@@ -1,12 +1,19 @@
 package io.switchlite.adapter.common.module.combat
 
 import io.switchlite.core.algorithm.VectorOperations
+import io.switchlite.core.condition.ConditionChecker
 import io.switchlite.core.model.*
 import io.switchlite.core.option.RandomRange
 import io.switchlite.core.util.Vec3
 import io.switchlite.adapter.common.api.EventBridge
 import io.switchlite.adapter.common.module.Module
 import io.switchlite.adapter.common.module.Category
+import io.switchlite.adapter.common.option.boolean
+import io.switchlite.adapter.common.option.float
+import io.switchlite.adapter.common.option.int
+import io.switchlite.adapter.common.option.enum
+import io.switchlite.adapter.common.option.triggerOptions
+import io.switchlite.adapter.common.option.probability
 
 object Velocity : Module("Velocity", Category.COMBAT) {
 
@@ -22,7 +29,7 @@ object Velocity : Module("Velocity", Category.COMBAT) {
     private val verticalMax by float("VerticalMax", 0.6f, 0.0f..1.0f)
 
     // ========== 概率 ==========
-    private val chance by int("Chance", 100, 0..100, "%")
+    private val probability by probability("Chance", 100, 0..100)
 
     // ========== 延迟/Tick ==========
     private val delayMs by int("DelayMs", 0, 0..500, "ms")
@@ -35,6 +42,16 @@ object Velocity : Module("Velocity", Category.COMBAT) {
     private val onlyGround by boolean("OnlyGround", true)
     private val onlyCurrentView by boolean("OnlyCurrentView", false)
     private val disabledInAir by boolean("DisabledInAir", true)
+
+    // ========== 统一触发条件引擎 ==========
+    private val triggerOptions by triggerOptions("Trigger") {
+        onlyMove = this@Velocity.onlyMove
+        onlyMoveForward = this@Velocity.onlyMoveForward
+        onlyWhenTargetGoesBack = this@Velocity.onlyWhenTargetGoesBack
+        onlyGround = this@Velocity.onlyGround
+        onlyCurrentView = this@Velocity.onlyCurrentView
+        disabledInAir = this@Velocity.disabledInAir
+    }
 
     // ========== Click 模式配置 ==========
     private val clicksMin by int("ClicksMin", 2, 1..10)
@@ -62,16 +79,13 @@ object Velocity : Module("Velocity", Category.COMBAT) {
         val target = ctx.target
         val original = ctx.originalMotion
 
-        // 1. 条件判断
-        if (onlyMove && !player.isMoving) return PlatformCommand.Pass(original)
-        if (onlyMoveForward && !player.isMovingForward) return PlatformCommand.Pass(original)
-        if (onlyGround && !player.onGround) return PlatformCommand.Pass(original)
-        if (disabledInAir && !player.onGround) return PlatformCommand.Pass(original)
-        if (onlyCurrentView && target != null && !player.isLookingAtTarget) return PlatformCommand.Pass(original)
-        if (onlyWhenTargetGoesBack && target != null && !target.isMovingBackward) return PlatformCommand.Pass(original)
+        // 1. 统一条件检查（替换原来的六行手动 if）
+        if (!ConditionChecker.check(triggerOptions, player, target)) {
+            return PlatformCommand.Pass(original)
+        }
 
-        // 2. 概率检查 (使用统一工具，不使用原生 Random)
-        if (!RandomRange.test(chance)) return PlatformCommand.Pass(original)
+        // 2. 概率检查（替换原来的 RandomRange.test(chance)）
+        if (!probability.test()) return PlatformCommand.Pass(original)
 
         // 3. 延迟检查
         if (delayTicks > 0 || delayMs > 0) {

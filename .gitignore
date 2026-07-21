@@ -1,28 +1,103 @@
 ```
 # Build artifacts
-*.class
-*.o
-*.obj
-*.exe
-*.dll
-*.so
-*.a
-*.out
 build/
 target/
 
 # Dependencies
 .gradle/
+node_modules/
+venv/
+.venv/
+__pycache__/
+*.egg-info/
 
-# Logs and temp files
+# Logs and temporary files
 *.log
 *.tmp
+*.swp
+
+# Environment files
+.env
+.env.local
+*.env.*
 
 # Editors
 .vscode/
 .idea/
 
+# Compressed files
+*.zip
+*.gz
+*.tar
+*.tgz
+*.bz2
+*.xz
+*.7z
+*.rar
+*.zst
+*.lz4
+*.lzh
+*.cab
+*.arj
+*.rpm
+*.deb
+*.Z
+*.lz
+*.lzo
+*.tar.gz
+*.tar.bz2
+*.tar.xz
+*.tar.zst
+
 # System files
 .DS_Store
 Thumbs.db
+
+# Coverage reports
+coverage/
+htmlcov/
+.coverage
+
+# Python specific
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+*.dist-info/
+.wheel/
+pip-log.txt
+pip-delete-this-directory.txt
+.tox/
+.nox/
+.coverage.*
+.cache/
+.pytest_cache/
+.mypy_cache/
+.hypothesis/
+
+# Java/Kotlin specific
+*.class
+*.jar
+*.war
+*.ear
+*.nar
+*.hprof
+*.dump
+*.ser
+*.iml
+*.iws
+*.ipr
+out/
+
+# Gradle specific
+.gradle/
+build/
+
+# Fabric/Forge specific
+.run/
+*.accesswidener
 ```

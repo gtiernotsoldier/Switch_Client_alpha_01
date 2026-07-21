@@ -1,0 +1,19 @@
+{
+  "name": "seasoned",
+  "description": "Balanced settings mimicking experienced PvP players",
+  "algorithm_style": {
+    "noise_intensity": 0.25,
+    "reaction_delay_mean_ms": 180,
+    "reaction_delay_std_ms": 35,
+    "max_angular_velocity_deg_per_tick": 5.0,
+    "cps_fatigue_decay": 0.92,
+    "overshoot_probability": 0.10,
+    "micro_jitter_amplitude": 0.5
+  },
+  "trigger_defaults": {
+    "chance": 85,
+    "onlyGround": true,
+    "onlyMoveForward": false,
+    "disabledInAir": true
+  }
+}

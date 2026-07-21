@@ -1,0 +1,13 @@
+{
+  "mode": "LEGIT",
+  "smoothness": 0.15,
+  "reactionDelayMs": 150,
+  "errorMargin": [-0.5, 0.5],
+  "onlyWhenLookingNearTarget": false,
+  "maxAngleDifference": 180.0,
+  "triggerOptions": {
+    "onlyGround": false,
+    "onlyMove": true,
+    "chance": 90
+  }
+}

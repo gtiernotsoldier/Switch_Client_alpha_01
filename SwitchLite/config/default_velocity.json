@@ -1,0 +1,14 @@
+{
+  "mode": "LEGIT",
+  "horizontalRange": [0.0, 0.5],
+  "verticalRange": [0.0, 0.3],
+  "chance": 80,
+  "delayMs": 0,
+  "delayTicks": 0,
+  "triggerOptions": {
+    "onlyGround": true,
+    "onlyMoveForward": true,
+    "disabledInAir": true,
+    "chance": 100
+  }
+}

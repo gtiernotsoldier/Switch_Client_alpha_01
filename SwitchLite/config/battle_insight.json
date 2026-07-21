@@ -1,0 +1,9 @@
+{
+  "enabled": true,
+  "showKBWinRate": true,
+  "showHitSelectTiming": true,
+  "showJumpResetPrompt": true,
+  "showMovementSuggestions": true,
+  "overlayPosition": "BOTTOM_RIGHT",
+  "colorScheme": "DEFAULT"
+}

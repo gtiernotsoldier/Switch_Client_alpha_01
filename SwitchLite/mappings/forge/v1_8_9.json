@@ -1,0 +1,22 @@
+{
+  "player_class": {
+    "forge_1_8_9": "net.minecraft.entity.player.EntityPlayer",
+    "fabric_1_20_1": "net.minecraft.class_745"
+  },
+  "velocity_packet": {
+    "forge_1_8_9": "net.minecraft.network.play.server.S12PacketEntityVelocity",
+    "fabric_1_20_1": "net.minecraft.class_2630"
+  },
+  "player_get_position": {
+    "forge_1_8_9": {
+      "class": "net.minecraft.entity.Entity",
+      "method": "func_174813_aQ",
+      "signature": "()Lnet/minecraft/util/AxisAlignedBB;"
+    },
+    "fabric_1_20_1": {
+      "class": "net.minecraft.class_1297",
+      "method": "method_5761",
+      "signature": "()Lnet/minecraft/class_238;"
+    }
+  }
+}

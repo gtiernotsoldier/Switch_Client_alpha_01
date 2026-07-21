@@ -1,13 +1,26 @@
 {
+  "enabled": true,
   "mode": "LEGIT",
-  "smoothness": 0.15,
-  "reactionDelayMs": 150,
-  "errorMargin": [-0.5, 0.5],
-  "onlyWhenLookingNearTarget": false,
-  "maxAngleDifference": 180.0,
+  "range": {
+    "min": 3.0,
+    "max": 10.0
+  },
+  "fov": {
+    "horizontal": 120.0,
+    "vertical": 60.0
+  },
+  "aimSpeed": 8,
+  "smoothness": 0.85,
+  "targetSelection": "DISTANCE_NEAREST",
   "triggerOptions": {
-    "onlyGround": false,
-    "onlyMove": true,
-    "chance": 90
-  }
+    "onlyCurrentView": true,
+    "disableOnMine": true,
+    "onlyOnClick": true,
+    "chance": 100,
+    "delayTicks": {
+      "min": 0,
+      "max": 2
+    }
+  },
+  "noiseIntensity": 0.05
 }

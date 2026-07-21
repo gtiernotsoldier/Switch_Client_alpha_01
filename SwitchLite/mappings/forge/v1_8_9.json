@@ -1,22 +1,46 @@
 {
-  "player_class": {
-    "forge_1_8_9": "net.minecraft.entity.player.EntityPlayer",
-    "fabric_1_20_1": "net.minecraft.class_745"
+  "forge:entity_getPosX": {
+    "class": "net.minecraft.entity.Entity",
+    "field": "posX"
   },
-  "velocity_packet": {
-    "forge_1_8_9": "net.minecraft.network.play.server.S12PacketEntityVelocity",
-    "fabric_1_20_1": "net.minecraft.class_2630"
+  "forge:entity_getPosY": {
+    "class": "net.minecraft.entity.Entity",
+    "field": "posY"
   },
-  "player_get_position": {
-    "forge_1_8_9": {
-      "class": "net.minecraft.entity.Entity",
-      "method": "func_174813_aQ",
-      "signature": "()Lnet/minecraft/util/AxisAlignedBB;"
-    },
-    "fabric_1_20_1": {
-      "class": "net.minecraft.class_1297",
-      "method": "method_5761",
-      "signature": "()Lnet/minecraft/class_238;"
-    }
+  "forge:entity_getPosZ": {
+    "class": "net.minecraft.entity.Entity",
+    "field": "posZ"
+  },
+  "forge:entity_getMotionX": {
+    "class": "net.minecraft.entity.Entity",
+    "field": "motionX"
+  },
+  "forge:entity_getMotionY": {
+    "class": "net.minecraft.entity.Entity",
+    "field": "motionY"
+  },
+  "forge:entity_getMotionZ": {
+    "class": "net.minecraft.entity.Entity",
+    "field": "motionZ"
+  },
+  "forge:entity_isOnGround": {
+    "class": "net.minecraft.entity.Entity",
+    "field": "onGround"
+  },
+  "forge:entity_getEntityId": {
+    "class": "net.minecraft.entity.Entity",
+    "method": "getEntityId"
+  },
+  "forge:player_rotationYaw": {
+    "class": "net.minecraft.entity.player.EntityPlayer",
+    "field": "rotationYaw"
+  },
+  "forge:player_rotationPitch": {
+    "class": "net.minecraft.entity.player.EntityPlayer",
+    "field": "rotationPitch"
+  },
+  "forge:player_isMovingForward": {
+    "class": "net.minecraft.entity.player.EntityPlayerSP",
+    "method": "isMovingForward"
   }
 }

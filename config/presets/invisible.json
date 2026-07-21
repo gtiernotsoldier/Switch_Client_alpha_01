@@ -1,0 +1,19 @@
+{
+  "name": "invisible",
+  "description": "Ultra-conservative settings for maximum stealth",
+  "algorithm_style": {
+    "noise_intensity": 0.15,
+    "reaction_delay_mean_ms": 220,
+    "reaction_delay_std_ms": 40,
+    "max_angular_velocity_deg_per_tick": 3.5,
+    "cps_fatigue_decay": 0.95,
+    "overshoot_probability": 0.05,
+    "micro_jitter_amplitude": 0.3
+  },
+  "trigger_defaults": {
+    "chance": 75,
+    "onlyGround": true,
+    "onlyMoveForward": true,
+    "disabledInAir": true
+  }
+}

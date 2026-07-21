@@ -1,0 +1,19 @@
+{
+  "name": "aggressive",
+  "description": "High-performance settings while staying within human limits",
+  "algorithm_style": {
+    "noise_intensity": 0.35,
+    "reaction_delay_mean_ms": 150,
+    "reaction_delay_std_ms": 30,
+    "max_angular_velocity_deg_per_tick": 7.0,
+    "cps_fatigue_decay": 0.90,
+    "overshoot_probability": 0.15,
+    "micro_jitter_amplitude": 0.7
+  },
+  "trigger_defaults": {
+    "chance": 90,
+    "onlyGround": false,
+    "onlyMoveForward": false,
+    "disabledInAir": false
+  }
+}

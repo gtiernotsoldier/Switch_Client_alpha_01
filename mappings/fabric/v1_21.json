@@ -1,0 +1,57 @@
+{
+  "platform": "fabric",
+  "version": "1.21",
+  "mappings": "yarn_1.21",
+  "classes": {
+    "minecraft": "net.minecraft.client.MinecraftClient",
+    "client_player_entity": "net.minecraft.client.network.ClientPlayerEntity",
+    "living_entity": "net.minecraft.entity.LivingEntity",
+    "vec3d": "net.minecraft.util.math.Vec3d",
+    "math_helper": "net.minecraft.util.math.MathHelper"
+  },
+  "methods": {
+    "player_get_instance": {
+      "chain": ["net.minecraft.client.MinecraftClient", "getInstance", "()Lnet/minecraft/client/MinecraftClient;"]
+    },
+    "player_get_the_player": {
+      "chain": ["net.minecraft.client.MinecraftClient", "player", "Lnet/minecraft/client/network/ClientPlayerEntity;"]
+    },
+    "player_get_velocity": {
+      "chain": ["net.minecraft.entity.Entity", "getVelocity", "()Lnet/minecraft/util/math/Vec3d;"]
+    },
+    "player_set_velocity": {
+      "chain": ["net.minecraft.entity.Entity", "setVelocity", "(DDD)V"]
+    }
+  },
+  "fields": {
+    "player_pos_x": {
+      "chain": ["net.minecraft.entity.Entity", "getX", "()D"]
+    },
+    "player_pos_y": {
+      "chain": ["net.minecraft.entity.Entity", "getY", "()D"]
+    },
+    "player_pos_z": {
+      "chain": ["net.minecraft.entity.Entity", "getZ", "()D"]
+    },
+    "player_yaw": {
+      "chain": ["net.minecraft.entity.Entity", "getYaw", "()F"]
+    },
+    "player_pitch": {
+      "chain": ["net.minecraft.entity.Entity", "getPitch", "()F"]
+    },
+    "player_on_ground": {
+      "chain": ["net.minecraft.entity.Entity", "isOnGround", "()Z"]
+    },
+    "player_input_forward": {
+      "chain": ["net.minecraft.client.input.Input", "forward", "F"]
+    },
+    "player_input_sideways": {
+      "chain": ["net.minecraft.client.input.Input", "sideways", "F"]
+    }
+  },
+  "packets": {
+    "entity_velocity_update_s2c": "net.minecraft.network.packet.s2c.play.EntityVelocityUpdateS2CPacket",
+    "player_interact_entity_c2s": "net.minecraft.network.packet.c2s.play.PlayerInteractEntityC2SPacket",
+    "player_move_c2s": "net.minecraft.network.packet.c2s.play.PlayerMoveC2SPacket"
+  }
+}

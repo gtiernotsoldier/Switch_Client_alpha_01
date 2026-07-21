@@ -44,6 +44,14 @@ object ConditionChecker {
             return false
         }
         
+        // onlyCurrentView check
+        if (options.onlyCurrentView && target != null && !player.isLookingAtTarget) return false
+        
+        // disableOnMine check - simplified, actual implementation may vary
+        if (options.disableOnMine && player.isMining) return false
+        
+        // onlyOnClick check - handled externally via input listeners
+        
         // Chance check
         if (options.chance < 100) {
             val random = kotlin.random.Random.nextInt(100)

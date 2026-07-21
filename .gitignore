@@ -4,16 +4,22 @@
 *.o
 *.obj
 *.out
-*.pyc
-__pycache__/
+build/
+target/
 
 # Dependencies
 .gradle/
-target/
+node_modules/
+venv/
+.venv/
+__pycache__/
+.mypy_cache/
+.pytest_cache/
 
 # Logs and temp files
 *.log
 *.tmp
+*.swp
 
 # Environment
 .env
@@ -24,7 +30,7 @@ target/
 .vscode/
 .idea/
 
-# OS generated files
+# System files
 .DS_Store
 Thumbs.db
 ```

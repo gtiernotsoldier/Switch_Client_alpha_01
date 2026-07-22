@@ -8,7 +8,7 @@ import io.switchlite.core.model.CombatContext
  * Platform-agnostic state extraction interface.
  * Implementations in Forge/Fabric use MappingContext to read game data.
  */
-interface StateProvider {
+interface IStateExtractor {
     fun extractPlayerState(): PlayerState
     fun extractTargetState(entityId: Int): TargetState?
     fun extractCombatContext(): CombatContext

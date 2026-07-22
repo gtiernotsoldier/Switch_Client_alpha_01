@@ -1,3 +1,0 @@
-// Placeholder for Java Agent JAR file
-// This file will be replaced with the actual built agent.jar during build process
-// Build command: ./gradlew :agent:shadowJar

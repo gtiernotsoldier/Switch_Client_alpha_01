@@ -1,1 +1,44 @@
-Nothing needs to be added to .gitignore since only a Kotlin source file was modified and no build artifacts, dependencies, or temporary files were detected in the changes.
+```
+# Gradle
+.gradle/
+build/
+!build.gradle.kts
+
+# Dependencies
+.libs/
+lib/
+
+# Logs
+*.log
+
+# Environment
+.env
+.env.local
+*.env.*
+
+# Editor/IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*.tmp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Coverage
+coverage/
+htmlcov/
+.coverage
+
+# Python (if applicable)
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+venv/
+.venv/
+.env
+```

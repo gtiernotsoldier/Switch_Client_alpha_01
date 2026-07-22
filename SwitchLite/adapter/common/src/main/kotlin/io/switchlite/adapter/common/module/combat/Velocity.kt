@@ -146,11 +146,11 @@ object Velocity : Module("Velocity", Category.COMBAT) {
     // ========== 生命周期 ==========
     override fun onEnable() {
         EventBridge.unregisterVelocityListener()
+        EventBridge.registerTickListener { currentTick ->
+            if (enabled) onTick(currentTick)
+        }
         EventBridge.registerVelocityListener { ctx ->
             if (enabled) onVelocityPacket(ctx) else PlatformCommand.Pass(ctx.originalMotion)
-        }
-        EventBridge.registerTickListener { player, target ->
-            if (enabled) onTick(player.currentTick)
         }
     }
 
@@ -168,8 +168,7 @@ object Velocity : Module("Velocity", Category.COMBAT) {
         for (command in commands) {
             when (command) {
                 is PlatformCommand.ModifyMotion -> {
-                    // Apply the modified motion to the player
-                    // Platform-specific implementation handles the actual application
+                    EventBridge.applyMotion(command.motion)
                 }
                 else -> {}
             }
@@ -177,7 +176,7 @@ object Velocity : Module("Velocity", Category.COMBAT) {
     }
 
     // ========== 内部类：延迟队列 ==========
-    private class DelayQueue {
+    private inner class DelayQueue {
         private data class Entry(val ctx: VelocityContext, val releaseTick: Int)
         private val queue = mutableListOf<Entry>()
         private var tickCounter = 0

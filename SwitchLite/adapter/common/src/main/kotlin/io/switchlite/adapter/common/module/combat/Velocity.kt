@@ -104,6 +104,13 @@ object Velocity : Module("Velocity", Category.COMBAT) {
 
     // ========== Delay 模式：包延迟 ==========
     private fun handleDelay(ctx: VelocityContext): PlatformCommand {
+        val player = ctx.player
+        val target = ctx.target
+        
+        if (!ConditionChecker.check(triggerOptions, player, target)) {
+            return PlatformCommand.Pass(ctx.originalMotion)
+        }
+        
         delayQueue.enqueue(ctx, delayMs, delayTicks)
         return PlatformCommand.CancelPacket(ctx.packetHandle)
     }
@@ -111,7 +118,13 @@ object Velocity : Module("Velocity", Category.COMBAT) {
     // ========== Click 模式：Liquid 算法逻辑 ==========
     private fun handleClick(ctx: VelocityContext): PlatformCommand {
         val player = ctx.player
-        val target = ctx.target ?: return PlatformCommand.Pass(ctx.originalMotion)
+        val target = ctx.target
+        
+        if (!ConditionChecker.check(triggerOptions, player, target)) {
+            return PlatformCommand.Pass(ctx.originalMotion)
+        }
+        
+        if (target == null) return PlatformCommand.Pass(ctx.originalMotion)
 
         // 1. 检测 hurtTime
         if (player.hurtTime != hurtTimeToClick) return PlatformCommand.Pass(ctx.originalMotion)
@@ -131,14 +144,35 @@ object Velocity : Module("Velocity", Category.COMBAT) {
 
     // ========== 生命周期 ==========
     override fun onEnable() {
+        EventBridge.unregisterVelocityListener()
         EventBridge.registerVelocityListener { ctx ->
             if (enabled) onVelocityPacket(ctx) else PlatformCommand.Pass(ctx.originalMotion)
+        }
+        EventBridge.registerTickListener { player, target ->
+            if (enabled) onTick(player.currentTick)
         }
     }
 
     override fun onDisable() {
         EventBridge.unregisterVelocityListener()
+        EventBridge.unregisterTickListener(this::onTick)
         delayQueue.clear()
+    }
+
+    /**
+     * Called on every tick to process delayed velocity packets
+     */
+    fun onTick(currentTick: Int) {
+        val commands = delayQueue.pump(currentTick)
+        for (command in commands) {
+            when (command) {
+                is PlatformCommand.ModifyMotion -> {
+                    // Apply the modified motion to the player
+                    // Platform-specific implementation handles the actual application
+                }
+                else -> {}
+            }
+        }
     }
 
     // ========== 内部类：延迟队列 ==========
@@ -162,8 +196,8 @@ object Velocity : Module("Velocity", Category.COMBAT) {
                 val entry = iterator.next()
                 if (currentTick >= entry.releaseTick) {
                     // 延迟到期，执行缩放
-                    val h = RandomRange.sample(entry.ctx.player.motionX.toFloat(), entry.ctx.player.motionZ.toFloat()) 
-                    val v = RandomRange.sample(0.4f, 0.6f) // 简化示例，实际应从配置读取
+                    val h = RandomRange.sample(horizontalMin, horizontalMax)
+                    val v = RandomRange.sample(verticalMin, verticalMax)
                     
                     val reduced = VectorOperations.scale(entry.ctx.originalMotion, h, v, h)
                     commands.add(PlatformCommand.ModifyMotion(reduced))

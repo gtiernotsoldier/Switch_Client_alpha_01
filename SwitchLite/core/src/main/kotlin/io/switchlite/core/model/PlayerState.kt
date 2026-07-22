@@ -1,5 +1,6 @@
 package io.switchlite.core.model
 
+import io.switchlite.core.util.Vec2
 import io.switchlite.core.util.Vec3
 
 /**
@@ -9,20 +10,20 @@ import io.switchlite.core.util.Vec3
 data class PlayerState(
     val name: String,
     val position: Vec3,
+    val rotation: Vec2,
     val motionX: Double,
     val motionY: Double,
     val motionZ: Double,
-    val rotationYaw: Float,
-    val rotationPitch: Float,
     val onGround: Boolean,
-    val isMoving: Boolean,           // NEW: Whether player is moving
-    val isMovingForward: Boolean,    // NEW: Whether player is moving forward
+    val isMoving: Boolean,
+    val isMovingForward: Boolean,
     val isSprinting: Boolean,
     val health: Float,
-    val hurtTime: Int,               // NEW: Current hurt time
-    val maxHurtTime: Int,            // NEW: Max hurt time (usually 10)
-    val isBlocking: Boolean,         // NEW: Whether blocking with sword
-    val isLookingAtTarget: Boolean,  // NEW: Whether looking at current target
+    val hurtTime: Int,
+    val maxHurtResistantTime: Int,
+    val isBlocking: Boolean,
+    val isLookingAtTarget: Boolean,
+    val isMining: Boolean,
     val ticks: Long
 ) {
     // Legacy constructor for backward compatibility
@@ -36,17 +37,38 @@ data class PlayerState(
     ) : this(
         name = name,
         position = Vec3(posX, posY, posZ),
+        rotation = Vec2(rotationYaw, rotationPitch),
         motionX = motionX, motionY = motionY, motionZ = motionZ,
-        rotationYaw = rotationYaw, rotationPitch = rotationPitch,
         onGround = onGround,
         isMoving = (motionX != 0.0 || motionZ != 0.0),
         isMovingForward = isMovingForward,
         isSprinting = isSprinting,
         health = health,
         hurtTime = hurtTime,
-        maxHurtTime = 10,
+        maxHurtResistantTime = 10,
         isBlocking = false,
         isLookingAtTarget = false,
+        isMining = false,
         ticks = ticks
     )
+
+    companion object {
+        val EMPTY = PlayerState(
+            name = "",
+            position = Vec3.ZERO,
+            rotation = Vec2.ZERO,
+            motionX = 0.0, motionY = 0.0, motionZ = 0.0,
+            onGround = false,
+            isMoving = false,
+            isMovingForward = false,
+            isSprinting = false,
+            health = 0f,
+            hurtTime = 0,
+            maxHurtResistantTime = 10,
+            isBlocking = false,
+            isLookingAtTarget = false,
+            isMining = false,
+            ticks = 0
+        )
+    }
 }

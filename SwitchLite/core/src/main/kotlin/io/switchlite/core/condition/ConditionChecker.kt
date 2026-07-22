@@ -1,17 +1,18 @@
 package io.switchlite.core.condition
 
-import io.switchlite.core.combat.model.PlayerState
-import io.switchlite.core.combat.model.TargetState
+import io.switchlite.core.model.PlayerState
+import io.switchlite.core.model.TargetState
 import io.switchlite.core.option.TriggerOptions
 
 /**
- * Unified condition checker for all trigger options
- * Compiles TriggerOptions into optimized check functions
+ * Unified condition checker for all trigger options.
+ * Compiles TriggerOptions into optimized check functions.
  */
 object ConditionChecker {
     
     /**
-     * Check if all conditions are met for activation
+     * Check if all conditions are met for activation.
+     * When target is null and target-based conditions are enabled, returns true (don't block).
      */
     fun check(options: TriggerOptions, player: PlayerState, target: TargetState?): Boolean {
         // Ground/Air checks
@@ -25,16 +26,15 @@ object ConditionChecker {
         if (options.onlyMoveBackward) return false // TODO: Implement backward detection
         if (options.onlyStrafe) return false // TODO: Implement strafe detection
         
-        // Target-based checks
+        // Target-based checks — skip when target is null
         if (target != null) {
-            if (options.onlyWhenTargetGoesBack && !target.isGoingBack) return false
-            if (options.onlyWhenTargetApproaches && !target.isMovingTowardsPlayer) return false
+            if (options.onlyWhenTargetGoesBack && !target.isMovingBackward) return false
+            if (options.onlyWhenTargetApproaches) return false // TODO: Implement approach detection
             
             // Distance checks
             if (target.distance < options.minDistance) return false
             if (target.distance > options.maxDistance) return false
         }
-        // When target is null, skip target-based checks (don't block activation)
         
         // Look direction check
         if (options.onLook) {
@@ -45,7 +45,7 @@ object ConditionChecker {
         // onlyCurrentView check
         if (options.onlyCurrentView && target != null && !player.isLookingAtTarget) return false
         
-        // disableOnMine check - simplified, actual implementation may vary
+        // disableOnMine check
         if (options.disableOnMine && player.isMining) return false
         
         // onlyOnClick check - handled externally via input listeners
@@ -62,8 +62,8 @@ object ConditionChecker {
     }
     
     /**
-     * Compile options into a reusable check function
-     * For performance optimization (fingerprint caching)
+     * Compile options into a reusable check function.
+     * For performance optimization (fingerprint caching).
      */
     fun compile(options: TriggerOptions): (PlayerState, TargetState?) -> Boolean {
         return { player, target -> check(options, player, target) }

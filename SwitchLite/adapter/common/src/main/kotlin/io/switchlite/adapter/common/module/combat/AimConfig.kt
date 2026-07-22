@@ -1,4 +1,7 @@
-package io.switchlite.core.option
+package io.switchlite.adapter.common.module.combat
+
+import io.switchlite.core.option.AimMode
+import io.switchlite.core.option.TriggerOptions
 
 data class AimConfig(
     val enabled: Boolean = true,
@@ -12,7 +15,5 @@ data class AimConfig(
     val triggerOptions: TriggerOptions = TriggerOptions(),
     val noiseIntensity: Double = 0.05
 )
-
-enum class AimMode { LEGIT, NORMAL }
 
 enum class TargetSelection { DISTANCE_NEAREST, CROSSHAIR }

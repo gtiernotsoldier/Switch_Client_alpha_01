@@ -14,12 +14,14 @@ data class TargetState(
     val motionY: Double,
     val motionZ: Double,
     val health: Float,
-    val hurtTime: Int,               // NEW: Target's current hurt time
-    val isMovingBackward: Boolean,   // NEW: Whether target is moving backward (for onlyWhenTargetGoesBack)
+    val hurtTime: Int,
+    val isMovingBackward: Boolean,
+    val isGoingBack: Boolean,
+    val isMovingTowardsPlayer: Boolean,
     val distance: Float,
-    val hitbox: Hitbox
+    val hitbox: Hitbox,
+    val id: Int
 ) {
-    // Legacy constructor for backward compatibility
     constructor(
         entityId: Int, name: String,
         posX: Double, posY: Double, posZ: Double,
@@ -32,10 +34,30 @@ data class TargetState(
         motionX = motionX, motionY = motionY, motionZ = motionZ,
         health = health,
         hurtTime = hurtTime,
-        isMovingBackward = false, // Default to false, Adapter sets actual value
+        isMovingBackward = false,
+        isGoingBack = false,
+        isMovingTowardsPlayer = false,
         distance = distance,
-        hitbox = hitbox
+        hitbox = hitbox,
+        id = entityId
     )
+
+    companion object {
+        val EMPTY = TargetState(
+            entityId = 0,
+            name = "",
+            position = Vec3.ZERO,
+            motionX = 0.0, motionY = 0.0, motionZ = 0.0,
+            health = 0f,
+            hurtTime = 0,
+            isMovingBackward = false,
+            isGoingBack = false,
+            isMovingTowardsPlayer = false,
+            distance = 0f,
+            hitbox = Hitbox(0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
+            id = 0
+        )
+    }
 }
 
 /**

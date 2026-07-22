@@ -93,6 +93,42 @@ public class MappingContext {
     }
     
     /**
+     * Get a field value from an object using a semantic key.
+     * @param obj The target object
+     * @param key Semantic key (e.g., "forge:entity_posX")
+     * @return The field value
+     */
+    public static Object getFieldValue(Object obj, String key) {
+        try {
+            Field field = getField(key);
+            if (field == null) return null;
+            field.setAccessible(true);
+            return field.get(obj);
+        } catch (Exception e) {
+            System.err.println("[MappingContext] Failed to get field value for key: " + key);
+            return null;
+        }
+    }
+
+    /**
+     * Invoke a method on an object using a semantic key.
+     * @param obj The target object
+     * @param key Semantic key (e.g., "forge:world_getEntityByID")
+     * @param args Method arguments
+     * @return The method return value
+     */
+    public static Object invokeMethod(Object obj, String key, Object... args) {
+        try {
+            MethodHandle handle = getMethod(key);
+            if (handle == null) return null;
+            return handle.invokeWithArguments(args);
+        } catch (Throwable e) {
+            System.err.println("[MappingContext] Failed to invoke method for key: " + key);
+            return null;
+        }
+    }
+
+    /**
      * Clear all caches (for hot-reloading)
      */
     public static void clearCache() {

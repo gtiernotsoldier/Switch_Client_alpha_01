@@ -106,9 +106,10 @@ object Velocity : Module("Velocity", Category.COMBAT) {
     private fun handleDelay(ctx: VelocityContext): PlatformCommand {
         val player = ctx.player
         val target = ctx.target
+        val original = ctx.originalMotion
         
         if (!ConditionChecker.check(triggerOptions, player, target)) {
-            return PlatformCommand.Pass(ctx.originalMotion)
+            return PlatformCommand.Pass(original)
         }
         
         delayQueue.enqueue(ctx, delayMs, delayTicks)

@@ -33,10 +33,8 @@ object ConditionChecker {
             // Distance checks
             if (target.distance < options.minDistance) return false
             if (target.distance > options.maxDistance) return false
-        } else {
-            // If target is required but null, fail
-            if (options.onlyWhenTargetGoesBack || options.onlyWhenTargetApproaches) return false
         }
+        // When target is null, skip target-based checks (don't block activation)
         
         // Look direction check
         if (options.onLook) {

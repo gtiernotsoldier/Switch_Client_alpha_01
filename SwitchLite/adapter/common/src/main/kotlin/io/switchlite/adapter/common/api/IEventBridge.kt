@@ -4,7 +4,7 @@ package io.switchlite.adapter.common.api
  * Platform-agnostic event bridge interface.
  * Implementations in Forge/Fabric translate platform-specific events to these common events.
  */
-interface EventBridge {
+interface IEventBridge {
     fun registerListeners()
     fun unregisterListeners()
 }

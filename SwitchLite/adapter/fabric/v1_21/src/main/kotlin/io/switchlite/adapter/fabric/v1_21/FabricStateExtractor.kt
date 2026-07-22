@@ -1,13 +1,13 @@
-package io.switchlite.adapter.v1_21
+package io.switchlite.adapter.fabric.v1_21
 
-import io.switchlite.adapter.common.api.StateProvider
+import io.switchlite.adapter.common.api.IStateExtractor
 import io.switchlite.core.model.PlayerState
 import io.switchlite.core.model.TargetState
 import io.switchlite.core.model.CombatContext
 import io.switchlite.agent.MappingContext
 import net.minecraft.client.MinecraftClient
 
-object FabricStateProvider : StateProvider {
+object FabricStateExtractor : IStateExtractor {
     private val mc = MinecraftClient.getInstance()
 
     override fun extractPlayerState(): PlayerState {

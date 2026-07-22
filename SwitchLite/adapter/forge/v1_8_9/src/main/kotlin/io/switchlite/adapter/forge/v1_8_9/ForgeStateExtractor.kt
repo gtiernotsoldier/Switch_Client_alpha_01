@@ -1,13 +1,13 @@
-package io.switchlite.adapter.v1_8_9
+package io.switchlite.adapter.forge.v1_8_9
 
-import io.switchlite.adapter.common.api.StateProvider
+import io.switchlite.adapter.common.api.IStateExtractor
 import io.switchlite.core.model.PlayerState
 import io.switchlite.core.model.TargetState
 import io.switchlite.core.model.CombatContext
 import io.switchlite.agent.MappingContext
 import net.minecraft.client.Minecraft
 
-object ForgeStateProvider : StateProvider {
+object ForgeStateExtractor : IStateExtractor {
     private val mc = Minecraft.getMinecraft()
 
     override fun extractPlayerState(): PlayerState {

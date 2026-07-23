@@ -1,221 +1,285 @@
-🥪 SwitchLite
+# 🥪 SwitchLite
+
+> A Minecraft Ghost Client built with the **Sandwich Architecture** — clean separation between core logic and platform-specific code.
+>
+> 一个基于 **三明治架构** 的 Minecraft 幽灵客户端 —— 核心逻辑与平台代码完全解耦。
+
+ [Discord](https://discord.gg/Sq4rWn4JG) · [GitHub](https://github.com/gtiernotsoldier/Switch_Client_alpha_01)
+
+---
+
+## 🥪 Sandwich 架构 · 现代幽灵客户端设计宣言
+
+### 我们为何存在
+
+反作弊系统（Grim、Polar、Vulcan、Watchdog）正在变得前所未有的智能。它们不再只检测单个作弊特征，而是通过时序分析、运动学建模、机器学习来识别非人类行为模式。传统的"功能堆叠、固定阈值、暴力绕过"模式已经失效——那些客户端正在大规模"坐牢"。
+
+我们需要一种全新的设计哲学：**不是对抗特征，而是模仿人类；不是追求极致效果，而是追求合法生存。**
+
+Sandwich 架构 由此诞生。
+
+---
+
+### 📜 核心理念：一部"现代对抗反作弊的宪法"
+
+我们坚信，一个能够长期生存的幽灵客户端，必须遵守以下四条根本原则：
+
+#### 1. ️ 更安全性 —— Safety First
+
+- **默认合法**：所有模块的默认配置必须在人类行为极限范围内，绝不产生超自然运动或输入。
+- **条件触发**：模块只在特定战术场景下激活（如 `onlyGround`、`onlyMoveForward`、`onlyWhenTargetGoesBack`），避免常驻暴露。
+- **软边界**：所有修改都应是"柔和、渐进、带随机扰动"的，例如 AimAssist 只将准星拉回碰撞箱边缘，而不是锁死中心点。
+- **暴力模块移除**：我们绝不包含 KillAura、Fly、Speed、Jesus 等明显违反游戏物理的功能。
+
+#### 2. 🔍 更高的可调试性 —— Debuggability
+
+- **策略与执行分离**：核心算法（Core）与 Minecraft 适配层（Adapter）完全解耦，Core 可进行单元测试、离线模拟。
+- **日志与回放**：适配层可记录每 tick 的状态、决策和网络包，便于被踢后复盘分析。
+- **策略热加载**：所有风险参数（击退保留率、CPS 范围、触发条件）均通过 JSON 配置文件定义，支持运行时修改、云端热更，无需重新编译。
+- **统一条件引擎**：所有模块共用 `TriggerCondition` 系统，避免重复的 if 判断，集中调试。
+
+#### 3. 🧠 更优秀的策略性 —— Strategy
+
+- **动态自适应**：模块行为根据距离、玩家状态、目标动作、服务器反作弊指纹实时调整。例如 AutoClicker 的 CPS 随目标距离变化，Velocity 仅在敌人后退时生效。
+- **策略可插拔**：通过 `AnticheatDetector` 识别当前反作弊类型（Grim/Vulcan/Watchdog），自动加载对应的 JSON 策略包。不同反作弊有不同"甜点参数"。
+- **全局行为规划**：所有网络包由统一调度器（`PacketScheduler`）管理，模拟真实网络延迟、丢包、乱序，保证时序一致性。
+- **云端策略库**：策略配置文件可托管在云端，客户端启动时自动拉取最新版本，实现"热更新"绕过。
+
+#### 4. 🤝 更好的辅助性 —— Assistance
+
+- **玩家是主角**：所有模块都是"副驾驶"，不替代玩家决策。AimAssist 不自动选择目标，AutoClicker 只在玩家按住左键时优化节奏，WTap 只在玩家向前移动时生效。
+- **减少重复劳动**：模块只处理机械、易错的操作（如自动补货、切换工具、搭路潜行），让玩家专注于战术和瞄准。
+- **自然交互**：模块的输出必须带有"人类的不完美"——随机扰动、反应延迟、过冲、抖动。让反作弊觉得"这是一个高 ping 但熟练的玩家"。
+
+---
+
+## 🧱 架构总览：三明治分层
+
+```
+┌─────────────────────────────────────────────┐
+│          C++ 注入器 (injector)               │
+│  · 进程检测 / 版本识别                       │
+│  · 加载映射库 / 缓存文件                     │
+│  · 注入 Agent / 部署 Fabric Mod             │
+├─────────────────────────────────────────────┤
+│          Java Agent (agent)                 │
+│  · 类加载时字节码修改（Javassist/ASM）       │
+│  · 提供 MappingContext（跨版本类/方法映射）  │
+│  · 缓存序列化（避免每次启动反射）            │
+├─────────────────────────────────────────────┤
+│          Kotlin 核心库 (core)               │
+│  · 纯数学 / 无 Minecraft 依赖               │
+│  · 策略接口（AimStrategy, VelocityStrategy） │
+│  · 算法实现（旋转、击退、预测、噪声）        │
+│  · 条件引擎（TriggerCondition）             │
+│  · 数据模型（PlayerState, Vec3）            │
+├─────────────────────────────────────────────┤
+│          版本适配层 (adapter)               │
+│  · forge/1.8.9（独立实现）                  │
+│  · fabric/common（1.16～1.21 共享源码）     │
+│  · fabric/v1_xx（版本差异适配器）           │
+│  · 每个模块 = 一个 .kt 文件                 │
+│  · 监听 Minecraft 事件 → 调用 core 策略     │
+│  · 将决策写回游戏（motion, 按键, 发包）     │
+└─────────────────────────────────────────────┘
+```
+
+---
+
+## 📦 项目结构
+
+```
+SwitchLite/
+├── core/                          # 纯逻辑，无 MC 依赖
+│   ├── algorithm/                 # RotationCalculator, VectorOperations, NoiseProvider
+│   ├── condition/                 # ConditionChecker, TriggerOptions
+│   ├── model/                     # PlayerState, TargetState, CombatContext
+│   ── util/                      # Vec2, Vec3, MathUtils
+├── adapter/
+│   ├── common/                    # 共享模块逻辑（单份代码）
+│   │   ├── api/                   # EventBridge, IEventBridge, IStateExtractor
+│   │   ├── module/                # Module base, Category, delegates
+│   │   └── module/combat/         # AimAssist, AutoClicker, etc.
+│   ├── forge/v1_8_9/             # Forge 1.8.9 翻译层
+│   └── fabric/v1_21/             # Fabric 1.21 翻译层
+├── agent/                         # MappingContext（Java 反射层）
+├── config/presets/                # 配置预设
+├── injector/resources/            # Mod 元数据和资源
+├── mappings/                      # 语义 key → MC 成员映射
+└── scripts/                       # 构建和工具脚本
+```
+
+---
+
+## 📦 模块设计示例（遵循宪法）
+
+| 模块 | 传统做法 | Sandwich 做法 |
+|------|---------|--------------|
+| **AimAssist** | 锁定头部/中心，线性平滑 | 仅当准星偏离碰撞箱时柔和拉回边缘，带抖动和反应延迟 |
+| **AutoClicker** | 固定 CPS 均匀随机 | 距离自适应 CPS，伽马分布，仅玩家攻击时生效 |
+| **Velocity** | 固定保留率 0% | 范围随机（20-60%），条件触发，模拟丢包 |
+| **WTap** | 固定 tick 发包 | 随机 tick + 概率 + 仅向前移动时触发 |
+| **Backtrack** | 固定延迟 | 动态延迟服从网络分布，随机丢包，与全局调度器协同 |
+| **Disabler** | 单一漏洞利用 | 策略库动态加载，多种绕过随机切换，行为合法化 |
+
+---
+
+## 🔧 四层架构详解
+
+| 层级 | 语言 | 职责 | 关键组件 |
+|------|------|------|---------|
+| **注入器** | C++ | 进程检测、版本识别、注入 Agent / 部署 Fabric Mod | 进程枚举、远程线程、版本探测 |
+| **Agent** | Java | 类加载时字节码修改，提供跨版本映射 | Javassist / ASM，MappingContext，缓存序列化 |
+| **Core** | Kotlin | 纯数学算法、策略接口、条件引擎、噪声扰动 | AimStrategy, VelocityStrategy, TriggerCondition, NoiseProvider |
+| **Adapter** | Kotlin | 版本适配（1.8.9 Forge / 1.20+ Fabric） | VelocityModule, AimModule, BattleInsight 等 |
+
+**核心原则：**
+- **算法在 Core**：所有决策逻辑（击退修改、旋转计算、CPS 生成）与 Minecraft 完全解耦，可单元测试。
+- **逻辑在模块**：每个适配层模块是一个完整文件，监听事件、提取状态、调用 Core、写回游戏。
+- **执行在 Adapter**：具体发包、修改 motion、模拟按键等由适配层完成，Core 不感知。
+
+---
+
+## ️ 四大基础设施（横切关注点）
+
+| 基础设施 | 作用 | 实现位置 |
+|---------|------|---------|
+| **映射库 + 缓存** | 跨版本类/方法/字段访问，零反射启动 | Agent + JSON + 序列化 |
+| **条件引擎** | 统一触发规则（onlyGround, onLook, chance, delay, ticks） | Core TriggerCondition + ConditionChecker |
+| **噪声扰动** | 所有策略输出强制添加随机化（高斯/均匀分布） | Core NoiseProvider 装饰器 |
+| **全局包调度器** | 管理所有网络包发送顺序、延迟、丢包模拟 | Adapter PacketScheduler |
+
+这些基础设施对模块透明，模块开发者只需声明配置，无需重复实现。
+
+---
+
+## ⚡ 关键组件
+
+### EventBridge（单例）
+中枢神经系统。模块直接调用：
+```kotlin
+EventBridge.setPlayerRotation(Vec2(yaw, pitch))
+EventBridge.applyMotion(Vec3(x, y, z))
+EventBridge.onVelocityPacket(ctx)
+```
+平台在启动时注册为处理器——模块永远不知道自己运行在哪个平台上。
 
-A Minecraft Ghost Client built with the Sandwich Architecture — clean separation between core logic and platform-specific code.
+### MappingContext
+基于 Java 反射的映射层，通过语义 key 解析 Minecraft 类/方法/字段。代码中零硬编码 MC 类名。
+```kotlin
+MappingContext.getFieldValue(player, "forge:entity_posX")
+MappingContext.invokeMethod(world, "fabric:world_getEntityByID", entityId)
+```
 
-A Minecraft ghost client based on the Sandwich Architecture — fully decoupled core logic and platform code.
+### Platform Commands
+速度处理返回密封命令：
+- `ModifyMotion` — 替换运动值
+- `CancelPacket` — 完全丢弃包
+- `ClickBurst` — 发送快速攻击包
+- `Pass` — 让原始值通过
 
-Discord:https://discord.gg/Sq4rWn4JG · GitHub:https://github.com/gtiernotsoldier/Switch_Client_alpha_01
+---
 
-🥪 Sandwich Architecture · A Design Manifesto for Modern Ghost Clients
+## 🎮 战斗模块示例（Velocity）
 
-Why We Exist
+**Core 层：**
+```kotlin
+interface VelocityStrategy {
+    fun modifyVelocity(original: Vec3, player: PlayerState, target: TargetState?, config: VelocityConfig): Vec3
+}
+class DefaultVelocityStrategy : VelocityStrategy { /* 纯数学实现 */ }
+```
 
-Anti-cheat systems (Grim, Polar, Vulcan, Watchdog) are becoming smarter than ever. They no longer merely detect individual cheat signatures—they identify non-human behavior patterns through temporal analysis, kinematic modeling, and machine learning. The traditional paradigm of "stacking features, fixed thresholds, brute-force bypass" has failed—those clients are getting banned en masse.
+**Adapter 层（1.8.9）：**
+```kotlin
+@EventTarget fun onPacket(event: PacketEvent) {
+    val config = buildConfig()
+    val modified = SandwichCore.velocityStrategy.modifyVelocity(original, playerState, targetState, config)
+    applyModifiedMotion(modified)
+}
+```
 
-We need a completely new design philosophy: not fighting signatures, but mimicking humans; not chasing maximum effectiveness, but pursuing legitimate survival.
+支持模式：Legit（范围随机 + 条件触发）、Delay（包延迟）、Click（自动连点）。
+条件：`onlyMove`, `onlyMoveForward`, `onlyWhenTargetGoesBack`, `onlyGround`, `onLook`, `disabledInAir`。
+随机化：水平/垂直保留率范围、触发概率、延迟 tick。
 
-Thus, the Sandwich Architecture was born.
+---
 
-📜 Core Philosophy: A "Constitution" for Modern Anti-Cheat Resistance
+## ️ 辅助模块：BattleInsight
 
-We firmly believe that a long-surviving ghost client must adhere to four fundamental principles:
+纯显示模块，不修改游戏行为，提供：
 
-1. 🛡️ Safety First
+- **KB 胜率**：实时击退距离对比。
+- **HitSelect 时机**：提示对方攻击后的 1-3 tick 窗口。
+- **JumpReset 提示**：被击退时建议跳跃。
+- **走位提示**：根据距离和地形建议 W/A/S/D。
 
-Legitimate by default: All module defaults must stay within human behavioral limits—no supernatural movement or input.
+所有提示均基于真实数据采集（击退包、攻击动画、玩家输入），反作弊无法检测。
 
-Conditional triggering: Modules activate only in specific tactical scenarios (e.g., onlyGround, onlyMoveForward, onlyWhenTargetGoesBack) to avoid constant exposure.
+---
 
-Soft boundaries: All modifications must be "gentle, gradual, and randomly perturbed." For example, AimAssist only nudges the crosshair toward the hitbox edge rather than locking onto the center.
+## 🌐 跨版本策略
 
-No brute-force modules: We categorically exclude blatantly physics-violating features like KillAura, Fly, Speed, and Jesus.
+- **Forge 1.8.9**：独立适配层（MCP 运行时名）。
+- **Fabric 1.16 ~ 1.21**：
+  - `common/` 共享 80% 源码（事件、状态提取、策略调用）。
+  - `v1_16/`, `v1_20/` 等子模块存放版本差异适配器（API 变化、包名映射）。
 
-2. 🔍 Debuggability
+映射库 + 缓存：C++ 检测版本 → Agent 加载对应 JSON → 适配层通过 MappingContext 获取类/方法/字段，无硬编码。
 
-Separation of strategy and execution: Core algorithms (Core) are fully decoupled from the Minecraft adaptation layer (Adapter), enabling unit testing and offline simulation of Core.
+---
 
-Logging and replay: The adaptation layer records per-tick state, decisions, and network packets for post-ban analysis.
+## 📋 开发状态
 
-Hot-reloadable strategies: All risk parameters (knockback retention rate, CPS range, trigger conditions) are defined via JSON configs, supporting runtime modification and cloud hot-swapping without recompilation.
+本项目处于 **alpha** 阶段。架构已完成，两个平台翻译层已实现，模块正在逐步填充。
 
-Unified condition engine: All modules share a TriggerCondition system, eliminating duplicate if-checks and centralizing debugging.
+### ✅ 已完成
+- [x] Sandwich 架构结构
+- [x] 核心算法（RotationCalculator, VectorOperations, NoiseProvider）
+- [x] 数据模型（PlayerState, TargetState, CombatContext）
+- [x] EventBridge 单例模式
+- [x] 属性委托（float, int, boolean, enum, triggerOptions, probability）
+- [x] Forge 1.8.9 平台层
+- [x] Fabric 1.21 平台层
+- [x] MappingContext 反射系统
 
-3. 🧠 Strategy
+###  进行中
+- [ ] 模块实现（AimAssist, AutoClicker, Velocity 等）
+- [ ] 包拦截（Fabric Mixin / Forge 包事件）
+- [ ] 目标选择系统
+- [ ] 配置 UI
 
-Dynamic adaptation: Module behavior adjusts in real time based on distance, player state, target actions, and server anti-cheat fingerprints. For instance, AutoClicker CPS scales with target distance; Velocity only triggers when the enemy backs away.
+---
 
-Pluggable strategies: AnticheatDetector identifies the current anti-cheat type (Grim/Vulcan/Watchdog) and auto-loads the corresponding JSON strategy pack. Different anti-cheats have different "sweet spots."
+## 🌍 未来展望
 
-Global behavior planning: All network packets are managed by a unified scheduler (PacketScheduler), simulating real network latency, packet loss, and reordering to ensure temporal consistency.
+反作弊会越来越强，但我们不会去"攻破"它们。我们的目标是：**让 Sandwich 架构的客户端行为，与真实人类玩家在统计学上无法区分。**
 
-Cloud strategy library: Strategy configs can be hosted in the cloud and pulled automatically on client startup, enabling "hot-update" bypasses.
+我们相信，辅助 ≠ 作弊。只要尊重游戏规则、尊重其他玩家、尊重反作弊的底线，幽灵客户端就可以作为一种"训练工具"、"辅助外设"长期存在。
 
-4. 🤝 Assistance
+欢迎加入我们，共同定义下一代幽灵客户端。
 
-Player remains the protagonist: All modules act as "co-pilots," never replacing player decisions. AimAssist doesn't auto-select targets; AutoClicker only optimizes rhythm while the player holds left-click; WTap only triggers while the player moves forward.
+---
 
-Reducing repetitive labor: Modules handle mechanical, error-prone tasks (auto-refill, tool switching, bridge sneaking), freeing players to focus on tactics and aim.
+## 🔧 开发与贡献指南
 
-Natural interaction: Module output must carry "human imperfection"—random jitter, reaction delays, overshoot, noise. Make the anti-cheat think "this is a high-ping but skilled player."
+1. **克隆仓库**：`git clone https://github.com/gtiernotsoldier/Switch_Client_alpha_01.git`
+2. **构建**：使用 Gradle 分别构建 core、agent、adapter 各模块。
+3. **调试**：单元测试 Core 层策略，集成测试在本地 Forge/Fabric 环境。
+4. **贡献**：欢迎提交 PR 改进策略算法、添加新版本适配层、优化噪声模型。但**绝不允许**添加暴力模块（KillAura、Fly 等）。
 
-🧱 Architecture Overview: The Sandwich Layers
+---
 
-┌─────────────────────────────────────────────┐ │ C++ Injector (injector) │ │ · Process detection / version ID │ │ · Load mapping libs / cache files │ │ · Inject Agent / deploy Fabric Mod │ ├─────────────────────────────────────────────┤ │ Java Agent (agent) │ │ · Bytecode modification at class load │ │ (Javassist/ASM) │ │ · Provides MappingContext (cross-version │ │ class/method mappings) │ │ · Cache serialization (avoid runtime refl.)│ ├─────────────────────────────────────────────┤ │ Kotlin Core Library (core) │ │ · Pure math / zero MC dependency │ │ · Strategy interfaces (AimStrategy, │ │ VelocityStrategy) │ │ · Algorithm implementations (rotation, │ │ knockback, prediction, noise) │ │ · Condition engine (TriggerCondition) │ │ · Data models (PlayerState, Vec3) │ ├─────────────────────────────────────────────┤ │ Version Adapter Layer (adapter) │ │ · forge/1.8.9 (independent impl) │ │ · fabric/common (shared src 1.16–1.21) │ │ · fabric/v1_xx (version diff adapters) │ │ · One module = one .kt file │ │ · Listen to MC events → call core strategy │ │ · Write decisions back to game (motion, │ │ inputs, packets) │ └─────────────────────────────────────────────┘ 
+##  许可证
 
-📦 Project Structure
+本项目采用 **GPLv3** 许可证。任何衍生作品必须开源，并保留原始版权声明。我们欢迎社区 fork 和二次开发，但请遵守本"宪法"精神，维护幽灵客户端的生态健康。
 
-SwitchLite/ ├── core/ # Pure logic, no MC dependency │ ├── algorithm/ # RotationCalculator, VectorOperations, NoiseProvider │ ├── condition/ # ConditionChecker, TriggerOptions │ ├── model/ # PlayerState, TargetState, CombatContext │ └── util/ # Vec2, Vec3, MathUtils ├── adapter/ │ ├── common/ # Shared module logic (single source) │ │ ├── api/ # EventBridge, IEventBridge, IStateExtractor │ │ ├── module/ # Module base, Category, delegates │ │ └── module/combat/ # AimAssist, AutoClicker, etc. │ ├── forge/v1_8_9/ # Forge 1.8.9 translation layer │ └── fabric/v1_21/ # Fabric 1.21 translation layer ├── agent/ # MappingContext (Java reflection layer) ├── config/presets/ # Config presets ├── injector/resources/ # Mod metadata and resources ├── mappings/ # Semantic key → MC member mappings └── scripts/ # Build and utility scripts 
+---
 
-📦 Module Design Examples (Constitutional Compliance)
+## 🤝 联系我们
 
-ModuleTraditional ApproachSandwich ApproachAimAssistLock onto head/center, linear smoothingOnly nudge crosshair toward hitbox edge when off-target, with jitter and reaction delayAutoClickerFixed CPS, uniform randomDistance-adaptive CPS, gamma distribution, only triggers while player attacksVelocityFixed retention rate 0%Randomized range (20–60%), conditional triggering, simulates packet lossWTapFixed tick packet timingRandom tick + probability + only triggers while moving forwardBacktrackFixed delayDynamic delay following network distribution, random packet loss, coordinated with global schedulerDisablerSingle exploitDynamically loaded strategy library, randomized switching between bypasses, behavior legalization 
+> *"算法在 core，逻辑在模块，执行在 adapter" —— 这既是代码组织原则，也是设计哲学。*
 
-🔧 Four-Layer Architecture Explained
+🔗 [Discord](https://discord.gg/Sq4rWn4JG) · [GitHub](https://github.com/gtiernotsoldier/Switch_Client_alpha_01)
 
-LayerLanguageResponsibilityKey ComponentsInjectorC++Process detection, version identification, Agent injection / Fabric Mod deploymentProcess enumeration, remote threading, version probingAgentJavaBytecode modification at class load, cross-version mappingJavassist / ASM, MappingContext, cache serializationCoreKotlinPure math algorithms, strategy interfaces, condition engine, noise perturbationAimStrategy, VelocityStrategy, TriggerCondition, NoiseProviderAdapterKotlinVersion adaptation (1.8.9 Forge / 1.20+ Fabric)VelocityModule, AimModule, BattleInsight, etc. 
-
-Core Principles:
-
-Algorithms belong in Core: All decision logic (knockback modification, rotation calculation, CPS generation) is fully decoupled from Minecraft and unit-testable.
-
-Logic belongs in Modules: Each adapter-layer module is a single file that listens to events, extracts state, calls Core, and writes back to the game.
-
-Execution happens in Adapter: Specific packet sending, motion modification, input simulation, etc., are handled by the adapter layer—Core remains unaware.
-
-🛠️ Four Infrastructure Pillars (Cross-Cutting Concerns)
-
-InfrastructurePurposeImplementation LocationMapping Library + CacheCross-version class/method/field access, zero-reflection startupAgent + JSON + serializationCondition EngineUnified trigger rules (onlyGround, onLook, chance, delay, ticks)Core TriggerCondition + ConditionCheckerNoise PerturbationForces randomization on all strategy outputs (Gaussian/uniform)Core NoiseProvider decoratorGlobal Packet SchedulerManages packet send order, delay, and simulated lossAdapter PacketScheduler 
-
-These infrastructures are transparent to modules—module developers simply declare configurations without reimplementing them.
-
-⚡ Key Components
-
-EventBridge (Singleton)
-
-The central nervous system. Modules call directly:
-
-EventBridge.setPlayerRotation(Vec2(yaw, pitch)) EventBridge.applyMotion(Vec3(x, y, z)) EventBridge.onVelocityPacket(ctx) 
-
-Platforms register themselves as handlers at startup—modules never know which platform they're running on.
-
-MappingContext
-
-A Java reflection-based mapping layer that resolves Minecraft classes/methods/fields via semantic keys. Zero hardcoded MC class names in code.
-
-MappingContext.getFieldValue(player, "forge:entity_posX") MappingContext.invokeMethod(world, "fabric:world_getEntityByID", entityId) 
-
-Platform Commands
-
-Velocity handling returns sealed commands:
-
-ModifyMotion — Replace motion values
-
-CancelPacket — Drop packet entirely
-
-ClickBurst — Send rapid attack packets
-
-Pass — Let original value pass through
-
-🎮 Combat Module Example (Velocity)
-
-Core Layer:
-
-interface VelocityStrategy { fun modifyVelocity( original: Vec3, player: PlayerState, target: TargetState?, config: VelocityConfig ): Vec3 } class DefaultVelocityStrategy : VelocityStrategy { /* Pure math implementation */ } 
-
-Adapter Layer (1.8.9):
-
-@EventTarget fun onPacket(event: PacketEvent) { val config = buildConfig() val modified = SandwichCore.velocityStrategy.modifyVelocity( original, playerState, targetState, config ) applyModifiedMotion(modified) } 
-
-Supported modes: Legit (randomized range + conditional trigger), Delay (packet delay), Click (auto click).
-
-Conditions: onlyMove, onlyMoveForward, onlyWhenTargetGoesBack, onlyGround, onLook, disabledInAir.
-
-Randomization: Horizontal/vertical retention rate ranges, trigger probability, delay ticks.
-
-🛡️ Assist Module: BattleInsight
-
-A purely visual module that does not modify game behavior, providing:
-
-KB Win Rate: Real-time knockback distance comparison.
-
-HitSelect Timing: Hints for the 1–3 tick window after opponent attacks.
-
-JumpReset Hint: Suggests jumping when knocked back.
-
-Movement Hint: Suggests W/A/S/D based on distance and terrain.
-
-All hints are based on real data collection (knockback packets, attack animations, player input)—undetectable by anti-cheats.
-
-🌐 Cross-Version Strategy
-
-Forge 1.8.9: Independent adapter layer (MCP runtime names).
-
-Fabric 1.16 ~ 1.21:
-
-common/ shares ~80% of source code (events, state extraction, strategy calls).
-
-Sub-modules like v1_16/, v1_20/ house version-specific adapters (API changes, package name mappings).
-
-Mapping library + cache: C++ detects version → Agent loads corresponding JSON → Adapter accesses classes/methods/fields via MappingContext, zero hardcoding.
-
-📋 Development Status
-
-This project is in alpha. The architecture is complete, both platform translation layers are implemented, and modules are being filled in progressively.
-
-✅ Completed
-
-[x] Sandwich Architecture structure
-
-[x] Core algorithms (RotationCalculator, VectorOperations, NoiseProvider)
-
-[x] Data models (PlayerState, TargetState, CombatContext)
-
-[x] EventBridge singleton pattern
-
-[x] Property delegates (float, int, boolean, enum, triggerOptions, probability)
-
-[x] Forge 1.8.9 platform layer
-
-[x] Fabric 1.21 platform layer
-
-[x] MappingContext reflection system
-
-🚧 In Progress
-
-[ ] Module implementations (AimAssist, AutoClicker, Velocity, etc.)
-
-[ ] Packet interception (Fabric Mixin / Forge packet events)
-
-[ ] Target selection system
-
-[ ] Configuration UI
-
-🌍 Future Vision
-
-Anti-cheats will only get stronger, but we won't try to "break" them. Our goal is: to make Sandwich-architecture clients statistically indistinguishable from real human players.
-
-We believe assistance ≠ cheating. As long as we respect game rules, other players, and anti-cheat boundaries, ghost clients can exist long-term as "training tools" and "assistive peripherals."
-
-Join us in defining the next generation of ghost clients.
-
-🔧 Development & Contribution Guide
-
-Clone: git clone https://github.com/gtiernotsoldier/Switch_Client_alpha_01.git
-
-Build: Use Gradle to build core, agent, and adapter modules separately.
-
-Debug: Unit test Core-layer strategies; integration test in local Forge/Fabric environments.
-
-Contribute: PRs improving strategy algorithms, adding version adapters, or optimizing noise models are welcome. Brute-force modules (KillAura, Fly, etc.) are strictly prohibited.
-
-📄 License
-
-This project is licensed under GPLv3. Any derivative work must be open-sourced and retain original copyright notices. Community forks and derivative projects are welcome, but please uphold the spirit of this "Constitution" and maintain the ecological health of ghost clients.
-
-🤝 Contact
-
-"Algorithms in core, logic in modules, execution in adapter" — this is both a code organization principle and a design philosophy.
-
-🔗 Discord:https://discord.gg/Sq4rWn4JG · GitHub:https://github.com/gtiernotsoldier/Switch_Client_alpha_01
-
-Sandwich Core Team 
+**Sandwich 核心团队**

@@ -70,6 +70,21 @@ object EventBridge {
         motionApplier = applier
     }
 
+    // ========== Key ==========
+    private val keyListeners = mutableListOf<(keyCode: Int, pressed: Boolean) -> Unit>()
+
+    fun registerKeyListener(listener: (keyCode: Int, pressed: Boolean) -> Unit) {
+        keyListeners.add(listener)
+    }
+
+    fun unregisterKeyListener(listener: (keyCode: Int, pressed: Boolean) -> Unit) {
+        keyListeners.remove(listener)
+    }
+
+    fun onKey(keyCode: Int, pressed: Boolean) {
+        keyListeners.forEach { it(keyCode, pressed) }
+    }
+
     // ========== Platform Registration ==========
     // Called by ForgeBootstrap / FabricBootstrap to wire up platform-specific handlers
     fun registerPlatformHandlers(
@@ -85,6 +100,7 @@ object EventBridge {
         tickListeners.clear()
         rotationSetter = null
         motionApplier = null
+        keyListeners.clear()
         tickCounter = 0
     }
 }

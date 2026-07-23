@@ -3,6 +3,8 @@ package io.switchlite.adapter.fabric.v1_21
 import net.fabricmc.api.ClientModInitializer
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents
 import net.minecraft.network.packet.s2c.play.EntityVelocityUpdateS2CPacket
+import org.lwjgl.glfw.GLFW
+import org.lwjgl.glfw.GLFWKeyCallbackI
 
 /**
  * Fabric 1.21 bootstrap entry point.
@@ -11,6 +13,8 @@ import net.minecraft.network.packet.s2c.play.EntityVelocityUpdateS2CPacket
 object FabricBootstrap : ClientModInitializer {
 
     private var initialized = false
+    private var previousKeyCallback: GLFWKeyCallbackI? = null
+    private var keyCallbackInitialized = false
 
     /**
      * Initialize Fabric bootstrap.
@@ -21,8 +25,9 @@ object FabricBootstrap : ClientModInitializer {
         initialized = true
 
         // Register tick event via Fabric API
-        ClientTickEvents.END_CLIENT_TICK.register { _ ->
+        ClientTickEvents.END_CLIENT_TICK.register { client ->
             FabricEventBridge.onTick()
+            setupKeyCallback(client)
         }
 
         // Initialize EventBridge platform handlers
@@ -33,6 +38,26 @@ object FabricBootstrap : ClientModInitializer {
         // before they are applied to the player.
 
         println("[FabricBootstrap] Initialized")
+    }
+
+    /**
+     * Set up GLFW key callback to capture all key events.
+     * Chains with Minecraft's previous callback to preserve existing key handling.
+     */
+    private fun setupKeyCallback(client: net.minecraft.client.MinecraftClient) {
+        if (keyCallbackInitialized) return
+        val window = client.window ?: return
+
+        previousKeyCallback = GLFW.glfwSetKeyCallback(window.handle, GLFWKeyCallbackI { windowHandle, key, scancode, action, mods ->
+            // Call previous callback (Minecraft's) to preserve existing key handling
+            previousKeyCallback?.invoke(windowHandle, key, scancode, action, mods)
+
+            // Dispatch to EventBridge for module consumption
+            val pressed = action == GLFW.GLFW_PRESS || action == GLFW.GLFW_REPEAT
+            io.switchlite.adapter.common.api.EventBridge.onKey(key, pressed)
+        })
+
+        keyCallbackInitialized = true
     }
 
     /**

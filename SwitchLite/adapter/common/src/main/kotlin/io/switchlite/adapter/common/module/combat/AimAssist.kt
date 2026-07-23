@@ -6,9 +6,7 @@ import io.switchlite.core.condition.ConditionChecker
 import io.switchlite.core.model.PlayerState
 import io.switchlite.core.model.TargetState
 import io.switchlite.core.option.AimMode
-import io.switchlite.core.model.Hitbox
 import io.switchlite.core.util.Vec2
-import io.switchlite.core.util.Vec3
 import io.switchlite.adapter.common.api.EventBridge
 import io.switchlite.adapter.common.module.Module
 import io.switchlite.adapter.common.module.Category
@@ -42,10 +40,6 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
     private val aimSpeed by int("AimSpeed", 8, 1..20, "%")
     private val smoothness by float("Smoothness", 0.85f, 0.0f..1.0f)
     private val noiseIntensity by float("NoiseIntensity", 0.05f, 0.0f..0.5f)
-    private val inViewSpeed by float("InViewSpeed", 35.0f, 0.0f..100.0f, "deg/s")
-    private val outViewSpeed by float("OutViewSpeed", 10.0f, 0.0f..100.0f, "deg/s")
-    private val minRotDiff by float("MinRotDiff", 0.5f, 0.0f..5.0f, "degrees")
-    private val predictTicks by int("PredictTicks", 2, 0..5, "ticks")
 
     // Target selection
     private val prioritizeDistance by boolean("PrioritizeDistance", true)
@@ -96,7 +90,19 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
             return
         }
 
-        // 2. Reaction Delay (new target detection)
+        // 2. Range Check (Horizontal Distance Validation — X/Z only, ignores height)
+        val dx = player.position.x - target.position.x
+        val dz = player.position.z - target.position.z
+        val horizontalDistance = kotlin.math.sqrt(dx * dx + dz * dz)
+        if (horizontalDistance < rangeMin || horizontalDistance > rangeMax) {
+            resetOvershootState()
+            return
+        }
+
+        // 3. Condition Check (Unified Engine)
+        if (!conditionChecker.check(triggerOptions, player, target)) return
+
+        // 4. Reaction Delay
         if (target.entityId != lastTargetId) {
             lastTargetId = target.entityId
             reactionDelayTicks = sampleReactionDelay()
@@ -107,81 +113,32 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
             return
         }
 
-        // 3. Range Check (Horizontal Distance Validation — X/Z only, ignores height)
-        val dx = player.position.x - target.position.x
-        val dz = player.position.z - target.position.z
-        val horizontalDistance = kotlin.math.sqrt(dx * dx + dz * dz)
-        if (horizontalDistance < rangeMin || horizontalDistance > rangeMax) {
-            resetOvershootState()
-            return
-        }
-
-        // 4. Condition Check (Unified Engine)
-        if (!conditionChecker.check(triggerOptions, player, target)) return
-
-        // 5. Position Prediction (Bug 3: add velocity-based prediction)
-        // TODO: 需要 Core 层 model 添加 prevPosition 以实现更精确的速度计算
-        // Using motionX/motionY/motionZ as velocity proxy
-        val predictFactor = predictTicks.toFloat()
-        val predictedPlayerPos = Vec3(
-            player.position.x + player.motionX * predictFactor,
-            player.position.y + player.motionY * predictFactor,
-            player.position.z + player.motionZ * predictFactor
-        )
-        val predictedTargetPos = Vec3(
-            target.position.x + target.motionX * predictFactor,
-            target.position.y + target.motionY * predictFactor,
-            target.position.z + target.motionZ * predictFactor
-        )
-        val predictedHitbox = Hitbox(
-            target.hitbox.minX + target.motionX * predictFactor,
-            target.hitbox.minY + target.motionY * predictFactor,
-            target.hitbox.minZ + target.motionZ * predictFactor,
-            target.hitbox.maxX + target.motionX * predictFactor,
-            target.hitbox.maxY + target.motionY * predictFactor,
-            target.hitbox.maxZ + target.motionZ * predictFactor
-        )
-
-        // 6. Target Point Calculation
+        // 5. Target Point Calculation
         val targetPoint = when (mode) {
             AimMode.LEGIT -> {
                 // Legit Mode: Only correct if outside hitbox, pull to edge
-                if (rotationCalculator.isInsideHitbox(predictedPlayerPos, player.rotation, predictedHitbox)) {
-                    // Inside box — use weak factor to track center, then return
-                    val centerPoint = rotationCalculator.calculateTargetPoint(predictedPlayerPos, predictedHitbox, lockOnCrosshair = true)
-                    val weakRotation = rotationCalculator.interpolate(
-                        current = player.rotation,
-                        target = centerPoint,
-                        yawFactor = 0.02f,
-                        pitchFactor = 0.01f
-                    )
-                    EventBridge.setPlayerRotation(weakRotation)
-                    return
+                if (rotationCalculator.isInsideHitbox(player.position, player.rotation, target.hitbox)) {
+                    return // Inside box, do nothing (Human-like hesitation)
                 }
-                rotationCalculator.getClosestBoxEdge(predictedPlayerPos, player.rotation, predictedHitbox)
+                rotationCalculator.getClosestBoxEdge(player.position, player.rotation, target.hitbox)
             }
             AimMode.NORMAL -> {
                 // Normal Mode: Lock to center or random point within box
-                rotationCalculator.calculateTargetPoint(predictedPlayerPos, predictedHitbox, lockOnCrosshair)
+                rotationCalculator.calculateTargetPoint(player.position, target.hitbox, lockOnCrosshair)
             }
         }
 
-        // 7. FOV Check
+        // 6. FOV Check
         val rotationDiff = rotationCalculator.calculateDifference(player.rotation, targetPoint)
         if (!rotationCalculator.isWithinFov(rotationDiff, horizontalFov, verticalFov)) {
             return // Target out of FOV
         }
 
-        // 8. Dynamic Speed Calculation (Bug 4: in-view vs out-of-view speed)
-        val angularSize = kotlin.math.abs(rotationDiff.yaw) + kotlin.math.abs(rotationDiff.pitch)
-        val baseSpeed = if (angularSize < horizontalFov * 0.5f) inViewSpeed else outViewSpeed
-        val gaussian = NoiseProvider.next(0f, 1f)
-        val jitteredSpeed = baseSpeed + gaussian * 0.5f
-        val effectiveFactor = (jitteredSpeed / 180f).coerceIn(0.01f, 1f)
-        val yawFactor = effectiveFactor
-        val pitchFactor = effectiveFactor * 0.6f
+        // 7. Smoothing & Interpolation
+        val yawFactor = aimSpeed / 20.0f * smoothness
+        val pitchFactor = aimSpeed / 20.0f * smoothness * 0.6f
 
-        // 9. Overshoot State Machine (Bug 5: safe unwrap + angle normalization)
+        // 8. Overshoot State Machine
         var finalRotation = when (overshootState) {
             OvershootState.IDLE -> {
                 // Normal tracking — check if we should overshoot
@@ -192,6 +149,7 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
                     pitchFactor = pitchFactor
                 )
                 // 15-25% chance to overshoot on significant direction changes
+                val angularSize = kotlin.math.abs(rotationDiff.yaw) + kotlin.math.abs(rotationDiff.pitch)
                 if (angularSize > 5f && NoiseProvider.nextUniform(0f, 1f) < 0.20f) {
                     // Transition to OVERSHOOT
                     overshootTarget = computeOvershootTarget(player.rotation, targetPoint)
@@ -228,7 +186,7 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
                 val result = rotationCalculator.interpolate(
                     current = player.rotation,
                     target = targetPoint,
-                    yawFactor = yawFactor * 1.2f,  // Slightly faster correction
+                    yawFactor = yawFactor * 1.2f,
                     pitchFactor = pitchFactor * 1.2f
                 )
                 overshootState = OvershootState.IDLE
@@ -237,25 +195,14 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
             }
         }
 
-        // 10. Noise Injection (Bug 4: independent pulse instead of accumulating walk)
-        val jitterYaw = if (NoiseProvider.nextUniform(0f, 1f) < 0.5f)
-            (NoiseProvider.next(0f, 1f) * noiseIntensity).toFloat() else 0f
-        val jitterPitch = if (NoiseProvider.nextUniform(0f, 1f) < 0.5f)
-            (NoiseProvider.next(0f, 1f) * noiseIntensity * 0.5f).toFloat() else 0f
-        finalRotation = Vec2(finalRotation.yaw + jitterYaw, finalRotation.pitch + jitterPitch)
+        // 9. Noise Injection (Humanization)
+        finalRotation = noiseProvider.applyWalk(finalRotation, noiseIntensity)
 
-        // 11. Minimum Rotation Diff Threshold (Bug 4: skip tiny adjustments)
-        val finalDiff = rotationCalculator.calculateDifference(player.rotation, finalRotation)
-        val finalAngularSize = kotlin.math.abs(finalDiff.yaw) + kotlin.math.abs(finalDiff.pitch)
-        if (finalAngularSize < minRotDiff) {
-            return // Rotation diff too small, skip packet
-        }
-
-        // 12. Apply Rotation
+        // 10. Apply Rotation (Via Bridge - Platform Specific Implementation handles the write-back)
         EventBridge.setPlayerRotation(finalRotation)
     }
 
-    // ========== Helper Methods ==========
+    // ========== Helper Methods (Pure Logic) ==========
 
     /**
      * Compute an overshoot target by offsetting beyond the real target
@@ -264,34 +211,20 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
     private fun computeOvershootTarget(currentRotation: Vec2, realTarget: Vec2): Vec2 {
         val delta = rotationCalculator.calculateDifference(currentRotation, realTarget)
         val overshootPercent = 0.05f + NoiseProvider.nextUniform(0f, 1f) * 0.10f  // 5-15%
-        
-        // Calculate raw overshoot rotation
-        val rawYaw = realTarget.yaw + delta.yaw * overshootPercent
-        val rawPitch = realTarget.pitch + delta.pitch * overshootPercent
-        
-        // Normalize yaw to [-180, 180] range
-        var normalizedYaw = rawYaw
-        while (normalizedYaw > 180f) normalizedYaw -= 360f
-        while (normalizedYaw < -180f) normalizedYaw += 360f
-        
-        // Clamp pitch to [-90, 90] range
-        val clampedPitch = rawPitch.coerceIn(-90f, 90f)
-        
-        return Vec2(normalizedYaw, clampedPitch)
+        return Vec2(
+            realTarget.yaw + delta.yaw * overshootPercent,
+            realTarget.pitch + delta.pitch * overshootPercent
+        )
     }
 
     /**
      * Sample a reaction delay in ticks using a log-normal distribution.
-     * Models human reaction time: median ~150ms (3 ticks at 20 TPS),
-     * with realistic variance.
+     * Models human reaction time: median ~3 ticks at 20 TPS.
      */
     private fun sampleReactionDelay(): Int {
-        // Log-normal: exp(mu + sigma * Z), where Z is standard normal
-        // mu=ln(3)≈1.1 for 3 tick median, sigma=0.35 for realistic spread
-        // Direct tick calculation, no unit conversion needed
         val z = NoiseProvider.next(0f, 1f).toDouble()
         val delayTicks = kotlin.math.exp(1.1 + 0.35 * z)
-        return delayTicks.toInt().coerceIn(1, 6)  // Clamp to 1-6 ticks
+        return delayTicks.toInt().coerceIn(1, 6)
     }
 
     private fun resetOvershootState() {

@@ -12,7 +12,6 @@ import io.switchlite.core.strategy.click.CooldownClickMode
 import io.switchlite.core.strategy.click.CooldownClickStrategy
 import io.switchlite.core.strategy.click.CritMode
 import io.switchlite.core.strategy.click.WeaponFilter
-import io.switchlite.core.strategy.click.WeaponType
 import io.switchlite.core.strategy.click.OnItemUse
 import io.switchlite.adapter.common.api.EventBridge
 import io.switchlite.adapter.common.module.Module
@@ -108,7 +107,6 @@ object AutoClicker : Module("AutoClicker", Category.COMBAT) {
     private val conditionChecker = ConditionChecker
 
     // ========== 1.8 Timing State ==========
-    private var ticksUntilNextClick = 0
     private var lastTargetId = -1
     private var pendingSecondClick = false
 
@@ -193,8 +191,8 @@ object AutoClicker : Module("AutoClicker", Category.COMBAT) {
     private fun onTick19(player: PlayerState, target: TargetState?) {
         // --- Adapter-level pre-checks (before strategy) ---
 
-        // 1. Item use check
-        if (player.isBlocking) {
+        // 1. Item use check (covers shield blocking, bow drawing, eating, drinking, etc.)
+        if (player.isUsingItem) {
             when (onItemUse) {
                 OnItemUse.WAIT -> return
                 OnItemUse.STOP -> {
@@ -207,10 +205,7 @@ object AutoClicker : Module("AutoClicker", Category.COMBAT) {
 
         // 2. Weapon filter check
         if (weaponFilter != WeaponFilter.ANY) {
-            // TODO: 需要 Core 层 PlayerState 添加 weaponType 字段
-            //       当前 PlayerState 没有武器类型信息，暂时用 true 降级通过
-            val heldWeaponType = WeaponType.SWORD // placeholder until PlayerState.weaponType exists
-            if (!weaponFilter.matches(heldWeaponType)) return
+            if (!weaponFilter.matches(player.weaponType)) return
         }
 
         // --- Delegate to core strategy ---
@@ -279,15 +274,6 @@ object AutoClicker : Module("AutoClicker", Category.COMBAT) {
         return adjusted.coerceIn(lo, hi)
     }
 
-    /**
-     * Sample initial click delay in ticks.
-     * Converts a random CPS within range to tick delay.
-     */
-    private fun sampleClickDelay(): Int {
-        val cps = sampleCpsInRange().coerceAtLeast(1)
-        return (20.0 / cps).toInt().coerceAtLeast(1)
-    }
-
     // ========== Lifecycle ==========
 
     override fun onEnable() {
@@ -305,7 +291,6 @@ object AutoClicker : Module("AutoClicker", Category.COMBAT) {
         tickListener?.let { EventBridge.unregisterTickListener(it) }
         tickListener = null
         // Reset 1.8 state
-        ticksUntilNextClick = 0
         lastTargetId = -1
         pendingSecondClick = false
         // Reset 1.9+ state

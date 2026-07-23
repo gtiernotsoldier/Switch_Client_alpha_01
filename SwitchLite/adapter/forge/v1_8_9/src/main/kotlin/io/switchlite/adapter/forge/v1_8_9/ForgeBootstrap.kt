@@ -2,6 +2,7 @@ package io.switchlite.adapter.forge.v1_8_9
 
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent
 import net.minecraftforge.fml.common.gameevent.TickEvent
+import net.minecraftforge.fml.common.gameevent.InputEvent
 import net.minecraftforge.fml.common.network.FMLNetworkEvent
 import net.minecraft.network.play.server.S12PacketEntityVelocity
 
@@ -38,6 +39,20 @@ object ForgeBootstrap {
     fun onClientTick(event: TickEvent.ClientTickEvent) {
         if (event.phase != TickEvent.Phase.END) return
         ForgeEventBridge.onTick()
+    }
+
+    /**
+     * Handle key input events.
+     * Dispatches key events to EventBridge for module consumption.
+     */
+    @SubscribeEvent
+    fun onKeyInput(event: InputEvent.KeyInputEvent) {
+        val lwjglCode = org.lwjgl.input.Keyboard.getEventKey()
+        val pressed = org.lwjgl.input.Keyboard.getEventKeyState()
+        if (lwjglCode != 0) {
+            val glfwCode = io.switchlite.adapter.common.api.KeyTranslator.fromLwjgl2(lwjglCode)
+            io.switchlite.adapter.common.api.EventBridge.onKey(glfwCode, pressed)
+        }
     }
 
     /**

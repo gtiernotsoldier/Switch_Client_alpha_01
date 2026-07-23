@@ -7,8 +7,15 @@ import io.switchlite.core.util.Vec2
 import io.switchlite.core.util.Vec3
 import io.switchlite.agent.MappingContext
 import net.minecraft.client.Minecraft
+import net.minecraft.client.entity.EntityPlayerSP
+import net.minecraft.entity.Entity
+import net.minecraft.entity.EntityLivingBase
+import net.minecraft.entity.monster.EntityMob
+import net.minecraft.entity.player.EntityPlayer
 import net.minecraft.item.ItemSword
 import net.minecraft.item.ItemAxe
+import net.minecraft.util.MovingObjectPosition
+import net.minecraft.util.AxisAlignedBB
 
 /**
  * Forge 1.8.9 state extractor.
@@ -18,6 +25,9 @@ import net.minecraft.item.ItemAxe
 object ForgeStateExtractor : IStateExtractor {
 
     private val mc get() = Minecraft.getMinecraft()
+
+    /** Maximum target selection range in blocks. */
+    private const val MAX_TARGET_RANGE = 6.0
 
     override fun extractPlayerState(): PlayerState {
         val player = mc.thePlayer ?: return PlayerState.EMPTY
@@ -41,6 +51,9 @@ object ForgeStateExtractor : IStateExtractor {
         val isMoving = (motionX != 0.0 || motionZ != 0.0)
         val isMovingForward = moveForward > 0f
 
+        // Attack key state: keyBindAttack.isKeyDown in 1.8.9
+        val isAttackKeyDown = mc.gameSettings.keyBindAttack.isKeyDown
+
         return PlayerState(
             name = player.name ?: "",
             position = Vec3(posX, posY, posZ),
@@ -57,9 +70,10 @@ object ForgeStateExtractor : IStateExtractor {
             maxHurtResistantTime = maxHurtResistantTime,
             isBlocking = player.isBlocking, // 1.8: only shield
             isUsingItem = false, // 1.8 has no unified isUsingItem; not used by 1.8 path
-            isLookingAtTarget = false, // TODO: implement raytrace
+            isLookingAtTarget = false, // handled by ConditionChecker angle calc (method B)
             isMining = false, // TODO: detect via MappingContext
             weaponType = classifyWeapon(player.heldItem?.item),
+            isAttackKeyDown = isAttackKeyDown,
             ticks = mc.theWorld?.worldTime?.toLong() ?: 0L
         )
     }
@@ -103,7 +117,7 @@ object ForgeStateExtractor : IStateExtractor {
 
         return TargetState(
             entityId = entityId,
-            name = "",
+            name = (entity as? EntityLivingBase)?.name ?: "",
             position = Vec3(posX, posY, posZ),
             motionX = motionX,
             motionY = motionY,
@@ -137,8 +151,50 @@ object ForgeStateExtractor : IStateExtractor {
     }
 
     override fun getCurrentTargetId(): Int? {
-        // TODO: implement target selection (crosshair entity / nearest entity)
-        return null
+        val player = mc.thePlayer ?: return null
+        val world = mc.theWorld ?: return null
+
+        // Priority 1: crosshair-targeted entity (raycast result)
+        val pointedEntity = mc.objectMouseOver
+        if (pointedEntity != null && pointedEntity.typeOfHit == MovingObjectPosition.MovingObjectType.ENTITY) {
+            val entity = pointedEntity.entityHit
+            if (isViableTarget(entity, player)) {
+                return entity.entityId
+            }
+        }
+
+        // Priority 2: nearest viable entity within range
+        var nearestEntity: Entity? = null
+        var nearestDistSq = MAX_TARGET_RANGE * MAX_TARGET_RANGE
+
+        val playerX = player.posX
+        val playerZ = player.posZ
+        val playerY = player.posY + player.eyeHeight
+
+        for (entity in world.loadedEntityList) {
+            if (!isViableTarget(entity, player)) continue
+            val dx = entity.posX - playerX
+            val dz = entity.posZ - playerZ
+            val distSq = dx * dx + dz * dz
+            if (distSq < nearestDistSq) {
+                nearestDistSq = distSq
+                nearestEntity = entity
+            }
+        }
+
+        return nearestEntity?.entityId
+    }
+
+    /**
+     * Check if an entity is a valid attack target.
+     * Viable = not self, alive, is EntityLivingBase (player or mob).
+     */
+    private fun isViableTarget(entity: Entity, player: EntityPlayerSP): Boolean {
+        if (entity === player) return false
+        if (entity !is EntityLivingBase) return false
+        if (entity.isDead) return false
+        if (entity.health <= 0f) return false
+        return true
     }
 
     /**

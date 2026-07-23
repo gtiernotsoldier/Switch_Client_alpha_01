@@ -1,5 +1,6 @@
 package io.switchlite.core.algorithm
 
+import io.switchlite.core.model.Hitbox
 import io.switchlite.core.util.Vec2
 import io.switchlite.core.util.Vec3
 
@@ -47,35 +48,144 @@ object RotationCalculator {
         )
     }
     
+    // ========== Hitbox Utilities ==========
+
+    private const val EYE_HEIGHT = 1.62
+
     /**
-     * Check if current rotation is inside target hitbox.
+     * Check if the player's current aim ray intersects the target hitbox.
+     * Casts a ray from player eye position in the direction of currentAim,
+     * tests intersection with the AABB hitbox.
      */
-    fun isInsideHitbox(current: Vec2, hitbox: ClosedFloatingPointRange<Float>): Boolean {
-        return hitbox.contains(current.yaw)
+    fun isInsideHitbox(playerPos: Vec3, currentAim: Vec2, hitbox: Hitbox): Boolean {
+        val eyePos = Vec3(playerPos.x, playerPos.y + EYE_HEIGHT, playerPos.z)
+        val dir = aimToDirection(currentAim)
+        return rayIntersectsAABB(eyePos, dir, hitbox)
     }
-    
+
     /**
-     * Get closest edge of hitbox for Legit mode.
+     * Get the rotation toward the closest point on the hitbox to the current aim.
+     * Projects all 8 hitbox corners to rotation space, picks the one closest to currentAim.
      */
-    fun getClosestBoxEdge(current: Vec2, hitbox: ClosedFloatingPointRange<Float>): Vec2 {
-        val minY = hitbox.start
-        val maxY = hitbox.endInclusive
-        return when {
-            current.yaw < minY -> Vec2(minY, current.pitch)
-            current.yaw > maxY -> Vec2(maxY, current.pitch)
-            else -> current
+    fun getClosestBoxEdge(playerPos: Vec3, currentAim: Vec2, hitbox: Hitbox): Vec2 {
+        val eyePos = Vec3(playerPos.x, playerPos.y + EYE_HEIGHT, playerPos.z)
+        val corners = hitboxCorners(hitbox)
+
+        var bestRotation: Vec2? = null
+        var bestDiff = Float.MAX_VALUE
+
+        for (corner in corners) {
+            val rot = calculateRotation(eyePos, corner)
+            val diff = kotlin.math.abs(normalizeAngle(rot.yaw - currentAim.yaw)) +
+                       kotlin.math.abs(rot.pitch - currentAim.pitch)
+            if (diff < bestDiff) {
+                bestDiff = diff
+                bestRotation = rot
+            }
         }
+
+        return bestRotation ?: currentAim
     }
-    
+
     /**
-     * Calculate target point based on selection type.
+     * Calculate the rotation to aim at the hitbox.
+     * If lockOnCrosshair, aim at the center of the hitbox.
+     * Otherwise, randomly sample a point within the hitbox.
      */
-    fun calculateTargetPoint(hitbox: ClosedFloatingPointRange<Float>, lockOnCrosshair: Boolean): Vec2 {
-        return if (lockOnCrosshair) {
-            Vec2((hitbox.start + hitbox.endInclusive) / 2f, 0f)
+    fun calculateTargetPoint(playerPos: Vec3, hitbox: Hitbox, lockOnCrosshair: Boolean): Vec2 {
+        val eyePos = Vec3(playerPos.x, playerPos.y + EYE_HEIGHT, playerPos.z)
+        val targetPoint = if (lockOnCrosshair) {
+            hitboxCenter(hitbox)
         } else {
-            Vec2(hitbox.start + kotlin.random.Random.nextFloat() * (hitbox.endInclusive - hitbox.start), 0f)
+            Vec3(
+                randomInRange(hitbox.minX, hitbox.maxX),
+                randomInRange(hitbox.minY, hitbox.maxY),
+                randomInRange(hitbox.minZ, hitbox.maxZ)
+            )
         }
+        return calculateRotation(eyePos, targetPoint)
+    }
+
+    // ========== Private Helpers ==========
+
+    /**
+     * Convert aim rotation (yaw, pitch in degrees) to a unit direction vector.
+     * Minecraft convention: yaw=0 faces south (-Z), yaw=90 faces west (-X).
+     */
+    private fun aimToDirection(aim: Vec2): Vec3 {
+        val yawRad = (aim.yaw + 90f) * (kotlin.math.PI.toFloat() / 180f)
+        val pitchRad = aim.pitch * (kotlin.math.PI.toFloat() / 180f)
+        val cosPitch = kotlin.math.cos(pitchRad.toDouble()).toFloat()
+        return Vec3(
+            -kotlin.math.cos(yawRad.toDouble()).toFloat() * cosPitch,
+            -kotlin.math.sin(pitchRad.toDouble()).toFloat(),
+            -kotlin.math.sin(yawRad.toDouble()).toFloat() * cosPitch
+        )
+    }
+
+    /**
+     * Ray-AABB intersection test using the slab method.
+     */
+    private fun rayIntersectsAABB(origin: Vec3, dir: Vec3, box: Hitbox): Boolean {
+        var tmin = Double.NEGATIVE_INFINITY
+        var tmax = Double.POSITIVE_INFINITY
+
+        val axes = listOf(
+            Triple(origin.x, dir.x, Pair(box.minX, box.maxX)),
+            Triple(origin.y, dir.y, Pair(box.minY, box.maxY)),
+            Triple(origin.z, dir.z, Pair(box.minZ, box.maxZ))
+        )
+
+        for ((o, d, range) in axes) {
+            if (kotlin.math.abs(d) < 1e-8) {
+                // Ray is parallel to slab
+                if (o < range.first || o > range.second) return false
+            } else {
+                val invD = 1.0 / d
+                var t1 = (range.first - o) * invD
+                var t2 = (range.second - o) * invD
+                if (t1 > t2) { val tmp = t1; t1 = t2; t2 = tmp }
+                if (t1 > tmin) tmin = t1
+                if (t2 < tmax) tmax = t2
+                if (tmin > tmax) return false
+            }
+        }
+
+        return tmax >= 0 && tmin <= tmax
+    }
+
+    /**
+     * Get the 8 corners of an AABB hitbox.
+     */
+    private fun hitboxCorners(box: Hitbox): List<Vec3> {
+        return listOf(
+            Vec3(box.minX, box.minY, box.minZ),
+            Vec3(box.minX, box.minY, box.maxZ),
+            Vec3(box.minX, box.maxY, box.minZ),
+            Vec3(box.minX, box.maxY, box.maxZ),
+            Vec3(box.maxX, box.minY, box.minZ),
+            Vec3(box.maxX, box.minY, box.maxZ),
+            Vec3(box.maxX, box.maxY, box.minZ),
+            Vec3(box.maxX, box.maxY, box.maxZ)
+        )
+    }
+
+    /**
+     * Get the center point of a hitbox.
+     */
+    private fun hitboxCenter(box: Hitbox): Vec3 {
+        return Vec3(
+            (box.minX + box.maxX) / 2.0,
+            (box.minY + box.maxY) / 2.0,
+            (box.minZ + box.maxZ) / 2.0
+        )
+    }
+
+    /**
+     * Random double in range [min, max].
+     */
+    private fun randomInRange(min: Double, max: Double): Double {
+        return min + kotlin.random.Random.nextDouble() * (max - min)
     }
     
     /**

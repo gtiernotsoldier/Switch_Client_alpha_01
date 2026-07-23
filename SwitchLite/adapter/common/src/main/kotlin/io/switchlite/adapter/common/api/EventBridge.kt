@@ -85,6 +85,17 @@ object EventBridge {
         keyListeners.forEach { it(keyCode, pressed) }
     }
 
+    // ========== Attack (Left Click) ==========
+    private var attackTrigger: (() -> Unit)? = null
+
+    fun triggerAttack() {
+        attackTrigger?.invoke()
+    }
+
+    fun registerAttackTrigger(trigger: () -> Unit) {
+        attackTrigger = trigger
+    }
+
     // ========== Platform Registration ==========
     // Called by ForgeBootstrap / FabricBootstrap to wire up platform-specific handlers
     fun registerPlatformHandlers(

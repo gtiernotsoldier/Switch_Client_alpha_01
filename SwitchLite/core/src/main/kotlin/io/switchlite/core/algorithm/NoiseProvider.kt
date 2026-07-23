@@ -11,6 +11,10 @@ object NoiseProvider {
     
     private var spare: Float? = null
     
+    // Time-dependent random walk state
+    private var walkYawOffset: Float = 0f
+    private var walkPitchOffset: Float = 0f
+    
     /**
      * Generate next noise value with default mean=0, stdDev=1.
      */
@@ -45,10 +49,7 @@ object NoiseProvider {
     }
     
     /**
-     * Apply noise perturbation to a rotation vector.
-     * @param rotation Current rotation
-     * @param intensity Noise intensity (0.0 = no noise, 1.0 = full noise)
-     * @return Perturbed rotation
+     * Apply independent per-frame noise (original behavior).
      */
     fun apply(rotation: Vec2, intensity: Float): Vec2 {
         if (intensity <= 0f) return rotation
@@ -56,12 +57,41 @@ object NoiseProvider {
         val pitchNoise = next(0f, intensity * 0.5f)
         return Vec2(rotation.yaw + yawNoise, rotation.pitch + pitchNoise)
     }
+
+    /**
+     * Apply time-dependent random walk noise.
+     * Each tick adds a small Gaussian increment to the previous offset,
+     * producing smooth, continuous drift rather than independent jitter.
+     *
+     * @param rotation Current rotation
+     * @param intensity Max drift magnitude in degrees
+     * @param decay How quickly the offset decays toward 0 each tick (0=none, 1=instant snap-back)
+     */
+    fun applyWalk(rotation: Vec2, intensity: Float, decay: Float = 0.1f): Vec2 {
+        if (intensity <= 0f) return rotation
+
+        // Random Gaussian increment scaled by intensity
+        val yawIncrement = next(0f, intensity * 0.3f)
+        val pitchIncrement = next(0f, intensity * 0.15f)
+
+        // Decay toward zero (prevents unbounded drift)
+        walkYawOffset = walkYawOffset * (1f - decay) + yawIncrement
+        walkPitchOffset = walkPitchOffset * (1f - decay) + pitchIncrement
+
+        // Clamp to max intensity
+        walkYawOffset = walkYawOffset.coerceIn(-intensity, intensity)
+        walkPitchOffset = walkPitchOffset.coerceIn(-intensity * 0.5f, intensity * 0.5f)
+
+        return Vec2(rotation.yaw + walkYawOffset, rotation.pitch + walkPitchOffset)
+    }
     
     /**
-     * Reset noise generator state.
+     * Reset noise generator state including random walk offsets.
      */
     fun reset() {
         spare = null
+        walkYawOffset = 0f
+        walkPitchOffset = 0f
     }
     
     /**

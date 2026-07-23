@@ -3,6 +3,7 @@ package io.switchlite.core.algorithm
 import io.switchlite.core.model.Hitbox
 import io.switchlite.core.util.Vec2
 import io.switchlite.core.util.Vec3
+import kotlin.random.Random
 
 /**
  * Rotation calculator for aim assist and target tracking.
@@ -38,13 +39,26 @@ object RotationCalculator {
     }
     
     /**
-     * Interpolate between current and target rotation with smoothness factor.
+     * Interpolate between current and target rotation with a single smoothness factor.
      */
     fun interpolate(current: Vec2, target: Vec2, factor: Float): Vec2 {
         val clampedFactor = factor.coerceIn(0f, 1f)
         return Vec2(
             current.yaw + (target.yaw - current.yaw) * clampedFactor,
             current.pitch + (target.pitch - current.pitch) * clampedFactor
+        )
+    }
+
+    /**
+     * Interpolate with separate yaw and pitch factors.
+     * Pitch typically moves slower than yaw for natural feel.
+     */
+    fun interpolate(current: Vec2, target: Vec2, yawFactor: Float, pitchFactor: Float): Vec2 {
+        val yf = yawFactor.coerceIn(0f, 1f)
+        val pf = pitchFactor.coerceIn(0f, 1f)
+        return Vec2(
+            current.yaw + (target.yaw - current.yaw) * yf,
+            current.pitch + (target.pitch - current.pitch) * pf
         )
     }
     
@@ -64,27 +78,86 @@ object RotationCalculator {
     }
 
     /**
-     * Get the rotation toward the closest point on the hitbox to the current aim.
-     * Projects all 8 hitbox corners to rotation space, picks the one closest to currentAim.
+     * Get the rotation toward the closest edge point on faces that face the player.
+     * 
+     * Step 1: Determine which faces of the hitbox are visible to the player.
+     *   For each axis, if the player is outside the box range, the nearer face is visible.
+     *   If inside the range, both faces on that axis are visible.
+     * Step 2: Among visible faces, find the edge point closest to the current aim direction.
      */
     fun getClosestBoxEdge(playerPos: Vec3, currentAim: Vec2, hitbox: Hitbox): Vec2 {
         val eyePos = Vec3(playerPos.x, playerPos.y + EYE_HEIGHT, playerPos.z)
-        val corners = hitboxCorners(hitbox)
 
-        var bestRotation: Vec2? = null
-        var bestDiff = Float.MAX_VALUE
+        // Determine visible faces based on player position relative to box
+        val visibleFaces = mutableListOf<Face>()
 
-        for (corner in corners) {
-            val rot = calculateRotation(eyePos, corner)
-            val diff = kotlin.math.abs(normalizeAngle(rot.yaw - currentAim.yaw)) +
-                       kotlin.math.abs(rot.pitch - currentAim.pitch)
-            if (diff < bestDiff) {
-                bestDiff = diff
-                bestRotation = rot
+        // X-axis faces
+        if (eyePos.x < hitbox.minX) {
+            visibleFaces.add(Face.MIN_X)
+        } else if (eyePos.x > hitbox.maxX) {
+            visibleFaces.add(Face.MAX_X)
+        } else {
+            // Inside X range — both faces visible
+            val distMin = kotlin.math.abs(eyePos.x - hitbox.minX)
+            val distMax = kotlin.math.abs(eyePos.x - hitbox.maxX)
+            if (distMin <= distMax) visibleFaces.add(Face.MIN_X)
+            if (distMax <= distMin) visibleFaces.add(Face.MAX_X)
+        }
+
+        // Y-axis faces
+        if (eyePos.y < hitbox.minY) {
+            visibleFaces.add(Face.MIN_Y)
+        } else if (eyePos.y > hitbox.maxY) {
+            visibleFaces.add(Face.MAX_Y)
+        } else {
+            val distMin = kotlin.math.abs(eyePos.y - hitbox.minY)
+            val distMax = kotlin.math.abs(eyePos.y - hitbox.maxY)
+            if (distMin <= distMax) visibleFaces.add(Face.MIN_Y)
+            if (distMax <= distMin) visibleFaces.add(Face.MAX_Y)
+        }
+
+        // Z-axis faces
+        if (eyePos.z < hitbox.minZ) {
+            visibleFaces.add(Face.MIN_Z)
+        } else if (eyePos.z > hitbox.maxZ) {
+            visibleFaces.add(Face.MAX_Z)
+        } else {
+            val distMin = kotlin.math.abs(eyePos.z - hitbox.minZ)
+            val distMax = kotlin.math.abs(eyePos.z - hitbox.maxZ)
+            if (distMin <= distMax) visibleFaces.add(Face.MIN_Z)
+            if (distMax <= distMin) visibleFaces.add(Face.MAX_Z)
+        }
+
+        // Fallback: if no faces detected (shouldn't happen), use all
+        if (visibleFaces.isEmpty()) {
+            visibleFaces.addAll(Face.values().toList())
+        }
+
+        // Collect edges belonging to visible faces
+        val visibleEdges = buildVisibleEdges(visibleFaces, hitboxCorners(hitbox))
+
+        // Find closest edge point to aim ray
+        val aimDir = aimToDirection(currentAim)
+        var bestPoint: Vec3? = null
+        var bestAngularDist = Double.MAX_VALUE
+
+        for (edge in visibleEdges) {
+            val closest = closestPointOnSegmentToRay(edge.a, edge.b, eyePos, aimDir)
+            val rot = calculateRotation(eyePos, closest)
+            val yawDiff = kotlin.math.abs(normalizeAngle(rot.yaw - currentAim.yaw))
+            val pitchDiff = kotlin.math.abs(rot.pitch - currentAim.pitch)
+            val angularDist = yawDiff + pitchDiff
+            if (angularDist < bestAngularDist) {
+                bestAngularDist = angularDist
+                bestPoint = closest
             }
         }
 
-        return bestRotation ?: currentAim
+        return if (bestPoint != null) {
+            calculateRotation(eyePos, bestPoint)
+        } else {
+            currentAim
+        }
     }
 
     /**
@@ -107,6 +180,53 @@ object RotationCalculator {
     }
 
     // ========== Private Helpers ==========
+
+    private enum class Face { MIN_X, MAX_X, MIN_Y, MAX_Y, MIN_Z, MAX_Z }
+
+    private data class Edge(val a: Vec3, val b: Vec3)
+
+    /**
+     * Face-to-edge topology. Each face maps to 4 edges defined by corner index pairs.
+     * Corner index mapping:
+     *   0: (minX, minY, minZ)  1: (minX, minY, maxZ)
+     *   2: (minX, maxY, minZ)  3: (minX, maxY, maxZ)
+     *   4: (maxX, minY, minZ)  5: (maxX, minY, maxZ)
+     *   6: (maxX, maxY, minZ)  7: (maxX, maxY, maxZ)
+     */
+    private val FACE_EDGE_TOPOLOGY: Map<Face, List<IntArray>> = mapOf(
+        Face.MIN_X to listOf(
+            intArrayOf(0, 1), intArrayOf(0, 2), intArrayOf(1, 3), intArrayOf(2, 3)
+        ),
+        Face.MAX_X to listOf(
+            intArrayOf(4, 5), intArrayOf(4, 6), intArrayOf(5, 7), intArrayOf(6, 7)
+        ),
+        Face.MIN_Y to listOf(
+            intArrayOf(0, 1), intArrayOf(0, 4), intArrayOf(1, 5), intArrayOf(4, 5)
+        ),
+        Face.MAX_Y to listOf(
+            intArrayOf(2, 3), intArrayOf(2, 6), intArrayOf(3, 7), intArrayOf(6, 7)
+        ),
+        Face.MIN_Z to listOf(
+            intArrayOf(0, 2), intArrayOf(0, 4), intArrayOf(2, 6), intArrayOf(4, 6)
+        ),
+        Face.MAX_Z to listOf(
+            intArrayOf(1, 3), intArrayOf(1, 5), intArrayOf(3, 7), intArrayOf(5, 7)
+        ),
+    )
+
+    /**
+     * Build world-space Edge objects for the given visible faces and hitbox.
+     */
+    private fun buildVisibleEdges(visibleFaces: List<Face>, corners: List<Vec3>): List<Edge> {
+        val edges = mutableListOf<Edge>()
+        for (face in visibleFaces) {
+            val topology = FACE_EDGE_TOPOLOGY[face] ?: continue
+            for ((i, j) in topology) {
+                edges.add(Edge(corners[i], corners[j]))
+            }
+        }
+        return edges
+    }
 
     /**
      * Convert aim rotation (yaw, pitch in degrees) to a unit direction vector.
@@ -138,7 +258,6 @@ object RotationCalculator {
 
         for ((o, d, range) in axes) {
             if (kotlin.math.abs(d) < 1e-8) {
-                // Ray is parallel to slab
                 if (o < range.first || o > range.second) return false
             } else {
                 val invD = 1.0 / d
@@ -155,7 +274,7 @@ object RotationCalculator {
     }
 
     /**
-     * Get the 8 corners of an AABB hitbox.
+     * Get the 8 corners of an AABB hitbox as world-space Vec3.
      */
     private fun hitboxCorners(box: Hitbox): List<Vec3> {
         return listOf(
@@ -186,6 +305,49 @@ object RotationCalculator {
      */
     private fun randomInRange(min: Double, max: Double): Double {
         return min + kotlin.random.Random.nextDouble() * (max - min)
+    }
+
+    /**
+     * Find the closest point on segment AB to a ray (origin + dir*t, t>=0).
+     * Returns the point on the segment.
+     */
+    private fun closestPointOnSegmentToRay(a: Vec3, b: Vec3, rayOrigin: Vec3, rayDir: Vec3): Vec3 {
+        val segDir = Vec3(b.x - a.x, b.y - a.y, b.z - a.z)
+        val segLenSq = segDir.dot(segDir)
+        if (segLenSq < 1e-12) return a
+
+        // Closest points between two lines: segment AB and ray
+        // Line 1: a + segDir * s,  s in [0,1]
+        // Line 2: rayOrigin + rayDir * t, t >= 0
+        val r = Vec3(rayOrigin.x - a.x, rayOrigin.y - a.y, rayOrigin.z - a.z)
+        val a_dot_a = segLenSq
+        val a_dot_b = segDir.dot(rayDir)
+        val b_dot_b = rayDir.dot(rayDir)
+        val a_dot_r = segDir.dot(r)
+        val b_dot_r = rayDir.dot(r)
+
+        val denom = a_dot_a * b_dot_b - a_dot_b * a_dot_b
+        var s: Double
+        var t: Double
+
+        if (kotlin.math.abs(denom) < 1e-12) {
+            // Lines parallel
+            s = 0.0
+            t = a_dot_r / a_dot_a
+        } else {
+            s = (a_dot_r * b_dot_b - b_dot_r * a_dot_b) / denom
+            t = (a_dot_r * a_dot_b - b_dot_r * a_dot_a) / denom
+        }
+
+        s = s.coerceIn(0.0, 1.0)
+        t = t.coerceAtLeast(0.0)
+
+        // The closest point on the segment
+        return Vec3(
+            a.x + segDir.x * s,
+            a.y + segDir.y * s,
+            a.z + segDir.z * s
+        )
     }
     
     /**

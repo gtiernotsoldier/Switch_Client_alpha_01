@@ -61,6 +61,17 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
     private val noiseProvider = NoiseProvider
     private val conditionChecker = ConditionChecker
 
+    // ========== Overshoot State Machine ==========
+    private enum class OvershootState { IDLE, OVERSHOOT, CORRECT }
+
+    private var overshootState = OvershootState.IDLE
+    private var overshootTarget: Vec2? = null
+    private var overshootTicksRemaining = 0
+
+    // ========== Reaction Delay ==========
+    private var lastTargetId = -1
+    private var reactionDelayTicks = 0
+
     // ========== Event Handler (Platform Agnostic) ==========
     
     /**
@@ -70,18 +81,37 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
      */
     fun onClientTick(player: PlayerState, target: TargetState?) {
         // 1. Safety Check
-        if (target == null) return
-        
+        if (target == null) {
+            resetOvershootState()
+            lastTargetId = -1
+            return
+        }
+
         // 2. Range Check (Horizontal Distance Validation — X/Z only, ignores height)
         val dx = player.position.x - target.position.x
         val dz = player.position.z - target.position.z
         val horizontalDistance = kotlin.math.sqrt(dx * dx + dz * dz)
-        if (horizontalDistance < rangeMin || horizontalDistance > rangeMax) return
+        if (horizontalDistance < rangeMin || horizontalDistance > rangeMax) {
+            resetOvershootState()
+            return
+        }
 
         // 3. Condition Check (Unified Engine)
         if (!conditionChecker.check(triggerOptions, player, target)) return
 
-        // 4. Target Point Calculation
+        // 4. Reaction Delay (Step 5)
+        // When a new target appears, sample a log-normal delay before processing
+        if (target.entityId != lastTargetId) {
+            lastTargetId = target.entityId
+            reactionDelayTicks = sampleReactionDelay()
+            resetOvershootState()
+        }
+        if (reactionDelayTicks > 0) {
+            reactionDelayTicks--
+            return
+        }
+
+        // 5. Target Point Calculation
         val targetPoint = when (mode) {
             AimMode.LEGIT -> {
                 // Legit Mode: Only correct if outside hitbox, pull to edge
@@ -96,27 +126,115 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
             }
         }
 
-        // 5. FOV Check
+        // 6. FOV Check
         val rotationDiff = rotationCalculator.calculateDifference(player.rotation, targetPoint)
         if (!rotationCalculator.isWithinFov(rotationDiff, horizontalFov, verticalFov)) {
             return // Target out of FOV
         }
 
-        // 6. Smoothing & Interpolation
-        var finalRotation = rotationCalculator.interpolate(
-            current = player.rotation,
-            target = targetPoint,
-            factor = aimSpeed / 20.0f * smoothness
-        )
+        // 7. Separate Yaw/Pitch Smoothing (Step 2)
+        val yawFactor = aimSpeed / 20.0f * smoothness
+        val pitchFactor = aimSpeed / 20.0f * smoothness * 0.6f
 
-        // 7. Noise Injection (Humanization)
-        finalRotation = noiseProvider.apply(finalRotation, noiseIntensity)
+        // 8. Overshoot State Machine (Step 3)
+        var finalRotation = when (overshootState) {
+            OvershootState.IDLE -> {
+                // Normal tracking — check if we should overshoot
+                val interpolated = rotationCalculator.interpolate(
+                    current = player.rotation,
+                    target = targetPoint,
+                    yawFactor = yawFactor,
+                    pitchFactor = pitchFactor
+                )
+                // 15-25% chance to overshoot on significant direction changes
+                val rotDelta = rotationCalculator.calculateDifference(player.rotation, targetPoint)
+                val angularSize = kotlin.math.abs(rotDelta.yaw) + kotlin.math.abs(rotDelta.pitch)
+                if (angularSize > 5f && kotlin.random.Random.nextFloat() < 0.20f) {
+                    // Transition to OVERSHOOT
+                    overshootTarget = computeOvershootTarget(player.rotation, targetPoint)
+                    overshootTicksRemaining = if (kotlin.random.Random.nextFloat() < 0.5f) 1 else 2
+                    overshootState = OvershootState.OVERSHOOT
+                    rotationCalculator.interpolate(
+                        current = player.rotation,
+                        target = overshootTarget!!,
+                        yawFactor = yawFactor,
+                        pitchFactor = pitchFactor
+                    )
+                } else {
+                    interpolated
+                }
+            }
+            OvershootState.OVERSHOOT -> {
+                // Move toward the overshoot point
+                val result = rotationCalculator.interpolate(
+                    current = player.rotation,
+                    target = overshootTarget!!,
+                    yawFactor = yawFactor,
+                    pitchFactor = pitchFactor
+                )
+                overshootTicksRemaining--
+                if (overshootTicksRemaining <= 0) {
+                    overshootState = OvershootState.CORRECT
+                }
+                result
+            }
+            OvershootState.CORRECT -> {
+                // Smoothly correct back to the real target
+                val result = rotationCalculator.interpolate(
+                    current = player.rotation,
+                    target = targetPoint,
+                    yawFactor = yawFactor * 1.2f,  // Slightly faster correction
+                    pitchFactor = pitchFactor * 1.2f
+                )
+                overshootState = OvershootState.IDLE
+                overshootTarget = null
+                result
+            }
+        }
 
-        // 8. Apply Rotation (Via Bridge - Platform Specific Implementation handles the write-back)
+        // 9. Noise Injection (Time-dependent random walk — Step 4)
+        finalRotation = noiseProvider.applyWalk(finalRotation, noiseIntensity)
+
+        // 10. Apply Rotation
         EventBridge.setPlayerRotation(finalRotation)
     }
 
-    // ========== Helper Methods (Pure Logic) ==========
+    // ========== Helper Methods ==========
+
+    /**
+     * Compute an overshoot target by offsetting beyond the real target
+     * by 5-15% of the rotation delta.
+     */
+    private fun computeOvershootTarget(currentRotation: Vec2, realTarget: Vec2): Vec2 {
+        val delta = rotationCalculator.calculateDifference(currentRotation, realTarget)
+        val overshootPercent = 0.05f + kotlin.random.Random.nextFloat() * 0.10f  // 5-15%
+        return Vec2(
+            realTarget.yaw + delta.yaw * overshootPercent,
+            realTarget.pitch + delta.pitch * overshootPercent
+        )
+    }
+
+    /**
+     * Sample a reaction delay in ticks using a log-normal distribution.
+     * Models human reaction time: median ~150ms (3 ticks at 20 TPS),
+     * with realistic variance.
+     */
+    private fun sampleReactionDelay(): Int {
+        // Log-normal: exp(mu + sigma * Z), where Z is standard normal
+        // mu=2.6 (~13.5 ticks median), sigma=0.4 gives realistic spread
+        val z = NoiseProvider.next(0f, 1f).toDouble()
+        val delayMs = kotlin.math.exp(2.6 + 0.4 * z)
+        val delayTicks = (delayMs / 50.0).toInt()  // 50ms per tick at 20 TPS
+        return delayTicks.coerceIn(1, 8)  // Clamp to 1-8 ticks (50-400ms)
+    }
+
+    private fun resetOvershootState() {
+        overshootState = OvershootState.IDLE
+        overshootTarget = null
+        overshootTicksRemaining = 0
+    }
+
+    // ========== Lifecycle ==========
     
     override fun onEnable() {
         // Register listener via Bridge
@@ -127,5 +245,9 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
 
     override fun onDisable() {
         EventBridge.unregisterTickListener(this::onClientTick)
+        resetOvershootState()
+        lastTargetId = -1
+        reactionDelayTicks = 0
+        noiseProvider.reset()
     }
 }

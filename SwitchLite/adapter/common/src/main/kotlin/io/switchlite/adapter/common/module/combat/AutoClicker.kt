@@ -52,6 +52,7 @@ object AutoClicker : Module("AutoClicker", Category.COMBAT) {
     // ========== Timing State ==========
     private var ticksUntilNextClick = 0
     private var lastTargetId = -1
+    private var pendingSecondClick = false
 
     // ========== Tick Listener Reference ==========
     private var tickListener: ((PlayerState, TargetState?) -> Unit)? = null
@@ -67,19 +68,19 @@ object AutoClicker : Module("AutoClicker", Category.COMBAT) {
         // 1. Block Hit Prevention — skip if player is mining a block
         if (disableOnBlock && player.isMining) return
 
-        // 2. Condition Check (Unified Engine)
-        if (target == null || !conditionChecker.check(triggerOptions, player, target)) return
-
-        // 3. Target Change Detection — reset timing on new target
-        if (target.entityId != lastTargetId) {
-            lastTargetId = target.entityId
-            ticksUntilNextClick = sampleClickDelay()
+        // 2. Handle pending second click from double-click mode
+        if (pendingSecondClick) {
+            pendingSecondClick = false
+            EventBridge.triggerAttack()
+            return
         }
 
-        // 4. Countdown
-        if (ticksUntilNextClick > 0) {
-            ticksUntilNextClick--
-            return
+        // 3. Condition Check (Unified Engine)
+        if (target == null || !conditionChecker.check(triggerOptions, player, target)) return
+
+        // 4. Target Change Detection — reset timing on new target
+        if (target.entityId != lastTargetId) {
+            lastTargetId = target.entityId
         }
 
         // 5. Calculate Effective CPS
@@ -91,8 +92,9 @@ object AutoClicker : Module("AutoClicker", Category.COMBAT) {
             }
         }.coerceAtLeast(1)
 
-        // 6. Convert CPS to tick delay (20 TPS) and schedule next click
-        ticksUntilNextClick = (20.0 / effectiveCps).toInt().coerceAtLeast(1)
+        // 6. Probability-based click (effectiveCps / 20.0 chance per tick)
+        val clickChance = effectiveCps / 20.0
+        if (NoiseProvider.nextUniform(0f, 1f) >= clickChance) return
 
         // 7. Execute Click(s) via Bridge
         when (clickMode) {
@@ -100,8 +102,9 @@ object AutoClicker : Module("AutoClicker", Category.COMBAT) {
                 EventBridge.triggerAttack()
             }
             ClickMode.DOUBLE -> {
+                // First click immediately, second click delayed to next tick
                 EventBridge.triggerAttack()
-                EventBridge.triggerAttack()
+                pendingSecondClick = true
             }
         }
     }
@@ -164,6 +167,7 @@ object AutoClicker : Module("AutoClicker", Category.COMBAT) {
         tickListener = null
         ticksUntilNextClick = 0
         lastTargetId = -1
+        pendingSecondClick = false
     }
 }
 

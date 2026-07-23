@@ -200,6 +200,15 @@ class CooldownClickStrategy : ClickStrategy<CooldownClickConfig, CooldownClickSt
                 if (input.isFalling) {
                     state.critPhase = CritPhase.WAIT_COOLDOWN
                     state.cooldownReady = false
+                    state.waitFallTicks = 0
+                } else {
+                    state.waitFallTicks++
+                    if (state.waitFallTicks >= 10) {
+                        // 降级：放弃暴击，直接普通攻击，复用 ATTACK 阶段恢复冲刺
+                        state.waitFallTicks = 0
+                        state.critPhase = CritPhase.ATTACK
+                        return ClickResult.Click
+                    }
                 }
                 ClickResult.Skip
             }
@@ -273,6 +282,7 @@ class CooldownClickStrategy : ClickStrategy<CooldownClickConfig, CooldownClickSt
         state.wasSprintingBeforeCrit = false
         state.cooldownReady = false
         state.legitDelayTicks = 0
+        state.waitFallTicks = 0
     }
 
     // ---- State ----
@@ -328,9 +338,16 @@ class CooldownClickStrategy : ClickStrategy<CooldownClickConfig, CooldownClickSt
          */
         var wasSprintingBeforeCrit: Boolean = false
 
+        /** WAIT_FALL 阶段已等待的 tick 数，用于超时降级。 */
+        var waitFallTicks: Int = 0
+
         override fun reset() {
             super.reset()
-            resetCritState(this)
+            critPhase = CritPhase.IDLE
+            wasSprintingBeforeCrit = false
+            cooldownReady = false
+            legitDelayTicks = 0
+            waitFallTicks = 0
         }
     }
 }

@@ -72,9 +72,11 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
         // 1. Safety Check
         if (target == null) return
         
-        // 2. Range Check (Distance Validation)
-        val distance = player.position.distanceTo(target.position)
-        if (distance < rangeMin || distance > rangeMax) return
+        // 2. Range Check (Horizontal Distance Validation — X/Z only, ignores height)
+        val dx = player.position.x - target.position.x
+        val dz = player.position.z - target.position.z
+        val horizontalDistance = kotlin.math.sqrt(dx * dx + dz * dz)
+        if (horizontalDistance < rangeMin || horizontalDistance > rangeMax) return
 
         // 3. Condition Check (Unified Engine)
         if (!conditionChecker.check(triggerOptions, player, target)) return
@@ -83,14 +85,14 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
         val targetPoint = when (mode) {
             AimMode.LEGIT -> {
                 // Legit Mode: Only correct if outside hitbox, pull to edge
-                if (rotationCalculator.isInsideHitbox(player.rotation, target.hitbox)) {
+                if (rotationCalculator.isInsideHitbox(player.position, player.rotation, target.hitbox)) {
                     return // Inside box, do nothing (Human-like hesitation)
                 }
-                rotationCalculator.getClosestBoxEdge(player.rotation, target.hitbox)
+                rotationCalculator.getClosestBoxEdge(player.position, player.rotation, target.hitbox)
             }
             AimMode.NORMAL -> {
                 // Normal Mode: Lock to center or random point within box
-                rotationCalculator.calculateTargetPoint(target.hitbox, lockOnCrosshair)
+                rotationCalculator.calculateTargetPoint(player.position, target.hitbox, lockOnCrosshair)
             }
         }
 

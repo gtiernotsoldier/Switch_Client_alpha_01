@@ -17,7 +17,7 @@ import io.switchlite.core.model.TargetState
  * 6. Convert CPS to per-tick probability and roll.
  * 7. If hit: Click (and in DOUBLE mode, set pending flag for next tick).
  */
-class ProbabilisticClickStrategy : ClickStrategy {
+class ProbabilisticClickStrategy : ClickStrategy<ClickConfig, ClickStrategy.State> {
 
     override fun execute(
         config: ClickConfig,

@@ -10,6 +10,10 @@ import io.switchlite.core.strategy.click.ClickResult
 import io.switchlite.core.strategy.click.CooldownClickConfig
 import io.switchlite.core.strategy.click.CooldownClickMode
 import io.switchlite.core.strategy.click.CooldownClickStrategy
+import io.switchlite.core.strategy.click.CritMode
+import io.switchlite.core.strategy.click.WeaponFilter
+import io.switchlite.core.strategy.click.WeaponType
+import io.switchlite.core.strategy.click.OnItemUse
 import io.switchlite.adapter.common.api.EventBridge
 import io.switchlite.adapter.common.module.Module
 import io.switchlite.adapter.common.module.Category
@@ -70,14 +74,20 @@ object AutoClicker : Module("AutoClicker", Category.COMBAT) {
     /** Cooldown threshold: 50%-100% of the cooldown bar. Default 100%. */
     private val cooldownThreshold by float("CooldownThreshold", 1.0f, 0.5f..1.0f, "%")
 
-    /** Enable critical hit logic (every hit is a crit). */
-    private val critEnabled by boolean("CritEnabled", false)
+    /** Crit mode: OFF (no crit) / ON (every hit crit) / SMART (crit if possible). */
+    private val critMode by enum("CritMode", CritMode.OFF)
 
-    /** Auto-stop sprinting before crit, restore after. */
+    /** Auto-stop sprinting before crit, restore after. Only affects ON and SMART. */
     private val critStopSprint by boolean("CritStopSprint", true)
 
     /** 1.9+ click mode: NORMAL (instant) or LEGIT (random 1-3t delay). */
     private val mode19 by enum("Mode19", CooldownClickMode.NORMAL)
+
+    /** Weapon filter: only click when holding a matching weapon. */
+    private val weaponFilter by enum("WeaponFilter", WeaponFilter.ANY)
+
+    /** Behaviour when player is using an item (blocking, eating, etc.). */
+    private val onItemUse by enum("OnItemUse", OnItemUse.WAIT)
 
     // ====================================================================
     // Shared Configuration
@@ -181,9 +191,32 @@ object AutoClicker : Module("AutoClicker", Category.COMBAT) {
     // ====================================================================
 
     private fun onTick19(player: PlayerState, target: TargetState?) {
+        // --- Adapter-level pre-checks (before strategy) ---
+
+        // 1. Item use check
+        if (player.isBlocking) {
+            when (onItemUse) {
+                OnItemUse.WAIT -> return
+                OnItemUse.STOP -> {
+                    EventBridge.releaseUsingItem()
+                    // continue to weapon filter + strategy
+                }
+                OnItemUse.IGNORE -> { /* continue */ }
+            }
+        }
+
+        // 2. Weapon filter check
+        if (weaponFilter != WeaponFilter.ANY) {
+            // TODO: 需要 Core 层 PlayerState 添加 weaponType 字段
+            //       当前 PlayerState 没有武器类型信息，暂时用 true 降级通过
+            val heldWeaponType = WeaponType.SWORD // placeholder until PlayerState.weaponType exists
+            if (!weaponFilter.matches(heldWeaponType)) return
+        }
+
+        // --- Delegate to core strategy ---
         val config = CooldownClickConfig(
             cooldownThreshold = cooldownThreshold,
-            critEnabled = critEnabled,
+            critMode = critMode,
             critStopSprint = critStopSprint,
             cooldownMode = mode19,
             disableOnBlock = disableOnBlock,

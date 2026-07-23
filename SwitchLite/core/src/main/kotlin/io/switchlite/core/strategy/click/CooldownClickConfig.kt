@@ -13,13 +13,11 @@ import io.switchlite.core.option.TriggerOptions
  * @property cooldownThreshold fraction of the cooldown bar that must be
  *   reached before attacking. 1.0 = wait for full charge (default),
  *   0.5 = attack at half cooldown (faster but reduced damage).
- * @property critEnabled when true, the strategy will attempt to land
- *   every hit as a critical hit. In 1.9+, crits require:
- *   1. Player is falling (negative motionY, airborne)
- *   2. Player is NOT sprinting
- *   When enabled, the strategy emits [ClickResult.StopSprint] before
- *   the attack and [ClickResult.RestoreSprint] after.
- * @property critStopSprint when true (and [critEnabled] is true),
+ * @property critMode controls critical hit behaviour. See [CritMode] for details.
+ *   [CritMode.OFF]: no crit logic.
+ *   [CritMode.ON]: full crit state machine for every hit.
+ *   [CritMode.SMART]: crit if conditions are met, otherwise hit normally.
+ * @property critStopSprint when true (and [critMode] is not [CritMode.OFF]),
  *   automatically stop sprinting before a crit hit and restore after.
  *   When false, the player must manually stop sprinting for crits.
  * @property cooldownMode NORMAL: attack as soon as cooldown reaches threshold.
@@ -30,7 +28,7 @@ import io.switchlite.core.option.TriggerOptions
  */
 data class CooldownClickConfig(
     val cooldownThreshold: Float = 1.0f,
-    val critEnabled: Boolean = false,
+    val critMode: CritMode = CritMode.OFF,
     val critStopSprint: Boolean = true,
     val cooldownMode: CooldownClickMode = CooldownClickMode.NORMAL,
     val disableOnBlock: Boolean = true,

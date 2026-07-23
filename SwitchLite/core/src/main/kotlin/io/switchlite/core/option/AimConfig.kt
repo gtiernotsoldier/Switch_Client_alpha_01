@@ -1,4 +1,4 @@
-package io.switchlite.adapter.common.module.combat
+package io.switchlite.core.option
 
 import io.switchlite.core.option.AimMode
 import io.switchlite.core.option.TriggerOptions

@@ -96,14 +96,48 @@ object EventBridge {
         attackTrigger = trigger
     }
 
+    // ========== Sprint ==========
+    private var sprintSetter: ((Boolean) -> Unit)? = null
+
+    /**
+     * Set the player's sprinting state.
+     * Used by 1.9+ crit logic (stop sprint before crit, restore after).
+     */
+    fun setSprinting(sprinting: Boolean) {
+        sprintSetter?.invoke(sprinting)
+    }
+
+    fun registerSprintSetter(setter: (Boolean) -> Unit) {
+        sprintSetter = setter
+    }
+
+    // ========== Item Use ==========
+    private var releaseUsingItemHandler: (() -> Unit)? = null
+
+    /**
+     * Release the player's active item use (e.g. stop blocking with shield,
+     * release bow draw, stop eating). Used by 1.9+ OnItemUse.STOP mode.
+     */
+    // TODO: 需要 EventBridge 添加 releaseUsingItem() — 当前为空实现，
+    //       平台适配器 (Forge/Fabric) 需要注册实际的 releaseUsingItem handler
+    fun releaseUsingItem() {
+        releaseUsingItemHandler?.invoke()
+    }
+
+    fun registerReleaseUsingItemHandler(handler: () -> Unit) {
+        releaseUsingItemHandler = handler
+    }
+
     // ========== Platform Registration ==========
     // Called by ForgeBootstrap / FabricBootstrap to wire up platform-specific handlers
     fun registerPlatformHandlers(
         rotationSetter: (Vec2) -> Unit,
-        motionApplier: (Vec3) -> Unit
+        motionApplier: (Vec3) -> Unit,
+        sprintSetter: (Boolean) -> Unit = {}
     ) {
         this.rotationSetter = rotationSetter
         this.motionApplier = motionApplier
+        this.sprintSetter = sprintSetter
     }
 
     fun reset() {
@@ -111,6 +145,8 @@ object EventBridge {
         tickListeners.clear()
         rotationSetter = null
         motionApplier = null
+        sprintSetter = null
+        releaseUsingItemHandler = null
         keyListeners.clear()
         tickCounter = 0
     }

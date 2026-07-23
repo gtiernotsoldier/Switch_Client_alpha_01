@@ -4,13 +4,13 @@ import io.switchlite.core.algorithm.NoiseProvider
 import io.switchlite.core.condition.ConditionChecker
 
 /**
- * 1.9+ cooldown-based click strategy with optional critical hit support.
+ * 1.9+ cooldown-based click strategy with critical hit support.
  *
  * In 1.9+ Minecraft the attack cooldown governs when the player can deal
  * full damage. This strategy waits for the cooldown to reach
  * [CooldownClickConfig.cooldownThreshold] before emitting a click.
  *
- * ## Cooldown-only mode (critEnabled = false)
+ * ## CritMode.OFF
  *
  * Per-tick pipeline:
  * 1. Block-hit prevention → Skip.
@@ -19,10 +19,9 @@ import io.switchlite.core.condition.ConditionChecker
  * 4. LEGIT mode: random delay 1-3 ticks after cooldown ready.
  * 5. Emit [ClickResult.Click].
  *
- * ## Crit mode (critEnabled = true)
+ * ## CritMode.ON (full crit state machine)
  *
- * Crits in 1.9+ require the player to be **falling** and **not sprinting**.
- * The strategy runs a multi-phase state machine:
+ * Every hit is a critical hit. Multi-phase FSM:
  *
  * ```
  * IDLE → STOP_SPRINT → WAIT_FALL → WAIT_COOLDOWN → ATTACK → RESTORE → IDLE
@@ -37,6 +36,17 @@ import io.switchlite.core.condition.ConditionChecker
  *
  * If [CooldownClickConfig.critStopSprint] is false, STOP_SPRINT and RESTORE
  * phases are skipped (the player manages sprinting manually).
+ *
+ * ## CritMode.SMART (opportunistic crit)
+ *
+ * Crit if conditions are already met; otherwise hit normally without waiting.
+ *
+ * - If falling + not sprinting → Click (natural crit, no FSM).
+ * - If sprinting + critStopSprint → StopSprint, then Click next tick.
+ *   (Whether it crits depends on whether the player is falling by then.)
+ * - Otherwise → Click immediately (normal hit).
+ *
+ * Uses a simplified two-phase sequence: `SMART_STOP_SPRINT → SMART_RESTORE`.
  */
 class CooldownClickStrategy : ClickStrategy<CooldownClickConfig, CooldownClickStrategy.CritState> {
 
@@ -67,10 +77,10 @@ class CooldownClickStrategy : ClickStrategy<CooldownClickConfig, CooldownClickSt
             return ClickResult.Skip
         }
 
-        // 2. If in crit sequence, drive the state machine first
-        //    (crit sequence takes priority over target loss — if we
-        //     already stopped sprinting we must restore it)
-        if (config.critEnabled && state.critPhase != CritPhase.IDLE) {
+        // 2. If in a crit sequence (ON or SMART), drive the FSM first.
+        //    This takes priority over target loss — if we already stopped
+        //    sprinting we must restore it.
+        if (config.critMode != CritMode.OFF && state.critPhase != CritPhase.IDLE) {
             return driveCritPhase(config, state, input)
         }
 
@@ -81,7 +91,6 @@ class CooldownClickStrategy : ClickStrategy<CooldownClickConfig, CooldownClickSt
 
         // 4. Cooldown check
         if (input.attackCooldown < config.cooldownThreshold) {
-            // Track when cooldown becomes ready for LEGIT delay
             if (!state.cooldownReady) {
                 state.cooldownReady = true
             }
@@ -104,24 +113,72 @@ class CooldownClickStrategy : ClickStrategy<CooldownClickConfig, CooldownClickSt
             }
         }
 
-        // 7. Cooldown ready — decide crit vs normal
+        // 7. Cooldown ready — decide crit behaviour
         state.cooldownReady = false
 
-        if (!config.critEnabled) {
-            // Simple cooldown click, no crit
-            return ClickResult.Click
+        when (config.critMode) {
+            CritMode.OFF -> {
+                // No crit logic, just click
+                return ClickResult.Click
+            }
+            CritMode.ON -> {
+                // Full crit FSM: every hit must be a crit
+                return startCritSequence(config, state, player, input)
+            }
+            CritMode.SMART -> {
+                // Opportunistic: crit if possible, otherwise click now
+                return smartCritDecision(config, state, player, input)
+            }
         }
+    }
 
-        // 8. Start crit sequence
+    // ---- ON mode: full crit FSM ----
+
+    /**
+     * Enter the crit state machine. Called when cooldown is ready
+     * and [CritMode.ON] is active.
+     */
+    private fun startCritSequence(
+        config: CooldownClickConfig,
+        state: CritState,
+        player: io.switchlite.core.model.PlayerState,
+        input: ClickInput
+    ): ClickResult {
         if (config.critStopSprint && player.isSprinting) {
             state.wasSprintingBeforeCrit = true
             state.critPhase = CritPhase.STOP_SPRINT
             return ClickResult.StopSprint
         }
-
-        // Not sprinting (or critStopSprint off) — skip to wait fall
+        // Not sprinting (or critStopSprint off) — wait for fall
         state.critPhase = CritPhase.WAIT_FALL
         return ClickResult.Skip
+    }
+
+    // ---- SMART mode: opportunistic crit ----
+
+    /**
+     * SMART crit decision. If the player can crit right now (falling +
+     * not sprinting), click immediately. If sprinting, stop sprint and
+     * click next tick. Otherwise, click as a normal hit.
+     */
+    private fun smartCritDecision(
+        config: CooldownClickConfig,
+        state: CritState,
+        player: io.switchlite.core.model.PlayerState,
+        input: ClickInput
+    ): ClickResult {
+        // Already in crit position — click for a natural crit
+        if (input.isFalling && !player.isSprinting) {
+            return ClickResult.Click
+        }
+        // Sprinting — stop sprint, click next tick
+        if (config.critStopSprint && player.isSprinting) {
+            state.wasSprintingBeforeCrit = true
+            state.critPhase = CritPhase.SMART_STOP_SPRINT
+            return ClickResult.StopSprint
+        }
+        // Can't crit — hit normally, don't wait
+        return ClickResult.Click
     }
 
     // ---- Crit state machine ----
@@ -132,6 +189,8 @@ class CooldownClickStrategy : ClickStrategy<CooldownClickConfig, CooldownClickSt
         input: ClickInput
     ): ClickResult {
         return when (state.critPhase) {
+            // ---- ON mode phases ----
+
             CritPhase.STOP_SPRINT -> {
                 // Sprint stop was emitted last tick, now wait for fall
                 state.critPhase = CritPhase.WAIT_FALL
@@ -170,7 +229,6 @@ class CooldownClickStrategy : ClickStrategy<CooldownClickConfig, CooldownClickSt
                 if (config.critStopSprint && state.wasSprintingBeforeCrit) {
                     return ClickResult.RestoreSprint(wasSprinting = true)
                 }
-                // No restore needed, go straight to idle
                 resetCritState(state)
                 ClickResult.Skip
             }
@@ -179,6 +237,24 @@ class CooldownClickStrategy : ClickStrategy<CooldownClickConfig, CooldownClickSt
                 resetCritState(state)
                 ClickResult.Skip
             }
+
+            // ---- SMART mode phases ----
+
+            CritPhase.SMART_STOP_SPRINT -> {
+                // Sprint was stopped last tick, click now
+                state.critPhase = CritPhase.SMART_RESTORE
+                ClickResult.Click
+            }
+            CritPhase.SMART_RESTORE -> {
+                // Click was emitted last tick, restore sprint if needed
+                if (config.critStopSprint && state.wasSprintingBeforeCrit) {
+                    resetCritState(state)
+                    return ClickResult.RestoreSprint(wasSprinting = true)
+                }
+                resetCritState(state)
+                ClickResult.Skip
+            }
+
             CritPhase.IDLE -> {
                 // Should not reach here, but handle gracefully
                 ClickResult.Skip
@@ -207,23 +283,28 @@ class CooldownClickStrategy : ClickStrategy<CooldownClickConfig, CooldownClickSt
     enum class CritPhase {
         /** Normal operation, no crit sequence active. */
         IDLE,
-        /** [ClickResult.StopSprint] was just emitted, waiting one tick. */
+
+        // -- ON mode phases --
+        /** [ClickResult.StopSprint] emitted, waiting one tick (ON mode). */
         STOP_SPRINT,
-        /** Waiting for the player to be falling (negative motionY, airborne). */
+        /** Waiting for the player to be falling (ON mode). */
         WAIT_FALL,
-        /** Waiting for attack cooldown to reach threshold. */
+        /** Waiting for attack cooldown to reach threshold (ON mode). */
         WAIT_COOLDOWN,
-        /** [ClickResult.Click] was just emitted. */
+        /** [ClickResult.Click] emitted, about to restore (ON mode). */
         ATTACK,
-        /** [ClickResult.RestoreSprint] was just emitted. */
-        RESTORE
+        /** [ClickResult.RestoreSprint] emitted, about to go IDLE (ON mode). */
+        RESTORE,
+
+        // -- SMART mode phases --
+        /** [ClickResult.StopSprint] emitted, will click next tick (SMART mode). */
+        SMART_STOP_SPRINT,
+        /** [ClickResult.Click] emitted, will restore sprint next tick (SMART mode). */
+        SMART_RESTORE
     }
 
     /**
      * Extended state for 1.9+ cooldown clicking with crit support.
-     *
-     * Extends the base [ClickStrategy.State] with cooldown tracking,
-     * LEGIT delay counter, and the crit phase machine.
      */
     class CritState : ClickStrategy.State() {
         /**
@@ -233,20 +314,17 @@ class CooldownClickStrategy : ClickStrategy<CooldownClickConfig, CooldownClickSt
         var critPhase: CritPhase = CritPhase.IDLE
 
         /**
-         * True if the cooldown bar has reached [CooldownClickConfig.cooldownThreshold]
-         * and we are in the tick it first became ready (for LEGIT delay start).
+         * True when the cooldown bar has reached threshold.
          */
         var cooldownReady: Boolean = false
 
         /**
          * Remaining ticks of LEGIT-mode random delay after cooldown ready.
-         * 0 means no delay pending.
          */
         var legitDelayTicks: Int = 0
 
         /**
          * Whether the player was sprinting before we stopped them for crit.
-         * Used to decide whether to restore sprinting after the crit hit.
          */
         var wasSprintingBeforeCrit: Boolean = false
 

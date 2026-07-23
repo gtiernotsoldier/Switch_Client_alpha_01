@@ -9,12 +9,16 @@ import io.switchlite.core.strategy.StrategyContext
  * Consumes [ClickInput] and produces a [ClickResult] telling
  * the adapter whether to issue an attack this tick.
  *
+ * [C] the configuration type (e.g. [ClickConfig] for 1.8,
+ *   [CooldownClickConfig] for 1.9+).
+ * [S] the mutable state type, must extend [State].
+ *
  * Humanization is achieved through:
- * - Probabilistic CPS (effective CPS is converted to per-tick chance).
- * - Distance-aware CPS adjustment (LEGIT mode).
- * - Double-click support (first click immediately, second deferred).
+ * - 1.8: Probabilistic CPS + distance-adjusted CPS (LEGIT mode).
+ * - 1.9+: Cooldown-wait + crit state machine + LEGIT delay.
+ * - Both: block-hit prevention, unified condition checks.
  */
-interface ClickStrategy : Strategy<ClickConfig, ClickStrategy.State, ClickResult> {
+interface ClickStrategy<C, S : ClickStrategy.State> : Strategy<C, S, ClickResult> {
 
     /**
      * Mutable per-session state for click processing.
@@ -23,7 +27,7 @@ interface ClickStrategy : Strategy<ClickConfig, ClickStrategy.State, ClickResult
      * @property pendingSecondClick true when a DOUBLE-mode first click
      *   was issued last tick and the second click should fire this tick.
      */
-    class State : StrategyContext {
+    open class State : StrategyContext {
         var lastTargetId: Int = -1
         var pendingSecondClick: Boolean = false
 

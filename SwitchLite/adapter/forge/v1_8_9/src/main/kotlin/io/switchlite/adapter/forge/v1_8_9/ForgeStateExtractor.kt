@@ -2,10 +2,13 @@ package io.switchlite.adapter.forge.v1_8_9
 
 import io.switchlite.adapter.common.api.IStateExtractor
 import io.switchlite.core.model.*
+import io.switchlite.core.strategy.click.WeaponType
 import io.switchlite.core.util.Vec2
 import io.switchlite.core.util.Vec3
 import io.switchlite.agent.MappingContext
 import net.minecraft.client.Minecraft
+import net.minecraft.item.ItemSword
+import net.minecraft.item.ItemAxe
 
 /**
  * Forge 1.8.9 state extractor.
@@ -52,9 +55,11 @@ object ForgeStateExtractor : IStateExtractor {
             health = health,
             hurtTime = hurtTime,
             maxHurtResistantTime = maxHurtResistantTime,
-            isBlocking = false, // TODO: detect via MappingContext
+            isBlocking = player.isBlocking, // 1.8: only shield
+            isUsingItem = false, // 1.8 has no unified isUsingItem; not used by 1.8 path
             isLookingAtTarget = false, // TODO: implement raytrace
             isMining = false, // TODO: detect via MappingContext
+            weaponType = classifyWeapon(player.heldItem?.item),
             ticks = mc.theWorld?.worldTime?.toLong() ?: 0L
         )
     }
@@ -134,5 +139,17 @@ object ForgeStateExtractor : IStateExtractor {
     override fun getCurrentTargetId(): Int? {
         // TODO: implement target selection (crosshair entity / nearest entity)
         return null
+    }
+
+    /**
+     * Classify the held item into a [WeaponType] for weapon filter logic.
+     * Forge 1.8.9 uses legacy ItemSword / ItemAxe classes.
+     */
+    private fun classifyWeapon(item: net.minecraft.item.Item?): WeaponType {
+        return when (item) {
+            is ItemSword -> WeaponType.SWORD
+            is ItemAxe -> WeaponType.AXE
+            else -> WeaponType.OTHER
+        }
     }
 }

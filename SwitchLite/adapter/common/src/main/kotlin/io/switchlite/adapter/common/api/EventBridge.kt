@@ -88,6 +88,23 @@ object EventBridge {
     // ========== Attack (Left Click) ==========
     private var attackTrigger: (() -> Unit)? = null
 
+    /**
+     * Trigger a left-click attack from the module layer.
+     *
+     * ⚠️ Anti-cheat requirement for Forge/Fabric adapter implementations:
+     *   The registered trigger MUST simulate the attack through the client input pipeline,
+     *   NOT by calling MCP/Forge `attackEntity()` or sending C02 packets directly.
+     *
+     *   Correct:  `Minecraft.getMinecraft().gameSettings.keyBindAttack.pressed = true`
+     *   (followed by `pressed = false` on next tick or in the same tick after processing).
+     *
+     *   Wrong:    `player.attackEntity(target)` — bypasses LWJGL input queue,
+     *             invisible to client-side anti-cheat input pipeline monitors.
+     *
+     *   Rationale: Client anti-cheat hooks the LWJGL input queue. Using KeyBinding.setKeyBindState
+     *   (or setting `.pressed` directly) ensures the event appears to originate from the
+     *   input pipeline, satisfying both client-side input monitoring AND memory state checks.
+     */
     fun triggerAttack() {
         attackTrigger?.invoke()
     }

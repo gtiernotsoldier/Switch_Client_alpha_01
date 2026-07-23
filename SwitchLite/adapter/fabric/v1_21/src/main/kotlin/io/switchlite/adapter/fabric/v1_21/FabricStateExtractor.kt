@@ -2,10 +2,12 @@ package io.switchlite.adapter.fabric.v1_21
 
 import io.switchlite.adapter.common.api.IStateExtractor
 import io.switchlite.core.model.*
+import io.switchlite.core.strategy.click.WeaponType
 import io.switchlite.core.util.Vec2
 import io.switchlite.core.util.Vec3
 import io.switchlite.agent.MappingContext
 import net.minecraft.client.MinecraftClient
+import net.minecraft.item.*
 
 /**
  * Fabric 1.21 state extractor.
@@ -52,9 +54,11 @@ object FabricStateExtractor : IStateExtractor {
             health = health,
             hurtTime = hurtTime,
             maxHurtResistantTime = maxHurtResistantTime,
-            isBlocking = false, // TODO: detect via MappingContext
+            isBlocking = player.isBlocking, // kept for 1.8 backward compat
+            isUsingItem = player.isUsingItem,
             isLookingAtTarget = false, // TODO: implement raytrace
             isMining = false, // TODO: detect via MappingContext
+            weaponType = classifyWeapon(player.mainHandStack?.item),
             ticks = mc.world?.time ?: 0L
         )
     }
@@ -134,5 +138,17 @@ object FabricStateExtractor : IStateExtractor {
     override fun getCurrentTargetId(): Int? {
         // TODO: implement target selection (crosshair entity / nearest entity)
         return null
+    }
+
+    /**
+     * Classify the held item into a [WeaponType] for weapon filter logic.
+     * Fabric 1.21 uses the Item class hierarchy directly.
+     */
+    private fun classifyWeapon(item: Item?): WeaponType {
+        return when (item) {
+            is SwordItem -> WeaponType.SWORD
+            is AxeItem -> WeaponType.AXE
+            else -> WeaponType.OTHER
+        }
     }
 }

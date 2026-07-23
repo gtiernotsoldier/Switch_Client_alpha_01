@@ -1,5 +1,6 @@
 package io.switchlite.core.model
 
+import io.switchlite.core.strategy.click.WeaponType
 import io.switchlite.core.util.Vec2
 import io.switchlite.core.util.Vec3
 
@@ -22,8 +23,10 @@ data class PlayerState(
     val hurtTime: Int,
     val maxHurtResistantTime: Int,
     val isBlocking: Boolean,
+    val isUsingItem: Boolean,
     val isLookingAtTarget: Boolean,
     val isMining: Boolean,
+    val weaponType: WeaponType,
     val ticks: Long
 ) {
     // Legacy constructor for backward compatibility
@@ -47,8 +50,10 @@ data class PlayerState(
         hurtTime = hurtTime,
         maxHurtResistantTime = 10,
         isBlocking = false,
+        isUsingItem = false,
         isLookingAtTarget = false,
         isMining = false,
+        weaponType = WeaponType.OTHER,
         ticks = ticks
     )
 
@@ -66,8 +71,10 @@ data class PlayerState(
             hurtTime = 0,
             maxHurtResistantTime = 10,
             isBlocking = false,
+            isUsingItem = false,
             isLookingAtTarget = false,
             isMining = false,
+            weaponType = WeaponType.OTHER,
             ticks = 0
         )
     }

@@ -7,7 +7,13 @@ import io.switchlite.core.util.Vec2
 import io.switchlite.core.util.Vec3
 import io.switchlite.agent.MappingContext
 import net.minecraft.client.MinecraftClient
+import net.minecraft.entity.Entity
+import net.minecraft.entity.LivingEntity
+import net.minecraft.entity.mob.MobEntity
+import net.minecraft.entity.player.PlayerEntity
 import net.minecraft.item.*
+import net.minecraft.util.hit.EntityHitResult
+import net.minecraft.util.hit.HitResult
 
 /**
  * Fabric 1.21 state extractor.
@@ -17,6 +23,9 @@ import net.minecraft.item.*
 object FabricStateExtractor : IStateExtractor {
 
     private val mc get() = MinecraftClient.getInstance()
+
+    /** Maximum target selection range in blocks. */
+    private const val MAX_TARGET_RANGE = 6.0
 
     override fun extractPlayerState(): PlayerState {
         val player = mc.player ?: return PlayerState.EMPTY
@@ -40,6 +49,9 @@ object FabricStateExtractor : IStateExtractor {
         val isMoving = (motionX != 0.0 || motionZ != 0.0)
         val isMovingForward = moveForward > 0f
 
+        // Attack key state: keyBindAttack.isPressed
+        val isAttackKeyDown = mc.options.attackKey.isPressed
+
         return PlayerState(
             name = player.name ?: "",
             position = Vec3(posX, posY, posZ),
@@ -56,9 +68,10 @@ object FabricStateExtractor : IStateExtractor {
             maxHurtResistantTime = maxHurtResistantTime,
             isBlocking = player.isBlocking, // kept for 1.8 backward compat
             isUsingItem = player.isUsingItem,
-            isLookingAtTarget = false, // TODO: implement raytrace
+            isLookingAtTarget = false, // handled by ConditionChecker angle calc (method B)
             isMining = false, // TODO: detect via MappingContext
             weaponType = classifyWeapon(player.mainHandStack?.item),
+            isAttackKeyDown = isAttackKeyDown,
             ticks = mc.world?.time ?: 0L
         )
     }
@@ -102,7 +115,7 @@ object FabricStateExtractor : IStateExtractor {
 
         return TargetState(
             entityId = entityId,
-            name = "",
+            name = (entity as? LivingEntity)?.name?.string ?: "",
             position = Vec3(posX, posY, posZ),
             motionX = motionX,
             motionY = motionY,
@@ -136,8 +149,48 @@ object FabricStateExtractor : IStateExtractor {
     }
 
     override fun getCurrentTargetId(): Int? {
-        // TODO: implement target selection (crosshair entity / nearest entity)
-        return null
+        val player = mc.player ?: return null
+        val world = mc.world ?: return null
+
+        // Priority 1: crosshair-targeted entity (raytrace)
+        val crosshair = mc.crosshairTarget
+        if (crosshair != null && crosshair.type == HitResult.Type.ENTITY) {
+            val entity = (crosshair as EntityHitResult).entity
+            if (isViableTarget(entity, player)) {
+                return entity.id
+            }
+        }
+
+        // Priority 2: nearest viable entity within range
+        var nearestEntity: Entity? = null
+        var nearestDistSq = MAX_TARGET_RANGE * MAX_TARGET_RANGE
+
+        for (entity in world.entities) {
+            if (!isViableTarget(entity, player)) continue
+            val dx = entity.x - player.x
+            val dz = entity.z - player.z
+            val distSq = dx * dx + dz * dz
+            if (distSq < nearestDistSq) {
+                nearestDistSq = distSq
+                nearestEntity = entity
+            }
+        }
+
+        return nearestEntity?.id
+    }
+
+    /**
+ * Check if an entity is a valid attack target.
+ * Viable = not self, alive, is LivingEntity (player or hostile mob).
+ */
+    private fun isViableTarget(entity: Entity, player: PlayerEntity): Boolean {
+        if (entity === player) return false
+        if (entity !is LivingEntity) return false
+        if (!entity.isAlive) return false
+        if (entity.isDead) return false
+        // Accept players and mobs (hostile + passive both included;
+        // PvP servers may want to filter teams, but that's a higher-level concern)
+        return true
     }
 
     /**

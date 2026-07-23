@@ -27,6 +27,7 @@ data class PlayerState(
     val isLookingAtTarget: Boolean,
     val isMining: Boolean,
     val weaponType: WeaponType,
+    val isAttackKeyDown: Boolean,
     val ticks: Long
 ) {
     // Legacy constructor for backward compatibility
@@ -54,6 +55,7 @@ data class PlayerState(
         isLookingAtTarget = false,
         isMining = false,
         weaponType = WeaponType.OTHER,
+        isAttackKeyDown = false,
         ticks = ticks
     )
 
@@ -75,6 +77,7 @@ data class PlayerState(
             isLookingAtTarget = false,
             isMining = false,
             weaponType = WeaponType.OTHER,
+            isAttackKeyDown = false,
             ticks = 0
         )
     }

@@ -149,10 +149,10 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
                 // 15-25% chance to overshoot on significant direction changes
                 val rotDelta = rotationCalculator.calculateDifference(player.rotation, targetPoint)
                 val angularSize = kotlin.math.abs(rotDelta.yaw) + kotlin.math.abs(rotDelta.pitch)
-                if (angularSize > 5f && kotlin.random.Random.nextFloat() < 0.20f) {
+                if (angularSize > 5f && NoiseProvider.nextUniform(0f, 1f) < 0.20f) {
                     // Transition to OVERSHOOT
                     overshootTarget = computeOvershootTarget(player.rotation, targetPoint)
-                    overshootTicksRemaining = if (kotlin.random.Random.nextFloat() < 0.5f) 1 else 2
+                    overshootTicksRemaining = if (NoiseProvider.nextUniform(0f, 1f) < 0.5f) 1 else 2
                     overshootState = OvershootState.OVERSHOOT
                     rotationCalculator.interpolate(
                         current = player.rotation,
@@ -207,7 +207,7 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
      */
     private fun computeOvershootTarget(currentRotation: Vec2, realTarget: Vec2): Vec2 {
         val delta = rotationCalculator.calculateDifference(currentRotation, realTarget)
-        val overshootPercent = 0.05f + kotlin.random.Random.nextFloat() * 0.10f  // 5-15%
+        val overshootPercent = 0.05f + NoiseProvider.nextUniform(0f, 1f) * 0.10f  // 5-15%
         return Vec2(
             realTarget.yaw + delta.yaw * overshootPercent,
             realTarget.pitch + delta.pitch * overshootPercent

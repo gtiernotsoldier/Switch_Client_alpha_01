@@ -47,6 +47,14 @@ object NoiseProvider {
         spare = z1
         return z0 * stdDev + mean
     }
+
+    /**
+     * Generate uniform random value in range [min, max].
+     * Uses Kotlin's Random internally but exposes through core API.
+     */
+    fun nextUniform(min: Float, max: Float): Float {
+        return min + Random.nextFloat() * (max - min)
+    }
     
     /**
      * Apply independent per-frame noise (original behavior).

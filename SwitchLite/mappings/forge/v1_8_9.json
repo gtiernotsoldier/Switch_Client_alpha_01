@@ -42,5 +42,9 @@
   "forge:player_isMovingForward": {
     "class": "net.minecraft.entity.player.EntityPlayerSP",
     "method": "isMovingForward"
+  },
+  "forge:playerController_isHittingBlock": {
+    "class": "net.minecraft.client.multiplayer.PlayerControllerMP",
+    "field": "isHittingBlock"
   }
 }

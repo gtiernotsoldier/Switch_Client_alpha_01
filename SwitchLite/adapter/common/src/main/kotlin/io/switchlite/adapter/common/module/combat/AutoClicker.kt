@@ -35,6 +35,11 @@ import io.switchlite.adapter.common.option.triggerOptions
  * 3. Platform Agnostic: Receives state via parameters, not direct game access.
  * 4. Core Dependency: 1.8 calls pure math algorithms from core/algorithm;
  *    1.9+ delegates to CooldownClickStrategy from core/strategy/click.
+ *
+ * Blind principle: This module does not select targets or check crosshair
+ * alignment. It clicks whenever trigger conditions are met (attack key held,
+ * not mining, etc.), regardless of who or what is under the crosshair.
+ * Target selection and aim are handled by AimAssist.
  */
 object AutoClicker : Module("AutoClicker", Category.COMBAT) {
 
@@ -94,7 +99,9 @@ object AutoClicker : Module("AutoClicker", Category.COMBAT) {
 
     // Trigger conditions (Unified Engine)
     private val triggerOptions by triggerOptions("Trigger") {
-        onlyCurrentView = true
+        // onlyCurrentView: disabled. This module is blind — it does not check
+        // whether the crosshair is on a target. AimAssist handles aiming.
+        onlyCurrentView = false
         disableOnMine = false
         onlyOnClick = true
         chance = 100
@@ -107,7 +114,6 @@ object AutoClicker : Module("AutoClicker", Category.COMBAT) {
     private val conditionChecker = ConditionChecker
 
     // ========== 1.8 Timing State ==========
-    private var lastTargetId = -1
     private var pendingSecondClick = false
 
     // ====================================================================
@@ -136,7 +142,7 @@ object AutoClicker : Module("AutoClicker", Category.COMBAT) {
     }
 
     // ====================================================================
-    // 1.8 Logic (unchanged)
+    // 1.8 Logic
     // ====================================================================
 
     private fun onTick18(player: PlayerState, target: TargetState?) {
@@ -150,28 +156,25 @@ object AutoClicker : Module("AutoClicker", Category.COMBAT) {
             return
         }
 
-        // 3. Condition Check (Unified Engine)
-        if (target == null || !conditionChecker.check(triggerOptions, player, target)) return
+        // 3. Blind gate: pass null so target-identity conditions are skipped.
+        //    Only non-target conditions are checked (onlyOnClick, disableOnMine, etc.)
+        if (!conditionChecker.check(triggerOptions, player, null)) return
 
-        // 4. Target Change Detection — reset timing on new target
-        if (target.entityId != lastTargetId) {
-            lastTargetId = target.entityId
-        }
-
-        // 5. Calculate Effective CPS
-        val effectiveCps = when (mode) {
-            AutoClickerMode.NORMAL -> sampleCpsInRange()
-            AutoClickerMode.LEGIT -> {
-                val baseCps = sampleCpsInRange()
-                adjustCpsByDistance(baseCps, target.distance)
-            }
+        // 4. Calculate Effective CPS
+        //    LEGIT borrows target.distance for human-like CPS adjustment;
+        //    target null → falls back to base (no distance modifier).
+        val base = sampleCpsInRange()
+        val effectiveCps = if (mode == AutoClickerMode.LEGIT && target != null) {
+            adjustCpsByDistance(base, target.distance)
+        } else {
+            base
         }.coerceAtLeast(1)
 
-        // 6. Probability-based click (effectiveCps / 20.0 chance per tick)
+        // 5. Probability-based click (effectiveCps / 20.0 chance per tick)
         val clickChance = effectiveCps / 20.0
         if (NoiseProvider.nextUniform(0f, 1f) >= clickChance) return
 
-        // 7. Execute Click(s) via Bridge
+        // 6. Execute Click(s) via Bridge
         when (clickMode) {
             ClickMode.SINGLE -> {
                 EventBridge.triggerAttack()
@@ -208,7 +211,7 @@ object AutoClicker : Module("AutoClicker", Category.COMBAT) {
             if (!weaponFilter.matches(player.weaponType)) return
         }
 
-        // --- Delegate to core strategy ---
+        // --- Delegate to core strategy (blind: target = null) ---
         val config = CooldownClickConfig(
             cooldownThreshold = cooldownThreshold,
             critMode = critMode,
@@ -219,7 +222,7 @@ object AutoClicker : Module("AutoClicker", Category.COMBAT) {
         )
         val input = ClickInput(
             player = player,
-            target = target,
+            target = null, // 1.9+ is fully blind
             attackCooldown = attackCooldownProvider(),
             isFalling = player.motionY < 0.0 && !player.onGround
         )
@@ -252,21 +255,21 @@ object AutoClicker : Module("AutoClicker", Category.COMBAT) {
     }
 
     /**
-     * Adjust CPS based on target distance for LEGIT mode.
-     * - Distance > 6 blocks: reduce CPS by 2-5
-     * - Distance < 3 blocks: increase CPS by 3-5
+     * LEGIT mode: adjust base CPS by target distance (1.8 only).
+     * - Distance > jittered 2.6–3.0 blocks: reduce by 2–5
+     * - Distance < 1.5 blocks: increase by 3–5
      * - Otherwise: no change
      */
     private fun adjustCpsByDistance(baseCps: Int, distance: Float): Int {
         val lo = minCps.coerceAtMost(maxCps)
         val hi = maxCps.coerceAtLeast(minCps)
         val adjusted = when {
-            distance > 6.0f -> {
-                val reduction = NoiseProvider.nextUniform(2f, 5f).toInt()
+            distance > NoiseProvider.nextUniform(2.6f, 3.0f) -> {
+                val reduction = NoiseProvider.nextUniform(2f, 6f).toInt().coerceIn(2, 5)
                 baseCps - reduction
             }
-            distance < 3.0f -> {
-                val boost = NoiseProvider.nextUniform(3f, 5f).toInt()
+            distance < 1.5f -> {
+                val boost = NoiseProvider.nextUniform(3f, 6f).toInt().coerceIn(3, 5)
                 baseCps + boost
             }
             else -> baseCps
@@ -291,7 +294,6 @@ object AutoClicker : Module("AutoClicker", Category.COMBAT) {
         tickListener?.let { EventBridge.unregisterTickListener(it) }
         tickListener = null
         // Reset 1.8 state
-        lastTargetId = -1
         pendingSecondClick = false
         // Reset 1.9+ state
         state19.reset()

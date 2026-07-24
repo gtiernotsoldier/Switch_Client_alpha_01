@@ -78,18 +78,19 @@ object ConditionChecker {
             }
         }
 
-        // Look direction check (onLook = crosshair alignment)
-        if (options.onLook) {
-            if (target == null || !isLookingAt(player, target, options.lookAngleThreshold)) {
-                CoreLogger.debug("Condition blocked: onLook (not looking at target)")
+        // Look direction checks (onLook / onlyCurrentView share isLookingAt).
+        // Difference: onLook blocks when target is null; onlyCurrentView skips.
+        if (options.onLook || options.onlyCurrentView) {
+            if (target == null) {
+                if (options.onLook) {
+                    CoreLogger.debug("Condition blocked: onLook (no target)")
+                    return false
+                }
+            } else if (!isLookingAt(player, target, options.lookAngleThreshold)) {
+                val blocked = if (options.onLook) "onLook" else "onlyCurrentView"
+                CoreLogger.debug("Condition blocked: $blocked (not looking at target)")
                 return false
             }
-        }
-
-        // onlyCurrentView check — angle-based, no platform raytrace needed
-        if (options.onlyCurrentView && target != null && !isLookingAt(player, target, options.lookAngleThreshold)) {
-            CoreLogger.debug("Condition blocked: onlyCurrentView")
-            return false
         }
 
         // onlyOnClick check — player must be holding the attack key

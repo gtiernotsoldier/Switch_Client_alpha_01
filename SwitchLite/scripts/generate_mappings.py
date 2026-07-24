@@ -1,7 +1,25 @@
 #!/usr/bin/env python3
 """
-Generate mapping delta files by comparing Yarn/MCP mappings.
+Generate mapping delta files by comparing Yarn mapping dumps.
+
+BUILD-TIME TOOL: compares two structured Yarn mapping dumps and outputs
+an incremental delta. This is NOT related to the runtime flat-format
+mapping files (e.g. mappings/fabric/v1_20_1.json) used by MappingLoader.
+
+Input format (structured Yarn dump, per version):
+  {
+    "version": "1.20.2",
+    "classes": { ... },
+    "methods": { ... },
+    "fields":  { ... },
+    "packets": { ... }
+  }
+
+Input path: mappings/fabric/yarn/v{version}.json
+Output path: mappings/fabric/deltas/v{version}.json
+
 Usage: python generate_mappings.py <base_version> <target_version>
+Example: python generate_mappings.py 1.20.1 1.20.2
 """
 
 import json
@@ -10,8 +28,8 @@ import os
 from pathlib import Path
 
 def load_mapping(version: str) -> dict:
-    """Load base mapping file for a version."""
-    mapping_path = Path(__file__).parent.parent / "mappings" / "fabric" / f"v{version}.json"
+    """Load structured Yarn mapping dump for a version."""
+    mapping_path = Path(__file__).parent.parent / "mappings" / "fabric" / "yarn" / f"v{version}.json"
     if not mapping_path.exists():
         raise FileNotFoundError(f"Mapping file not found: {mapping_path}")
     with open(mapping_path, 'r') as f:

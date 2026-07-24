@@ -49,10 +49,9 @@ object AutoClicker : Module("AutoClicker", Category.COMBAT) {
 
     /**
      * Combat version. Determines which config and logic path to use.
-     * The version-specific adapter (Forge 1.8.9 / Fabric 1.21) should
-     * set this during bootstrap.
+     * GUI-visible; adapter bootstrap sets the initial value.
      */
-    var combatVersion: CombatVersion = CombatVersion.V1_8
+    var combatVersion by enum("CombatVersion", CombatVersion.V1_8)
 
     /**
      * Provider for the player's attack cooldown (0.0–1.0).
@@ -84,14 +83,14 @@ object AutoClicker : Module("AutoClicker", Category.COMBAT) {
     /** Auto-stop sprinting before crit, restore after. Only affects ON and SMART. */
     private val critStopSprint by boolean("CritStopSprint", true)
 
-    /** 1.9+ click mode: NORMAL (instant) or LEGIT (random 1-3t delay). */
-    private val mode19 by enum("Mode19", CooldownClickMode.NORMAL)
-
     /** Weapon filter: only click when holding a matching weapon. */
     private val weaponFilter by enum("WeaponFilter", WeaponFilter.ANY)
 
     /** Behaviour when player is using an item (blocking, eating, etc.). */
     private val onItemUse by enum("OnItemUse", OnItemUse.WAIT)
+
+    /** 1.9+ click mode: NORMAL (instant) or LEGIT (random 1-3t delay). */
+    private val mode19 by enum("Mode19", CooldownClickMode.NORMAL)
 
     // ====================================================================
     // Shared Configuration

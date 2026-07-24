@@ -200,9 +200,6 @@ object AutoClicker : Module("AutoClicker", Category.COMBAT) {
                     // continue to weapon filter + strategy
                 }
                 "Ignore" -> { /* continue */ }
-                else -> {
-                    println("[AutoClicker] Unknown onItemUse: $onItemUse, treating as Ignore")
-                }
             }
         }
 
@@ -212,10 +209,7 @@ object AutoClicker : Module("AutoClicker", Category.COMBAT) {
                 "Sword" -> player.weaponType == WeaponType.SWORD
                 "Axe" -> player.weaponType == WeaponType.AXE
                 "Sword&Axe" -> player.weaponType == WeaponType.SWORD || player.weaponType == WeaponType.AXE
-                else -> {
-                    println("[AutoClicker] Unknown weaponFilter: $weaponFilter, passing through")
-                    true
-                }
+                else -> true
             }
             if (!passes) return
         }
@@ -225,18 +219,12 @@ object AutoClicker : Module("AutoClicker", Category.COMBAT) {
             "On" -> CritMode.ON
             "Smart" -> CritMode.SMART
             "Off" -> CritMode.OFF
-            else -> {
-                println("[AutoClicker] Unknown critMode: $critMode, falling back to Off")
-                CritMode.OFF
-            }
+            else -> CritMode.OFF
         }
         val mode19Enum = when (mode19) {
             "Legit" -> CooldownClickMode.LEGIT
             "Normal" -> CooldownClickMode.NORMAL
-            else -> {
-                println("[AutoClicker] Unknown mode19: $mode19, falling back to Normal")
-                CooldownClickMode.NORMAL
-            }
+            else -> CooldownClickMode.NORMAL
         }
         val config = CooldownClickConfig(
             cooldownThreshold = cooldownThreshold,

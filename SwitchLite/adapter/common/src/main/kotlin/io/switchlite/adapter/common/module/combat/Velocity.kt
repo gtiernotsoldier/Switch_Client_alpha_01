@@ -70,10 +70,7 @@ object Velocity : Module("Velocity", Category.COMBAT) {
             "Legit" -> handleLegit(ctx)
             "Delay" -> handleDelay(ctx)
             "Click" -> handleClick(ctx)
-            else -> {
-                println("[Velocity] Unknown mode: $mode, falling back to Legit")
-                handleLegit(ctx)
-            }
+            else -> handleLegit(ctx)
         }
     }
 

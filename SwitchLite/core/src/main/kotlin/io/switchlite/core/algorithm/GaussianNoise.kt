@@ -11,7 +11,7 @@ class GaussianNoise(
     private val mean: Float = 0f,
     private val stdDev: Float = 1f,
     private val random: Random = Random
-) : NoiseProvider {
+) : NoiseGenerator {
     
     private var spare: Float? = null
     

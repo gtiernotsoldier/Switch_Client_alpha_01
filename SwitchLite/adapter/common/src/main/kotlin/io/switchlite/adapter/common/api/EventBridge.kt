@@ -31,6 +31,7 @@ object EventBridge {
 
     // ========== Tick ==========
     private val tickListeners = mutableListOf<(PlayerState, TargetState?) -> Unit>()
+    private val simpleTickListeners = mutableListOf<(Int) -> Unit>()
     private var tickCounter = 0
 
     fun registerTickListener(listener: (PlayerState, TargetState?) -> Unit) {
@@ -41,9 +42,18 @@ object EventBridge {
         tickListeners.remove(listener)
     }
 
+    fun registerTickListener(listener: (Int) -> Unit) {
+        simpleTickListeners.add(listener)
+    }
+
+    fun unregisterTickListener(listener: (Int) -> Unit) {
+        simpleTickListeners.remove(listener)
+    }
+
     fun onTick(player: PlayerState, target: TargetState?) {
         tickCounter++
         tickListeners.forEach { it(player, target) }
+        simpleTickListeners.forEach { it(tickCounter) }
     }
 
     fun getCurrentTick(): Int = tickCounter
@@ -160,10 +170,12 @@ object EventBridge {
     fun reset() {
         velocityListener = null
         tickListeners.clear()
+        simpleTickListeners.clear()
         rotationSetter = null
         motionApplier = null
         sprintSetter = null
         releaseUsingItemHandler = null
+        attackTrigger = null
         keyListeners.clear()
         tickCounter = 0
     }

@@ -22,7 +22,9 @@ data class TriggerOptions(
     val maxDistance: Float = Float.MAX_VALUE,
     val chance: Int = 100,
     val delayTicks: Int = 0,
-    val delayMs: Int = 0
+    val delayMs: Int = 0,
+    /** Angle threshold (degrees) for "looking at target" checks. Configurable per anti-cheat strategy pack. */
+    val lookAngleThreshold: Float = 30.0f
 ) {
     class Builder {
         var onlyGround: Boolean = false
@@ -43,6 +45,7 @@ data class TriggerOptions(
         var chance: Int = 100
         var delayTicks: Int = 0
         var delayMs: Int = 0
+        var lookAngleThreshold: Float = 30.0f
 
         fun build(): TriggerOptions = TriggerOptions(
             onlyGround = onlyGround,
@@ -62,7 +65,8 @@ data class TriggerOptions(
             maxDistance = maxDistance,
             chance = chance,
             delayTicks = delayTicks,
-            delayMs = delayMs
+            delayMs = delayMs,
+            lookAngleThreshold = lookAngleThreshold
         )
     }
 }

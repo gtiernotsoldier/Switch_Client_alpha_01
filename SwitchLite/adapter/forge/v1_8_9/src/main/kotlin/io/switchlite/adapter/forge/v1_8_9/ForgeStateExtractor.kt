@@ -14,6 +14,7 @@ import net.minecraft.entity.monster.EntityMob
 import net.minecraft.entity.player.EntityPlayer
 import net.minecraft.item.ItemSword
 import net.minecraft.item.ItemAxe
+import org.lwjgl.input.Mouse
 import net.minecraft.util.MovingObjectPosition
 import net.minecraft.util.AxisAlignedBB
 
@@ -51,8 +52,9 @@ object ForgeStateExtractor : IStateExtractor {
         val isMoving = (motionX != 0.0 || motionZ != 0.0)
         val isMovingForward = moveForward > 0f
 
-        // Attack key state: keyBindAttack.isKeyDown in 1.8.9
-        val isAttackKeyDown = mc.gameSettings.keyBindAttack.isKeyDown
+        // Physical mouse left button — decoupled from keyBindAttack to avoid
+        // self-pollution when AutoClicker sets keyBindAttack.pressed = true
+        val isAttackKeyDown = Mouse.isButtonDown(0)
 
         return PlayerState(
             name = player.name ?: "",

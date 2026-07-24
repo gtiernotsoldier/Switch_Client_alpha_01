@@ -44,8 +44,19 @@ public class MappingContext {
                 System.err.println("[MappingContext] No mapping found for key: " + k);
                 return null;
             }
-            // TODO: Parse mapping and load class
-            return null; // Placeholder
+            try {
+                @SuppressWarnings("unchecked")
+                Map<String, String> entry = (Map<String, String>) mapping;
+                String className = entry.get("class");
+                if (className == null) {
+                    System.err.println("[MappingContext] Missing 'class' in mapping for key: " + k);
+                    return null;
+                }
+                return Class.forName(className);
+            } catch (ClassNotFoundException e) {
+                System.err.println("[MappingContext] Class not found for key " + k + ": " + e.getMessage());
+                return null;
+            }
         });
     }
     
@@ -61,8 +72,45 @@ public class MappingContext {
                 System.err.println("[MappingContext] No method mapping found for key: " + k);
                 return null;
             }
-            // TODO: Parse mapping and resolve method handle
-            return null; // Placeholder
+            try {
+                @SuppressWarnings("unchecked")
+                Map<String, String> entry = (Map<String, String>) mapping;
+                String className = entry.get("class");
+                String methodName = entry.get("method");
+                if (className == null || methodName == null) {
+                    System.err.println("[MappingContext] Missing 'class' or 'method' in mapping for key: " + k);
+                    return null;
+                }
+                Class<?> clazz = Class.forName(className);
+                // Search declared methods (including private) first, then public inherited
+                Method found = null;
+                for (Method m : clazz.getDeclaredMethods()) {
+                    if (m.getName().equals(methodName)) {
+                        found = m;
+                        break;
+                    }
+                }
+                if (found == null) {
+                    for (Method m : clazz.getMethods()) {
+                        if (m.getName().equals(methodName)) {
+                            found = m;
+                            break;
+                        }
+                    }
+                }
+                if (found == null) {
+                    System.err.println("[MappingContext] Method '" + methodName + "' not found in " + className + " for key: " + k);
+                    return null;
+                }
+                found.setAccessible(true);
+                return MethodHandles.lookup().unreflect(found);
+            } catch (ClassNotFoundException e) {
+                System.err.println("[MappingContext] Class not found for key " + k + ": " + e.getMessage());
+                return null;
+            } catch (IllegalAccessException e) {
+                System.err.println("[MappingContext] Cannot access method for key " + k + ": " + e.getMessage());
+                return null;
+            }
         });
     }
     
@@ -78,8 +126,26 @@ public class MappingContext {
                 System.err.println("[MappingContext] No field mapping found for key: " + k);
                 return null;
             }
-            // TODO: Parse mapping and resolve field
-            return null; // Placeholder
+            try {
+                @SuppressWarnings("unchecked")
+                Map<String, String> entry = (Map<String, String>) mapping;
+                String className = entry.get("class");
+                String fieldName = entry.get("field");
+                if (className == null || fieldName == null) {
+                    System.err.println("[MappingContext] Missing 'class' or 'field' in mapping for key: " + k);
+                    return null;
+                }
+                Class<?> clazz = Class.forName(className);
+                Field field = clazz.getDeclaredField(fieldName);
+                field.setAccessible(true);
+                return field;
+            } catch (ClassNotFoundException e) {
+                System.err.println("[MappingContext] Class not found for key " + k + ": " + e.getMessage());
+                return null;
+            } catch (NoSuchFieldException e) {
+                System.err.println("[MappingContext] Field '" + fieldName + "' not found in " + className + " for key: " + k);
+                return null;
+            }
         });
     }
     
@@ -121,7 +187,7 @@ public class MappingContext {
         try {
             MethodHandle handle = getMethod(key);
             if (handle == null) return null;
-            return handle.invokeWithArguments(args);
+            return handle.bindTo(obj).invokeWithArguments(args);
         } catch (Throwable e) {
             System.err.println("[MappingContext] Failed to invoke method for key: " + key);
             return null;

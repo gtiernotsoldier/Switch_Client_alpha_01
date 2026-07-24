@@ -84,8 +84,9 @@ class CooldownClickStrategy : ClickStrategy<CooldownClickConfig, CooldownClickSt
             return driveCritPhase(config, state, input)
         }
 
-        // 3. Target + condition check
-        if (target == null || !ConditionChecker.check(config.triggerOptions, player, target)) {
+        // 3. Condition check (blind: target may be null;
+        //    ConditionChecker skips target-based conditions when null)
+        if (!ConditionChecker.check(config.triggerOptions, player, target)) {
             return ClickResult.Skip
         }
 
@@ -274,7 +275,7 @@ class CooldownClickStrategy : ClickStrategy<CooldownClickConfig, CooldownClickSt
     // ---- Helpers ----
 
     private fun sampleLegitDelay(): Int {
-        return NoiseProvider.nextUniform(1f, 3f).toInt().coerceIn(1, 3)
+        return NoiseProvider.nextUniform(1f, 4f).toInt().coerceIn(1, 3)
     }
 
     private fun resetCritState(state: CritState) {

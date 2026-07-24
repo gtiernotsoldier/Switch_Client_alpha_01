@@ -49,8 +49,14 @@ object FabricStateExtractor : IStateExtractor {
         val isMoving = (motionX != 0.0 || motionZ != 0.0)
         val isMovingForward = moveForward > 0f
 
-        // Attack key state: keyBindAttack.isPressed
-        val isAttackKeyDown = mc.options.attackKey.isPressed
+        // Physical mouse left button via GLFW — decoupled from attackKey to avoid
+        // self-pollution when AutoClicker sets keyBindAttack.pressed = true
+        val isAttackKeyDown = try {
+            val handle = mc.window.handle
+            org.lwjgl.glfw.GLFW.glfwGetMouseButton(handle, org.lwjgl.glfw.GLFW.GLFW_MOUSE_BUTTON_LEFT) == org.lwjgl.glfw.GLFW.GLFW_PRESS
+        } catch (_: Exception) {
+            false
+        }
 
         return PlayerState(
             name = player.name ?: "",

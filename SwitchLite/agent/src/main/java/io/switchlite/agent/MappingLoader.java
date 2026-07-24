@@ -5,6 +5,9 @@ import java.nio.file.*;
 import java.util.HashMap;
 import java.util.Map;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
 /**
  * Mapping file loader for cross-version compatibility
  * Loads JSON mapping files based on platform and version
@@ -63,13 +66,21 @@ public class MappingLoader {
         }
     }
     
+    private static final ObjectMapper MAPPER = new ObjectMapper();
+
     /**
-     * Simple JSON parser (stub - use proper library in production)
+     * Parse a JSON mapping file into a flat Map.
+     * Expected format: { "key": { "class": "...", "field": "..." } }
      */
+    @SuppressWarnings("unchecked")
     private static Map<String, Object> parseJsonFile(File file) throws IOException {
-        // TODO: Implement proper JSON parsing with Jackson or Gson
-        System.out.println("[MappingLoader] Parsing JSON: " + file.getName());
-        return new HashMap<>(); // Placeholder
+        System.out.println("[MappingLoader] Parsing JSON: " + file.getAbsolutePath());
+        Map<String, Object> result = MAPPER.readValue(
+            file,
+            new TypeReference<Map<String, Object>>() {}
+        );
+        System.out.println("[MappingLoader] Parsed " + result.size() + " entries from " + file.getName());
+        return result;
     }
     
     /**

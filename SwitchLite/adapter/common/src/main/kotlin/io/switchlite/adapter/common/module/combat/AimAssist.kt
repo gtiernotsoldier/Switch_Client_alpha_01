@@ -5,7 +5,6 @@ import io.switchlite.core.algorithm.RotationCalculator
 import io.switchlite.core.condition.ConditionChecker
 import io.switchlite.core.model.PlayerState
 import io.switchlite.core.model.TargetState
-import io.switchlite.core.option.AimMode
 import io.switchlite.core.util.Vec2
 import io.switchlite.adapter.common.api.EventBridge
 import io.switchlite.adapter.common.module.Module
@@ -13,7 +12,7 @@ import io.switchlite.adapter.common.module.Category
 import io.switchlite.adapter.common.option.float
 import io.switchlite.adapter.common.option.int
 import io.switchlite.adapter.common.option.boolean
-import io.switchlite.adapter.common.option.enum
+import io.switchlite.adapter.common.option.choices
 import io.switchlite.adapter.common.option.triggerOptions
 
 /**
@@ -53,8 +52,8 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
         chance = 100
     }
 
-    // Mode: LEGIT (box edge) vs NORMAL (center/random)
-    private val mode by enum("Mode", AimMode.LEGIT)
+    // Mode: Legit (box edge) vs Normal (center/random)
+    private val mode by choices("Mode", arrayOf("Legit", "Normal"))
 
     // ========== Runtime Dependencies (Injected by Core) ==========
     private val rotationCalculator = RotationCalculator
@@ -115,14 +114,14 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
 
         // 5. Target Point Calculation
         val targetPoint = when (mode) {
-            AimMode.LEGIT -> {
+            "Legit" -> {
                 // Legit Mode: Only correct if outside hitbox, pull to edge
                 if (rotationCalculator.isInsideHitbox(player.position, player.rotation, target.hitbox)) {
                     return // Inside box, do nothing (Human-like hesitation)
                 }
                 rotationCalculator.getClosestBoxEdge(player.position, player.rotation, target.hitbox)
             }
-            AimMode.NORMAL -> {
+            else -> {
                 // Normal Mode: Lock to center or random point within box
                 rotationCalculator.calculateTargetPoint(player.position, target.hitbox, lockOnCrosshair)
             }

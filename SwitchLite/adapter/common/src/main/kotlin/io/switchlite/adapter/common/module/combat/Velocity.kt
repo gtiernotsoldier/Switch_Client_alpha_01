@@ -11,14 +11,14 @@ import io.switchlite.adapter.common.module.Category
 import io.switchlite.adapter.common.option.boolean
 import io.switchlite.adapter.common.option.float
 import io.switchlite.adapter.common.option.int
-import io.switchlite.adapter.common.option.enum
+import io.switchlite.adapter.common.option.choices
 import io.switchlite.adapter.common.option.triggerOptions
 import io.switchlite.adapter.common.option.probability
 
 object Velocity : Module("Velocity", Category.COMBAT) {
 
     // ========== 模式 ==========
-    private val mode by enum("Mode", VelocityMode.LEGIT)
+    private val mode by choices("Mode", arrayOf("Legit", "Delay", "Click"))
 
     // ========== Legit 模式：水平（最大/最小分开）==========
     private val horizontalMin by float("HorizontalMin", 0.4f, 0.0f..1.0f)
@@ -67,9 +67,10 @@ object Velocity : Module("Velocity", Category.COMBAT) {
     // ========== 入口方法 ==========
     fun onVelocityPacket(ctx: VelocityContext): PlatformCommand {
         return when (mode) {
-            VelocityMode.LEGIT -> handleLegit(ctx)
-            VelocityMode.DELAY -> handleDelay(ctx)
-            VelocityMode.CLICK -> handleClick(ctx)
+            "Legit" -> handleLegit(ctx)
+            "Delay" -> handleDelay(ctx)
+            "Click" -> handleClick(ctx)
+            else -> handleLegit(ctx)
         }
     }
 
@@ -212,5 +213,3 @@ object Velocity : Module("Velocity", Category.COMBAT) {
         }
     }
 }
-
-enum class VelocityMode { LEGIT, DELAY, CLICK }

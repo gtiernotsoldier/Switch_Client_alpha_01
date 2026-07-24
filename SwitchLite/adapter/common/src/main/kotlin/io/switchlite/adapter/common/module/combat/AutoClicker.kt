@@ -10,9 +10,7 @@ import io.switchlite.core.strategy.click.CooldownClickConfig
 import io.switchlite.core.strategy.click.CooldownClickMode
 import io.switchlite.core.strategy.click.CooldownClickStrategy
 import io.switchlite.core.strategy.click.CritMode
-import io.switchlite.core.strategy.click.WeaponFilter
 import io.switchlite.core.strategy.click.WeaponType
-import io.switchlite.core.strategy.click.OnItemUse
 import io.switchlite.adapter.common.api.EventBridge
 import io.switchlite.adapter.common.module.Module
 import io.switchlite.adapter.common.module.Category

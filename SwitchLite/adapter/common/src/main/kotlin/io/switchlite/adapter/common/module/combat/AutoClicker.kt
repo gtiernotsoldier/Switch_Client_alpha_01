@@ -4,7 +4,6 @@ import io.switchlite.core.algorithm.NoiseProvider
 import io.switchlite.core.condition.ConditionChecker
 import io.switchlite.core.model.PlayerState
 import io.switchlite.core.model.TargetState
-import io.switchlite.core.option.ClickMode
 import io.switchlite.core.strategy.click.ClickInput
 import io.switchlite.core.strategy.click.ClickResult
 import io.switchlite.core.strategy.click.CooldownClickConfig
@@ -12,22 +11,23 @@ import io.switchlite.core.strategy.click.CooldownClickMode
 import io.switchlite.core.strategy.click.CooldownClickStrategy
 import io.switchlite.core.strategy.click.CritMode
 import io.switchlite.core.strategy.click.WeaponFilter
+import io.switchlite.core.strategy.click.WeaponType
 import io.switchlite.core.strategy.click.OnItemUse
 import io.switchlite.adapter.common.api.EventBridge
 import io.switchlite.adapter.common.module.Module
 import io.switchlite.adapter.common.module.Category
 import io.switchlite.adapter.common.option.int
 import io.switchlite.adapter.common.option.boolean
-import io.switchlite.adapter.common.option.enum
+import io.switchlite.adapter.common.option.choices
 import io.switchlite.adapter.common.option.float
 import io.switchlite.adapter.common.option.triggerOptions
 
 /**
  * AutoClicker Module
  *
- * Supports two combat paradigms via [CombatVersion]:
- * - **V1_8**: CPS-based clicking (no cooldown). 1.7.10 / 1.8.9.
- * - **V1_9_PLUS**: Cooldown-bar based clicking (1.9+).
+ * Supports two combat paradigms via combatVersion setting:
+ * - **1.8**: CPS-based clicking (no cooldown). 1.7.10 / 1.8.9.
+ * - **1.9+**: Cooldown-bar based clicking (1.9+).
  *
  * Architecture Compliance:
  * 1. Pure Logic: No Minecraft/Forge/Fabric imports.
@@ -51,7 +51,7 @@ object AutoClicker : Module("AutoClicker", Category.COMBAT) {
      * Combat version. Determines which config and logic path to use.
      * GUI-visible; adapter bootstrap sets the initial value.
      */
-    var combatVersion by enum("CombatVersion", CombatVersion.V1_8)
+    var combatVersion by choices("CombatVersion", arrayOf("1.8", "1.9+"))
 
     /**
      * Provider for the player's attack cooldown (0.0–1.0).
@@ -65,10 +65,10 @@ object AutoClicker : Module("AutoClicker", Category.COMBAT) {
     private val minCps by int("MinCPS", 8, 0..20, "cps")
 
     // Click mode: SINGLE or DOUBLE
-    private val clickMode by enum("ClickMode", ClickMode.SINGLE)
+    private val clickMode by choices("ClickMode", arrayOf("Single", "Double"))
 
     // Mode: NORMAL or LEGIT (dynamic CPS based on distance)
-    private val mode by enum("Mode", AutoClickerMode.NORMAL)
+    private val mode by choices("Mode", arrayOf("Normal", "Legit"))
 
     // ====================================================================
     // 1.9+ Configuration
@@ -77,20 +77,20 @@ object AutoClicker : Module("AutoClicker", Category.COMBAT) {
     /** Cooldown threshold: 50%-100% of the cooldown bar. Default 100%. */
     private val cooldownThreshold by float("CooldownThreshold", 1.0f, 0.5f..1.0f, "%")
 
-    /** Crit mode: OFF (no crit) / ON (every hit crit) / SMART (crit if possible). */
-    private val critMode by enum("CritMode", CritMode.OFF)
+    /** Crit mode: Off / On / Smart */
+    private val critMode by choices("CritMode", arrayOf("Off", "On", "Smart"))
 
-    /** Auto-stop sprinting before crit, restore after. Only affects ON and SMART. */
+    /** Auto-stop sprinting before crit, restore after. Only affects On and Smart. */
     private val critStopSprint by boolean("CritStopSprint", true)
 
     /** Weapon filter: only click when holding a matching weapon. */
-    private val weaponFilter by enum("WeaponFilter", WeaponFilter.ANY)
+    private val weaponFilter by choices("WeaponFilter", arrayOf("Any", "Sword", "Axe", "Sword&Axe"))
 
     /** Behaviour when player is using an item (blocking, eating, etc.). */
-    private val onItemUse by enum("OnItemUse", OnItemUse.WAIT)
+    private val onItemUse by choices("OnItemUse", arrayOf("Wait", "Stop", "Ignore"))
 
-    /** 1.9+ click mode: NORMAL (instant) or LEGIT (random 1-3t delay). */
-    private val mode19 by enum("Mode19", CooldownClickMode.NORMAL)
+    /** 1.9+ click mode: Normal (instant) or Legit (random 1-3t delay). */
+    private val mode19 by choices("Mode19", arrayOf("Normal", "Legit"))
 
     // ====================================================================
     // Shared Configuration
@@ -135,8 +135,8 @@ object AutoClicker : Module("AutoClicker", Category.COMBAT) {
      */
     fun onClientTick(player: PlayerState, target: TargetState?) {
         when (combatVersion) {
-            CombatVersion.V1_8 -> onTick18(player, target)
-            CombatVersion.V1_9_PLUS -> onTick19(player, target)
+            "1.8" -> onTick18(player, target)
+            "1.9+" -> onTick19(player, target)
         }
     }
 
@@ -163,7 +163,7 @@ object AutoClicker : Module("AutoClicker", Category.COMBAT) {
         //    LEGIT borrows target.distance for human-like CPS adjustment;
         //    target null → falls back to base (no distance modifier).
         val base = sampleCpsInRange()
-        val effectiveCps = if (mode == AutoClickerMode.LEGIT && target != null) {
+        val effectiveCps = if (mode == "Legit" && target != null) {
             adjustCpsByDistance(base, target.distance)
         } else {
             base
@@ -175,10 +175,10 @@ object AutoClicker : Module("AutoClicker", Category.COMBAT) {
 
         // 6. Execute Click(s) via Bridge
         when (clickMode) {
-            ClickMode.SINGLE -> {
+            "Single" -> {
                 EventBridge.triggerAttack()
             }
-            ClickMode.DOUBLE -> {
+            "Double" -> {
                 // First click immediately, second click delayed to next tick
                 EventBridge.triggerAttack()
                 pendingSecondClick = true
@@ -196,26 +196,38 @@ object AutoClicker : Module("AutoClicker", Category.COMBAT) {
         // 1. Item use check (covers shield blocking, bow drawing, eating, drinking, etc.)
         if (player.isUsingItem) {
             when (onItemUse) {
-                OnItemUse.WAIT -> return
-                OnItemUse.STOP -> {
+                "Wait" -> return
+                "Stop" -> {
                     EventBridge.releaseUsingItem()
                     // continue to weapon filter + strategy
                 }
-                OnItemUse.IGNORE -> { /* continue */ }
+                "Ignore" -> { /* continue */ }
             }
         }
 
         // 2. Weapon filter check
-        if (weaponFilter != WeaponFilter.ANY) {
-            if (!weaponFilter.matches(player.weaponType)) return
+        if (weaponFilter != "Any") {
+            val passes = when (weaponFilter) {
+                "Sword" -> player.weaponType == WeaponType.SWORD
+                "Axe" -> player.weaponType == WeaponType.AXE
+                "Sword&Axe" -> player.weaponType == WeaponType.SWORD || player.weaponType == WeaponType.AXE
+                else -> true
+            }
+            if (!passes) return
         }
 
         // --- Delegate to core strategy (blind: target = null) ---
+        val critModeEnum = when (critMode) {
+            "On" -> CritMode.ON
+            "Smart" -> CritMode.SMART
+            else -> CritMode.OFF
+        }
+        val mode19Enum = if (mode19 == "Legit") CooldownClickMode.LEGIT else CooldownClickMode.NORMAL
         val config = CooldownClickConfig(
             cooldownThreshold = cooldownThreshold,
-            critMode = critMode,
+            critMode = critModeEnum,
             critStopSprint = critStopSprint,
-            cooldownMode = mode19,
+            cooldownMode = mode19Enum,
             disableOnBlock = disableOnBlock,
             triggerOptions = triggerOptions
         )
@@ -298,24 +310,3 @@ object AutoClicker : Module("AutoClicker", Category.COMBAT) {
         state19.reset()
     }
 }
-
-// ====================================================================
-// Enums
-// ====================================================================
-
-/**
- * Combat version — determines which click paradigm to use.
- */
-enum class CombatVersion {
-    /** 1.8 and below: CPS-based, no cooldown. */
-    V1_8,
-    /** 1.9+: cooldown bar governs attack speed. */
-    V1_9_PLUS
-}
-
-/**
- * AutoClicker operating mode.
- * NORMAL: fixed random CPS within range.
- * LEGIT: dynamic CPS adjusted by target distance.
- */
-enum class AutoClickerMode { NORMAL, LEGIT }

@@ -52,6 +52,18 @@ fun <T : Enum<T>> enum(
 }
 
 /**
+ * Choices option delegate — string-based selectable list.
+ * The first element in [options] is the default value.
+ * Strings double as GUI display names (no separate mapping needed).
+ */
+fun choices(
+    name: String,
+    options: Array<String>
+): ReadOnlyProperty<Any?, String> {
+    return ReadOnlyProperty { _, _ -> options[0] }
+}
+
+/**
  * Trigger options delegate builder.
  */
 fun triggerOptions(

@@ -18,6 +18,7 @@ import kotlin.math.sqrt
  * @property hurtTimeMax Only activate when target's hurtTime <= this value.
  * @property delayTicks Ticks to wait after attack before restoring sprint.
  * @property cooldownTicks Minimum ticks between activations.
+ * @property sprintBaseSpeed Platform-specific sprint base speed (e.g. 0.286 for 1.8.9). Injected by adapter.
  */
 data class KeepSprintConfig(
     val mode: String,
@@ -30,16 +31,15 @@ data class KeepSprintConfig(
     val hurtTimeMax: Int,
     val delayTicks: Int,
     val cooldownTicks: Int,
-    /** Platform-specific sprint base speed (e.g. 0.286 for 1.8.9). Injected by adapter. */
     val sprintBaseSpeed: Double = 0.286
 )
 
 /**
  * Result of a KeepSprint decision.
- * The adapter maps this to platform actions (set sprinting, modify motion).
+ * The adapter maps this to platform actions (set sprinting, apply motion).
  */
 sealed class KeepSprintResult {
-    /** Restore sprint and apply this motion vector. */
+    /** Restore sprint and apply this motion vector (null = skip motion, just set flag). */
     data class Restore(val keepPercentage: Float, val motion: Vec3?) : KeepSprintResult()
 
     /** Delayed restore — store the percentage, adapter applies after delayTicks. */
@@ -66,22 +66,19 @@ class KeepSprintState(
  * Input for KeepSprint strategy execution.
  * Pure data — the adapter assembles this from platform state.
  *
- * @property isSprinting Whether the player is currently sprinting.
- * @property isAttackKeyDown Whether the player is holding left click.
+ * @property sprintCancelledTick The tick when sprint was cancelled by an attack, or null.
  * @property targetHurtTime The current target's hurtTime (0-10), or null if no target.
  * @property targetDistance Horizontal distance to target in blocks, or null if no target.
  * @property currentTick Current game tick.
- * @property horizontalSpeed Player's current horizontal speed (for optional motion override).
- * @property motionX Player's current motionX.
+ * @property motionX Player's current motionX (for core-layer motion computation).
+ * @property motionY Player's current motionY.
  * @property motionZ Player's current motionZ.
  */
 data class KeepSprintInput(
-    val isSprinting: Boolean,
-    val isAttackKeyDown: Boolean,
+    val sprintCancelledTick: Int?,
     val targetHurtTime: Int?,
     val targetDistance: Float?,
     val currentTick: Int,
-    val horizontalSpeed: Double,
     val motionX: Double,
     val motionY: Double,
     val motionZ: Double
@@ -110,9 +107,9 @@ object KeepSprintStrategy : Strategy<KeepSprintConfig, KeepSprintState, KeepSpri
             }
         }
 
-        // 2. Only activate when player is attacking and was sprinting
-        if (!ksInput.isAttackKeyDown) return KeepSprintResult.Pass
-        if (!ksInput.isSprinting) return KeepSprintResult.Pass
+        // 2. Only activate within the sprint-cancel window (max 10 ticks, matching MC hurtTime range)
+        val cancelAge = ksInput.sprintCancelledTick?.let { ksInput.currentTick - it } ?: return KeepSprintResult.Pass
+        if (cancelAge > 10) return KeepSprintResult.Pass
 
         // 3. HurtTime check
         val hurtTime = ksInput.targetHurtTime ?: return KeepSprintResult.Pass
@@ -131,7 +128,7 @@ object KeepSprintStrategy : Strategy<KeepSprintConfig, KeepSprintState, KeepSpri
 
         // 6. Calculate keep percentage based on mode
         val keepPercentage = when (config.mode) {
-            "Legit" -> calculateLegitKeep(config, ksInput.targetDistance)
+            "Legit" -> LegitKeepSprintStrategy.calculateKeep(config, ksInput.targetDistance)
             else -> config.horizontalKeep  // Normal
         }
 
@@ -160,26 +157,5 @@ object KeepSprintStrategy : Strategy<KeepSprintConfig, KeepSprintState, KeepSpri
         val targetSpeed = config.sprintBaseSpeed * keepPercentage
         val scale = targetSpeed / currentSpeed
         return Vec3(input.motionX * scale, input.motionY, input.motionZ * scale)
-    }
-
-    /**
-     * Legit mode: interpolate keep percentage based on distance to target.
-     *
-     * - distance <= minReach → minKeep
-     * - distance >= maxReach → maxKeep
-     * - in between → linear interpolation
-     * - no target → fall back to minKeep (conservative)
-     */
-    internal fun calculateLegitKeep(config: KeepSprintConfig, distance: Float?): Float {
-        val d = distance ?: return config.minKeep
-
-        return when {
-            d <= config.minReach -> config.minKeep
-            d >= config.maxReach -> config.maxKeep
-            else -> {
-                val t = (d - config.minReach) / (config.maxReach - config.minReach)
-                config.minKeep + t * (config.maxKeep - config.minKeep)
-            }
-        }
     }
 }

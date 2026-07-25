@@ -10,7 +10,6 @@ import io.switchlite.core.strategy.keepsprint.KeepSprintConfig
 import io.switchlite.core.strategy.keepsprint.KeepSprintInput
 import io.switchlite.core.strategy.keepsprint.KeepSprintState
 import io.switchlite.core.strategy.keepsprint.KeepSprintStrategy
-import kotlin.math.sqrt
 
 /**
  * KeepSprint — maintains sprint speed when attacking.
@@ -55,6 +54,8 @@ object KeepSprint : Module("KeepSprint", Category.COMBAT) {
 
     // ========== Internal State ==========
     private val strategyState = KeepSprintState()
+    private var prevSprinting = false
+    private var sprintCancelledTick: Int? = null
     private val tickListener: (PlayerState, TargetState?) -> Unit = { p, t -> onTick(p, t) }
 
     // ========== Config Snapshot ==========
@@ -77,14 +78,20 @@ object KeepSprint : Module("KeepSprint", Category.COMBAT) {
      * Build strategy input from current player/target state.
      */
     private fun buildInput(player: PlayerState, target: TargetState?): KeepSprintInput {
-        val hSpeed = sqrt(player.motionX * player.motionX + player.motionZ * player.motionZ)
+        val now = EventBridge.getCurrentTick()
+        if (prevSprinting && !player.isSprinting && player.isAttackKeyDown) {
+            sprintCancelledTick = now
+        }
+        // Expire window if older than 10 ticks
+        if (sprintCancelledTick != null && now - sprintCancelledTick!! > 10) {
+            sprintCancelledTick = null
+        }
+        prevSprinting = player.isSprinting
         return KeepSprintInput(
-            isSprinting = player.isSprinting,
-            isAttackKeyDown = player.isAttackKeyDown,
+            sprintCancelledTick = sprintCancelledTick,
             targetHurtTime = target?.hurtTime,
             targetDistance = target?.distance,
-            currentTick = EventBridge.getCurrentTick(),
-            horizontalSpeed = hSpeed,
+            currentTick = now,
             motionX = player.motionX,
             motionY = player.motionY,
             motionZ = player.motionZ
@@ -92,7 +99,7 @@ object KeepSprint : Module("KeepSprint", Category.COMBAT) {
     }
 
     /**
-     * Apply restore: set sprint flag and apply motion computed by Core strategy.
+     * Apply restore: set sprint flag and apply motion computed by core strategy.
      */
     private fun applyRestore(result: io.switchlite.core.strategy.keepsprint.KeepSprintResult.Restore) {
         EventBridge.setSprinting(true)
@@ -132,6 +139,8 @@ object KeepSprint : Module("KeepSprint", Category.COMBAT) {
 
     override fun onDisable() {
         strategyState.reset()
+        prevSprinting = false
+        sprintCancelledTick = null
         EventBridge.unregisterTickListener(tickListener)
     }
 }

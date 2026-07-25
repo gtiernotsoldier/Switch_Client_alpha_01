@@ -150,6 +150,7 @@ object EventBridge {
 
     // ========== Item Use ==========
     private var releaseUsingItemHandler: (() -> Unit)? = null
+    private var pressUseItemHandler: (() -> Unit)? = null
 
     /**
      * Release the player's active item use (e.g. stop blocking with shield,
@@ -161,6 +162,18 @@ object EventBridge {
 
     fun registerReleaseUsingItemHandler(handler: () -> Unit) {
         releaseUsingItemHandler = handler
+    }
+
+    /**
+     * Press the use-item key (right-click). Used by AutoBlock module.
+     * Simulates right-click through the input pipeline.
+     */
+    fun pressUseItem() {
+        pressUseItemHandler?.invoke()
+    }
+
+    fun registerPressUseItemHandler(handler: () -> Unit) {
+        pressUseItemHandler = handler
     }
 
     // ========== Platform Registration ==========
@@ -181,6 +194,7 @@ object EventBridge {
         motionApplier = null
         sprintSetter = null
         releaseUsingItemHandler = null
+        pressUseItemHandler = null
         attackTrigger = null
         keyListeners.clear()
         tickCounter = 0

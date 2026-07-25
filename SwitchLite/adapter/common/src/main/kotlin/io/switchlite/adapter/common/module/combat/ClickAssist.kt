@@ -9,6 +9,7 @@ import io.switchlite.adapter.common.module.Category
 import io.switchlite.adapter.common.option.boolean
 import io.switchlite.adapter.common.option.choices
 import io.switchlite.adapter.common.option.int
+import kotlin.math.atan2
 import kotlin.random.Random
 
 /**
@@ -61,6 +62,15 @@ object ClickAssist : Module("ClickAssist", Category.COMBAT) {
     private var prevLeftDown: Boolean = false
     private var prevRightDown: Boolean = false
 
+    /**
+     * Two-tick right-click state machine:
+     * Tick N: pressUseItem → set pending
+     * Tick N+1: auto-release via releaseUsingItem
+     * MC's block placement is processed in onLivingUpdate() between ticks,
+     * so a same-tick press+release would never register.
+     */
+    private var rightExtraPressed: Boolean = false
+
     // ========== Tick Listener ==========
     private val tickListener: (PlayerState, TargetState?) -> Unit = { p, t ->
         if (enabled) onTick(p, t)
@@ -81,7 +91,24 @@ object ClickAssist : Module("ClickAssist", Category.COMBAT) {
         // (not blocking extra clicks during GUI because tick events still fire)
 
         // ---- Process scheduled extra clicks ----
-        if (scheduledClicks > 0 && System.nanoTime() >= nextClickNs) {
+        // Phase 1: release pending right-click from previous tick
+        if (rightExtraPressed) {
+            EventBridge.releaseUsingItem()
+            rightExtraPressed = false
+            // If there are more scheduled clicks, the next one fires immediately
+            if (scheduledClicks > 0) {
+                val isRight = nextIsRightClick
+                fireExtraClick()
+                scheduledClicks--
+                if (scheduledClicks > 0) {
+                    nextClickNs = System.nanoTime() + intervalNs
+                }
+            }
+            // Fall through to edge detection below
+        }
+
+        // Phase 2: fire new extra click if timer is due
+        if (scheduledClicks > 0 && !rightExtraPressed && System.nanoTime() >= nextClickNs) {
             fireExtraClick()
             scheduledClicks--
             if (scheduledClicks > 0) {
@@ -126,8 +153,9 @@ object ClickAssist : Module("ClickAssist", Category.COMBAT) {
     }
 
     private fun checkedSchedule(nowNs: Long, player: PlayerState, target: TargetState?, isRightClick: Boolean) {
-        // Filter: only aiming at entity
-        if (onlyAimingEntity && target == null && !player.isLookingAtTarget) return
+        // Filter: only aiming at entity — angle-based check (player.isLookingAtTarget is
+        // hardcoded false in StateExtractor; crosshair raycast is adapter-level only).
+        if (onlyAimingEntity && target == null && !isLookingAtTarget(player, target)) return
 
         // Filter: above 5 CPS (applies to both left and right)
         if (above5Cps && estimateCps(nowNs) < 5f) return
@@ -154,13 +182,11 @@ object ClickAssist : Module("ClickAssist", Category.COMBAT) {
         }
     }
 
-    /** Fire one extra click (left or right). */
+    /** Fire one extra click (left or right). Right-click spans two ticks. */
     private fun fireExtraClick() {
         if (nextIsRightClick) {
             EventBridge.pressUseItem()
-            // Right-click release needs a brief delay for the game to register it.
-            // The release will be handled by a follow-up scheduled click or cleanup.
-            EventBridge.releaseUsingItem()
+            rightExtraPressed = true  // release happens next tick
         } else {
             EventBridge.triggerAttack()
         }
@@ -184,6 +210,24 @@ object ClickAssist : Module("ClickAssist", Category.COMBAT) {
         return (recentClicks.size - 1).toFloat() / (windowNs / 1_000_000_000f)
     }
 
+    // ========== Helpers ==========
+
+    /**
+     * Angle-based "looking at target" check.
+     * Computes horizontal angular difference between player's yaw and the
+     * direction to target. A 30° threshold is used (same as ConditionChecker default).
+     */
+    private fun isLookingAtTarget(player: PlayerState, target: TargetState?): Boolean {
+        if (target == null) return false
+        val dx = target.position.x - player.position.x
+        val dz = target.position.z - player.position.z
+        if (dx == 0.0 && dz == 0.0) return true
+        val yawToTarget = Math.toDegrees(atan2(-dx, dz)).toFloat()
+        var diff = player.rotation.yaw - yawToTarget
+        diff = ((diff + 180f) % 360f + 360f) % 360f - 180f
+        return kotlin.math.abs(diff) <= 30f
+    }
+
     // ========== Lifecycle ==========
 
     override fun onEnable() {
@@ -196,6 +240,10 @@ object ClickAssist : Module("ClickAssist", Category.COMBAT) {
     }
 
     private fun cleanup() {
+        if (rightExtraPressed) {
+            EventBridge.releaseUsingItem()
+            rightExtraPressed = false
+        }
         scheduledClicks = 0
         recentClicks.clear()
         prevLeftDown = false

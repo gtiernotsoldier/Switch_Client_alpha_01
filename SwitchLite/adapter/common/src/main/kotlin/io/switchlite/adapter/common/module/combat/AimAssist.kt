@@ -5,6 +5,13 @@ import io.switchlite.core.algorithm.RotationCalculator
 import io.switchlite.core.condition.ConditionChecker
 import io.switchlite.core.model.PlayerState
 import io.switchlite.core.model.TargetState
+import io.switchlite.core.option.AimMode
+import io.switchlite.core.strategy.aim.AimConfig
+import io.switchlite.core.strategy.aim.AimInput
+import io.switchlite.core.strategy.aim.AimResult
+import io.switchlite.core.strategy.aim.AimStrategy
+import io.switchlite.core.strategy.aim.LegitAimStrategy
+import io.switchlite.core.strategy.aim.SelfAdaptiveAimStrategy
 import io.switchlite.core.util.Vec2
 import io.switchlite.adapter.common.api.EventBridge
 import io.switchlite.adapter.common.module.Module
@@ -52,8 +59,8 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
         chance = 100
     }
 
-    // Mode: Legit (box edge) vs Normal (center/random)
-    private val mode by choices("Mode", arrayOf("Legit", "Normal"))
+    // Mode: Legit (box edge) vs Normal (center/random) vs SelfAdaptive (adaptive)
+    private val mode by choices("Mode", arrayOf("Legit", "Normal", "SelfAdaptive"))
 
     // ========== Runtime Dependencies (Injected by Core) ==========
     private val rotationCalculator = RotationCalculator
@@ -66,6 +73,10 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
     private var overshootState = OvershootState.IDLE
     private var overshootTarget: Vec2? = null
     private var overshootTicksRemaining = 0
+
+    // ========== Self-adaptive Strategy (Algorithm in Core) ==========
+    private val adaptiveStrategy = SelfAdaptiveAimStrategy()
+    private val adaptiveStrategyState = SelfAdaptiveAimStrategy.AdaptiveState()
 
     // ========== Reaction Delay ==========
     private var lastTargetId = -1
@@ -82,6 +93,47 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
      * NO Minecraft object access allowed here.
      */
     fun onClientTick(player: PlayerState, target: TargetState?) {
+        when (mode) {
+            "SelfAdaptive" -> onSelfAdaptiveTick(player, target)
+            else -> onStandardTick(player, target)
+        }
+    }
+
+    /**
+     * Self-adaptive tick: delegates to SelfAdaptiveAimStrategy in Core,
+     * passing mouse delta data from EventBridge.
+     */
+    private fun onSelfAdaptiveTick(player: PlayerState, target: TargetState?) {
+        val config = buildAdaptiveConfig()
+        val input = AimInput(
+            player = player,
+            target = target,
+            mouseDeltaX = EventBridge.mouseDeltaX,
+            mouseDeltaY = EventBridge.mouseDeltaY,
+            sensitivity = EventBridge.mouseSensitivity
+        )
+        val result = adaptiveStrategy.execute(config, adaptiveStrategyState, input)
+        when (result) {
+            is AimResult.ApplyRotation -> EventBridge.setPlayerRotation(result.rotation)
+            is AimResult.Skip -> {}
+        }
+    }
+
+    private fun buildAdaptiveConfig(): AimConfig = AimConfig(
+        mode = AimMode.SELF_ADAPTIVE,
+        rangeMin = rangeMin,
+        rangeMax = rangeMax,
+        horizontalFov = horizontalFov,
+        verticalFov = verticalFov,
+        aimSpeed = aimSpeed,
+        smoothness = smoothness,
+        noiseIntensity = noiseIntensity,
+        lockOnCrosshair = lockOnCrosshair,
+        triggerOptions = triggerOptions
+    )
+
+    /** Standard (Legit/Normal) tick path — existing logic, unchanged. */
+    private fun onStandardTick(player: PlayerState, target: TargetState?) {
         // 1. Safety Check
         if (target == null) {
             resetOvershootState()
@@ -240,6 +292,7 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
             if (enabled) onClientTick(player, target)
         }
         EventBridge.registerTickListener(tickListener!!)
+        adaptiveStrategyState.reset()
     }
 
     override fun onDisable() {
@@ -249,5 +302,6 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
         resetOvershootState()
         lastTargetId = -1
         reactionDelayTicks = 0
+        adaptiveStrategyState.reset()
     }
 }

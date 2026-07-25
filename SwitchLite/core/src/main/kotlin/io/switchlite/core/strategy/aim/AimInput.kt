@@ -16,5 +16,11 @@ import io.switchlite.core.model.TargetState
  */
 data class AimInput(
     val player: PlayerState,
-    val target: TargetState?
+    val target: TargetState?,
+    /** Raw mouse delta in pixels this frame (screen-space). Positive X = right. */
+    val mouseDeltaX: Float = 0f,
+    /** Raw mouse delta in pixels this frame (screen-space). Positive Y = up. */
+    val mouseDeltaY: Float = 0f,
+    /** Player's configured mouse sensitivity (from game settings). */
+    val sensitivity: Float = 1.0f
 )

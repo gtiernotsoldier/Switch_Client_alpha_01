@@ -38,6 +38,12 @@ object ForgeEventBridge : IEventBridge {
             applyMotion(motion)
         }
 
+        // Register sprint setter (KeepSprint)
+        EventBridge.registerSprintSetter { sprinting ->
+            val player = mc.thePlayer ?: return@registerSprintSetter
+            player.isSprinting = sprinting
+        }
+
         // Register releaseUsingItem handler (1.9+ AutoClicker OnItemUse.STOP)
         EventBridge.registerReleaseUsingItemHandler {
             mc.thePlayer?.stopUsingItem()

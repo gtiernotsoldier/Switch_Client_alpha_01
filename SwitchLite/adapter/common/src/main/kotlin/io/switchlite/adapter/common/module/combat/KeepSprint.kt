@@ -56,6 +56,7 @@ object KeepSprint : Module("KeepSprint", Category.COMBAT) {
     // ========== Internal State ==========
     private val strategyState = KeepSprintState()
     private var prevSprinting = false
+    private var sprintCancelledTick: Int? = null
 
     // ========== Config Snapshot ==========
     private fun buildConfig(): KeepSprintConfig {
@@ -77,13 +78,20 @@ object KeepSprint : Module("KeepSprint", Category.COMBAT) {
      * Build strategy input from current player/target state.
      */
     private fun buildInput(player: PlayerState, target: TargetState?): KeepSprintInput {
-        val sprintJustCancelled = prevSprinting && !player.isSprinting && player.isAttackKeyDown
+        val now = EventBridge.getCurrentTick()
+        if (prevSprinting && !player.isSprinting && player.isAttackKeyDown) {
+            sprintCancelledTick = now
+        }
+        // Expire window if older than 10 ticks
+        if (sprintCancelledTick != null && now - sprintCancelledTick!! > 10) {
+            sprintCancelledTick = null
+        }
         prevSprinting = player.isSprinting
         return KeepSprintInput(
-            sprintJustCancelled = sprintJustCancelled,
+            sprintCancelledTick = sprintCancelledTick,
             targetHurtTime = target?.hurtTime,
             targetDistance = target?.distance,
-            currentTick = EventBridge.getCurrentTick()
+            currentTick = now
         )
     }
 
@@ -150,6 +158,8 @@ object KeepSprint : Module("KeepSprint", Category.COMBAT) {
 
     override fun onDisable() {
         strategyState.reset()
+        prevSprinting = false
+        sprintCancelledTick = null
         EventBridge.unregisterTickListener(this::onTick)
     }
 }

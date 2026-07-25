@@ -62,14 +62,15 @@ class KeepSprintState(
  * Input for KeepSprint strategy execution.
  * Pure data — the adapter assembles this from platform state.
  *
- * @property sprintJustCancelled True when sprint was true last tick, now false, and attack key is held.
+ * @property sprintCancelledTick The tick when sprint was cancelled by an attack, or null.
+ *   The strategy uses this as a window (up to 10 ticks) to wait for hurtTime to satisfy the threshold.
  * @property targetHurtTime The current target's hurtTime (0-10), or null if no target.
  * @property targetDistance Horizontal distance to target in blocks, or null if no target.
  * @property currentTick Current game tick.
  */
 data class KeepSprintInput(
-    /** True when sprint was true last tick and is now false while attack key is held — detects vanilla's attack→cancelSprint. */
-    val sprintJustCancelled: Boolean,
+    /** The tick when sprint was cancelled by an attack, or null if no recent cancel. */
+    val sprintCancelledTick: Int?,
     val targetHurtTime: Int?,
     val targetDistance: Float?,
     val currentTick: Int
@@ -98,8 +99,9 @@ object KeepSprintStrategy : Strategy<KeepSprintConfig, KeepSprintState, KeepSpri
             }
         }
 
-        // 2. Only activate when sprint was just cancelled by an attack
-        if (!ksInput.sprintJustCancelled) return KeepSprintResult.Pass
+        // 2. Only activate within the sprint-cancel window (max 10 ticks, matching MC hurtTime range)
+        val cancelAge = ksInput.sprintCancelledTick?.let { ksInput.currentTick - it } ?: return KeepSprintResult.Pass
+        if (cancelAge > 10) return KeepSprintResult.Pass
 
         // 3. HurtTime check
         val hurtTime = ksInput.targetHurtTime ?: return KeepSprintResult.Pass

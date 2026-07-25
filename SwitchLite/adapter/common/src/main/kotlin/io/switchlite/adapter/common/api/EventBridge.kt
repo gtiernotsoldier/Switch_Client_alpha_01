@@ -138,6 +138,16 @@ object EventBridge {
         sprintSetter = setter
     }
 
+    // ========== Mouse Delta (for Self-adaptive AimAssist) ==========
+    // Set by ForgeBootstrap / FabricBootstrap each tick before onTick().
+
+    /** Raw mouse delta X this frame (pixels, screen space). */
+    @Volatile var mouseDeltaX: Float = 0f
+    /** Raw mouse delta Y this frame (pixels, screen space). */
+    @Volatile var mouseDeltaY: Float = 0f
+    /** Player's configured mouse sensitivity (from game options). */
+    @Volatile var mouseSensitivity: Float = 1.0f
+
     // ========== Item Use ==========
     private var releaseUsingItemHandler: (() -> Unit)? = null
 
@@ -174,5 +184,8 @@ object EventBridge {
         attackTrigger = null
         keyListeners.clear()
         tickCounter = 0
+        mouseDeltaX = 0f
+        mouseDeltaY = 0f
+        mouseSensitivity = 1.0f
     }
 }

@@ -8,6 +8,7 @@ import io.switchlite.core.strategy.aim.AimInput
 import io.switchlite.core.strategy.aim.AimResult
 import io.switchlite.core.strategy.aim.AimStrategy
 import io.switchlite.core.strategy.aim.LegitAimStrategy
+import io.switchlite.core.strategy.aim.SelfAdaptiveAimStrategy
 import io.switchlite.adapter.common.api.EventBridge
 import io.switchlite.adapter.common.module.Module
 import io.switchlite.adapter.common.module.Category
@@ -23,7 +24,8 @@ import io.switchlite.adapter.common.option.triggerOptions
  * Architecture compliance (Sandwich):
  * 1. Logic in module: config assembly, input building, result mapping.
  * 2. Algorithm in Core: all humanization (overshoot FSM, reaction delay,
- *    box-edge tracking, noise injection) lives in [LegitAimStrategy].
+ *    box-edge tracking, noise injection, adaptive alignment) lives in
+ *    [LegitAimStrategy] or [SelfAdaptiveAimStrategy].
  * 3. Platform agnostic: receives [PlayerState]/[TargetState] via parameters.
  * 4. Core dependency: only calls [AimStrategy.execute].
  */
@@ -47,8 +49,8 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
     @Suppress("unused")
     private val prioritizeDistance by boolean("PrioritizeDistance", true)
 
-    // Mode: Legit (box edge) vs Normal (center/random)
-    private val mode by choices("Mode", arrayOf("Legit", "Normal"))
+    // Mode: Legit (box edge) vs Normal (center/random) vs SelfAdaptive (adaptive)
+    private val mode by choices("Mode", arrayOf("Legit", "Normal", "SelfAdaptive"))
     private val lockOnCrosshair by boolean("LockOnCrosshair", false)
 
     // Trigger conditions (Unified Engine)
@@ -59,15 +61,18 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
         chance = 100
     }
 
-    // ========== Core Strategy (Algorithm lives here) ==========
-    private val strategy = LegitAimStrategy()
-    private val strategyState = AimStrategy.State()
+    // ========== Core Strategies (Algorithm lives here) ==========
+    private val legitStrategy = LegitAimStrategy()
+    private val legitState = AimStrategy.State()
+    private val adaptiveStrategy = SelfAdaptiveAimStrategy()
+    private val adaptiveState = SelfAdaptiveAimStrategy.AdaptiveState()
 
-    // ========== Config Builder ==========
-    private fun buildConfig(): AimConfig = AimConfig(
-        mode = when (mode) {
+    // ========== Config Builder (shared by all modes) ==========
+    private fun buildConfig(modeOverride: AimMode? = null): AimConfig = AimConfig(
+        mode = modeOverride ?: when (mode) {
             "Legit" -> AimMode.LEGIT
             "Normal" -> AimMode.NORMAL
+            "SelfAdaptive" -> AimMode.SELF_ADAPTIVE
             else -> AimMode.LEGIT
         },
         rangeMin = rangeMin,
@@ -88,24 +93,44 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
 
     /**
      * Called by EventBridge on every client tick.
-     * Assembles config and input, delegates to Core strategy, maps result.
-     * NO algorithm logic here — only ~15 lines of glue code.
+     * Routes to Legit/Normal (via LegitAimStrategy) or SelfAdaptive (via SelfAdaptiveAimStrategy).
+     * NO algorithm logic here — only config assembly + result mapping.
      */
     fun onClientTick(player: PlayerState, target: TargetState?) {
-        val config = buildConfig()
-        val input = AimInput(player, target)
-        val result = strategy.execute(config, strategyState, input)
-
-        when (result) {
-            is AimResult.ApplyRotation -> EventBridge.setPlayerRotation(result.rotation)
-            is AimResult.Skip -> { /* no-op */ }
+        when (mode) {
+            "SelfAdaptive" -> {
+                val config = buildConfig(AimMode.SELF_ADAPTIVE)
+                val input = AimInput(
+                    player = player,
+                    target = target,
+                    mouseDeltaX = EventBridge.mouseDeltaX,
+                    mouseDeltaY = EventBridge.mouseDeltaY,
+                    sensitivity = EventBridge.mouseSensitivity
+                )
+                val result = adaptiveStrategy.execute(config, adaptiveState, input)
+                when (result) {
+                    is AimResult.ApplyRotation -> EventBridge.setPlayerRotation(result.rotation)
+                    is AimResult.Skip -> { /* no-op */ }
+                }
+            }
+            else -> {
+                // Legit / Normal — delegate to LegitAimStrategy
+                val config = buildConfig()
+                val input = AimInput(player, target)
+                val result = legitStrategy.execute(config, legitState, input)
+                when (result) {
+                    is AimResult.ApplyRotation -> EventBridge.setPlayerRotation(result.rotation)
+                    is AimResult.Skip -> { /* no-op */ }
+                }
+            }
         }
     }
 
     // ========== Lifecycle ==========
 
     override fun onEnable() {
-        strategyState.reset()
+        legitState.reset()
+        adaptiveState.reset()
         tickListener = { player, target ->
             if (enabled) onClientTick(player, target)
         }
@@ -115,6 +140,7 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
     override fun onDisable() {
         tickListener?.let { EventBridge.unregisterTickListener(it) }
         tickListener = null
-        strategyState.reset()
+        legitState.reset()
+        adaptiveState.reset()
     }
 }

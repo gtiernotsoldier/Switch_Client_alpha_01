@@ -4,7 +4,9 @@ import net.minecraftforge.fml.common.eventhandler.SubscribeEvent
 import net.minecraftforge.fml.common.gameevent.TickEvent
 import net.minecraftforge.fml.common.gameevent.InputEvent
 import net.minecraftforge.fml.common.network.FMLNetworkEvent
+import io.switchlite.adapter.common.api.EventBridge
 import io.switchlite.core.logging.CoreLogger
+import org.lwjgl.input.Mouse
 
 /**
  * Forge 1.8.9 bootstrap entry point.
@@ -44,12 +46,22 @@ object ForgeBootstrap {
      */
     @SubscribeEvent
     fun onClientTick(event: TickEvent.ClientTickEvent) {
-        if (event.phase != TickEvent.Phase.END) return
-
-        // Retry injection if netHandler wasn't available at init
-        ForgePacketInterceptor.ensureInjected()
-
-        ForgeEventBridge.onTick()
+        when (event.phase) {
+            TickEvent.Phase.START -> {
+                // Capture mouse delta before the game consumes it in EntityRenderer.
+                // Mouse.getDX()/getDY() accumulate between Display.update() calls;
+                // reading at START gives us the full frame delta.
+                EventBridge.mouseDeltaX = Mouse.getDX().toFloat()
+                EventBridge.mouseDeltaY = Mouse.getDY().toFloat()
+                val mc = net.minecraft.client.Minecraft.getMinecraft()
+                EventBridge.mouseSensitivity = mc.gameSettings.mouseSensitivity
+            }
+            TickEvent.Phase.END -> {
+                // Retry injection if netHandler wasn't available at init
+                ForgePacketInterceptor.ensureInjected()
+                ForgeEventBridge.onTick()
+            }
+        }
     }
 
     /**

@@ -63,7 +63,7 @@ class DelayVelocityStrategy(
      * @param currentTick the current server/client tick.
      * @return list of results for packets ready to be released.
      */
-    override fun pumpDelayed(
+    fun pumpDelayed(
         config: VelocityConfig,
         state: VelocityStrategy.State,
         currentTick: Int

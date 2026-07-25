@@ -7,7 +7,6 @@ import io.switchlite.core.util.Vec2
 import io.switchlite.core.util.Vec3
 import io.switchlite.agent.MappingContext
 import net.minecraft.client.Minecraft
-import org.lwjgl.input.Mouse
 
 /**
  * Forge 1.8.9 event bridge implementation.
@@ -48,14 +47,6 @@ object ForgeEventBridge : IEventBridge {
         // Register releaseUsingItem handler (1.9+ AutoClicker OnItemUse.STOP)
         EventBridge.registerReleaseUsingItemHandler {
             mc.thePlayer?.stopUsingItem()
-        }
-
-        // Register attack trigger (AutoClicker)
-        // Uses the LWJGL input pipeline (keyBindAttack.pressed) rather than
-        // sending C02 packets directly — required by client-side anti-cheat
-        // input queue monitors.
-        EventBridge.registerAttackTrigger {
-            mc.gameSettings.keyBindAttack.pressed = true
         }
     }
 
@@ -170,13 +161,6 @@ object ForgeEventBridge : IEventBridge {
      * Called by ForgeBootstrap on ClientTickEvent.
      */
     fun onTick() {
-        // Release synthetic attack key press (set by attack trigger)
-        // Only release if the physical mouse button is NOT held,
-        // to avoid interfering with real player clicks.
-        if (mc.gameSettings.keyBindAttack.pressed && !Mouse.isButtonDown(0)) {
-            mc.gameSettings.keyBindAttack.pressed = false
-        }
-
         // Apply pending motion override from velocity interception
         pendingMotion?.let { motion ->
             applyMotion(motion)

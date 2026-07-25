@@ -16,19 +16,6 @@ import io.switchlite.core.strategy.StrategyContext
 interface VelocityStrategy : Strategy<VelocityConfig, VelocityStrategy.State, VelocityResult> {
 
     /**
-     * Process the delay queue and release expired packets.
-     * Default: empty list (no delay support). Overridden by Legit/Delay strategies.
-     *
-     * @param config current configuration snapshot.
-     * @param state mutable strategy state.
-     * @param currentTick the current server/client tick.
-     * @return list of results for packets ready to be released.
-     */
-    fun pumpDelayed(config: VelocityConfig, state: State, currentTick: Int): List<VelocityResult> {
-        return emptyList()
-    }
-
-    /**
      * Mutable per-session state for velocity processing.
      *
      * Implementations may extend this to add mode-specific fields

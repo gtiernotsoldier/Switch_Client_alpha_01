@@ -157,12 +157,10 @@ object EventBridge {
     // Called by ForgeBootstrap / FabricBootstrap to wire up platform-specific handlers
     fun registerPlatformHandlers(
         rotationSetter: (Vec2) -> Unit,
-        motionApplier: (Vec3) -> Unit,
-        sprintSetter: (Boolean) -> Unit = {}
+        motionApplier: (Vec3) -> Unit
     ) {
         this.rotationSetter = rotationSetter
         this.motionApplier = motionApplier
-        this.sprintSetter = sprintSetter
     }
 
     fun reset() {

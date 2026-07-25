@@ -55,6 +55,7 @@ object KeepSprint : Module("KeepSprint", Category.COMBAT) {
 
     // ========== Internal State ==========
     private val strategyState = KeepSprintState()
+    private var prevSprinting = false
 
     // ========== Config Snapshot ==========
     private fun buildConfig(): KeepSprintConfig {
@@ -76,16 +77,13 @@ object KeepSprint : Module("KeepSprint", Category.COMBAT) {
      * Build strategy input from current player/target state.
      */
     private fun buildInput(player: PlayerState, target: TargetState?): KeepSprintInput {
-        val hSpeed = sqrt(player.motionX * player.motionX + player.motionZ * player.motionZ)
+        val sprintJustCancelled = prevSprinting && !player.isSprinting && player.isAttackKeyDown
+        prevSprinting = player.isSprinting
         return KeepSprintInput(
-            isSprinting = player.isSprinting,
-            isAttackKeyDown = player.isAttackKeyDown,
+            sprintJustCancelled = sprintJustCancelled,
             targetHurtTime = target?.hurtTime,
             targetDistance = target?.distance,
-            currentTick = EventBridge.getCurrentTick(),
-            horizontalSpeed = hSpeed,
-            motionX = player.motionX,
-            motionZ = player.motionZ
+            currentTick = EventBridge.getCurrentTick()
         )
     }
 

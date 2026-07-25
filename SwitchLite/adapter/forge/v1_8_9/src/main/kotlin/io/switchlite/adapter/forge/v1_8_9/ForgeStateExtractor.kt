@@ -30,6 +30,11 @@ object ForgeStateExtractor : IStateExtractor {
     /** Maximum target selection range in blocks. */
     private const val MAX_TARGET_RANGE = 6.0
 
+    // ========== Combat Tracking State ==========
+    private var combatStartTick: Long = -1
+    private var lastAttackTick: Long = 0
+    private var lastTrackedTargetId: Int = -1
+
     override fun extractPlayerState(): PlayerState {
         val player = mc.thePlayer ?: return PlayerState.EMPTY
 
@@ -117,6 +122,26 @@ object ForgeStateExtractor : IStateExtractor {
         val dz = posZ - playerZ
         val distance = kotlin.math.sqrt(dx * dx + dy * dy + dz * dz).toFloat()
 
+        // Direction from player to target (horizontal)
+        val dirToTargetX = posX - playerX
+        val dirToTargetZ = posZ - playerZ
+        val dirLen = kotlin.math.sqrt(dirToTargetX * dirToTargetX + dirToTargetZ * dirToTargetZ)
+
+        // Target movement direction analysis:
+        // Dot product of target motion with direction FROM player TO target.
+        // Positive = target moving away from player (backward/retreating).
+        // Negative = target moving toward player (approaching).
+        val isMovingBackward: Boolean
+        val isMovingTowardsPlayer: Boolean
+        if (dirLen > 0.01 && (motionX != 0.0 || motionZ != 0.0)) {
+            val dot = (motionX * dirToTargetX + motionZ * dirToTargetZ) / dirLen
+            isMovingBackward = dot > 0.01
+            isMovingTowardsPlayer = dot < -0.01
+        } else {
+            isMovingBackward = false
+            isMovingTowardsPlayer = false
+        }
+
         return TargetState(
             entityId = entityId,
             name = (entity as? EntityLivingBase)?.name ?: "",
@@ -126,9 +151,9 @@ object ForgeStateExtractor : IStateExtractor {
             motionZ = motionZ,
             health = health,
             hurtTime = hurtTime,
-            isMovingBackward = motionX * motionX + motionZ * motionZ > 0 && false, // TODO
-            isGoingBack = false, // TODO
-            isMovingTowardsPlayer = false, // TODO
+            isMovingBackward = isMovingBackward,
+            isGoingBack = isMovingBackward,
+            isMovingTowardsPlayer = isMovingTowardsPlayer,
             distance = distance,
             hitbox = hitbox,
             id = entityId
@@ -140,16 +165,83 @@ object ForgeStateExtractor : IStateExtractor {
         val targetId = getCurrentTargetId()
         val target = if (targetId != null) extractTargetState(targetId) else null
         val distance = target?.distance ?: 0f
+        val currentTick = mc.theWorld?.worldTime?.toLong() ?: 0L
+
+        // Track combat start/end
+        if (targetId != null) {
+            if (lastTrackedTargetId != targetId) {
+                // New target acquired — reset combat timer
+                combatStartTick = currentTick
+                lastTrackedTargetId = targetId
+            }
+            // Track attack (player holding attack key while target exists)
+            if (player.isAttackKeyDown) {
+                lastAttackTick = currentTick
+            }
+        } else {
+            // No target — end combat tracking after 3 seconds (60 ticks)
+            if (combatStartTick >= 0 && currentTick - combatStartTick > 60) {
+                combatStartTick = -1
+                lastTrackedTargetId = -1
+            }
+        }
+
+        val ticksInCombat = if (combatStartTick >= 0) currentTick - combatStartTick else 0L
+
+        // Angle difference: horizontal angle between player look direction and direction to target
+        val angleDiff: Float = if (target != null) {
+            val dx = target.position.x - player.position.x
+            val dz = target.position.z - player.position.z
+            val yawToTarget = (kotlin.math.atan2(-dx, dz) * (180.0 / kotlin.math.PI)).toFloat()
+            var diff = player.rotation.yaw - yawToTarget
+            // Normalize to -180..180
+            diff = ((diff + 180f) % 360f + 360f) % 360f - 180f
+            kotlin.math.abs(diff)
+        } else 0f
+
+        // Visibility: use MC's raytrace (entity raycast)
+        val isTargetVisible = if (targetId != null) {
+            checkTargetVisibility(targetId)
+        } else false
 
         return CombatContext(
             playerState = player,
             targetState = target,
             distance = distance,
-            angleDiff = 0f, // TODO: calculate
-            isTargetVisible = target != null, // TODO: raytrace
-            ticksInCombat = 0, // TODO: track
-            lastAttackTick = 0 // TODO: track
+            angleDiff = angleDiff,
+            isTargetVisible = isTargetVisible,
+            ticksInCombat = ticksInCombat,
+            lastAttackTick = lastAttackTick
         )
+    }
+
+    /**
+     * Check if the target entity is visible via raytrace (no blocks between player and target).
+     * Uses MC's world.rayTraceBlocks from player eye to target center.
+     */
+    private fun checkTargetVisibility(entityId: Int): Boolean {
+        val player = mc.thePlayer ?: return false
+        val world = mc.theWorld ?: return false
+        val entity = MappingContext.invokeMethod(world, "forge:world_getEntityByID", entityId) ?: return false
+
+        val entityPos = MappingContext.getFieldValue(entity, "forge:entity_posX") as? Double ?: return false
+        val entityPosY = MappingContext.getFieldValue(entity, "forge:entity_posY") as? Double ?: return false
+        val entityPosZ = MappingContext.getFieldValue(entity, "forge:entity_posZ") as? Double ?: return false
+
+        // Ray from player eye to target center (approximate: feet + 0.9 height)
+        val eyePos = net.minecraft.util.Vec3(
+            player.posX,
+            player.posY + player.eyeHeight,
+            player.posZ
+        )
+        val targetPos = net.minecraft.util.Vec3(
+            entityPos,
+            entityPosY + 0.9,
+            entityPosZ
+        )
+
+        val result = world.rayTraceBlocks(eyePos, targetPos, false, true, false)
+        return result == null // null = no block hit = visible
     }
 
     override fun getCurrentTargetId(): Int? {

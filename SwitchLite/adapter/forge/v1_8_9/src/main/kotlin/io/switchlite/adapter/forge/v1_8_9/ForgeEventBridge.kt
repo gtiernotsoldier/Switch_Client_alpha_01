@@ -17,6 +17,13 @@ object ForgeEventBridge : IEventBridge {
     private val mc get() = Minecraft.getMinecraft()
 
     /**
+     * Pending motion override from velocity packet interception.
+     * Applied on the next client tick after the packet passes through.
+     */
+    @Volatile
+    var pendingMotion: Vec3? = null
+
+    /**
      * Register Forge event listeners.
      * Called by ForgeBootstrap during initialization.
      */
@@ -85,16 +92,48 @@ object ForgeEventBridge : IEventBridge {
 
     /**
      * Process velocity packet from Forge event system.
-     * Called by ForgeBootstrap when S12PacketEntityVelocity is received.
+     * Called by ForgePacketInterceptor when S12PacketEntityVelocity or S27PacketExplosion is received.
+     *
+     * S12PacketEntityVelocity stores velocity as int (1/8000 block/tick).
+     * We convert to block/tick doubles before passing to the module pipeline.
      */
     fun onVelocityPacket(packetHandle: Any): PlatformCommand {
         val player = ForgeStateExtractor.extractPlayerState()
         val targetId = ForgeStateExtractor.getCurrentTargetId()
         val target = if (targetId != null) ForgeStateExtractor.extractTargetState(targetId) else null
 
-        val motionX = MappingContext.getFieldValue(packetHandle, "forge:velocity_motionX") as? Double ?: 0.0
-        val motionY = MappingContext.getFieldValue(packetHandle, "forge:velocity_motionY") as? Double ?: 0.0
-        val motionZ = MappingContext.getFieldValue(packetHandle, "forge:velocity_motionZ") as? Double ?: 0.0
+        // S12PacketEntityVelocity: getMotionX/Y/Z() returns int (raw packet units)
+        val rawX = MappingContext.getFieldValue(packetHandle, "forge:velocity_motionX")
+        val rawY = MappingContext.getFieldValue(packetHandle, "forge:velocity_motionY")
+        val rawZ = MappingContext.getFieldValue(packetHandle, "forge:velocity_motionZ")
+
+        val motionX: Double
+        val motionY: Double
+        val motionZ: Double
+
+        when {
+            // Int values from S12PacketEntityVelocity (divide by 8000)
+            rawX is Int -> {
+                motionX = rawX / 8000.0
+                motionY = (rawY as? Int ?: 0) / 8000.0
+                motionZ = (rawZ as? Int ?: 0) / 8000.0
+            }
+            // Double values from S27PacketExplosion (already in block/tick)
+            rawX is Double -> {
+                motionX = rawX
+                motionY = rawY as? Double ?: 0.0
+                motionZ = rawZ as? Double ?: 0.0
+            }
+            // Float fallback
+            rawX is Float -> {
+                motionX = rawX.toDouble()
+                motionY = (rawY as? Float ?: 0f).toDouble()
+                motionZ = (rawZ as? Float ?: 0f).toDouble()
+            }
+            else -> {
+                motionX = 0.0; motionY = 0.0; motionZ = 0.0
+            }
+        }
 
         val ctx = VelocityContext(
             originalMotion = Vec3(motionX, motionY, motionZ),
@@ -111,6 +150,12 @@ object ForgeEventBridge : IEventBridge {
      * Called by ForgeBootstrap on ClientTickEvent.
      */
     fun onTick() {
+        // Apply pending motion override from velocity interception
+        pendingMotion?.let { motion ->
+            applyMotion(motion)
+            pendingMotion = null
+        }
+
         val player = ForgeStateExtractor.extractPlayerState()
         val targetId = ForgeStateExtractor.getCurrentTargetId()
         val target = if (targetId != null) ForgeStateExtractor.extractTargetState(targetId) else null

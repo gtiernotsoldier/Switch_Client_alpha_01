@@ -27,6 +27,11 @@ object FabricStateExtractor : IStateExtractor {
     /** Maximum target selection range in blocks. */
     private const val MAX_TARGET_RANGE = 6.0
 
+    // ========== Combat Tracking State ==========
+    private var combatStartTick: Long = -1
+    private var lastAttackTick: Long = 0
+    private var lastTrackedTargetId: Int = -1
+
     override fun extractPlayerState(): PlayerState {
         val player = mc.player ?: return PlayerState.EMPTY
 
@@ -119,6 +124,26 @@ object FabricStateExtractor : IStateExtractor {
         val dz = posZ - playerZ
         val distance = kotlin.math.sqrt(dx * dx + dy * dy + dz * dz).toFloat()
 
+        // Direction from player to target (horizontal)
+        val dirToTargetX = posX - playerX
+        val dirToTargetZ = posZ - playerZ
+        val dirLen = kotlin.math.sqrt(dirToTargetX * dirToTargetX + dirToTargetZ * dirToTargetZ)
+
+        // Target movement direction analysis:
+        // Dot product of target motion with direction FROM player TO target.
+        // Positive = target moving away from player (backward/retreating).
+        // Negative = target moving toward player (approaching).
+        val isMovingBackward: Boolean
+        val isMovingTowardsPlayer: Boolean
+        if (dirLen > 0.01 && (motionX != 0.0 || motionZ != 0.0)) {
+            val dot = (motionX * dirToTargetX + motionZ * dirToTargetZ) / dirLen
+            isMovingBackward = dot > 0.01
+            isMovingTowardsPlayer = dot < -0.01
+        } else {
+            isMovingBackward = false
+            isMovingTowardsPlayer = false
+        }
+
         return TargetState(
             entityId = entityId,
             name = (entity as? LivingEntity)?.name?.string ?: "",
@@ -128,9 +153,9 @@ object FabricStateExtractor : IStateExtractor {
             motionZ = motionZ,
             health = health,
             hurtTime = hurtTime,
-            isMovingBackward = false, // TODO
-            isGoingBack = false, // TODO
-            isMovingTowardsPlayer = false, // TODO
+            isMovingBackward = isMovingBackward,
+            isGoingBack = isMovingBackward,
+            isMovingTowardsPlayer = isMovingTowardsPlayer,
             distance = distance,
             hitbox = hitbox,
             id = entityId
@@ -142,16 +167,82 @@ object FabricStateExtractor : IStateExtractor {
         val targetId = getCurrentTargetId()
         val target = if (targetId != null) extractTargetState(targetId) else null
         val distance = target?.distance ?: 0f
+        val currentTick = mc.world?.time ?: 0L
+
+        // Track combat start/end
+        if (targetId != null) {
+            if (lastTrackedTargetId != targetId) {
+                combatStartTick = currentTick
+                lastTrackedTargetId = targetId
+            }
+            if (player.isAttackKeyDown) {
+                lastAttackTick = currentTick
+            }
+        } else {
+            if (combatStartTick >= 0 && currentTick - combatStartTick > 60) {
+                combatStartTick = -1
+                lastTrackedTargetId = -1
+            }
+        }
+
+        val ticksInCombat = if (combatStartTick >= 0) currentTick - combatStartTick else 0L
+
+        // Angle difference: horizontal angle between player look direction and direction to target
+        val angleDiff: Float = if (target != null) {
+            val dx = target.position.x - player.position.x
+            val dz = target.position.z - player.position.z
+            val yawToTarget = (kotlin.math.atan2(-dx, dz) * (180.0 / kotlin.math.PI)).toFloat()
+            var diff = player.rotation.yaw - yawToTarget
+            diff = ((diff + 180f) % 360f + 360f) % 360f - 180f
+            kotlin.math.abs(diff)
+        } else 0f
+
+        // Visibility: raytrace from player eye to target
+        val isTargetVisible = if (targetId != null) {
+            checkTargetVisibility(targetId)
+        } else false
 
         return CombatContext(
             playerState = player,
             targetState = target,
             distance = distance,
-            angleDiff = 0f, // TODO: calculate
-            isTargetVisible = target != null, // TODO: raytrace
-            ticksInCombat = 0, // TODO: track
-            lastAttackTick = 0 // TODO: track
+            angleDiff = angleDiff,
+            isTargetVisible = isTargetVisible,
+            ticksInCombat = ticksInCombat,
+            lastAttackTick = lastAttackTick
         )
+    }
+
+    /**
+     * Check if the target entity is visible via raytrace.
+     * Uses MC's world.raycast from player eye to target center.
+     */
+    private fun checkTargetVisibility(entityId: Int): Boolean {
+        val player = mc.player ?: return false
+        val world = mc.world ?: return false
+        val entity = world.getEntityById(entityId) ?: return false
+
+        val eyePos = net.minecraft.util.math.Vec3d(
+            player.x,
+            player.y + player.standingEyeHeight,
+            player.z
+        )
+        val targetPos = net.minecraft.util.math.Vec3d(
+            entity.x,
+            entity.y + entity.height * 0.5,
+            entity.z
+        )
+
+        val result = world.raycast(
+            net.minecraft.world.RaycastContext(
+                eyePos,
+                targetPos,
+                net.minecraft.world.RaycastContext.ShapeType.COLLIDER,
+                net.minecraft.world.RaycastContext.FluidHandling.NONE,
+                player
+            )
+        )
+        return result.type == net.minecraft.util.hit.HitResult.Type.MISS
     }
 
     override fun getCurrentTargetId(): Int? {

@@ -29,19 +29,25 @@ import io.switchlite.core.logging.CoreLogger
 object ForgePacketInterceptor : ChannelDuplexHandler() {
 
     private const val HANDLER_NAME = "switchlite_velocity"
+    private var injected = false
+
+    /**
+     * Ensure the interceptor is injected. Safe to call every tick —
+     * no-ops if already injected or if netHandler is not yet available.
+     */
+    fun ensureInjected() {
+        if (injected) return
+        inject()
+    }
 
     /**
      * Inject this handler into the player's network pipeline.
-     * Called by ForgeBootstrap after the player joins a world.
+     * Called by ForgeBootstrap at init and retried via ensureInjected() on tick.
      */
     fun inject() {
         val mc = Minecraft.getMinecraft()
         val netHandler: NetHandlerPlayClient = mc.netHandler ?: return
         val channel = try {
-            val managerField = netHandler.javaClass.getDeclaredField("field_147303_d") // gameInfo
-            // Actually we need NetworkManager from NetHandlerPlayClient
-            // In 1.8.9 MCP: NetHandlerPlayClient has field "field_147299_f" (gameController)
-            // The NetworkManager is accessible via reflection on the handler
             val networkManager = getNetworkManager(netHandler) ?: return
             val channelField = networkManager.javaClass.getDeclaredField("channel")
             channelField.isAccessible = true
@@ -52,9 +58,13 @@ object ForgePacketInterceptor : ChannelDuplexHandler() {
         } ?: return
 
         val pipeline: ChannelPipeline = channel.pipeline()
-        if (pipeline.get(HANDLER_NAME) != null) return // already injected
+        if (pipeline.get(HANDLER_NAME) != null) {
+            injected = true
+            return // already injected
+        }
 
         pipeline.addBefore("packet_handler", HANDLER_NAME, this)
+        injected = true
         CoreLogger.info("[ForgePacketInterceptor] Injected into network pipeline")
     }
 
@@ -63,6 +73,7 @@ object ForgePacketInterceptor : ChannelDuplexHandler() {
      * Called on disconnect or client shutdown.
      */
     fun eject() {
+        injected = false
         val mc = Minecraft.getMinecraft()
         val netHandler: NetHandlerPlayClient = mc.netHandler ?: return
         val channel = try {

@@ -4,11 +4,11 @@ import net.minecraftforge.fml.common.eventhandler.SubscribeEvent
 import net.minecraftforge.fml.common.gameevent.TickEvent
 import net.minecraftforge.fml.common.gameevent.InputEvent
 import net.minecraftforge.fml.common.network.FMLNetworkEvent
-import net.minecraft.network.play.server.S12PacketEntityVelocity
+import io.switchlite.core.logging.CoreLogger
 
 /**
  * Forge 1.8.9 bootstrap entry point.
- * Registers Forge events and bridges them to common/module layer.
+ * Registers Forge events, injects packet interceptor, and bridges to common/module layer.
  */
 object ForgeBootstrap {
 
@@ -16,28 +16,39 @@ object ForgeBootstrap {
 
     /**
      * Initialize Forge bootstrap.
-     * Called during mod initialization.
+     * Called during mod initialization (FMLInitializationEvent or mod constructor).
      */
     fun init() {
         if (initialized) return
         initialized = true
 
-        // Register event handlers
+        // Register Forge event bus handlers (tick, key input)
         net.minecraftforge.common.MinecraftForge.EVENT_BUS.register(this)
 
-        // Initialize EventBridge platform handlers
+        // Initialize EventBridge platform handlers (rotation setter, motion applier)
         ForgeEventBridge.registerListeners()
 
-        println("[ForgeBootstrap] Initialized")
+        // Inject Netty packet interceptor for velocity packet interception.
+        // Must be called after player joins a world (netHandler exists).
+        // We attempt here; if netHandler is null, ForgePacketInterceptor.inject()
+        // will be retried on the first ClientTickEvent where netHandler is available.
+        ForgePacketInterceptor.inject()
+
+        CoreLogger.info("[ForgeBootstrap] Initialized")
     }
 
     /**
      * Handle client tick events.
      * Extracts player state and dispatches to EventBridge.
+     * Also retries packet interceptor injection if it failed at init time.
      */
     @SubscribeEvent
     fun onClientTick(event: TickEvent.ClientTickEvent) {
         if (event.phase != TickEvent.Phase.END) return
+
+        // Retry injection if netHandler wasn't available at init
+        ForgePacketInterceptor.ensureInjected()
+
         ForgeEventBridge.onTick()
     }
 
@@ -56,51 +67,11 @@ object ForgeBootstrap {
     }
 
     /**
-     * Handle incoming packets.
-     * Intercepts S12PacketEntityVelocity for velocity manipulation.
+     * Handle disconnect — eject packet interceptor to avoid leaking into next session.
      */
     @SubscribeEvent
-    fun onPacket(event: FMLNetworkEvent.ClientCustomPacketEvent) {
-        // TODO: intercept S12PacketEntityVelocity
-        // This requires packet event registration in Forge 1.8.9
-    }
-
-    /**
-     * Handle velocity packet directly.
-     * Called when S12PacketEntityVelocity is detected.
-     */
-    fun onVelocityPacket(packet: S12PacketEntityVelocity) {
-        val command = ForgeEventBridge.onVelocityPacket(packet)
-
-        when (command) {
-            is io.switchlite.core.model.PlatformCommand.ModifyMotion -> {
-                // Motion will be applied by ForgeEventBridge.applyMotion()
-            }
-            is io.switchlite.core.model.PlatformCommand.CancelPacket -> {
-                // Cancel the packet - requires packet event cancellation
-            }
-            is io.switchlite.core.model.PlatformCommand.ClickBurst -> {
-                // Send click packets
-                sendClickBurst(command.targetId, command.times)
-            }
-            is io.switchlite.core.model.PlatformCommand.Pass -> {
-                // Do nothing, let original motion pass through
-            }
-            else -> {}
-        }
-    }
-
-    /**
-     * Send click burst to target.
-     */
-    private fun sendClickBurst(targetId: Int, times: Int) {
-        val mc = net.minecraft.client.Minecraft.getMinecraft()
-        val player = mc.thePlayer ?: return
-        val world = mc.theWorld ?: return
-
-        repeat(times) {
-            // TODO: send C02PacketUseEntity via MappingContext
-            println("[ForgeBootstrap] Click burst #$it on entity $targetId")
-        }
+    fun onDisconnect(event: FMLNetworkEvent.ClientDisconnectionFromServerEvent) {
+        ForgePacketInterceptor.eject()
+        CoreLogger.info("[ForgeBootstrap] Disconnected — packet interceptor ejected")
     }
 }

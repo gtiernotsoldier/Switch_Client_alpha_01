@@ -33,9 +33,8 @@ object FabricBootstrap : ClientModInitializer {
         // Initialize EventBridge platform handlers
         FabricEventBridge.registerListeners()
 
-        // TODO: Register packet interceptor mixin for EntityVelocityUpdateS2CPacket
-        // This requires a Mixin into ClientPlayNetworkHandler to intercept velocity packets
-        // before they are applied to the player.
+        // Velocity packet interception is handled by ClientPlayNetworkHandlerMixin
+        // (registered via switchlite.mixins.json)
 
         println("[FabricBootstrap] Initialized")
     }
@@ -87,15 +86,21 @@ object FabricBootstrap : ClientModInitializer {
 
     /**
      * Send click burst to target.
+     * Sends PlayerInteractEntityC2SPacket (ATTACK) via the player's network handler.
      */
     private fun sendClickBurst(targetId: Int, times: Int) {
         val mc = net.minecraft.client.MinecraftClient.getInstance()
         val player = mc.player ?: return
         val world = mc.world ?: return
+        val target = world.getEntityById(targetId) ?: return
 
         repeat(times) {
-            // TODO: send PlayerInteractEntityC2SPacket via MappingContext
-            println("[FabricBootstrap] Click burst #$it on entity $targetId")
+            val packet = net.minecraft.network.packet.c2s.play.PlayerInteractEntityC2SPacket(
+                target,
+                player.isSneaking,
+                net.minecraft.network.packet.c2s.play.PlayerInteractEntityC2SPacket.ATTACK
+            )
+            player.networkHandler.sendPacket(packet)
         }
     }
 }

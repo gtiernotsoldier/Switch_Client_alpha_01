@@ -113,8 +113,12 @@ object ForgePacketInterceptor : ChannelDuplexHandler() {
                         }
                         is io.switchlite.core.model.PlatformCommand.ModifyMotion -> {
                             // Let the packet through, then override motion next tick
-                            // (handled by ForgeBootstrap's tick listener applying motion)
                             ForgeEventBridge.pendingMotion = command.motion
+                        }
+                        is io.switchlite.core.model.PlatformCommand.ClickBurst -> {
+                            // Send attack packets to target, then swallow velocity packet
+                            sendClickBurst(command.targetId, command.times)
+                            return
                         }
                         else -> {
                             // Pass or NoOp — let original packet through
@@ -132,6 +136,10 @@ object ForgePacketInterceptor : ChannelDuplexHandler() {
                     is io.switchlite.core.model.PlatformCommand.ModifyMotion -> {
                         ForgeEventBridge.pendingMotion = command.motion
                     }
+                    is io.switchlite.core.model.PlatformCommand.ClickBurst -> {
+                        sendClickBurst(command.targetId, command.times)
+                        return
+                    }
                     else -> {}
                 }
             }
@@ -139,6 +147,26 @@ object ForgePacketInterceptor : ChannelDuplexHandler() {
 
         // Forward to vanilla handler
         super.channelRead(ctx, msg)
+    }
+
+    /**
+     * Send C02PacketUseEntity (ATTACK) to the target entity.
+     * Called when Velocity module returns ClickBurst command.
+     */
+    private fun sendClickBurst(targetId: Int, times: Int) {
+        val mc = Minecraft.getMinecraft()
+        val netHandler = mc.netHandler ?: return
+        val world = mc.theWorld ?: return
+        val target = world.getEntityByID(targetId) ?: return
+
+        repeat(times) {
+            val packet = net.minecraft.network.play.client.C02PacketUseEntity(
+                target,
+                net.minecraft.network.play.client.C02PacketUseEntity.Action.ATTACK
+            )
+            netHandler.addToSendQueue(packet)
+        }
+        CoreLogger.debug("[ForgePacketInterceptor] ClickBurst: $times attacks on entity $targetId")
     }
 
     /**

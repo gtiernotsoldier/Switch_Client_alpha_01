@@ -145,8 +145,6 @@ object EventBridge {
      * Release the player's active item use (e.g. stop blocking with shield,
      * release bow draw, stop eating). Used by 1.9+ OnItemUse.STOP mode.
      */
-    // TODO: 需要 EventBridge 添加 releaseUsingItem() — 当前为空实现，
-    //       平台适配器 (Forge/Fabric) 需要注册实际的 releaseUsingItem handler
     fun releaseUsingItem() {
         releaseUsingItemHandler?.invoke()
     }

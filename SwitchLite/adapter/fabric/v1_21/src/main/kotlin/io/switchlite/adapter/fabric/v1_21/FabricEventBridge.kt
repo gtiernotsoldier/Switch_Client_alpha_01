@@ -31,6 +31,11 @@ object FabricEventBridge : IEventBridge {
             applyMotion(motion)
         }
 
+        // Register sprint setter (KeepSprint)
+        EventBridge.registerSprintSetter { sprinting ->
+            mc.player?.setSprinting(sprinting)
+        }
+
         // Register releaseUsingItem handler (1.9+ AutoClicker OnItemUse.STOP)
         EventBridge.registerReleaseUsingItemHandler {
             mc.player?.stopUsingItem()

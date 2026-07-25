@@ -2,6 +2,8 @@ package io.switchlite.core.strategy.keepsprint
 
 import io.switchlite.core.strategy.Strategy
 import io.switchlite.core.strategy.StrategyContext
+import io.switchlite.core.util.Vec3
+import kotlin.math.sqrt
 
 /**
  * Configuration snapshot for KeepSprint.
@@ -16,6 +18,7 @@ import io.switchlite.core.strategy.StrategyContext
  * @property hurtTimeMax Only activate when target's hurtTime <= this value.
  * @property delayTicks Ticks to wait after attack before restoring sprint.
  * @property cooldownTicks Minimum ticks between activations.
+ * @property sprintBaseSpeed Platform-specific sprint base speed (e.g. 0.286 for 1.8.9). Injected by adapter.
  */
 data class KeepSprintConfig(
     val mode: String,
@@ -27,16 +30,17 @@ data class KeepSprintConfig(
     val chance: Int,
     val hurtTimeMax: Int,
     val delayTicks: Int,
-    val cooldownTicks: Int
+    val cooldownTicks: Int,
+    val sprintBaseSpeed: Double = 0.286
 )
 
 /**
  * Result of a KeepSprint decision.
- * The adapter maps this to platform actions (set sprinting, modify motion).
+ * The adapter maps this to platform actions (set sprinting, apply motion).
  */
 sealed class KeepSprintResult {
-    /** Restore sprint at the given horizontal keep percentage. */
-    data class Restore(val keepPercentage: Float) : KeepSprintResult()
+    /** Restore sprint and apply this motion vector (null = skip motion, just set flag). */
+    data class Restore(val keepPercentage: Float, val motion: Vec3?) : KeepSprintResult()
 
     /** Delayed restore — store the percentage, adapter applies after delayTicks. */
     data class DelayedRestore(val keepPercentage: Float, val releaseTick: Int) : KeepSprintResult()
@@ -63,17 +67,21 @@ class KeepSprintState(
  * Pure data — the adapter assembles this from platform state.
  *
  * @property sprintCancelledTick The tick when sprint was cancelled by an attack, or null.
- *   The strategy uses this as a window (up to 10 ticks) to wait for hurtTime to satisfy the threshold.
  * @property targetHurtTime The current target's hurtTime (0-10), or null if no target.
  * @property targetDistance Horizontal distance to target in blocks, or null if no target.
  * @property currentTick Current game tick.
+ * @property motionX Player's current motionX (for core-layer motion computation).
+ * @property motionY Player's current motionY.
+ * @property motionZ Player's current motionZ.
  */
 data class KeepSprintInput(
-    /** The tick when sprint was cancelled by an attack, or null if no recent cancel. */
     val sprintCancelledTick: Int?,
     val targetHurtTime: Int?,
     val targetDistance: Float?,
-    val currentTick: Int
+    val currentTick: Int,
+    val motionX: Double,
+    val motionY: Double,
+    val motionZ: Double
 )
 
 /**
@@ -95,7 +103,7 @@ object KeepSprintStrategy : Strategy<KeepSprintConfig, KeepSprintState, KeepSpri
         state.pendingRestore?.let { (keepPct, releaseTick) ->
             if (ksInput.currentTick >= releaseTick) {
                 state.pendingRestore = null
-                return KeepSprintResult.Restore(keepPct)
+                return KeepSprintResult.Restore(keepPct, computeMotion(config, keepPct, ksInput))
             }
         }
 
@@ -133,7 +141,21 @@ object KeepSprintStrategy : Strategy<KeepSprintConfig, KeepSprintState, KeepSpri
             state.pendingRestore = keepPercentage to releaseTick
             KeepSprintResult.DelayedRestore(keepPercentage, releaseTick)
         } else {
-            KeepSprintResult.Restore(keepPercentage)
+            KeepSprintResult.Restore(keepPercentage, computeMotion(config, keepPercentage, ksInput))
         }
+    }
+
+    /**
+     * Compute the target motion vector: scale current horizontal motion
+     * so its magnitude equals sprintBaseSpeed * keepPercentage.
+     * Returns null if current speed is negligible (player is stationary).
+     */
+    private fun computeMotion(config: KeepSprintConfig, keepPercentage: Float, input: KeepSprintInput): Vec3? {
+        val currentSpeed = sqrt(input.motionX * input.motionX + input.motionZ * input.motionZ)
+        if (currentSpeed < 0.001) return null
+
+        val targetSpeed = config.sprintBaseSpeed * keepPercentage
+        val scale = targetSpeed / currentSpeed
+        return Vec3(input.motionX * scale, input.motionY, input.motionZ * scale)
     }
 }

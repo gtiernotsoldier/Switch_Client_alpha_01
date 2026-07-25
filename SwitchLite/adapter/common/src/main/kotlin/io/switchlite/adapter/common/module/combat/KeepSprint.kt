@@ -55,6 +55,7 @@ object KeepSprint : Module("KeepSprint", Category.COMBAT) {
 
     // ========== Internal State ==========
     private val strategyState = KeepSprintState()
+    private val tickListener: (PlayerState, TargetState?) -> Unit = { p, t -> onTick(p, t) }
 
     // ========== Config Snapshot ==========
     private fun buildConfig(): KeepSprintConfig {
@@ -85,36 +86,17 @@ object KeepSprint : Module("KeepSprint", Category.COMBAT) {
             currentTick = EventBridge.getCurrentTick(),
             horizontalSpeed = hSpeed,
             motionX = player.motionX,
+            motionY = player.motionY,
             motionZ = player.motionZ
         )
     }
 
     /**
-     * Apply the keep percentage: restore sprint and adjust horizontal motion.
-     *
-     * Vanilla sprint speed is ~0.286 blocks/tick (1.8.9) or ~0.287 (1.21).
-     * When MC cancels sprint on attack, motion drops to ~60% of that.
-     * We restore the sprint flag and scale motion back up to [keepPercentage] of sprint speed.
+     * Apply restore: set sprint flag and apply motion computed by Core strategy.
      */
-    private fun applyRestore(keepPercentage: Float, player: PlayerState) {
-        // 1. Restore sprint flag
+    private fun applyRestore(result: io.switchlite.core.strategy.keepsprint.KeepSprintResult.Restore) {
         EventBridge.setSprinting(true)
-
-        // 2. Scale horizontal motion to the desired percentage of sprint speed
-        val currentSpeed = sqrt(player.motionX * player.motionX + player.motionZ * player.motionZ)
-        if (currentSpeed > 0.001) {
-            // Calculate the sprint speed (0.286 for 1.8.9, approximate for all versions)
-            val sprintSpeed = 0.286
-            val targetSpeed = sprintSpeed * keepPercentage
-            val scale = targetSpeed / currentSpeed
-            val newMotionX = player.motionX * scale
-            val newMotionZ = player.motionZ * scale
-            io.switchlite.core.util.Vec3(
-                newMotionX,
-                player.motionY,
-                newMotionZ
-            ).let { EventBridge.applyMotion(it) }
-        }
+        result.motion?.let { EventBridge.applyMotion(it) }
     }
 
     // ========== Tick Entry ==========
@@ -128,7 +110,7 @@ object KeepSprint : Module("KeepSprint", Category.COMBAT) {
 
         when (result) {
             is io.switchlite.core.strategy.keepsprint.KeepSprintResult.Restore -> {
-                applyRestore(result.keepPercentage, player)
+                applyRestore(result)
                 io.switchlite.core.logging.CoreLogger.debug(
                     "[KeepSprint] Restored sprint at ${"%.0f".format(result.keepPercentage * 100)}%"
                 )
@@ -145,13 +127,11 @@ object KeepSprint : Module("KeepSprint", Category.COMBAT) {
     // ========== Lifecycle ==========
     override fun onEnable() {
         strategyState.reset()
-        EventBridge.registerTickListener { player, target ->
-            onTick(player, target)
-        }
+        EventBridge.registerTickListener(tickListener)
     }
 
     override fun onDisable() {
         strategyState.reset()
-        EventBridge.unregisterTickListener(this::onTick)
+        EventBridge.unregisterTickListener(tickListener)
     }
 }

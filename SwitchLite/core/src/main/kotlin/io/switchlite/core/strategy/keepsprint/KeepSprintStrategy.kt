@@ -2,6 +2,8 @@ package io.switchlite.core.strategy.keepsprint
 
 import io.switchlite.core.strategy.Strategy
 import io.switchlite.core.strategy.StrategyContext
+import io.switchlite.core.util.Vec3
+import kotlin.math.sqrt
 
 /**
  * Configuration snapshot for KeepSprint.
@@ -27,7 +29,9 @@ data class KeepSprintConfig(
     val chance: Int,
     val hurtTimeMax: Int,
     val delayTicks: Int,
-    val cooldownTicks: Int
+    val cooldownTicks: Int,
+    /** Platform-specific sprint base speed (e.g. 0.286 for 1.8.9). Injected by adapter. */
+    val sprintBaseSpeed: Double = 0.286
 )
 
 /**
@@ -35,8 +39,8 @@ data class KeepSprintConfig(
  * The adapter maps this to platform actions (set sprinting, modify motion).
  */
 sealed class KeepSprintResult {
-    /** Restore sprint at the given horizontal keep percentage. */
-    data class Restore(val keepPercentage: Float) : KeepSprintResult()
+    /** Restore sprint and apply this motion vector. */
+    data class Restore(val keepPercentage: Float, val motion: Vec3?) : KeepSprintResult()
 
     /** Delayed restore — store the percentage, adapter applies after delayTicks. */
     data class DelayedRestore(val keepPercentage: Float, val releaseTick: Int) : KeepSprintResult()
@@ -79,6 +83,7 @@ data class KeepSprintInput(
     val currentTick: Int,
     val horizontalSpeed: Double,
     val motionX: Double,
+    val motionY: Double,
     val motionZ: Double
 )
 
@@ -101,7 +106,7 @@ object KeepSprintStrategy : Strategy<KeepSprintConfig, KeepSprintState, KeepSpri
         state.pendingRestore?.let { (keepPct, releaseTick) ->
             if (ksInput.currentTick >= releaseTick) {
                 state.pendingRestore = null
-                return KeepSprintResult.Restore(keepPct)
+                return KeepSprintResult.Restore(keepPct, computeMotion(config, keepPct, ksInput))
             }
         }
 
@@ -139,8 +144,22 @@ object KeepSprintStrategy : Strategy<KeepSprintConfig, KeepSprintState, KeepSpri
             state.pendingRestore = keepPercentage to releaseTick
             KeepSprintResult.DelayedRestore(keepPercentage, releaseTick)
         } else {
-            KeepSprintResult.Restore(keepPercentage)
+            KeepSprintResult.Restore(keepPercentage, computeMotion(config, keepPercentage, ksInput))
         }
+    }
+
+    /**
+     * Compute the target motion vector: scale current horizontal motion
+     * so its magnitude equals sprintBaseSpeed * keepPercentage.
+     * Returns null if current speed is negligible (player is stationary).
+     */
+    private fun computeMotion(config: KeepSprintConfig, keepPercentage: Float, input: KeepSprintInput): Vec3? {
+        val currentSpeed = sqrt(input.motionX * input.motionX + input.motionZ * input.motionZ)
+        if (currentSpeed < 0.001) return null
+
+        val targetSpeed = config.sprintBaseSpeed * keepPercentage
+        val scale = targetSpeed / currentSpeed
+        return Vec3(input.motionX * scale, input.motionY, input.motionZ * scale)
     }
 
     /**

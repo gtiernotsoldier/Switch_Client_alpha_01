@@ -73,7 +73,7 @@ class LegitVelocityStrategy : VelocityStrategy {
      *
      * @return list of results for packets that are ready to be released.
      */
-    fun pumpDelayed(config: VelocityConfig, state: VelocityStrategy.State, currentTick: Int): List<VelocityResult> {
+    override fun pumpDelayed(config: VelocityConfig, state: VelocityStrategy.State, currentTick: Int): List<VelocityResult> {
         state.tickCounter = currentTick
         val results = mutableListOf<VelocityResult>()
         val iterator = state.delayQueue.iterator()

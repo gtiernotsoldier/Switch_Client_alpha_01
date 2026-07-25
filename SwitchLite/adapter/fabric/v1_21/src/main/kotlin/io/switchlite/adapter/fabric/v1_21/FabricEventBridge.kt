@@ -7,6 +7,7 @@ import io.switchlite.core.util.Vec2
 import io.switchlite.core.util.Vec3
 import io.switchlite.agent.MappingContext
 import net.minecraft.client.MinecraftClient
+import org.lwjgl.glfw.GLFW
 
 /**
  * Fabric 1.21 event bridge implementation.
@@ -39,6 +40,13 @@ object FabricEventBridge : IEventBridge {
         // Register releaseUsingItem handler (1.9+ AutoClicker OnItemUse.STOP)
         EventBridge.registerReleaseUsingItemHandler {
             mc.player?.stopUsingItem()
+        }
+
+        // Register attack trigger (AutoClicker)
+        // Uses the input pipeline via options.attackKey.isPressed rather than
+        // sending packets directly — required by client-side anti-cheat monitors.
+        EventBridge.registerAttackTrigger {
+            mc.options.attackKey.isPressed = true
         }
     }
 
@@ -121,6 +129,16 @@ object FabricEventBridge : IEventBridge {
      * Called by FabricBootstrap on client tick.
      */
     fun onTick() {
+        // Release synthetic attack key press (set by attack trigger).
+        // Only release if the physical mouse button is NOT held,
+        // to avoid interfering with real player clicks.
+        val window = mc.window
+        val physicalDown = window != null &&
+            GLFW.glfwGetMouseButton(window.handle, GLFW.GLFW_MOUSE_BUTTON_LEFT) == GLFW.GLFW_PRESS
+        if (mc.options.attackKey.isPressed && !physicalDown) {
+            mc.options.attackKey.isPressed = false
+        }
+
         val player = FabricStateExtractor.extractPlayerState()
         val targetId = FabricStateExtractor.getCurrentTargetId()
         val target = if (targetId != null) FabricStateExtractor.extractTargetState(targetId) else null

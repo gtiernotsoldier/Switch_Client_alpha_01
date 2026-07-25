@@ -54,14 +54,14 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
     /** Whether AutoBlock pressed the right-click (not the player). */
     private var blockHeld: Boolean = false
 
-    /** System time (ms) when blocking started. Used by Normal mode countdown. */
-    private var blockStartTimeMs: Long = 0L
+    /** nanoTime when blocking started (Normal mode countdown). */
+    private var blockStartNano: Long = 0L
 
     /** Whether we are in the Switch-mode "wait before re-blocking" phase. */
     private var reblockPending: Boolean = false
 
-    /** System time when Switch release happened; re-block after [delayMs]. */
-    private var reblockStartTimeMs: Long = 0L
+    /** nanoTime when Switch release happened; re-block after [delayMs]. */
+    private var reblockStartNano: Long = 0L
 
     /** Previous tick's attack key state (for rising-edge detection). */
     private var wasAttacking: Boolean = false
@@ -78,7 +78,7 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
 
         // ---------- Switch re-block timer ----------
         if (reblockPending) {
-            if (elapsedSince(reblockStartTimeMs) >= delayMs) {
+            if (elapsedNs(reblockStartNano) >= delayMs * 1_000_000L) {
                 EventBridge.pressUseItem()
                 blockHeld = true
                 reblockPending = false
@@ -89,7 +89,7 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
 
         // ---------- Normal mode block-release timer ----------
         if (blockHeld && mode == "Normal") {
-            if (elapsedSince(blockStartTimeMs) >= delayMs) {
+            if (elapsedNs(blockStartNano) >= delayMs * 1_000_000L) {
                 releaseBlock()
             }
             return
@@ -119,14 +119,14 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
             "Normal" -> {
                 EventBridge.pressUseItem()
                 blockHeld = true
-                blockStartTimeMs = System.currentTimeMillis()
+                blockStartNano = System.nanoTime()
             }
             "Switch" -> {
                 if (blockHeld) {
                     // Currently blocking → release for attack, then re-block
                     releaseBlock()
                     reblockPending = true
-                    reblockStartTimeMs = System.currentTimeMillis()
+                    reblockStartNano = System.nanoTime()
                 } else {
                     // Not blocking → start blocking now
                     EventBridge.pressUseItem()
@@ -138,14 +138,20 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
 
     // ========== Helpers ==========
 
+    /**
+     * Release the right-click.
+     * Only releases if we were the ones who pressed it AND the player is not
+     * physically holding the right mouse button (prevents stealing the player's manual block).
+     */
     private fun releaseBlock() {
         if (!blockHeld) return
+        if (EventBridge.isRightMousePhysicallyDown) return  // player is manually holding
         EventBridge.releaseUsingItem()
         blockHeld = false
     }
 
-    private fun elapsedSince(startMs: Long): Long =
-        System.currentTimeMillis() - startMs
+    private fun elapsedNs(startNano: Long): Long =
+        System.nanoTime() - startNano
 
     // ========== Lifecycle ==========
 

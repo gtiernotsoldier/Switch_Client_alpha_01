@@ -148,6 +148,9 @@ object EventBridge {
     /** Player's configured mouse sensitivity (from game options). */
     @Volatile var mouseSensitivity: Float = 1.0f
 
+    /** Whether the physical right mouse button is currently held (not synthetic). */
+    @Volatile var isRightMousePhysicallyDown: Boolean = false
+
     // ========== Item Use ==========
     private var releaseUsingItemHandler: (() -> Unit)? = null
     private var pressUseItemHandler: (() -> Unit)? = null
@@ -201,5 +204,6 @@ object EventBridge {
         mouseDeltaX = 0f
         mouseDeltaY = 0f
         mouseSensitivity = 1.0f
+        isRightMousePhysicallyDown = false
     }
 }

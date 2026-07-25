@@ -157,9 +157,8 @@ class SelfAdaptiveAimStrategy : AimStrategy {
         val yawFactor = dynamicAimSpeed / 20.0f * dynamicSmoothness
         val pitchFactor = dynamicAimSpeed / 20.0f * dynamicSmoothness * 0.6f
 
-        // 10. Overshoot state machine (reuse LegitAimStrategy patterns)
-        val finalRotation = executeOvershoot(
-            config = config,
+        // 10. Overshoot state machine (shared via OvershootHelper)
+        val finalRotation = OvershootHelper.execute(
             state = state,
             player = player,
             targetPoint = targetPoint,
@@ -179,17 +178,31 @@ class SelfAdaptiveAimStrategy : AimStrategy {
     /**
      * Convert raw mouse delta (pixels) to approximate angular displacement (degrees).
      *
-     * Minecraft's mouse sensitivity formula (approximate):
-     *   angular_delta = raw_delta * sensitivity * 0.15
+     * Uses Minecraft's actual mouse sensitivity formula (1.8–1.21):
+     *   f(s) = s * 0.6 * (1 - s³ * 0.6)
+     *   angular_delta = raw_delta * f(sensitivity) * pixelToAngle
      *
-     * This is a simplified model — the actual MC formula involves a cubic
-     * sensitivity curve. The 0.15 factor is calibrated for typical sensitivity
-     * values (0.5–2.0) and produces reasonable alignment scores.
-     * Small inaccuracies are smoothed out by the EMA.
+     * This is a cubic curve, not linear: low sensitivity values are dampened
+     * more than a naive s*0.15 would suggest. Using the real formula prevents
+     * systematic overestimation of angular displacement at low sensitivity,
+     * which would bias the alignment EMA downward (making the player look
+     * worse than they are).
+     *
+     * The pixelToAngle constant (0.15) is the Minecraft default pixel→degree
+     * mapping baked into the game's rendering pipeline.
+     *
+     * NOTE: LWJGL 2 (Forge) uses `Mouse.getDY()` which reports Y-up.
+     *       GLFW (Fabric) uses Y-down screen coordinates. Since we compute
+     *       the scalar magnitude sqrt(dx²+dy²), the Y direction is irrelevant
+     *       here. If per-axis alignment is added in the future, the sign
+     *       must be flipped on one platform.
      */
     internal fun mouseDeltaToAngular(dx: Float, dy: Float, sensitivity: Float): Float {
         val pixelMagnitude = sqrt(dx * dx + dy * dy)
-        return pixelMagnitude * sensitivity * 0.15f
+        // MC real sensitivity curve: f(s) = s * 0.6 * (1 - s³ * 0.6)
+        val s3 = sensitivity * sensitivity * sensitivity
+        val effectiveSensitivity = sensitivity * 0.6f * (1.0f - s3 * 0.6f)
+        return pixelMagnitude * effectiveSensitivity * 0.15f
     }
 
     /**
@@ -221,88 +234,11 @@ class SelfAdaptiveAimStrategy : AimStrategy {
         return aimSpeed to smoothness
     }
 
-    // ==================== Overshoot FSM ====================
-
-    private fun executeOvershoot(
-        config: AimConfig,
-        state: AimStrategy.State,
-        player: PlayerState,
-        targetPoint: Vec2,
-        rotationDiff: Vec2,
-        yawFactor: Float,
-        pitchFactor: Float
-    ): Vec2? {
-        return when (state.overshootPhase) {
-            AimStrategy.State.OvershootPhase.IDLE -> {
-                val interpolated = RotationCalculator.interpolate(
-                    current = player.rotation,
-                    target = targetPoint,
-                    yawFactor = yawFactor,
-                    pitchFactor = pitchFactor
-                )
-                val angularSize = abs(rotationDiff.yaw) + abs(rotationDiff.pitch)
-                if (angularSize > 5f && NoiseProvider.nextUniform(0f, 1f) < 0.20f) {
-                    val delta = RotationCalculator.calculateDifference(player.rotation, targetPoint)
-                    val overshootPercent = 0.05f + NoiseProvider.nextUniform(0f, 1f) * 0.10f
-                    state.overshootTarget = Vec2(
-                        targetPoint.yaw + delta.yaw * overshootPercent,
-                        targetPoint.pitch + delta.pitch * overshootPercent
-                    )
-                    state.overshootTicksRemaining =
-                        if (NoiseProvider.nextUniform(0f, 1f) < 0.5f) 1 else 2
-                    state.overshootPhase = AimStrategy.State.OvershootPhase.OVERSHOOT
-                    val osTarget = state.overshootTarget ?: return null
-                    RotationCalculator.interpolate(
-                        current = player.rotation,
-                        target = osTarget,
-                        yawFactor = yawFactor,
-                        pitchFactor = pitchFactor
-                    )
-                } else {
-                    interpolated
-                }
-            }
-            AimStrategy.State.OvershootPhase.OVERSHOOT -> {
-                val osTarget = state.overshootTarget ?: run {
-                    state.resetOvershoot()
-                    return null
-                }
-                val result = RotationCalculator.interpolate(
-                    current = player.rotation,
-                    target = osTarget,
-                    yawFactor = yawFactor,
-                    pitchFactor = pitchFactor
-                )
-                state.overshootTicksRemaining--
-                if (state.overshootTicksRemaining <= 0) {
-                    state.overshootPhase = AimStrategy.State.OvershootPhase.CORRECT
-                }
-                result
-            }
-            AimStrategy.State.OvershootPhase.CORRECT -> {
-                val result = RotationCalculator.interpolate(
-                    current = player.rotation,
-                    target = targetPoint,
-                    yawFactor = yawFactor * 1.2f,
-                    pitchFactor = pitchFactor * 1.2f
-                )
-                state.resetOvershoot()
-                result
-            }
-        }
-    }
-
     // ==================== Helpers ====================
 
     private fun sampleReactionDelay(): Int {
         val z = NoiseProvider.next(0f, 1f).toDouble()
         val delayTicks = kotlin.math.exp(1.1 + 0.35 * z)
         return delayTicks.toInt().coerceIn(1, 6)
-    }
-
-    private fun AimStrategy.State.resetOvershoot() {
-        overshootPhase = AimStrategy.State.OvershootPhase.IDLE
-        overshootTarget = null
-        overshootTicksRemaining = 0
     }
 }

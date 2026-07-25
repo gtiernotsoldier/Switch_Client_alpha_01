@@ -112,9 +112,8 @@ class LegitAimStrategy : AimStrategy {
         val yawFactor = config.aimSpeed / 20.0f * config.smoothness
         val pitchFactor = config.aimSpeed / 20.0f * config.smoothness * 0.6f
 
-        // 9. Overshoot state machine
-        val finalRotation = executeOvershoot(
-            config = config,
+        // 9. Overshoot state machine (shared via OvershootHelper)
+        val finalRotation = OvershootHelper.execute(
             state = state,
             player = player,
             targetPoint = targetPoint,
@@ -129,97 +128,10 @@ class LegitAimStrategy : AimStrategy {
         return AimResult.ApplyRotation(noisyRotation)
     }
 
-    // ---- Overshoot state machine ----
-
-    /**
-     * Runs the three-phase overshoot FSM and returns the interpolated
-     * rotation for this tick, or null if the caller should Skip.
-     */
-    private fun executeOvershoot(
-        config: AimConfig,
-        state: AimStrategy.State,
-        player: PlayerState,
-        targetPoint: Vec2,
-        rotationDiff: Vec2,
-        yawFactor: Float,
-        pitchFactor: Float
-    ): Vec2? {
-        return when (state.overshootPhase) {
-            AimStrategy.State.OvershootPhase.IDLE -> {
-                val interpolated = RotationCalculator.interpolate(
-                    current = player.rotation,
-                    target = targetPoint,
-                    yawFactor = yawFactor,
-                    pitchFactor = pitchFactor
-                )
-
-                // 15-25% chance to overshoot on significant direction changes
-                val angularSize = abs(rotationDiff.yaw) + abs(rotationDiff.pitch)
-                if (angularSize > 5f && NoiseProvider.nextUniform(0f, 1f) < 0.20f) {
-                    state.overshootTarget = computeOvershootTarget(
-                        player.rotation, targetPoint
-                    )
-                    state.overshootTicksRemaining =
-                        if (NoiseProvider.nextUniform(0f, 1f) < 0.5f) 1 else 2
-                    state.overshootPhase = AimStrategy.State.OvershootPhase.OVERSHOOT
-                    val osTarget = state.overshootTarget ?: return null
-                    RotationCalculator.interpolate(
-                        current = player.rotation,
-                        target = osTarget,
-                        yawFactor = yawFactor,
-                        pitchFactor = pitchFactor
-                    )
-                } else {
-                    interpolated
-                }
-            }
-            AimStrategy.State.OvershootPhase.OVERSHOOT -> {
-                val osTarget = state.overshootTarget ?: run {
-                    state.resetOvershoot()
-                    return null
-                }
-                val result = RotationCalculator.interpolate(
-                    current = player.rotation,
-                    target = osTarget,
-                    yawFactor = yawFactor,
-                    pitchFactor = pitchFactor
-                )
-                state.overshootTicksRemaining--
-                if (state.overshootTicksRemaining <= 0) {
-                    state.overshootPhase = AimStrategy.State.OvershootPhase.CORRECT
-                }
-                result
-            }
-            AimStrategy.State.OvershootPhase.CORRECT -> {
-                val result = RotationCalculator.interpolate(
-                    current = player.rotation,
-                    target = targetPoint,
-                    yawFactor = yawFactor * 1.2f,
-                    pitchFactor = pitchFactor * 1.2f
-                )
-                state.overshootPhase = AimStrategy.State.OvershootPhase.IDLE
-                state.overshootTarget = null
-                result
-            }
-        }
-    }
-
     // ---- Helpers ----
 
     /**
-     * Compute an overshoot target by offsetting beyond the real target
-     * by 5-15% of the rotation delta.
-     */
-    private fun computeOvershootTarget(currentRotation: Vec2, realTarget: Vec2): Vec2 {
-        val delta = RotationCalculator.calculateDifference(currentRotation, realTarget)
-        val overshootPercent = 0.05f + NoiseProvider.nextUniform(0f, 1f) * 0.10f
-        return Vec2(
-            realTarget.yaw + delta.yaw * overshootPercent,
-            realTarget.pitch + delta.pitch * overshootPercent
-        )
-    }
-
-    /**
+     * Sample a reaction delay in ticks using a log-normal distribution.
      * Sample a reaction delay in ticks using a log-normal distribution.
      * Models human reaction time: median ~3 ticks at 20 TPS.
      */
@@ -227,14 +139,5 @@ class LegitAimStrategy : AimStrategy {
         val z = NoiseProvider.next(0f, 1f).toDouble()
         val delayTicks = exp(1.1 + 0.35 * z)
         return delayTicks.toInt().coerceIn(1, 6)
-    }
-
-    /**
-     * Reset only overshoot state (not the full [AimStrategy.State]).
-     */
-    private fun AimStrategy.State.resetOvershoot() {
-        overshootPhase = AimStrategy.State.OvershootPhase.IDLE
-        overshootTarget = null
-        overshootTicksRemaining = 0
     }
 }

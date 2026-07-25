@@ -1,5 +1,6 @@
 package io.switchlite.adapter.common.module.combat
 
+import io.switchlite.core.condition.ConditionChecker
 import io.switchlite.core.model.PlayerState
 import io.switchlite.core.model.TargetState
 import io.switchlite.core.strategy.click.WeaponType
@@ -10,7 +11,7 @@ import io.switchlite.adapter.common.option.boolean
 import io.switchlite.adapter.common.option.choices
 import io.switchlite.adapter.common.option.float
 import io.switchlite.adapter.common.option.int
-import kotlin.math.abs
+import io.switchlite.adapter.common.option.triggerOptions
 import kotlin.random.Random
 
 /**
@@ -54,12 +55,21 @@ object BlockHit : Module("BlockHit", Category.COMBAT) {
     private val onlySword by boolean("OnlySword", true)
     private val onlyPlayers by boolean("OnlyPlayers", true)
 
-    // ========== Conditions (independent toggles) ==========
+    // ========== Conditions (Unified Engine — shared with AimAssist/Velocity/etc.) ==========
     private val onlyPlane by boolean("OnlyPlane", true)
     private val onlyTargeting by boolean("OnlyTargeting", false)
     private val onlyMove by boolean("OnlyMove", false)
     private val onlyMoveForward by boolean("OnlyMoveForward", false)
     private val onlyWhenTargetGoesBack by boolean("OnlyWhenTargetGoesBack", false)
+
+    // Unified trigger engine — map individual toggles into TriggerOptions
+    private val triggerOptions by triggerOptions("Trigger") {
+        onlyGround = onlyPlane
+        onlyCurrentView = onlyTargeting
+        onlyMove = this@BlockHit.onlyMove
+        onlyMoveForward = this@BlockHit.onlyMoveForward
+        onlyWhenTargetGoesBack = this@BlockHit.onlyWhenTargetGoesBack
+    }
 
     // ========== Phase State Machine ==========
     private enum class Phase { IDLE, POST_DELAY, BLOCKING }
@@ -141,8 +151,8 @@ object BlockHit : Module("BlockHit", Category.COMBAT) {
             return
         }
 
-        // ---- Additional conditions (all must pass) ----
-        if (!checkConditions(player, target)) return
+        // ---- Additional conditions (Unified Engine) ----
+        if (!ConditionChecker.check(triggerOptions, player, target)) return
 
         // ---- Probability roll ----
         if (chance < 100 && Random.nextInt(100) >= chance) return
@@ -178,38 +188,12 @@ object BlockHit : Module("BlockHit", Category.COMBAT) {
         EventBridge.releaseUsingItem()
     }
 
-    /** Target validity: alive, not self, onlyPlayers filter. */
+    /** Target validity: alive, onlyPlayers filter. */
     private fun isValidTarget(target: TargetState): Boolean {
         if (target.health <= 0f) return false
         // onlyPlayers: names are empty for non-player entities in most implementations
         if (onlyPlayers && target.name.isEmpty()) return false
         return true
-    }
-
-    /** Check all enabled condition toggles. All must pass. */
-    private fun checkConditions(player: PlayerState, target: TargetState): Boolean {
-        if (onlyPlane && !player.onGround) return false
-
-        if (onlyTargeting && !isLookingAtTarget(player, target)) return false
-
-        if (onlyMove && !player.isMoving) return false
-
-        if (onlyMoveForward && !player.isMovingForward) return false
-
-        if (onlyWhenTargetGoesBack && !target.isGoingBack) return false
-
-        return true
-    }
-
-    /** Angle-based crosshair-on-target check (30° threshold). */
-    private fun isLookingAtTarget(player: PlayerState, target: TargetState): Boolean {
-        val dx = target.position.x - player.position.x
-        val dz = target.position.z - player.position.z
-        if (dx == 0.0 && dz == 0.0) return true
-        val yawToTarget = Math.toDegrees(kotlin.math.atan2(-dx, dz)).toFloat()
-        var diff = player.rotation.yaw - yawToTarget
-        diff = ((diff + 180f) % 360f + 360f) % 360f - 180f
-        return abs(diff) <= 30f
     }
 
     private fun resetState() {

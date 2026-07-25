@@ -37,6 +37,11 @@ object ForgeEventBridge : IEventBridge {
         EventBridge.registerMotionApplier { motion ->
             applyMotion(motion)
         }
+
+        // Register releaseUsingItem handler (1.9+ AutoClicker OnItemUse.STOP)
+        EventBridge.registerReleaseUsingItemHandler {
+            mc.thePlayer?.stopUsingItem()
+        }
     }
 
     /**

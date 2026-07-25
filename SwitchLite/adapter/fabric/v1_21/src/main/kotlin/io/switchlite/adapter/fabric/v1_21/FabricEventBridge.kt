@@ -37,9 +37,15 @@ object FabricEventBridge : IEventBridge {
             mc.player?.setSprinting(sprinting)
         }
 
-        // Register releaseUsingItem handler (1.9+ AutoClicker OnItemUse.STOP)
+        // Register releaseUsingItem handler (AutoClicker OnItemUse.STOP / AutoBlock)
         EventBridge.registerReleaseUsingItemHandler {
+            mc.options.useKey.isPressed = false
             mc.player?.stopUsingItem()
+        }
+
+        // Register pressUseItem handler (AutoBlock — sword blocking, 1.8 only)
+        EventBridge.registerPressUseItemHandler {
+            mc.options.useKey.isPressed = true
         }
 
         // Register attack trigger (AutoClicker)

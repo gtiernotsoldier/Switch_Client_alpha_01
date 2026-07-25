@@ -45,9 +45,15 @@ object ForgeEventBridge : IEventBridge {
             player.isSprinting = sprinting
         }
 
-        // Register releaseUsingItem handler (1.9+ AutoClicker OnItemUse.STOP)
+        // Register releaseUsingItem handler (AutoClicker OnItemUse.STOP / AutoBlock)
         EventBridge.registerReleaseUsingItemHandler {
+            mc.gameSettings.keyBindUseItem.pressed = false
             mc.thePlayer?.stopUsingItem()
+        }
+
+        // Register pressUseItem handler (AutoBlock — sword blocking)
+        EventBridge.registerPressUseItemHandler {
+            mc.gameSettings.keyBindUseItem.pressed = true
         }
 
         // Register attack trigger (AutoClicker)

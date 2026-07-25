@@ -55,6 +55,8 @@ object ForgeBootstrap {
                 EventBridge.mouseDeltaY = Mouse.getDY().toFloat()
                 val mc = net.minecraft.client.Minecraft.getMinecraft()
                 EventBridge.mouseSensitivity = mc.gameSettings.mouseSensitivity
+                // Physical right-click state (AutoBlock: prevents releasing player's manual hold)
+                EventBridge.isRightMousePhysicallyDown = Mouse.isButtonDown(1)
             }
             TickEvent.Phase.END -> {
                 // Retry injection if netHandler wasn't available at init

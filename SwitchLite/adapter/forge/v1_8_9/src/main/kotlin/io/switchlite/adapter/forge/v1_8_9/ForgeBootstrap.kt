@@ -55,8 +55,12 @@ object ForgeBootstrap {
                 EventBridge.mouseDeltaY = Mouse.getDY().toFloat()
                 val mc = net.minecraft.client.Minecraft.getMinecraft()
                 EventBridge.mouseSensitivity = mc.gameSettings.mouseSensitivity
-                // Physical right-click state (AutoBlock: prevents releasing player's manual hold)
+                // Physical mouse button states (AutoBlock, ClickAssist)
+                EventBridge.isLeftMousePhysicallyDown = Mouse.isButtonDown(0)
                 EventBridge.isRightMousePhysicallyDown = Mouse.isButtonDown(1)
+                // Crosshair state (ClickAssist: 仅方块 filter)
+                EventBridge.isLookingAtBlock = mc.objectMouseOver != null &&
+                    mc.objectMouseOver.typeOfHit == net.minecraft.util.MovingObjectPosition.MovingObjectType.BLOCK
             }
             TickEvent.Phase.END -> {
                 // Retry injection if netHandler wasn't available at init

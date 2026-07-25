@@ -151,6 +151,12 @@ object EventBridge {
     /** Whether the physical right mouse button is currently held (not synthetic). */
     @Volatile var isRightMousePhysicallyDown: Boolean = false
 
+    /** Whether the physical left mouse button is currently held (not synthetic). */
+    @Volatile var isLeftMousePhysicallyDown: Boolean = false
+
+    /** Whether the player's crosshair is currently pointing at a block. */
+    @Volatile var isLookingAtBlock: Boolean = false
+
     // ========== Item Use ==========
     private var releaseUsingItemHandler: (() -> Unit)? = null
     private var pressUseItemHandler: (() -> Unit)? = null
@@ -205,5 +211,7 @@ object EventBridge {
         mouseDeltaY = 0f
         mouseSensitivity = 1.0f
         isRightMousePhysicallyDown = false
+        isLeftMousePhysicallyDown = false
+        isLookingAtBlock = false
     }
 }

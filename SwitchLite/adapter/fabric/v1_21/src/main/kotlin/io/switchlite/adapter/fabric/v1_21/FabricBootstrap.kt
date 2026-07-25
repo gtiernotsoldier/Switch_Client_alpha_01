@@ -3,6 +3,7 @@ package io.switchlite.adapter.fabric.v1_21
 import net.fabricmc.api.ClientModInitializer
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents
 import net.minecraft.network.packet.s2c.play.EntityVelocityUpdateS2CPacket
+import io.switchlite.adapter.common.api.EventBridge
 import org.lwjgl.glfw.GLFW
 import org.lwjgl.glfw.GLFWKeyCallbackI
 
@@ -16,6 +17,11 @@ object FabricBootstrap : ClientModInitializer {
     private var previousKeyCallback: GLFWKeyCallbackI? = null
     private var keyCallbackInitialized = false
 
+    // ========== Mouse Delta Tracking (Self-adaptive AimAssist) ==========
+    private var prevCursorX: Double = 0.0
+    private var prevCursorY: Double = 0.0
+    private var cursorInitialized = false
+
     /**
      * Initialize Fabric bootstrap.
      * Called during mod initialization via ClientModInitializer.
@@ -23,6 +29,11 @@ object FabricBootstrap : ClientModInitializer {
     override fun onInitializeClient() {
         if (initialized) return
         initialized = true
+
+        // Capture mouse delta at START (before game consumes it)
+        ClientTickEvents.START_CLIENT_TICK.register { client ->
+            captureMouseDelta(client)
+        }
 
         // Register tick event via Fabric API
         ClientTickEvents.END_CLIENT_TICK.register { client ->
@@ -37,6 +48,27 @@ object FabricBootstrap : ClientModInitializer {
         // (registered via switchlite.mixins.json)
 
         println("[FabricBootstrap] Initialized")
+    }
+
+    /**
+     * Capture mouse delta from GLFW cursor position and write to EventBridge.
+     * Called at START_CLIENT_TICK so the delta represents the full frame.
+     */
+    private fun captureMouseDelta(client: net.minecraft.client.MinecraftClient) {
+        val window = client.window ?: return
+        val cursorXBuf = DoubleArray(1)
+        val cursorYBuf = DoubleArray(1)
+        GLFW.glfwGetCursorPos(window.handle, cursorXBuf, cursorYBuf)
+
+        if (cursorInitialized) {
+            EventBridge.mouseDeltaX = (cursorXBuf[0] - prevCursorX).toFloat()
+            EventBridge.mouseDeltaY = (cursorYBuf[0] - prevCursorY).toFloat()
+        }
+        prevCursorX = cursorXBuf[0]
+        prevCursorY = cursorYBuf[0]
+        cursorInitialized = true
+
+        EventBridge.mouseSensitivity = client.options.mouseSensitivity.toFloat()
     }
 
     /**

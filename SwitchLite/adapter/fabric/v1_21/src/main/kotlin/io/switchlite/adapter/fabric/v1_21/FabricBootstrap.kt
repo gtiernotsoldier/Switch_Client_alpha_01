@@ -74,6 +74,10 @@ object FabricBootstrap : ClientModInitializer {
             GLFW.glfwGetMouseButton(window.handle, GLFW.GLFW_MOUSE_BUTTON_LEFT) == GLFW.GLFW_PRESS
         EventBridge.isRightMousePhysicallyDown =
             GLFW.glfwGetMouseButton(window.handle, GLFW.GLFW_MOUSE_BUTTON_RIGHT) == GLFW.GLFW_PRESS
+        // Fluid state (JumpReset: prevents jump in water/lava)
+        EventBridge.isInFluid = client.player?.let { p ->
+            p.isTouchingWater || p.isInLava
+        } ?: false
     }
 
     /**

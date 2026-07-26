@@ -61,6 +61,10 @@ object ForgeBootstrap {
                 // Crosshair state (ClickAssist: 仅方块 filter)
                 EventBridge.isLookingAtBlock = mc.objectMouseOver != null &&
                     mc.objectMouseOver.typeOfHit == net.minecraft.util.MovingObjectPosition.MovingObjectType.BLOCK
+                // Fluid state (JumpReset: prevents jump in water/lava/web)
+                EventBridge.isInFluid = mc.thePlayer?.let { p ->
+                    p.isInWater || p.isInLava || p.isInWeb
+                } ?: false
             }
             TickEvent.Phase.END -> {
                 // Retry injection if netHandler wasn't available at init

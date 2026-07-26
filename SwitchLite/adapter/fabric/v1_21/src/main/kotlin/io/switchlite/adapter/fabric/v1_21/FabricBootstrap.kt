@@ -69,6 +69,11 @@ object FabricBootstrap : ClientModInitializer {
         cursorInitialized = true
 
         EventBridge.mouseSensitivity = client.options.mouseSensitivity.toFloat()
+        // Physical mouse button states (ClickAssist, WTap 1.9+)
+        EventBridge.isLeftMousePhysicallyDown =
+            GLFW.glfwGetMouseButton(window.handle, GLFW.GLFW_MOUSE_BUTTON_LEFT) == GLFW.GLFW_PRESS
+        EventBridge.isRightMousePhysicallyDown =
+            GLFW.glfwGetMouseButton(window.handle, GLFW.GLFW_MOUSE_BUTTON_RIGHT) == GLFW.GLFW_PRESS
     }
 
     /**

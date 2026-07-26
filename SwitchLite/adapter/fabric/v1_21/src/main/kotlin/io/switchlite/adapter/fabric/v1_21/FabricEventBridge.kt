@@ -101,6 +101,16 @@ object FabricEventBridge : IEventBridge {
             mc.options.attackKey.isPressed = false
         }
 
+        // Register reach setter (Reach)
+        EventBridge.registerReachSetter { distance ->
+            val targetId = FabricStateExtractor.getCurrentTargetId() ?: return@registerReachSetter
+            val entity = mc.world?.getEntityById(targetId) ?: return@registerReachSetter
+            if (entity !is net.minecraft.entity.LivingEntity || !entity.isAlive) return@registerReachSetter
+            val dist = mc.player?.distanceTo(entity) ?: return@registerReachSetter
+            if (dist > distance) return@registerReachSetter
+            mc.crosshairTarget = net.minecraft.util.hit.EntityHitResult(entity)
+        }
+
         // Register attack trigger (AutoClicker)
         // Uses the input pipeline via options.attackKey.isPressed rather than
         // sending packets directly — required by client-side anti-cheat monitors.

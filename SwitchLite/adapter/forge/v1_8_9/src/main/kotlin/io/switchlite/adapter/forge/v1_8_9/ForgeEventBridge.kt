@@ -113,6 +113,16 @@ object ForgeEventBridge : IEventBridge {
             mc.leftClickCounter = 0
         }
 
+        // Register reach setter (Reach — 1.8 exclusive)
+        EventBridge.registerReachSetter { distance ->
+            val targetId = ForgeStateExtractor.getCurrentTargetId() ?: return@registerReachSetter
+            val entity = mc.theWorld?.getEntityByID(targetId) ?: return@registerReachSetter
+            if (entity !is net.minecraft.entity.EntityLivingBase || !entity.isEntityAlive) return@registerReachSetter
+            val dist = mc.thePlayer?.getDistanceToEntity(entity) ?: return@registerReachSetter
+            if (dist > distance) return@registerReachSetter
+            mc.objectMouseOver = net.minecraft.util.MovingObjectPosition(entity)
+        }
+
         // Register attack trigger (AutoClicker)
         // Uses the LWJGL input pipeline (keyBindAttack.pressed) rather than
         // sending C02 packets directly — required by client-side anti-cheat

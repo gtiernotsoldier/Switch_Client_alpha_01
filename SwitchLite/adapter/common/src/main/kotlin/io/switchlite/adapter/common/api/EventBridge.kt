@@ -180,6 +180,12 @@ object EventBridge {
     fun resetClickDelay() { resetClickDelayHandler?.invoke() }
     fun registerResetClickDelayHandler(handler: () -> Unit) { resetClickDelayHandler = handler }
 
+    // ========== Reach (Reach — 1.8 exclusive) ==========
+    private var reachSetter: ((Float) -> Unit)? = null
+
+    fun setReach(distance: Float) { reachSetter?.invoke(distance) }
+    fun registerReachSetter(handler: (Float) -> Unit) { reachSetter = handler }
+
     // ========== Mouse Delta (for Self-adaptive AimAssist) ==========
     // Set by ForgeBootstrap / FabricBootstrap each tick before onTick().
 

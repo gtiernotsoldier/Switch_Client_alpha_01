@@ -174,6 +174,12 @@ object EventBridge {
         sprintSetter = setter
     }
 
+    // ========== Click Delay Reset (DelayRemover — 1.8 exclusive) ==========
+    private var resetClickDelayHandler: (() -> Unit)? = null
+
+    fun resetClickDelay() { resetClickDelayHandler?.invoke() }
+    fun registerResetClickDelayHandler(handler: () -> Unit) { resetClickDelayHandler = handler }
+
     // ========== Mouse Delta (for Self-adaptive AimAssist) ==========
     // Set by ForgeBootstrap / FabricBootstrap each tick before onTick().
 

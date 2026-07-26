@@ -37,7 +37,8 @@ object WTap : Module("WTap", Category.COMBAT) {
 
     // ========== Shared Configuration ==========
     private val chance by int("Chance", 100, 0..100, "%")
-    private val range by float("Range", 3.0f, 0.0f..6.0f, "blocks")
+    private val rangeMin by float("RangeMin", 0.0f, 0.0f..6.0f, "blocks")
+    private val rangeMax by float("RangeMax", 3.0f, 0.0f..6.0f, "blocks")
     private val onlyPlayers by boolean("OnlyPlayers", true)
 
     // ========== Shared Conditions (Unified Engine) ==========
@@ -109,7 +110,7 @@ object WTap : Module("WTap", Category.COMBAT) {
         if (!player.isMovingForward) { hitCounter = 0; return }
 
         // Target guards
-        if (target == null || target.distance > range) { hitCounter = 0; return }
+        if (target == null || target.distance < rangeMin || target.distance > rangeMax) { hitCounter = 0; return }
         if (target.health <= 0f) { hitCounter = 0; return }
         if (onlyPlayers && target.name.isEmpty()) { hitCounter = 0; return }
 

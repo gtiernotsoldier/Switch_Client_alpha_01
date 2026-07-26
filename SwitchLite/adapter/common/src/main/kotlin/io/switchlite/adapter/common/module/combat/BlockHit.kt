@@ -50,7 +50,8 @@ object BlockHit : Module("BlockHit", Category.COMBAT) {
 
     // ========== Probability & Range ==========
     private val chance by int("Chance", 100, 0..100, "%")
-    private val range by float("Range", 3.0f, 0.0f..6.0f, "blocks")
+    private val rangeMin by float("RangeMin", 0.0f, 0.0f..6.0f, "blocks")
+    private val rangeMax by float("RangeMax", 3.0f, 0.0f..6.0f, "blocks")
 
     // ========== Filters ==========
     private val onlySword by boolean("OnlySword", true)
@@ -141,7 +142,7 @@ object BlockHit : Module("BlockHit", Category.COMBAT) {
 
         // ---- Target guards ----
         if (!isValidTarget(target)) { resetState(); return }
-        if (target.distance > range) { resetState(); return }
+        if (target.distance < rangeMin || target.distance > rangeMax) { resetState(); return }
 
         // ---- Additional conditions (Unified Engine) ----
         if (!ConditionChecker.check(triggerOptions, player, target)) return

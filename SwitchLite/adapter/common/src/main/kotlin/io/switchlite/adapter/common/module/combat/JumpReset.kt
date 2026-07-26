@@ -160,7 +160,9 @@ object JumpReset : Module("JumpReset", Category.COMBAT) {
 
         EventBridge.jump()
 
-        // Reset after execution
+        // Reset after execution — cooldownCounter must be reset here because
+        // ticks continue incrementing it during the delay period.
+        cooldownCounter = 0
         resetState()
     }
 
@@ -172,11 +174,11 @@ object JumpReset : Module("JumpReset", Category.COMBAT) {
         // Player facing direction from yaw (via Core RotationCalculator)
         val facing = RotationCalculator.yawToDirection(player.rotation.yaw)
 
-        // Dot product ≥ cos(120°) = -0.5 → angle ≤ 120°
-        val dot = facing.x * motion.x + facing.z * motion.z / hSpeed
-        // Actually, knockback vector needs to be unit:
+        // Knockback direction unit vector
         val kbX = motion.x / hSpeed
         val kbZ = motion.z / hSpeed
+
+        // Dot product ≥ cos(120°) = -0.5 → angle ≤ 120°
         return (facing.x * kbX + facing.z * kbZ) >= -0.5
     }
 

@@ -23,8 +23,7 @@ import kotlin.random.Random
  *   **Burst**: allow click when target can be damaged (1.8: hurtTime==0, 1.9+: cooldown ready).
  *   **Critical**: if moving upward → cancel; otherwise → Burst.
  *
- * 1.8: trigger on target.hurtTime == 0.         Tick cooldown default 8.
- * 1.9+: trigger on attack cooldown >= threshold. Tick cooldown default 12.
+ * 1.8 / 1.9+: Tick cooldown (default 8), sync with hurt immunity window.
  */
 object HitSelect : Module("HitSelect", Category.COMBAT) {
 

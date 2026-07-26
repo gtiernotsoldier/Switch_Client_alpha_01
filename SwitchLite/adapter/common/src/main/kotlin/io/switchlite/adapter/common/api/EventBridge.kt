@@ -294,6 +294,8 @@ object EventBridge {
         releaseBackHandler = null
         jumpHandler = null
         sprintResetHandler = null
+        resetClickDelayHandler = null
+        reachSetter = null
         attackTrigger = null
         cancelAttackHandler = null
         keyListeners.clear()

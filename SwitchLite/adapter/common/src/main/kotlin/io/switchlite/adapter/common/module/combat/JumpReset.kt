@@ -4,6 +4,7 @@ import io.switchlite.core.condition.ConditionChecker
 import io.switchlite.core.model.PlayerState
 import io.switchlite.core.model.TargetState
 import io.switchlite.core.model.VelocityContext
+import io.switchlite.core.algorithm.RotationCalculator
 import io.switchlite.core.util.Vec3
 import io.switchlite.adapter.common.api.EventBridge
 import io.switchlite.adapter.common.module.Module
@@ -166,22 +167,17 @@ object JumpReset : Module("JumpReset", Category.COMBAT) {
     // ========== Angle Check ==========
     private fun isKnockbackFromFront(player: PlayerState, motion: Vec3): Boolean {
         val hSpeed = sqrt(motion.x * motion.x + motion.z * motion.z)
-        if (hSpeed < 0.001) return false // no horizontal knockback
+        if (hSpeed < 0.001) return false
 
-        // Player facing direction (yaw → unit vector)
-        val yawRad = player.rotation.yaw * kotlin.math.PI.toFloat() / 180f
-        val facingX = -kotlin.math.sin(yawRad.toDouble())
-        val facingZ = kotlin.math.cos(yawRad.toDouble())
+        // Player facing direction from yaw (via Core RotationCalculator)
+        val facing = RotationCalculator.yawToDirection(player.rotation.yaw)
 
-        // Knockback direction unit vector
+        // Dot product ≥ cos(120°) = -0.5 → angle ≤ 120°
+        val dot = facing.x * motion.x + facing.z * motion.z / hSpeed
+        // Actually, knockback vector needs to be unit:
         val kbX = motion.x / hSpeed
         val kbZ = motion.z / hSpeed
-
-        // Dot product between facing and knockback
-        val dot = facingX * kbX + facingZ * kbZ
-        // Angle: acos(dot). dot = cos(angle).
-        // Allowed: |angle| ≤ 120° → dot ≥ cos(120°) = -0.5
-        return dot >= -0.5
+        return (facing.x * kbX + facing.z * kbZ) >= -0.5
     }
 
     // ========== Lifecycle ==========

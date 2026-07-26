@@ -364,4 +364,20 @@ object RotationCalculator {
         
         return Vec2(yaw, pitch)
     }
+
+    /**
+     * Convert yaw (degrees, MC convention) to a horizontal unit direction vector.
+     * yaw=0 faces south (+Z), yaw=90 faces west (-X).
+     *
+     * Used by knockback angle checks (JumpReset) and movement direction computation
+     * (ConditionChecker).
+     */
+    fun yawToDirection(yaw: Float): Vec3 {
+        val yawRad = (yaw + 90f) * (kotlin.math.PI.toFloat() / 180f)
+        return Vec3(
+            -kotlin.math.cos(yawRad.toDouble()),
+            0.0,
+            -kotlin.math.sin(yawRad.toDouble())
+        )
+    }
 }

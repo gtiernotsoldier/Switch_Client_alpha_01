@@ -3,6 +3,7 @@ package io.switchlite.adapter.common.module.combat
 import io.switchlite.core.condition.ConditionChecker
 import io.switchlite.core.model.PlayerState
 import io.switchlite.core.model.TargetState
+import io.switchlite.core.strategy.combat.CombatTrigger
 import io.switchlite.adapter.common.api.EventBridge
 import io.switchlite.adapter.common.module.Module
 import io.switchlite.adapter.common.module.Category
@@ -123,27 +124,23 @@ object WTap : Module("WTap", Category.COMBAT) {
     // 1.8 Logic
     // ================================================================
     private fun evaluate18(player: PlayerState, target: TargetState, now: Long) {
-        val maxHurt = player.maxHurtResistantTime
-
-        // Mode-specific hurt-time check
-        val conditionMet = when (eventType) {
-            "POST" -> target.hurtTime >= maxHurt
-            "PRE"  -> target.hurtTime <  maxHurt
-            else   -> target.hurtTime >= maxHurt
-        }
-        if (!conditionMet) return
-
         // Unified conditions
         if (!ConditionChecker.check(triggerOptions, player, target)) return
 
-        // Probability
-        if (chance < 100 && Random.nextInt(100) >= chance) return
-
-        // Attack counting
-        hitCounter++
-        if (hitCounter < hitThreshold) return
-        hitCounter = 0
-        hitThreshold = Random.nextInt(onceEveryMin, onceEveryMax + 1).coerceAtLeast(1)
+        // POST/PRE hurt-time gate + probability + hit counting (shared via Core)
+        val eval = CombatTrigger.evaluate(
+            mode = if (eventType == "PRE") CombatTrigger.Mode.PRE else CombatTrigger.Mode.POST,
+            target = target,
+            maxHurtTime = player.maxHurtResistantTime,
+            hitCounter = hitCounter,
+            hitThreshold = hitThreshold,
+            hitPerMin = onceEveryMin,
+            hitPerMax = onceEveryMax,
+            chance = chance
+        )
+        hitCounter = eval.hitCounter
+        hitThreshold = eval.hitThreshold
+        if (!eval.fire) return
 
         // Execute
         val pd = Random.nextInt(postDelayMin, postDelayMax + 1)

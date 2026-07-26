@@ -64,6 +64,11 @@ object FabricEventBridge : IEventBridge {
             mc.options.backKey.isPressed = false
         }
 
+        // Register jump handler (JumpReset)
+        EventBridge.registerJumpHandler {
+            mc.player?.jump()
+        }
+
         // Register attack trigger (AutoClicker)
         // Uses the input pipeline via options.attackKey.isPressed rather than
         // sending packets directly — required by client-side anti-cheat monitors.
@@ -142,6 +147,9 @@ object FabricEventBridge : IEventBridge {
             target = target,
             packetHandle = packetHandle
         )
+
+        // Notify passive observers (JumpReset) before dispatching to active listener (Velocity)
+        EventBridge.notifyVelocityPacket(ctx)
 
         return EventBridge.onVelocityPacket(ctx)
     }

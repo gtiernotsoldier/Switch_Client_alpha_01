@@ -3,6 +3,7 @@ package io.switchlite.adapter.common.module.combat
 import io.switchlite.core.condition.ConditionChecker
 import io.switchlite.core.model.PlayerState
 import io.switchlite.core.model.TargetState
+import io.switchlite.core.strategy.combat.CombatTrigger
 import io.switchlite.core.strategy.click.WeaponType
 import io.switchlite.adapter.common.api.EventBridge
 import io.switchlite.adapter.common.module.Module
@@ -49,7 +50,8 @@ object BlockHit : Module("BlockHit", Category.COMBAT) {
 
     // ========== Probability & Range ==========
     private val chance by int("Chance", 100, 0..100, "%")
-    private val range by float("Range", 3.0f, 0.0f..6.0f, "blocks")
+    private val rangeMin by float("RangeMin", 0.0f, 0.0f..6.0f, "blocks")
+    private val rangeMax by float("RangeMax", 3.0f, 0.0f..6.0f, "blocks")
 
     // ========== Filters ==========
     private val onlySword by boolean("OnlySword", true)
@@ -140,28 +142,25 @@ object BlockHit : Module("BlockHit", Category.COMBAT) {
 
         // ---- Target guards ----
         if (!isValidTarget(target)) { resetState(); return }
-        if (target.distance > range) { resetState(); return }
-
-        // ---- Mode: POST / PRE hurt-time check ----
-        val maxHurt = player.maxHurtResistantTime
-        val postCondition = eventType == "POST" && target.hurtTime >= maxHurt
-        val preCondition  = eventType == "PRE"  && target.hurtTime <  maxHurt
-        if (!postCondition && !preCondition) {
-            // reset hitCounter when hurt condition not met between attacks
-            return
-        }
+        if (target.distance < rangeMin || target.distance > rangeMax) { resetState(); return }
 
         // ---- Additional conditions (Unified Engine) ----
         if (!ConditionChecker.check(triggerOptions, player, target)) return
 
-        // ---- Probability roll ----
-        if (chance < 100 && Random.nextInt(100) >= chance) return
-
-        // ---- Attack counting (hitPer) ----
-        hitCounter++
-        if (hitCounter < hitPerThreshold) return
-        hitCounter = 0
-        hitPerThreshold = Random.nextInt(hitPerMin, hitPerMax + 1).coerceAtLeast(1)
+        // ---- POST/PRE hurt-time + probability + hit counting (shared via Core) ----
+        val eval = CombatTrigger.evaluate(
+            mode = if (eventType == "PRE") CombatTrigger.Mode.PRE else CombatTrigger.Mode.POST,
+            target = target,
+            maxHurtTime = player.maxHurtResistantTime,
+            hitCounter = hitCounter,
+            hitThreshold = hitPerThreshold,
+            hitPerMin = hitPerMin,
+            hitPerMax = hitPerMax,
+            chance = chance
+        )
+        hitCounter = eval.hitCounter
+        hitPerThreshold = eval.hitThreshold
+        if (!eval.fire) return
 
         // ---- Execute block-hit ----
         val postDelayMs = Random.nextInt(postDelayMin, postDelayMax + 1)

@@ -56,6 +56,14 @@ object ForgeEventBridge : IEventBridge {
             mc.gameSettings.keyBindUseItem.pressed = true
         }
 
+        // Register forward key handlers (WTap)
+        EventBridge.registerPressForwardHandler {
+            mc.gameSettings.keyBindForward.pressed = true
+        }
+        EventBridge.registerReleaseForwardHandler {
+            mc.gameSettings.keyBindForward.pressed = false
+        }
+
         // Register attack trigger (AutoClicker)
         // Uses the LWJGL input pipeline (keyBindAttack.pressed) rather than
         // sending C02 packets directly — required by client-side anti-cheat

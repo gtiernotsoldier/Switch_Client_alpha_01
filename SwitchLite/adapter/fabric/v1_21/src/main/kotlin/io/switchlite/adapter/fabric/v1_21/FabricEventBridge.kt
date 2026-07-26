@@ -48,6 +48,14 @@ object FabricEventBridge : IEventBridge {
             mc.options.useKey.isPressed = true
         }
 
+        // Register forward key handlers (WTap)
+        EventBridge.registerPressForwardHandler {
+            mc.options.forwardKey.isPressed = true
+        }
+        EventBridge.registerReleaseForwardHandler {
+            mc.options.forwardKey.isPressed = false
+        }
+
         // Register attack trigger (AutoClicker)
         // Uses the input pipeline via options.attackKey.isPressed rather than
         // sending packets directly — required by client-side anti-cheat monitors.

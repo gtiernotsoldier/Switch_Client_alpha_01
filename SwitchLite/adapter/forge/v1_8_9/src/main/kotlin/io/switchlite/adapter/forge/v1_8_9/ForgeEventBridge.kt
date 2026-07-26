@@ -115,24 +115,12 @@ object ForgeEventBridge : IEventBridge {
 
         // Register reach setter (Reach — 1.8 exclusive)
         EventBridge.registerReachSetter { distance ->
-            val player = mc.thePlayer ?: return@registerReachSetter
-            // Normal reach already has a target → don't interfere
-            if (mc.objectMouseOver != null &&
-                mc.objectMouseOver.typeOfHit == net.minecraft.util.MovingObjectPosition.MovingObjectType.ENTITY &&
-                player.getDistanceToEntity(mc.objectMouseOver.entityHit) <= distance
-            ) return@registerReachSetter
-            // Search for entity at extended range
-            var nearest: net.minecraft.entity.Entity? = null
-            var nearestDist = distance.toDouble()
-            for (e in mc.theWorld!!.loadedEntityList) {
-                if (e === player || !e.isEntityAlive) continue
-                if (e !is net.minecraft.entity.EntityLivingBase) continue
-                val d = player.getDistanceToEntity(e)
-                if (d in 0.0..<nearestDist) { nearest = e; nearestDist = d }
-            }
-            if (nearest != null) {
-                mc.objectMouseOver = net.minecraft.util.MovingObjectPosition(nearest)
-            }
+            val targetId = ForgeStateExtractor.getCurrentTargetId() ?: return@registerReachSetter
+            val entity = mc.theWorld?.getEntityByID(targetId) ?: return@registerReachSetter
+            if (entity !is net.minecraft.entity.EntityLivingBase || !entity.isEntityAlive) return@registerReachSetter
+            val dist = mc.thePlayer?.getDistanceToEntity(entity) ?: return@registerReachSetter
+            if (dist > distance) return@registerReachSetter
+            mc.objectMouseOver = net.minecraft.util.MovingObjectPosition(entity)
         }
 
         // Register attack trigger (AutoClicker)

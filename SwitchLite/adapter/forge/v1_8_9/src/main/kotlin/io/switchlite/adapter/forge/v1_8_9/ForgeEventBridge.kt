@@ -108,6 +108,11 @@ object ForgeEventBridge : IEventBridge {
             mc.gameSettings.keyBindAttack.pressed = false
         }
 
+        // Register click delay reset (DelayRemover — 1.8 exclusive)
+        EventBridge.registerResetClickDelayHandler {
+            mc.leftClickCounter = 0
+        }
+
         // Register attack trigger (AutoClicker)
         // Uses the LWJGL input pipeline (keyBindAttack.pressed) rather than
         // sending C02 packets directly — required by client-side anti-cheat

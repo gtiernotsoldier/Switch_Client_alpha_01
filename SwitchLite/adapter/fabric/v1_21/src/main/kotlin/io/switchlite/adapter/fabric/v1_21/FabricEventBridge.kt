@@ -56,6 +56,14 @@ object FabricEventBridge : IEventBridge {
             mc.options.forwardKey.isPressed = false
         }
 
+        // Register back key handlers (STap)
+        EventBridge.registerPressBackHandler {
+            mc.options.backKey.isPressed = true
+        }
+        EventBridge.registerReleaseBackHandler {
+            mc.options.backKey.isPressed = false
+        }
+
         // Register attack trigger (AutoClicker)
         // Uses the input pipeline via options.attackKey.isPressed rather than
         // sending packets directly — required by client-side anti-cheat monitors.

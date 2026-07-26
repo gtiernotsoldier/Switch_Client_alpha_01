@@ -4,6 +4,7 @@ import io.switchlite.adapter.common.api.EventBridge
 import io.switchlite.adapter.common.module.Module
 import io.switchlite.adapter.common.module.Category
 import io.switchlite.adapter.common.option.*
+import io.switchlite.core.condition.ConditionChecker
 import io.switchlite.core.model.PlayerState
 import io.switchlite.core.model.TargetState
 import io.switchlite.core.strategy.keepsprint.KeepSprintConfig
@@ -47,6 +48,17 @@ object KeepSprint : Module("KeepSprint", Category.COMBAT) {
 
     // ========== Conditions ==========
     private val hurtTimeMax by int("HurtTime", 10, 1..10)
+
+    // ========== Unified Condition Engine ==========
+    private val onlyPlane by boolean("OnlyPlane", true)
+    private val onlyMove by boolean("OnlyMove", false)
+    private val onlyWhenTargetGoesBack by boolean("OnlyWhenTargetGoesBack", false)
+
+    private val triggerOptions by triggerOptions("Trigger") {
+        onlyGround = onlyPlane
+        onlyMove = this@KeepSprint.onlyMove
+        onlyWhenTargetGoesBack = this@KeepSprint.onlyWhenTargetGoesBack
+    }
 
     // ========== Timing ==========
     private val delayTicks by int("Delay", 0, 1..20, "ticks")
@@ -109,6 +121,9 @@ object KeepSprint : Module("KeepSprint", Category.COMBAT) {
     // ========== Tick Entry ==========
     fun onTick(player: PlayerState, target: TargetState?) {
         if (!enabled) return
+
+        // Unified condition check
+        if (!ConditionChecker.check(triggerOptions, player, target)) return
 
         val config = buildConfig()
         val input = buildInput(player, target)

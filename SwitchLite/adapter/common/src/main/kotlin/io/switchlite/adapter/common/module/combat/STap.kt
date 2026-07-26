@@ -193,7 +193,11 @@ object STap : Module("STap", Category.COMBAT) {
     // ========== Lifecycle ==========
     override fun onEnable() {
         hitCounter = 0
-        hitThreshold = 1
+        hitThreshold = when (combatVersion) {
+            "1.8" -> Random.nextInt(onceEveryMin, onceEveryMax + 1).coerceAtLeast(1)
+            "1.9+" -> Random.nextInt(onceEvery19Min, onceEvery19Max + 1).coerceAtLeast(1)
+            else -> 1
+        }
         EventBridge.registerTickListener(tickListener)
     }
 

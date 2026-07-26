@@ -16,6 +16,7 @@ object EventBridge {
 
     // ========== Velocity ==========
     private var velocityListener: ((VelocityContext) -> PlatformCommand)? = null
+    private val velocityNotifiers = mutableListOf<(VelocityContext) -> Unit>()
 
     fun registerVelocityListener(listener: (VelocityContext) -> PlatformCommand) {
         velocityListener = listener
@@ -23,6 +24,19 @@ object EventBridge {
 
     fun unregisterVelocityListener() {
         velocityListener = null
+    }
+
+    /** Register a passive observer of velocity packets (does not return a command). */
+    fun registerVelocityNotifier(notifier: (VelocityContext) -> Unit) {
+        velocityNotifiers.add(notifier)
+    }
+
+    fun unregisterVelocityNotifier(notifier: (VelocityContext) -> Unit) {
+        velocityNotifiers.remove(notifier)
+    }
+
+    fun notifyVelocityPacket(ctx: VelocityContext) {
+        velocityNotifiers.forEach { it(ctx) }
     }
 
     fun onVelocityPacket(ctx: VelocityContext): PlatformCommand {
@@ -157,6 +171,9 @@ object EventBridge {
     /** Whether the player's crosshair is currently pointing at a block. */
     @Volatile var isLookingAtBlock: Boolean = false
 
+    /** Whether the player is in water, lava, or cobweb. */
+    @Volatile var isInFluid: Boolean = false
+
     // ========== Item Use ==========
     private var releaseUsingItemHandler: (() -> Unit)? = null
     private var pressUseItemHandler: (() -> Unit)? = null
@@ -205,6 +222,12 @@ object EventBridge {
     fun registerPressBackHandler(handler: () -> Unit) { pressBackHandler = handler }
     fun registerReleaseBackHandler(handler: () -> Unit) { releaseBackHandler = handler }
 
+    // ========== Jump (JumpReset) ==========
+    private var jumpHandler: (() -> Unit)? = null
+
+    fun jump() { jumpHandler?.invoke() }
+    fun registerJumpHandler(handler: () -> Unit) { jumpHandler = handler }
+
     // ========== Platform Registration ==========
     // Called by ForgeBootstrap / FabricBootstrap to wire up platform-specific handlers
     fun registerPlatformHandlers(
@@ -217,6 +240,7 @@ object EventBridge {
 
     fun reset() {
         velocityListener = null
+        velocityNotifiers.clear()
         tickListeners.clear()
         simpleTickListeners.clear()
         rotationSetter = null
@@ -228,6 +252,7 @@ object EventBridge {
         releaseForwardHandler = null
         pressBackHandler = null
         releaseBackHandler = null
+        jumpHandler = null
         attackTrigger = null
         keyListeners.clear()
         tickCounter = 0
@@ -237,5 +262,6 @@ object EventBridge {
         isRightMousePhysicallyDown = false
         isLeftMousePhysicallyDown = false
         isLookingAtBlock = false
+        isInFluid = false
     }
 }

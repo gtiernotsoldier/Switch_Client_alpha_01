@@ -72,6 +72,11 @@ object ForgeEventBridge : IEventBridge {
             mc.gameSettings.keyBindBack.pressed = false
         }
 
+        // Register jump handler (JumpReset)
+        EventBridge.registerJumpHandler {
+            mc.thePlayer?.jump()
+        }
+
         // Register attack trigger (AutoClicker)
         // Uses the LWJGL input pipeline (keyBindAttack.pressed) rather than
         // sending C02 packets directly — required by client-side anti-cheat
@@ -183,6 +188,9 @@ object ForgeEventBridge : IEventBridge {
             target = target,
             packetHandle = packetHandle
         )
+
+        // Notify passive observers (JumpReset) before dispatching to active listener (Velocity)
+        EventBridge.notifyVelocityPacket(ctx)
 
         return EventBridge.onVelocityPacket(ctx)
     }

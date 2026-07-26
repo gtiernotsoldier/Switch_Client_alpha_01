@@ -30,7 +30,7 @@ import kotlin.random.Random
  */
 object CombatTrigger {
 
-    enum class Mode { POST, PRE }
+    enum class Mode { POST, PRE, EQUAL }
 
     data class EvalResult(
         val fire: Boolean,
@@ -50,8 +50,9 @@ object CombatTrigger {
     ): EvalResult {
         // 1. POST/PRE hurt-time gate
         val hurtOk = when (mode) {
-            Mode.POST -> target.hurtTime >= maxHurtTime
-            Mode.PRE  -> target.hurtTime <  maxHurtTime
+            Mode.POST  -> target.hurtTime >= maxHurtTime
+            Mode.PRE   -> target.hurtTime <  maxHurtTime
+            Mode.EQUAL -> target.hurtTime == maxHurtTime
         }
         if (!hurtOk) return EvalResult(false, hitCounter, hitThreshold)
 

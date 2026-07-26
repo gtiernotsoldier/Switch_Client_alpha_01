@@ -77,6 +77,32 @@ object ForgeEventBridge : IEventBridge {
             mc.thePlayer?.jump()
         }
 
+        // Register sprint reset handler (SprintReset — 1.8 exclusive)
+        EventBridge.registerSprintResetHandler { mode ->
+            val player = mc.thePlayer ?: return@registerSprintResetHandler
+            when (mode) {
+                "Nostop" -> {
+                    player.sendQueue.addToSendQueue(
+                        net.minecraft.network.play.client.C0BPacketEntityAction(
+                            player, net.minecraft.network.play.client.C0BPacketEntityAction.Action.STOP_SPRINTING
+                        )
+                    )
+                    player.sendQueue.addToSendQueue(
+                        net.minecraft.network.play.client.C0BPacketEntityAction(
+                            player, net.minecraft.network.play.client.C0BPacketEntityAction.Action.START_SPRINTING
+                        )
+                    )
+                }
+                "Silent" -> {
+                    player.sendQueue.addToSendQueue(
+                        net.minecraft.network.play.client.C03PacketPlayer.C04PacketPlayerPosition(
+                            player.posX, player.posY, player.posZ, player.onGround
+                        )
+                    )
+                }
+            }
+        }
+
         // Register attack trigger (AutoClicker)
         // Uses the LWJGL input pipeline (keyBindAttack.pressed) rather than
         // sending C02 packets directly — required by client-side anti-cheat

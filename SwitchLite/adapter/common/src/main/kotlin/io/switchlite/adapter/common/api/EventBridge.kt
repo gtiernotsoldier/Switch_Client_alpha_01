@@ -244,8 +244,6 @@ object EventBridge {
     fun registerPressBackHandler(handler: () -> Unit) { pressBackHandler = handler }
     fun registerReleaseBackHandler(handler: () -> Unit) { releaseBackHandler = handler }
 
-    fun registerCancelAttackHandler(handler: () -> Unit) { cancelAttackHandler = handler }
-
     // ========== Sprint Reset Packets (SprintReset — 1.8 exclusive) ==========
     private var sprintResetHandler: ((String) -> Unit)? = null
 

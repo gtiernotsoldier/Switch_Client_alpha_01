@@ -17,6 +17,7 @@ import io.switchlite.adapter.common.module.Module
 import io.switchlite.adapter.common.module.Category
 import io.switchlite.adapter.common.option.choices
 import io.switchlite.adapter.common.option.float
+import io.switchlite.adapter.common.option.int
 
 /**
  * TriggerBot Module — autonomous attack when crosshair is on target.
@@ -37,6 +38,13 @@ object TriggerBot : Module("TriggerBot", Category.COMBAT) {
     private val rangeMin by float("RangeMin", 0.0f, 0.0f..3.0f, "blocks")
     private val rangeMax by float("RangeMax", 3.0f, 0.0f..3.0f, "blocks")
 
+    // ========== 1.8 CPS ==========
+    private val minCps by int("MinCPS", 8, 1..20, "cps")
+    private val maxCps by int("MaxCPS", 14, 1..20, "cps")
+
+    // ========== 1.9+ Cooldown ==========
+    private val cooldownThreshold by int("CooldownThreshold", 100, 50..100, "%")
+
     // ========== Core Strategies ==========
     private val strategy18 = ProbabilisticClickStrategy()
     private val state18 = ClickStrategy.State()
@@ -55,7 +63,7 @@ object TriggerBot : Module("TriggerBot", Category.COMBAT) {
         when (combatVersion) {
             "1.8" -> {
                 val config = ClickConfig(
-                    minCps = 8, maxCps = 14,
+                    minCps = minCps, maxCps = maxCps,
                     clickMode = ClickMode.SINGLE,
                     mode = ClickOperatingMode.LEGIT,
                     disableOnBlock = true,
@@ -67,7 +75,7 @@ object TriggerBot : Module("TriggerBot", Category.COMBAT) {
             }
             "1.9+" -> {
                 val config = CooldownClickConfig(
-                    cooldownThreshold = 1.0f,
+                    cooldownThreshold = cooldownThreshold / 100f,
                     cooldownMode = CooldownClickMode.LEGIT,
                     disableOnBlock = true,
                     triggerOptions = io.switchlite.core.option.TriggerOptions(chance = 100)

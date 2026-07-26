@@ -1,5 +1,6 @@
 package io.switchlite.core.condition
 
+import io.switchlite.core.algorithm.RotationCalculator
 import io.switchlite.core.logging.CoreLogger
 import io.switchlite.core.model.PlayerState
 import io.switchlite.core.model.TargetState
@@ -153,11 +154,8 @@ object ConditionChecker {
         val speed = sqrt(player.motionX * player.motionX + player.motionZ * player.motionZ)
         if (speed < 0.01) return false
 
-        val yawRad = (player.rotation.yaw * PI / 180.0)
-        val forwardX = -sin(yawRad)
-        val forwardZ = cos(yawRad)
-
-        val dot = player.motionX * forwardX + player.motionZ * forwardZ
+        val facing = RotationCalculator.yawToDirection(player.rotation.yaw)
+        val dot = player.motionX * facing.x + player.motionZ * facing.z
         return dot < -0.01
     }
 
@@ -169,14 +167,12 @@ object ConditionChecker {
         val speed = sqrt(player.motionX * player.motionX + player.motionZ * player.motionZ)
         if (speed < 0.01) return false
 
-        val yawRad = (player.rotation.yaw * PI / 180.0)
-        val forwardX = -sin(yawRad)
-        val forwardZ = cos(yawRad)
+        val facing = RotationCalculator.yawToDirection(player.rotation.yaw)
 
         // Forward component (dot product)
-        val forward = player.motionX * forwardX + player.motionZ * forwardZ
+        val forward = player.motionX * facing.x + player.motionZ * facing.z
         // Lateral component (2D cross product magnitude)
-        val lateral = player.motionX * forwardZ - player.motionZ * forwardX
+        val lateral = player.motionX * facing.z - player.motionZ * facing.x
 
         return abs(lateral) > abs(forward) && abs(lateral) > 0.01
     }

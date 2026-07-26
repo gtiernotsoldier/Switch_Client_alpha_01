@@ -50,13 +50,17 @@ object KeepSprint : Module("KeepSprint", Category.COMBAT) {
     private val hurtTimeMax by int("HurtTime", 10, 1..10)
 
     // ========== Unified Condition Engine ==========
-    private val onlyPlane by boolean("OnlyPlane", true)
+    // onlyGround default ON: sprint restore only triggers on ground.
+    // Disable if using KeepSprint with crits (in-air hits).
+    private val onlyGround by boolean("OnlyGround", true)
     private val onlyMove by boolean("OnlyMove", false)
+    private val onlyMoveForward by boolean("OnlyMoveForward", false)
     private val onlyWhenTargetGoesBack by boolean("OnlyWhenTargetGoesBack", false)
 
     private val triggerOptions by triggerOptions("Trigger") {
-        onlyGround = onlyPlane
+        onlyGround = this@KeepSprint.onlyGround
         onlyMove = this@KeepSprint.onlyMove
+        onlyMoveForward = this@KeepSprint.onlyMoveForward
         onlyWhenTargetGoesBack = this@KeepSprint.onlyWhenTargetGoesBack
     }
 
@@ -122,11 +126,14 @@ object KeepSprint : Module("KeepSprint", Category.COMBAT) {
     fun onTick(player: PlayerState, target: TargetState?) {
         if (!enabled) return
 
-        // Unified condition check
-        if (!ConditionChecker.check(triggerOptions, player, target)) return
-
+        // Track sprint state FIRST (before condition gate) — must update
+        // prevSprinting and sprintCancelledTick every tick regardless of
+        // conditions, otherwise a jump/crit scenario leaves stale state.
         val config = buildConfig()
         val input = buildInput(player, target)
+
+        // Unified condition check
+        if (!ConditionChecker.check(triggerOptions, player, target)) return
 
         val result = KeepSprintStrategy.execute(config, strategyState, input)
 

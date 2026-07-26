@@ -4,6 +4,7 @@ import io.switchlite.core.condition.ConditionChecker
 import io.switchlite.core.model.PlayerState
 import io.switchlite.core.model.TargetState
 import io.switchlite.core.strategy.combat.CombatTrigger
+import io.switchlite.core.strategy.tap.TapStateMachine
 import io.switchlite.adapter.common.api.EventBridge
 import io.switchlite.adapter.common.module.Module
 import io.switchlite.adapter.common.module.Category
@@ -21,10 +22,7 @@ import kotlin.random.Random
  * an attack, then re-presses it. This resets the player's sprint state,
  * allowing knockback to function at full strength on the next hit.
  *
- * Supports two version paths:
- * - **1.8**: POST/PRE mode with configurable hit counting, postDelay.
- * - **1.9+**: Cooldown-based triggering with [attackCooldownProvider].
- *
+ * State machine managed by Core [TapStateMachine].
  * Only activates while the player is holding W ([PlayerState.isMovingForward]).
  */
 object WTap : Module("WTap", Category.COMBAT) {
@@ -58,8 +56,8 @@ object WTap : Module("WTap", Category.COMBAT) {
 
     // ========== 1.8 Configuration ==========
     private val eventType by choices("EventType", arrayOf("POST", "PRE"))
-    private val actionTicksMin18 by int("ActionMsMin18", 25, 1..500, "ms")
-    private val actionTicksMax18 by int("ActionMsMax18", 55, 1..500, "ms")
+    private val actionMin18 by int("ActionMsMin18", 25, 1..500, "ms")
+    private val actionMax18 by int("ActionMsMax18", 55, 1..500, "ms")
     private val onceEveryMin by int("OnceEveryMin", 1, 1..10)
     private val onceEveryMax by int("OnceEveryMax", 1, 1..10)
     private val postDelayMin by int("PostDelayMin", 25, 0..500, "ms")
@@ -67,15 +65,11 @@ object WTap : Module("WTap", Category.COMBAT) {
 
     // ========== 1.9+ Configuration ==========
     private val cooldownThreshold by float("CooldownThreshold", 1.0f, 0.5f..1.0f, "%")
-    private val actionTicksMin19 by int("ActionMsMin19", 15, 1..500, "ms")
-    private val actionTicksMax19 by int("ActionMsMax19", 30, 1..500, "ms")
+    private val actionMin19 by int("ActionMsMin19", 15, 1..500, "ms")
+    private val actionMax19 by int("ActionMsMax19", 30, 1..500, "ms")
 
-    // ========== State Machine ==========
-    private enum class Phase { IDLE, POST_DELAY, TAPPING }
-
-    private var phase: Phase = Phase.IDLE
-    private var tapEndNano: Long = 0L
-    private var postDelayEndNano: Long = 0L
+    // ========== Core State Machine ==========
+    private val machine = TapStateMachine()
     private var hitCounter: Int = 0
     private var hitThreshold: Int = 1
 
@@ -87,24 +81,15 @@ object WTap : Module("WTap", Category.COMBAT) {
     private fun onTick(player: PlayerState, target: TargetState?) {
         val now = System.nanoTime()
 
-        // ---- Phase: TAPPING (W released, waiting to re-press) ----
-        if (phase == Phase.TAPPING) {
-            if (now >= tapEndNano) {
-                EventBridge.pressForward()
-                phase = Phase.IDLE
-            }
-            return
+        // ---- State machine events ----
+        when (machine.tick(now)) {
+            TapStateMachine.Event.END_TAP -> EventBridge.pressForward()
+            TapStateMachine.Event.SHOULD_START_TAP -> startTap(now)
+            TapStateMachine.Event.NONE -> {}
         }
 
-        // ---- Phase: POST_DELAY (1.8 only, waiting before tap) ----
-        if (phase == Phase.POST_DELAY) {
-            if (now >= postDelayEndNano) {
-                startTap(now)
-            }
-            return
-        }
-
-        // ---- Phase: IDLE — evaluate trigger ----
+        // Only evaluate trigger in IDLE phase
+        if (machine.phase != TapStateMachine.Phase.IDLE) return
 
         // Guard: W must be held
         if (!player.isMovingForward) { hitCounter = 0; return }
@@ -114,7 +99,7 @@ object WTap : Module("WTap", Category.COMBAT) {
         if (target.health <= 0f) { hitCounter = 0; return }
         if (onlyPlayers && target.name.isEmpty()) { hitCounter = 0; return }
 
-        // ---- Route by version ----
+        // Route by version
         when (combatVersion) {
             "1.8" -> evaluate18(player, target, now)
             "1.9+" -> evaluate19(player, target, now)
@@ -122,13 +107,11 @@ object WTap : Module("WTap", Category.COMBAT) {
     }
 
     // ================================================================
-    // 1.8 Logic
+    // 1.8 — CombatTrigger pipeline
     // ================================================================
     private fun evaluate18(player: PlayerState, target: TargetState, now: Long) {
-        // Unified conditions
         if (!ConditionChecker.check(triggerOptions, player, target)) return
 
-        // POST/PRE hurt-time gate + probability + hit counting (shared via Core)
         val eval = CombatTrigger.evaluate(
             mode = if (eventType == "PRE") CombatTrigger.Mode.PRE else CombatTrigger.Mode.POST,
             target = target,
@@ -143,34 +126,27 @@ object WTap : Module("WTap", Category.COMBAT) {
         hitThreshold = eval.hitThreshold
         if (!eval.fire) return
 
-        // Execute
         val pd = Random.nextInt(postDelayMin, postDelayMax + 1)
         if (pd > 0) {
-            postDelayEndNano = now + pd * 1_000_000L
-            phase = Phase.POST_DELAY
+            machine.beginPostDelay(now, pd)
         } else {
             startTap(now)
         }
     }
 
     // ================================================================
-    // 1.9+ Logic
+    // 1.9+ — Cooldown-based triggering
     // ================================================================
     private fun evaluate19(player: PlayerState, target: TargetState, now: Long) {
-        // Must have a target in crosshair
         if (!EventBridge.isLeftMousePhysicallyDown) return
 
-        // Cooldown check
         val cooldown = attackCooldownProvider()
         if (cooldown < cooldownThreshold) return
 
-        // Unified conditions
         if (!ConditionChecker.check(triggerOptions, player, target)) return
 
-        // Probability
         if (chance < 100 && Random.nextInt(100) >= chance) return
 
-        // 1.9+: fire on every attack (postDelay = 0)
         startTap(now)
     }
 
@@ -179,14 +155,12 @@ object WTap : Module("WTap", Category.COMBAT) {
     // ================================================================
     private fun startTap(nowNs: Long) {
         EventBridge.releaseForward()
-        phase = Phase.TAPPING
-
         val ms = when (combatVersion) {
-            "1.8" -> Random.nextInt(actionTicksMin18, actionTicksMax18 + 1)
-            "1.9+" -> Random.nextInt(actionTicksMin19, actionTicksMax19 + 1)
+            "1.8" -> Random.nextInt(actionMin18, actionMax18 + 1)
+            "1.9+" -> Random.nextInt(actionMin19, actionMax19 + 1)
             else -> 40
         }
-        tapEndNano = nowNs + ms * 1_000_000L
+        machine.beginTap(nowNs, ms)
     }
 
     // ========== Lifecycle ==========
@@ -198,11 +172,10 @@ object WTap : Module("WTap", Category.COMBAT) {
 
     override fun onDisable() {
         EventBridge.unregisterTickListener(tickListener)
-        // Re-press W if we had it released (prevents stuck key)
-        if (phase == Phase.TAPPING) {
+        if (machine.phase == TapStateMachine.Phase.TAPPING) {
             EventBridge.pressForward()
         }
-        phase = Phase.IDLE
+        machine.reset()
         hitCounter = 0
     }
 }

@@ -185,6 +185,16 @@ object EventBridge {
         pressUseItemHandler = handler
     }
 
+    // ========== Forward Key (WTap) ==========
+    private var pressForwardHandler: (() -> Unit)? = null
+    private var releaseForwardHandler: (() -> Unit)? = null
+
+    fun pressForward() { pressForwardHandler?.invoke() }
+    fun releaseForward() { releaseForwardHandler?.invoke() }
+
+    fun registerPressForwardHandler(handler: () -> Unit) { pressForwardHandler = handler }
+    fun registerReleaseForwardHandler(handler: () -> Unit) { releaseForwardHandler = handler }
+
     // ========== Platform Registration ==========
     // Called by ForgeBootstrap / FabricBootstrap to wire up platform-specific handlers
     fun registerPlatformHandlers(
@@ -204,6 +214,8 @@ object EventBridge {
         sprintSetter = null
         releaseUsingItemHandler = null
         pressUseItemHandler = null
+        pressForwardHandler = null
+        releaseForwardHandler = null
         attackTrigger = null
         keyListeners.clear()
         tickCounter = 0

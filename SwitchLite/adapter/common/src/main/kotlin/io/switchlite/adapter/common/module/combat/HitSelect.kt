@@ -94,8 +94,11 @@ object HitSelect : Module("HitSelect", Category.COMBAT) {
             return
         }
 
-        // Probability
-        if (chance < 100 && Random.nextInt(100) >= chance) return
+        // Probability — fail also enters cooldown to prevent tick-level spam
+        if (chance < 100 && Random.nextInt(100) >= chance) {
+            cooldown = tick
+            return
+        }
 
         // Allow click through, enter cooldown
         cooldown = tick

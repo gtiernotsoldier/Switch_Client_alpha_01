@@ -33,6 +33,11 @@ object FabricBootstrap : ClientModInitializer {
         // Capture mouse delta at START (before game consumes it)
         ClientTickEvents.START_CLIENT_TICK.register { client ->
             captureMouseDelta(client)
+            // PreTick listeners (HitSelect)
+            val player = FabricStateExtractor.extractPlayerState()
+            val targetId = FabricStateExtractor.getCurrentTargetId()
+            val target = if (targetId != null) FabricStateExtractor.extractTargetState(targetId) else null
+            EventBridge.onStartTick(player, target)
         }
 
         // Register tick event via Fabric API

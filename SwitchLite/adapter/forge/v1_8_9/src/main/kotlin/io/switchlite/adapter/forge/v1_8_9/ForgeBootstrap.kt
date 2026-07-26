@@ -65,6 +65,12 @@ object ForgeBootstrap {
                 EventBridge.isInFluid = mc.thePlayer?.let { p ->
                     p.isInWater || p.isInLava || p.isInWeb
                 } ?: false
+
+                // PreTick listeners (HitSelect — runs before game processes input)
+                val player = ForgeStateExtractor.extractPlayerState()
+                val targetId = ForgeStateExtractor.getCurrentTargetId()
+                val target = if (targetId != null) ForgeStateExtractor.extractTargetState(targetId) else null
+                EventBridge.onStartTick(player, target)
             }
             TickEvent.Phase.END -> {
                 // Retry injection if netHandler wasn't available at init

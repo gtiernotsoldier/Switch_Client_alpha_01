@@ -69,6 +69,33 @@ object FabricEventBridge : IEventBridge {
             mc.player?.jump()
         }
 
+        // Register sprint reset handler (SprintReset)
+        EventBridge.registerSprintResetHandler { mode ->
+            val player = mc.player ?: return@registerSprintResetHandler
+            val network = player.networkHandler ?: return@registerSprintResetHandler
+            when (mode) {
+                "Nostop" -> {
+                    network.sendPacket(
+                        net.minecraft.network.packet.c2s.play.ClientCommandC2SPacket(
+                            player, net.minecraft.network.packet.c2s.play.ClientCommandC2SPacket.Mode.STOP_SPRINTING
+                        )
+                    )
+                    network.sendPacket(
+                        net.minecraft.network.packet.c2s.play.ClientCommandC2SPacket(
+                            player, net.minecraft.network.packet.c2s.play.ClientCommandC2SPacket.Mode.START_SPRINTING
+                        )
+                    )
+                }
+                "Silent" -> {
+                    network.sendPacket(
+                        net.minecraft.network.packet.c2s.play.PlayerMoveC2SPacket.PositionAndOnGround(
+                            player.x, player.y, player.z, player.isOnGround
+                        )
+                    )
+                }
+            }
+        }
+
         // Register attack trigger (AutoClicker)
         // Uses the input pipeline via options.attackKey.isPressed rather than
         // sending packets directly — required by client-side anti-cheat monitors.

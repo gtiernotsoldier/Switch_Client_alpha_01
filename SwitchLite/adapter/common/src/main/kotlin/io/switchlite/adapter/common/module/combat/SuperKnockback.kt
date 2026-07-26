@@ -20,7 +20,7 @@ import kotlin.random.Random
  *   **SprintTap2**: press S (back) for [stopTicks] to force a movement stop,
  *     release, wait [unSprintTicks], then restore sprint.
  *
- * Triggers when target.hurtTime == [hurtTime] (default 10 = the instant the
+ * Triggers when target.hurtTime equals the configured HurtTime value (default 10 = the instant the
  * target was hit), subject to ConditionChecker, probability, and built-in
  * 3-block range. Optional delay before execution.
  */
@@ -139,7 +139,7 @@ object SuperKnockback : Module("SuperKnockback", Category.COMBAT) {
             "SprintTap2" -> {
                 EventBridge.pressBack()
                 phase = Phase.STOP
-                phaseTicksRemaining = stopTicks.coerceAtMost(unSprintTicks)
+                phaseTicksRemaining = stopTicks
             }
         }
     }

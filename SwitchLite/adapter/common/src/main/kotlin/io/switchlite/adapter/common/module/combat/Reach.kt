@@ -27,7 +27,6 @@ object Reach : Module("Reach", Category.COMBAT) {
 
     // ========== Trigger ==========
     private val chance by int("Chance", 100, 0..100, "%")
-    private val tickCooldown by int("Tick", 8, 1..20, "ticks")
     private val hitPer by int("HitPer", 1, 1..10)
     private val delay by int("Delay", 0, 0..500, "ms")
 
@@ -91,7 +90,6 @@ object Reach : Module("Reach", Category.COMBAT) {
 
         // Fire — extend reach for [delay] ms, then fall back to min
         EventBridge.setReach(reachMax)
-        cooldown = tickCooldown
 
         if (delay > 0) {
             delayNano = System.nanoTime() + delay * 1_000_000L

@@ -4,6 +4,7 @@ import io.switchlite.core.condition.ConditionChecker
 import io.switchlite.core.model.PlayerState
 import io.switchlite.core.model.TargetState
 import io.switchlite.core.strategy.combat.CombatTrigger
+import io.switchlite.core.strategy.tap.TapStateMachine
 import io.switchlite.adapter.common.api.EventBridge
 import io.switchlite.adapter.common.module.Module
 import io.switchlite.adapter.common.module.Category
@@ -18,14 +19,9 @@ import kotlin.random.Random
  * STap Module — brief S-key press during forward movement for sudden stops.
  *
  * Presses the back key (S) for [actionTicks] milliseconds while holding W,
- * causing a near-instant speed drop. This disrupts the opponent's aim
- * prediction by creating a momentary "stutter" in the player's movement.
+ * causing a near-instant speed drop that disrupts opponent aim prediction.
  *
- * Supports two version paths:
- * - **1.8**: POST/PRE mode with configurable hit counting and postDelay.
- * - **1.9+**: Fixed POST mode with lower probability (30-60%), 2-3 hit counting,
- *   and extremely short actionTicks (10-15ms) — a micro-stutter on the cooldown edge.
- *
+ * State machine managed by Core [TapStateMachine].
  * Only activates while holding W ([PlayerState.isMovingForward]).
  */
 object STap : Module("STap", Category.COMBAT) {
@@ -70,12 +66,8 @@ object STap : Module("STap", Category.COMBAT) {
     private val onceEvery19Min by int("OnceEvery19Min", 2, 1..10)
     private val onceEvery19Max by int("OnceEvery19Max", 3, 1..10)
 
-    // ========== State Machine ==========
-    private enum class Phase { IDLE, POST_DELAY, TAPPING }
-
-    private var phase: Phase = Phase.IDLE
-    private var tapEndNano: Long = 0L
-    private var postDelayEndNano: Long = 0L
+    // ========== Core State Machine ==========
+    private val machine = TapStateMachine()
     private var hitCounter: Int = 0
     private var hitThreshold: Int = 1
 
@@ -87,24 +79,14 @@ object STap : Module("STap", Category.COMBAT) {
     private fun onTick(player: PlayerState, target: TargetState?) {
         val now = System.nanoTime()
 
-        // ---- Phase: TAPPING (S pressed, waiting to release) ----
-        if (phase == Phase.TAPPING) {
-            if (now >= tapEndNano) {
-                EventBridge.releaseBack()
-                phase = Phase.IDLE
-            }
-            return
+        // ---- State machine events ----
+        when (machine.tick(now)) {
+            TapStateMachine.Event.END_TAP -> EventBridge.releaseBack()
+            TapStateMachine.Event.SHOULD_START_TAP -> startTap(now)
+            TapStateMachine.Event.NONE -> {}
         }
 
-        // ---- Phase: POST_DELAY (waiting before S press) ----
-        if (phase == Phase.POST_DELAY) {
-            if (now >= postDelayEndNano) {
-                startTap(now)
-            }
-            return
-        }
-
-        // ---- Phase: IDLE — evaluate trigger ----
+        if (machine.phase != TapStateMachine.Phase.IDLE) return
 
         // Guard: W must be held
         if (!player.isMovingForward) { hitCounter = 0; return }
@@ -114,10 +96,10 @@ object STap : Module("STap", Category.COMBAT) {
         if (target.health <= 0f) { hitCounter = 0; return }
         if (onlyPlayers && target.name.isEmpty()) { hitCounter = 0; return }
 
-        // ---- Unified conditions ----
+        // Unified conditions
         if (!ConditionChecker.check(triggerOptions, player, target)) return
 
-        // ---- Route by version ----
+        // Route by version
         when (combatVersion) {
             "1.8" -> evaluate18(player, target, now)
             "1.9+" -> evaluate19(now)
@@ -125,7 +107,7 @@ object STap : Module("STap", Category.COMBAT) {
     }
 
     // ================================================================
-    // 1.8 — full trigger pipeline via CombatTrigger
+    // 1.8 — CombatTrigger pipeline
     // ================================================================
     private fun evaluate18(player: PlayerState, target: TargetState, now: Long) {
         val eval = CombatTrigger.evaluate(
@@ -144,34 +126,25 @@ object STap : Module("STap", Category.COMBAT) {
 
         val pd = Random.nextInt(postDelayMin, postDelayMax + 1)
         if (pd > 0) {
-            postDelayEndNano = now + pd * 1_000_000L
-            phase = Phase.POST_DELAY
+            machine.beginPostDelay(now, pd)
         } else {
             startTap(now)
         }
     }
 
     // ================================================================
-    // 1.9+ — low-frequency micro-stutter
+    // 1.9+ — Low-frequency micro-stutter
     // ================================================================
     private fun evaluate19(now: Long) {
-        // 1.9+: POST only — must hit target (hurtTime at max)
-        // Bail out early if no target was just hurt (handled by the caller having
-        // a valid hurt-time check via the target's state. Since 1.9+ doesn't
-        // expose target.hurtTime reliably on every tick, we rely on the physical
-        // left-click as a proxy for "attack just happened".)
         if (!EventBridge.isLeftMousePhysicallyDown) return
 
-        // Probability (lower for 1.9+: 30-60%, prevents opponent adaptation)
         if (Random.nextInt(100) >= chance19) return
 
-        // Attack counting (2-3 per cycle)
         hitCounter++
         if (hitCounter < hitThreshold) return
         hitCounter = 0
         hitThreshold = Random.nextInt(onceEvery19Min, onceEvery19Max + 1).coerceAtLeast(1)
 
-        // 1.9+: postDelay fixed at 0 (must sync with attack instant)
         startTap(now)
     }
 
@@ -180,14 +153,12 @@ object STap : Module("STap", Category.COMBAT) {
     // ================================================================
     private fun startTap(nowNs: Long) {
         EventBridge.pressBack()
-        phase = Phase.TAPPING
-
         val ms = when (combatVersion) {
             "1.8" -> Random.nextInt(actionMin18, actionMax18 + 1)
             "1.9+" -> Random.nextInt(actionMin19, actionMax19 + 1)
             else -> 40
         }
-        tapEndNano = nowNs + ms * 1_000_000L
+        machine.beginTap(nowNs, ms)
     }
 
     // ========== Lifecycle ==========
@@ -203,10 +174,10 @@ object STap : Module("STap", Category.COMBAT) {
 
     override fun onDisable() {
         EventBridge.unregisterTickListener(tickListener)
-        if (phase == Phase.TAPPING) {
+        if (machine.phase == TapStateMachine.Phase.TAPPING) {
             EventBridge.releaseBack()
         }
-        phase = Phase.IDLE
+        machine.reset()
         hitCounter = 0
     }
 }

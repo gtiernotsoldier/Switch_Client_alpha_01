@@ -64,6 +64,14 @@ object ForgeEventBridge : IEventBridge {
             mc.gameSettings.keyBindForward.pressed = false
         }
 
+        // Register back key handlers (STap)
+        EventBridge.registerPressBackHandler {
+            mc.gameSettings.keyBindBack.pressed = true
+        }
+        EventBridge.registerReleaseBackHandler {
+            mc.gameSettings.keyBindBack.pressed = false
+        }
+
         // Register attack trigger (AutoClicker)
         // Uses the LWJGL input pipeline (keyBindAttack.pressed) rather than
         // sending C02 packets directly — required by client-side anti-cheat

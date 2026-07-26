@@ -195,6 +195,16 @@ object EventBridge {
     fun registerPressForwardHandler(handler: () -> Unit) { pressForwardHandler = handler }
     fun registerReleaseForwardHandler(handler: () -> Unit) { releaseForwardHandler = handler }
 
+    // ========== Back Key (STap) ==========
+    private var pressBackHandler: (() -> Unit)? = null
+    private var releaseBackHandler: (() -> Unit)? = null
+
+    fun pressBack() { pressBackHandler?.invoke() }
+    fun releaseBack() { releaseBackHandler?.invoke() }
+
+    fun registerPressBackHandler(handler: () -> Unit) { pressBackHandler = handler }
+    fun registerReleaseBackHandler(handler: () -> Unit) { releaseBackHandler = handler }
+
     // ========== Platform Registration ==========
     // Called by ForgeBootstrap / FabricBootstrap to wire up platform-specific handlers
     fun registerPlatformHandlers(
@@ -216,6 +226,8 @@ object EventBridge {
         pressUseItemHandler = null
         pressForwardHandler = null
         releaseForwardHandler = null
+        pressBackHandler = null
+        releaseBackHandler = null
         attackTrigger = null
         keyListeners.clear()
         tickCounter = 0

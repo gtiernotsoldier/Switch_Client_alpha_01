@@ -103,6 +103,11 @@ object ForgeEventBridge : IEventBridge {
             }
         }
 
+        // Register cancel attack handler (HitSelect)
+        EventBridge.registerCancelAttackHandler {
+            mc.gameSettings.keyBindAttack.pressed = false
+        }
+
         // Register attack trigger (AutoClicker)
         // Uses the LWJGL input pipeline (keyBindAttack.pressed) rather than
         // sending C02 packets directly — required by client-side anti-cheat

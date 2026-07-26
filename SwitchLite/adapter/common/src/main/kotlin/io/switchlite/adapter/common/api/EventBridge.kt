@@ -39,6 +39,21 @@ object EventBridge {
         velocityNotifiers.forEach { it(ctx) }
     }
 
+    // ========== PreTick (START phase, before game processes input) ==========
+    private val startTickListeners = mutableListOf<(PlayerState, TargetState?) -> Unit>()
+
+    fun registerStartTickListener(listener: (PlayerState, TargetState?) -> Unit) {
+        startTickListeners.add(listener)
+    }
+
+    fun unregisterStartTickListener(listener: (PlayerState, TargetState?) -> Unit) {
+        startTickListeners.remove(listener)
+    }
+
+    fun onStartTick(player: PlayerState, target: TargetState?) {
+        startTickListeners.forEach { it(player, target) }
+    }
+
     fun onVelocityPacket(ctx: VelocityContext): PlatformCommand {
         return velocityListener?.invoke(ctx) ?: PlatformCommand.Pass(ctx.originalMotion)
     }
@@ -137,6 +152,13 @@ object EventBridge {
         attackTrigger = trigger
     }
 
+    // ========== Cancel Attack (HitSelect) ==========
+    private var cancelAttackHandler: (() -> Unit)? = null
+
+    fun cancelAttack() { cancelAttackHandler?.invoke() }
+
+    fun registerCancelAttackHandler(handler: () -> Unit) { cancelAttackHandler = handler }
+
     // ========== Sprint ==========
     private var sprintSetter: ((Boolean) -> Unit)? = null
 
@@ -222,6 +244,8 @@ object EventBridge {
     fun registerPressBackHandler(handler: () -> Unit) { pressBackHandler = handler }
     fun registerReleaseBackHandler(handler: () -> Unit) { releaseBackHandler = handler }
 
+    fun registerCancelAttackHandler(handler: () -> Unit) { cancelAttackHandler = handler }
+
     // ========== Sprint Reset Packets (SprintReset — 1.8 exclusive) ==========
     private var sprintResetHandler: ((String) -> Unit)? = null
 
@@ -261,6 +285,7 @@ object EventBridge {
         jumpHandler = null
         sprintResetHandler = null
         attackTrigger = null
+        cancelAttackHandler = null
         keyListeners.clear()
         tickCounter = 0
         mouseDeltaX = 0f

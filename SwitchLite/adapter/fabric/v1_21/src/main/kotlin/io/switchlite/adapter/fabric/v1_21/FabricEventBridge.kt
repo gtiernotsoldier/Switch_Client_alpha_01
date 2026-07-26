@@ -96,6 +96,11 @@ object FabricEventBridge : IEventBridge {
             }
         }
 
+        // Register cancel attack handler (HitSelect)
+        EventBridge.registerCancelAttackHandler {
+            mc.options.attackKey.isPressed = false
+        }
+
         // Register attack trigger (AutoClicker)
         // Uses the input pipeline via options.attackKey.isPressed rather than
         // sending packets directly — required by client-side anti-cheat monitors.

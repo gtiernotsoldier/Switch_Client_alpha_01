@@ -222,6 +222,12 @@ object EventBridge {
     fun registerPressBackHandler(handler: () -> Unit) { pressBackHandler = handler }
     fun registerReleaseBackHandler(handler: () -> Unit) { releaseBackHandler = handler }
 
+    // ========== Sprint Reset Packets (SprintReset — 1.8 exclusive) ==========
+    private var sprintResetHandler: ((String) -> Unit)? = null
+
+    fun sendSprintReset(mode: String) { sprintResetHandler?.invoke(mode) }
+    fun registerSprintResetHandler(handler: (String) -> Unit) { sprintResetHandler = handler }
+
     // ========== Jump (JumpReset) ==========
     private var jumpHandler: (() -> Unit)? = null
 
@@ -253,6 +259,7 @@ object EventBridge {
         pressBackHandler = null
         releaseBackHandler = null
         jumpHandler = null
+        sprintResetHandler = null
         attackTrigger = null
         keyListeners.clear()
         tickCounter = 0

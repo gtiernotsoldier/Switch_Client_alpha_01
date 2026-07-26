@@ -25,6 +25,14 @@ import io.switchlite.adapter.common.option.int
  * Unlike AutoClicker (which requires the player to hold left-click),
  * TriggerBot autonomously attacks whenever a valid target is within range.
  *
+ * **Primary path: 1.9+** — the cooldown bar makes timing the critical factor;
+ * CooldownClickStrategy ensures every attack fires at full damage.
+ * 1.8 path is provided for compatibility but offers less benefit (CPS
+ * is tick-bound and equivalent to manual clicking).
+ *
+ * **By design, no condition filters** — no weapon check, no OnlyGround, etc.
+ * Pair with HitSelect to filter ineffective clicks and AimAssist for targeting.
+ *
  * Uses the same Core click strategies as AutoClicker:
  *   1.8 — ProbabilisticClickStrategy, 1.9+ — CooldownClickStrategy.
  *

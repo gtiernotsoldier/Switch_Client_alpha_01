@@ -56,13 +56,11 @@ object CombatTrigger {
         }
         if (!hurtOk) return EvalResult(false, hitCounter, hitThreshold)
 
-        // 2. Probability roll
-        if (chance < 100 && Random.nextInt(100) >= chance)
-            return EvalResult(false, hitCounter, hitThreshold)
-
-        // 3. Attack counting
+        // 2. Attack counting
         val c = hitCounter + 1
         if (c < hitThreshold) return EvalResult(false, c, hitThreshold)
+
+        // 3. Probability roll (after counting — only roll when about to fire)
 
         val nextThreshold = Random.nextInt(hitPerMin, hitPerMax + 1).coerceAtLeast(1)
         return EvalResult(true, 0, nextThreshold)

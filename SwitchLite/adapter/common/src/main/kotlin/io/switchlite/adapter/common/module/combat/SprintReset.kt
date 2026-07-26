@@ -11,7 +11,6 @@ import io.switchlite.adapter.common.option.boolean
 import io.switchlite.adapter.common.option.choices
 import io.switchlite.adapter.common.option.int
 import io.switchlite.adapter.common.option.triggerOptions
-import kotlin.random.Random
 
 /**
  * SprintReset Module — packet-level sprint state reset for max knockback.
@@ -21,7 +20,6 @@ import kotlin.random.Random
  *   **Silent**: C03 player position packet (implicit movement state refresh).
  *
  * Triggers on attack when target.hurtTime equals HurtTime threshold.
- * 1.8 exclusive — packet classes don't exist in 1.9+.
  */
 object SprintReset : Module("SprintReset", Category.COMBAT) {
 
@@ -77,7 +75,7 @@ object SprintReset : Module("SprintReset", Category.COMBAT) {
         // Condition check
         if (!ConditionChecker.check(triggerOptions, player, target)) return
 
-        // CombatTrigger EQUAL mode + attack counting
+        // CombatTrigger EQUAL mode + attack counting + probability
         val eval = CombatTrigger.evaluate(
             mode = CombatTrigger.Mode.EQUAL,
             target = target,
@@ -86,14 +84,11 @@ object SprintReset : Module("SprintReset", Category.COMBAT) {
             hitThreshold = hitThreshold,
             hitPerMin = tick,
             hitPerMax = tick,
-            chance = 100 // passthrough — probability checked below
+            chance = chance
         )
         hitCounter = eval.hitCounter
         hitThreshold = eval.hitThreshold
         if (!eval.fire) return
-
-        // Probability
-        if (chance < 100 && Random.nextInt(100) >= chance) return
 
         // Schedule send
         if (delay > 0) {

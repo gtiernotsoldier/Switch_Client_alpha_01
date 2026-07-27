@@ -34,7 +34,27 @@ ProcessInfo findMinecraftProcess() {
                     if (processId == pe.th32ProcessID) {
                         result.pid = pe.th32ProcessID;
                         result.valid = true;
-                        // TODO: Get full path from process
+
+                        // Get window title
+                        char title[256];
+                        GetWindowTextA(hWnd, title, 256);
+                        result.windowTitle = std::string(title);
+
+                        // Get exe path via ModuleFileName
+                        HANDLE hProc = OpenProcess(
+                            PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, processId);
+                        if (hProc) {
+                            HMODULE hMods[1024];
+                            DWORD cbNeeded;
+                            if (EnumProcessModulesEx(hProc, hMods, sizeof(hMods), &cbNeeded,
+                                LIST_MODULES_32BIT | LIST_MODULES_64BIT)) {
+                                char modName[MAX_PATH];
+                                if (GetModuleFileNameExA(hProc, hMods[0], modName, MAX_PATH)) {
+                                    result.path = std::string(modName);
+                                }
+                            }
+                            CloseHandle(hProc);
+                        }
                         break;
                     }
                 }

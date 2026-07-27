@@ -107,7 +107,8 @@ object HitSelect : Module("HitSelect", Category.COMBAT) {
             "KBReduction" -> player.hurtTime == 0
             // CriticalHits: mutually exclusive with onlyGround condition —
             // disable OnlyGround in the trigger panel when using this preference.
-            "CriticalHits" -> player.motionY < 0.0 && !player.onGround
+            "CriticalHits" -> player.motionY < 0.0 && !player.onGround &&
+                player.attackCooldownProgress >= 1.0f
             else -> false
         }
     }

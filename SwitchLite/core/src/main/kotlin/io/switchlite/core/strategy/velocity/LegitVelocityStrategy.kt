@@ -26,11 +26,11 @@ class LegitVelocityStrategy : VelocityStrategy {
         input: Any
     ): VelocityResult {
         require(input is VelocityContext) { "LegitVelocityStrategy expects VelocityContext" }
-        return processLegit(config, input)
+        return processLegit(config, state, input)
     }
 
     // Visible-for-testing entry point
-    internal fun processLegit(config: VelocityConfig, ctx: VelocityContext): VelocityResult {
+    internal fun processLegit(config: VelocityConfig, state: VelocityStrategy.State, ctx: VelocityContext): VelocityResult {
         val player = ctx.player
         val target = ctx.target
         val original = ctx.originalMotion

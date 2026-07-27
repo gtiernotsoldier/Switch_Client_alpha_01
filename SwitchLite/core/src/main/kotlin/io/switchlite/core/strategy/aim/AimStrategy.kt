@@ -23,7 +23,7 @@ interface AimStrategy : Strategy<AimConfig, AimStrategy.State, AimResult> {
      * Carries the overshoot state machine and reaction delay counter.
      * All fields are reset when the module is re-enabled.
      */
-    class State : StrategyContext {
+    open class State : StrategyContext {
         /**
          * Three-phase overshoot simulation state machine.
          *

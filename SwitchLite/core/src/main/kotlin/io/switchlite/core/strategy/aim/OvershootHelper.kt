@@ -96,10 +96,10 @@ object OvershootHelper {
             }
         }
     }
+}
 
-    fun AimStrategy.State.resetOvershoot() {
-        overshootPhase = AimStrategy.State.OvershootPhase.IDLE
-        overshootTarget = null
-        overshootTicksRemaining = 0
-    }
+fun AimStrategy.State.resetOvershoot() {
+    overshootPhase = AimStrategy.State.OvershootPhase.IDLE
+    overshootTarget = null
+    overshootTicksRemaining = 0
 }

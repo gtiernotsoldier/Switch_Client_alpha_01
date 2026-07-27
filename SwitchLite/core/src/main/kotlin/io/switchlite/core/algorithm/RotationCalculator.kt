@@ -148,7 +148,7 @@ object RotationCalculator {
             val pitchDiff = kotlin.math.abs(rot.pitch - currentAim.pitch)
             val angularDist = yawDiff + pitchDiff
             if (angularDist < bestAngularDist) {
-                bestAngularDist = angularDist
+                bestAngularDist = angularDist.toDouble()
                 bestPoint = closest
             }
         }

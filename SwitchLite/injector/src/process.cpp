@@ -27,7 +27,7 @@ ProcessInfo findMinecraftProcess() {
             std::string exeName = pe.szExeFile;
             if (exeName == "javaw.exe" || exeName == "java.exe") {
                 // Additional check: verify Minecraft window
-                HWND hWnd = FindWindow(NULL, L"Minecraft");
+                HWND hWnd = FindWindowA(NULL, "Minecraft");
                 if (hWnd != NULL) {
                     DWORD processId;
                     GetWindowThreadProcessId(hWnd, &processId);

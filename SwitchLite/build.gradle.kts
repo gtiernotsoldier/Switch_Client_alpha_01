@@ -22,6 +22,14 @@ subprojects {
         targetCompatibility = JavaVersion.VERSION_1_8
     }
 
+    // Explicit Kotlin JVM target — future-proof against Kotlin version
+    // upgrades that change the default jvmTarget (risk: UnsupportedClassVersionError).
+    tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile> {
+        kotlinOptions {
+            jvmTarget = "1.8"
+        }
+    }
+
     dependencies {
         implementation(kotlin("stdlib"))
         

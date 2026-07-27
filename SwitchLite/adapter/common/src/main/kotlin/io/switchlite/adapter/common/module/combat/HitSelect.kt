@@ -104,7 +104,7 @@ object HitSelect : Module("HitSelect", Category.COMBAT) {
     private fun checkPreference(player: PlayerState, target: TargetState?): Boolean {
         return when (preference) {
             "MoveSpeed" -> player.onGround && player.isMoving
-            "KBReduction" -> player.hurtTime != player.maxHurtResistantTime
+            "KBReduction" -> player.hurtTime == 0
             // CriticalHits: mutually exclusive with onlyGround condition —
             // disable OnlyGround in the trigger panel when using this preference.
             "CriticalHits" -> player.motionY < 0.0 && !player.onGround

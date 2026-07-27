@@ -77,6 +77,7 @@ object FabricStateExtractor : IStateExtractor {
             health = health,
             hurtTime = hurtTime,
             maxHurtResistantTime = maxHurtResistantTime,
+            attackCooldownProgress = player.getAttackCooldownProgress(0.0f),
             isBlocking = player.isBlocking, // kept for 1.8 backward compat
             isUsingItem = player.isUsingItem,
             isLookingAtTarget = false, // handled by ConditionChecker angle calc (method B)

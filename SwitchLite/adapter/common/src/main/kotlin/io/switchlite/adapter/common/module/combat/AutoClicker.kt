@@ -49,12 +49,6 @@ object AutoClicker : Module("AutoClicker", Category.COMBAT) {
 
     var combatVersion by choices("CombatVersion", arrayOf("1.8", "1.9+"))
 
-    /**
-     * Provider for the player's attack cooldown (0.0–1.0).
-     * Injected by the 1.9+ adapter. Returns 1.0 (always ready) if not set.
-     */
-    var attackCooldownProvider: (() -> Float) = { 1.0f }
-
     // ========== 1.8 Configuration (Delegated Properties) ==========
     private val maxCps by int("MaxCPS", 10, 0..20, "cps")
     private val minCps by int("MinCPS", 8, 0..20, "cps")
@@ -190,7 +184,7 @@ object AutoClicker : Module("AutoClicker", Category.COMBAT) {
         val input = ClickInput(
             player = player,
             target = null,
-            attackCooldown = attackCooldownProvider(),
+            attackCooldown = player.attackCooldownProgress,
             isFalling = player.motionY < 0.0 && !player.onGround
         )
         val result = strategy19.processTick(config, state19, input)

@@ -41,7 +41,6 @@ import io.switchlite.adapter.common.option.int
 object TriggerBot : Module("TriggerBot", Category.COMBAT) {
 
     var combatVersion by choices("CombatVersion", arrayOf("1.8", "1.9+"))
-    var attackCooldownProvider: (() -> Float) = { 1.0f }
 
     private val rangeMin by float("RangeMin", 0.0f, 0.0f..3.0f, "blocks")
     private val rangeMax by float("RangeMax", 3.0f, 0.0f..3.0f, "blocks")
@@ -90,7 +89,7 @@ object TriggerBot : Module("TriggerBot", Category.COMBAT) {
                 )
                 val input = ClickInput(
                     player = player, target = null,
-                    attackCooldown = attackCooldownProvider(),
+                    attackCooldown = player.attackCooldownProgress,
                     isFalling = player.motionY < 0.0 && !player.onGround
                 )
                 val result = strategy19.processTick(config, state19, input)

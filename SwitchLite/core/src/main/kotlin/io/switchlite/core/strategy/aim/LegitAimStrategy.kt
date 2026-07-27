@@ -83,7 +83,7 @@ class LegitAimStrategy : AimStrategy {
 
         // 6. Target point computation
         val targetPoint = when (config.mode) {
-            AimMode.LEGIT -> {
+            AimMode.LEGIT, AimMode.SELF_ADAPTIVE -> {
                 if (RotationCalculator.isInsideHitbox(
                         player.position, player.rotation, target.hitbox
                     )

@@ -14,8 +14,8 @@ object ClickGUI : Module("ClickGUI", Category.RENDER) {
 
     private var isOpen = false
 
-    private val keyListener: (Int, Boolean) -> Unit = { keyCode, pressed ->
-        if (!pressed) return@keyListener
+    private val keyListener: (Int, Boolean) -> Unit = label@{ keyCode, pressed ->
+        if (!pressed) return@label
         when (keyCode) {
             KeyCode.RIGHT_SHIFT -> {
                 isOpen = !isOpen

@@ -11,4 +11,4 @@ interface IEventBridge {
 
 data class AttackEvent(val targetId: Int)
 data class PacketEvent(val packet: Any, var isCancelled: Boolean = false)
-data class TickEvent()
+class TickEvent

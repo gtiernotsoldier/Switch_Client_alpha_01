@@ -56,7 +56,7 @@ object ClickAssist : Module("ClickAssist", Category.COMBAT) {
     private var nextIsRightClick: Boolean = false
 
     /** Sliding window of recent click timestamps for manual CPS estimation. */
-    private val recentClicks = ArrayDeque<Long>(capacity = 10)
+    private val recentClicks = ArrayDeque<Long>(10)
 
     /** Previous tick physical button states (for rising-edge detection). */
     private var prevLeftDown: Boolean = false

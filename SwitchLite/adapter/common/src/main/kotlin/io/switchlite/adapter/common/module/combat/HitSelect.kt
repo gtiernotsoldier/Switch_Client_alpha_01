@@ -66,7 +66,10 @@ object HitSelect : Module("HitSelect", Category.COMBAT) {
         if (!EventBridge.isLeftMousePhysicallyDown) return
 
         // Tick gate: haven't passed N ticks since last eval
-        if (tickCount - lastEvalTick < tick) return
+        if (tickCount - lastEvalTick < tick) {
+            cancel()
+            return
+        }
         lastEvalTick = tickCount
 
         // Condition gate
@@ -101,7 +104,9 @@ object HitSelect : Module("HitSelect", Category.COMBAT) {
     private fun checkPreference(player: PlayerState, target: TargetState?): Boolean {
         return when (preference) {
             "MoveSpeed" -> player.onGround && player.isMoving
-            "KBReduction" -> target != null && target.hurtTime != player.maxHurtResistantTime
+            "KBReduction" -> player.hurtTime != player.maxHurtResistantTime
+            // CriticalHits: mutually exclusive with onlyGround condition —
+            // disable OnlyGround in the trigger panel when using this preference.
             "CriticalHits" -> player.motionY < 0.0 && !player.onGround
             else -> false
         }
@@ -114,12 +119,14 @@ object HitSelect : Module("HitSelect", Category.COMBAT) {
     }
 
     private fun cancel() {
-        EventBridge.cancelAttack()
+        // Active mode: cancel click → game never sees it.
+        // Pause mode: let click through but evaluation failed (throttle only).
+        if (mode == "Active") EventBridge.cancelAttack()
     }
 
     // ========== Lifecycle ==========
     override fun onEnable() {
-        lastAttackNano = 0L
+        lastAttackNano = System.nanoTime()  // start fresh, delay gate won't fire prematurely
         lastEvalTick = 0
         tickCount = 0
         EventBridge.registerStartTickListener(startListener)

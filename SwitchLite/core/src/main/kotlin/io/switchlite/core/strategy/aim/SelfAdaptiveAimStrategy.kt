@@ -39,12 +39,16 @@ class SelfAdaptiveAimStrategy : AimStrategy {
 
     /** Extended state with adaptive tracking fields. */
     class AdaptiveState : AimStrategy.State() {
-        /** EMA of player's alignment score (0.0 = random, 1.0 = perfect). */
         var alignmentEma: Float = 0.5f
-        /** Angular error from the previous tick (for delta calculation). */
         var previousAngularError: Float = 0f
-        /** Whether we have a valid previous frame for delta calculation. */
         var hasPreviousFrame: Boolean = false
+
+        override fun reset() {
+            super.reset()
+            alignmentEma = 0.5f
+            previousAngularError = 0f
+            hasPreviousFrame = false
+        }
     }
 
     override fun execute(

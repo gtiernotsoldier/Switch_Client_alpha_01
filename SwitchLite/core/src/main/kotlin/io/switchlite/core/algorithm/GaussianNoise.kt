@@ -37,7 +37,7 @@ class GaussianNoise(
             s = u * u + v * v
         } while (s >= 1 || s == 0f)
         
-        val mul = sqrt(-2.0 * ln(s) / s)
+        val mul = sqrt(-2.0 * ln(s.toDouble()) / s)
         val z0 = u * mul
         val z1 = v * mul
         

@@ -4,6 +4,7 @@ import io.switchlite.core.algorithm.NoiseProvider
 import io.switchlite.core.condition.ConditionChecker
 import io.switchlite.core.model.PlayerState
 import io.switchlite.core.model.TargetState
+import io.switchlite.core.option.ClickMode
 
 /**
  * Default click strategy with probabilistic CPS and distance adjustment.

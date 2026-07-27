@@ -22,10 +22,6 @@ subprojects {
         targetCompatibility = JavaVersion.VERSION_1_8
     }
 
-    kotlin {
-        jvmToolchain(8)
-    }
-
     dependencies {
         implementation(kotlin("stdlib"))
         

@@ -22,4 +22,7 @@ std::string readVersionsJson(const std::string& versionsDir);
 // Detect platform (Forge/Fabric) from mods or config files
 std::string detectPlatform(const std::string& mcDir);
 
+// Get default .minecraft directory (APPDATA on Windows, HOME on Linux)
+std::string getDefaultMinecraftDir();
+
 #endif // VERSION_H

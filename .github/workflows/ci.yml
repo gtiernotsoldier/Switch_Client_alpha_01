@@ -7,7 +7,7 @@ on:
     branches: [main]
 
 jobs:
-  # ─── JVM build (core + agent + adapter:common) ───
+  # ─── JVM build (core + agent + adapter:common + fat jar) ───
   jvm:
     runs-on: ubuntu-latest
     steps:
@@ -20,12 +20,29 @@ jobs:
         with: { gradle-version: '8.5' }
       - name: Compile
         run: cd SwitchLite && gradle :core:compileKotlin :agent:classes :adapter:common:compileKotlin --no-daemon
+      - name: Build agent fat jar
+        run: cd SwitchLite && gradle :agent:jar --no-daemon
+      - name: Copy agent.jar to injector resources
+        run: |
+          cp SwitchLite/agent/build/libs/switchlite-agent-*.jar SwitchLite/injector/resources/agent.jar
+          echo "agent.jar size: $(wc -c < SwitchLite/injector/resources/agent.jar) bytes"
+      - name: Upload agent.jar artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: switchlite-agent-jar
+          path: SwitchLite/injector/resources/agent.jar
 
   # ─── Injector (Windows) ───
   injector:
     runs-on: windows-latest
+    needs: jvm
     steps:
       - uses: actions/checkout@v4
+      - name: Download agent.jar from jvm job
+        uses: actions/download-artifact@v4
+        with:
+          name: switchlite-agent-jar
+          path: SwitchLite/injector/resources
       - name: Build injector
         run: cd SwitchLite/injector && mkdir build && cd build && cmake .. && cmake --build . --config Release
       - name: Upload artifact

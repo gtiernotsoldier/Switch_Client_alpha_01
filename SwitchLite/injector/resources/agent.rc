@@ -32,3 +32,7 @@ BEGIN
         VALUE "Translation", 0x409, 1200
     END
 END
+
+// Embed agent.jar binary into EXE (RCDATA resource)
+#define AGENT_JAR_RCDATA 101
+AGENT_JAR_RCDATA RCDATA "agent.jar"

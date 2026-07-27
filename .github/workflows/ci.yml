@@ -21,19 +21,8 @@ jobs:
       - name: Compile
         run: cd SwitchLite && gradle :core:compileKotlin :agent:classes :adapter:common:compileKotlin --no-daemon
 
-  # ─── Injector (Linux) ───
-  injector-linux:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Build injector
-        run: cd SwitchLite/injector && mkdir -p build && cd build && cmake .. && cmake --build .
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with: { name: injector-linux, path: SwitchLite/injector/build/injector }
-
   # ─── Injector (Windows) ───
-  injector-windows:
+  injector:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -41,4 +30,4 @@ jobs:
         run: cd SwitchLite/injector && mkdir build && cd build && cmake .. && cmake --build . --config Release
       - name: Upload artifact
         uses: actions/upload-artifact@v4
-        with: { name: injector-windows, path: SwitchLite/injector/build/Release/injector.exe }
+        with: { name: switchlite-injector, path: SwitchLite/injector/build/Release/injector.exe }

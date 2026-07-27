@@ -15,9 +15,10 @@ import io.switchlite.adapter.common.option.triggerOptions
  * Auto-enables sprint when the player is moving forward and on ground,
  * mimicking vanilla sprint mechanics (double-tap W or auto-sprint).
  *
- * Vanilla cancellation rules:
+ * Vanilla sprint cancellation / prevention:
  *   - Sprint cancels in water/lava/web (EventBridge.isInFluid)
  *   - Sprint cancels when food level <= 6 (EventBridge.foodLevel)
+ *   - Sprint blocked while blocking/using item (player.isBlocking/isUsingItem)
  *   - Attack cancellation intentionally NOT handled (KeepSprint owns that)
  *
  * Compatible with SprintReset, WTap/STap, SuperKnockback, KeepSprint —
@@ -41,6 +42,8 @@ object Sprint : Module("Sprint", Category.MOVEMENT) {
         if (!player.isMovingForward) return
         if (!ConditionChecker.check(triggerOptions, player, null)) return
         if (EventBridge.isInFluid || EventBridge.foodLevel <= 6) return
+        // Vanilla: can't sprint while blocking or using item
+        if (player.isBlocking || player.isUsingItem) return
         if (!player.isSprinting) {
             EventBridge.setSprinting(true)
         }

@@ -310,5 +310,6 @@ object EventBridge {
         isLeftMousePhysicallyDown = false
         isLookingAtBlock = false
         isInFluid = false
+        foodLevel = 20
     }
 }

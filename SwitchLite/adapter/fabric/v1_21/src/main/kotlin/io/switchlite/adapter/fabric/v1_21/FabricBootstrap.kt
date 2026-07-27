@@ -74,6 +74,8 @@ object FabricBootstrap : ClientModInitializer {
         cursorInitialized = true
 
         EventBridge.mouseSensitivity = client.options.mouseSensitivity.toFloat()
+        // Food level (Sprint: vanilla cancels at <= 6)
+        EventBridge.foodLevel = client.player?.hungerManager?.foodLevel ?: 20
         // Physical mouse button states (ClickAssist, WTap 1.9+)
         EventBridge.isLeftMousePhysicallyDown =
             GLFW.glfwGetMouseButton(window.handle, GLFW.GLFW_MOUSE_BUTTON_LEFT) == GLFW.GLFW_PRESS

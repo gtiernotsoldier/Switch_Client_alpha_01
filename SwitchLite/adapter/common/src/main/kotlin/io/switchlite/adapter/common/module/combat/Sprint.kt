@@ -47,6 +47,9 @@ object Sprint : Module("Sprint", Category.COMBAT) {
         // Condition check (ground + forward)
         if (!ConditionChecker.check(triggerOptions, player, null)) return
 
+        // Vanilla sprint cancellation: fluid or hunger <= 6
+        if (EventBridge.isInFluid || EventBridge.foodLevel <= 6) return
+
         // Enable sprint if not already sprinting
         if (!player.isSprinting) {
             EventBridge.setSprinting(true)

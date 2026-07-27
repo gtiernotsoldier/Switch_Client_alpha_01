@@ -208,6 +208,9 @@ object EventBridge {
     /** Whether the player is in water, lava, or cobweb. */
     @Volatile var isInFluid: Boolean = false
 
+    /** Player's food level (0-20). Vanilla sprint cancels at <= 6. */
+    @Volatile var foodLevel: Int = 20
+
     // ========== Item Use ==========
     private var releaseUsingItemHandler: (() -> Unit)? = null
     private var pressUseItemHandler: (() -> Unit)? = null

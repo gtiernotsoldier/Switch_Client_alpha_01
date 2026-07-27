@@ -3,8 +3,10 @@
 #include <iostream>
 
 #ifdef _WIN32
+    #define _WIN32_WINNT 0x0601  // Windows 7+ for EnumProcessModulesEx
     #include <windows.h>
     #include <tlhelp32.h>
+    #include <psapi.h>
 #else
     #include <dirent.h>
     #include <fstream>

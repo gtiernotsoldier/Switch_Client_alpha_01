@@ -65,6 +65,8 @@ object ForgeBootstrap {
                 EventBridge.isInFluid = mc.thePlayer?.let { p ->
                     p.isInWater || p.isInLava || p.isInWeb
                 } ?: false
+                // Food level (Sprint: vanilla cancels at <= 6)
+                EventBridge.foodLevel = mc.thePlayer?.foodStats?.foodLevel ?: 20
 
                 // PreTick listeners (HitSelect — runs before game processes input)
                 val player = ForgeStateExtractor.extractPlayerState()

@@ -22,6 +22,8 @@ data class PlayerState(
     val health: Float,
     val hurtTime: Int,
     val maxHurtResistantTime: Int,
+    /** Attack cooldown progress 0.0–1.0. 1.8 always 1.0 (no cooldown bar). */
+    val attackCooldownProgress: Float = 1.0f,
     val isBlocking: Boolean,
     val isUsingItem: Boolean,
     val isLookingAtTarget: Boolean,

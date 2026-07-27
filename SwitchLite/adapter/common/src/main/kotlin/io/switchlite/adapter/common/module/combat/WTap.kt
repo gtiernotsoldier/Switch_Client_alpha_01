@@ -30,9 +30,6 @@ object WTap : Module("WTap", Category.COMBAT) {
     // ========== Version Selection ==========
     var combatVersion by choices("CombatVersion", arrayOf("1.8", "1.9+"))
 
-    /** Provider for the player's attack cooldown (0.0–1.0), injected by 1.9+ adapter. */
-    var attackCooldownProvider: (() -> Float) = { 1.0f }
-
     // ========== Shared Configuration ==========
     private val chance by int("Chance", 100, 0..100, "%")
     private val rangeMin by float("RangeMin", 0.0f, 0.0f..6.0f, "blocks")
@@ -140,7 +137,7 @@ object WTap : Module("WTap", Category.COMBAT) {
     private fun evaluate19(player: PlayerState, target: TargetState, now: Long) {
         if (!EventBridge.isLeftMousePhysicallyDown) return
 
-        val cooldown = attackCooldownProvider()
+        val cooldown = player.attackCooldownProgress
         if (cooldown < cooldownThreshold) return
 
         if (!ConditionChecker.check(triggerOptions, player, target)) return

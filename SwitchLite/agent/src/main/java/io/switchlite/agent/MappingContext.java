@@ -126,11 +126,13 @@ public class MappingContext {
                 System.err.println("[MappingContext] No field mapping found for key: " + k);
                 return null;
             }
+            String className = null;
+            String fieldName = null;
             try {
                 @SuppressWarnings("unchecked")
                 Map<String, String> entry = (Map<String, String>) mapping;
-                String className = entry.get("class");
-                String fieldName = entry.get("field");
+                className = entry.get("class");
+                fieldName = entry.get("field");
                 if (className == null || fieldName == null) {
                     System.err.println("[MappingContext] Missing 'class' or 'field' in mapping for key: " + k);
                     return null;

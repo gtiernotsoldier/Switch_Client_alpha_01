@@ -25,7 +25,7 @@ jobs:
           gradle-version: '8.5'
 
       - name: Compile Kotlin (core + agent + adapter:common)
-        run: cd SwitchLite && gradle :core:compileKotlin :agent:compileKotlin :adapter:common:compileKotlin --no-daemon
+        run: cd SwitchLite && gradle :core:compileKotlin :agent:classes :adapter:common:compileKotlin --no-daemon
 
       - name: Run tests
         run: cd SwitchLite && gradle test --no-daemon

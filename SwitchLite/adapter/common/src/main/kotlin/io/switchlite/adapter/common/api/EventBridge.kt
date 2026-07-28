@@ -245,6 +245,12 @@ object EventBridge {
     fun setGamma(value: Float) { gammaSetter?.invoke(value) }
     fun registerGammaSetter(handler: (Float) -> Unit) { gammaSetter = handler }
 
+    // ========== Right-Click Delay (FastPlace — World) ==========
+    private var rightClickDelayHandler: ((Int) -> Unit)? = null
+
+    fun setRightClickDelay(ticks: Int) { rightClickDelayHandler?.invoke(ticks) }
+    fun registerRightClickDelayHandler(handler: (Int) -> Unit) { rightClickDelayHandler = handler }
+
     // ========== HUD Text (HUD — Render) ==========
     @Volatile var hudTextLine: String = ""
 
@@ -397,6 +403,7 @@ object EventBridge {
         resetHurtCamHandler = null
         resetFovModifierHandler = null
         gammaSetter = null
+        rightClickDelayHandler = null
         hudTextLine = ""
         keyListeners.clear()
         tickCounter = 0

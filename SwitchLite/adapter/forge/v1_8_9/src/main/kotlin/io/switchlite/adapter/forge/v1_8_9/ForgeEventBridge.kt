@@ -195,6 +195,11 @@ object ForgeEventBridge : IEventBridge {
             mc.gameSettings.gammaSetting = gamma
         }
 
+        // Register right-click delay (FastPlace)
+        EventBridge.registerRightClickDelayHandler { ticks ->
+            mc.rightClickDelayTimer = ticks
+        }
+
         // Register attack trigger (AutoClicker)
         // Uses the LWJGL input pipeline (keyBindAttack.pressed) rather than
         // sending C02 packets directly — required by client-side anti-cheat

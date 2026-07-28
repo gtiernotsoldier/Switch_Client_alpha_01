@@ -184,6 +184,11 @@ object FabricEventBridge : IEventBridge {
             mc.options.gamma.value = gamma.toDouble()
         }
 
+        // Register right-click delay (FastPlace)
+        EventBridge.registerRightClickDelayHandler { ticks ->
+            mc.itemUseCooldown = ticks
+        }
+
         // Register attack trigger (AutoClicker)
         // Uses the input pipeline via options.attackKey.isPressed rather than
         // sending packets directly — required by client-side anti-cheat monitors.

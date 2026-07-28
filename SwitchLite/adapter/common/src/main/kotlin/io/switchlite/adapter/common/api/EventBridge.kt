@@ -180,6 +180,12 @@ object EventBridge {
     fun resetClickDelay() { resetClickDelayHandler?.invoke() }
     fun registerResetClickDelayHandler(handler: () -> Unit) { resetClickDelayHandler = handler }
 
+    // ========== Jump Delay Reset (NoJumpDelay — Movement) ==========
+    private var resetJumpDelayHandler: (() -> Unit)? = null
+
+    fun resetJumpDelay() { resetJumpDelayHandler?.invoke() }
+    fun registerResetJumpDelayHandler(handler: () -> Unit) { resetJumpDelayHandler = handler }
+
     // ========== Reach (Reach — 1.8 exclusive) ==========
     private var reachSetter: ((Float) -> Unit)? = null
 
@@ -298,6 +304,7 @@ object EventBridge {
         jumpHandler = null
         sprintResetHandler = null
         resetClickDelayHandler = null
+        resetJumpDelayHandler = null
         reachSetter = null
         attackTrigger = null
         cancelAttackHandler = null

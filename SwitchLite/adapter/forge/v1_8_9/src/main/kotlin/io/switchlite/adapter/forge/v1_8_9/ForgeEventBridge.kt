@@ -113,6 +113,17 @@ object ForgeEventBridge : IEventBridge {
             mc.leftClickCounter = 0
         }
 
+        // Register jump delay reset (NoJumpDelay — Movement)
+        EventBridge.registerResetJumpDelayHandler {
+            mc.thePlayer?.let { p ->
+                try {
+                    val f = p.javaClass.getDeclaredField("jumpTicks")
+                    f.isAccessible = true
+                    f.setInt(p, 0)
+                } catch (_: Exception) {}
+            }
+        }
+
         // Register reach setter (Reach — 1.8 exclusive)
         EventBridge.registerReachSetter { distance ->
             val targetId = ForgeStateExtractor.getCurrentTargetId() ?: return@registerReachSetter

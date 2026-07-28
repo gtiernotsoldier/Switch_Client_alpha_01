@@ -101,6 +101,17 @@ object FabricEventBridge : IEventBridge {
             mc.options.attackKey.isPressed = false
         }
 
+        // Register jump delay reset (NoJumpDelay — Movement)
+        EventBridge.registerResetJumpDelayHandler {
+            mc.player?.let { p ->
+                try {
+                    val f = p.javaClass.getDeclaredField("jumpingCooldown")
+                    f.isAccessible = true
+                    f.setInt(p, 0)
+                } catch (_: Exception) {}
+            }
+        }
+
         // Register reach setter (Reach)
         EventBridge.registerReachSetter { distance ->
             val targetId = FabricStateExtractor.getCurrentTargetId() ?: return@registerReachSetter

@@ -26,12 +26,12 @@ object NoMouseFix : Module("NoMouseFix", Category.MOVEMENT) {
     }
 
     private val endListener: (PlayerState, TargetState?) -> Unit = { _, _ ->
-        if (!EventBridge.velocityPacketReceivedThisTick) return
-        // Restore original mouse state
-        EventBridge.mouseDeltaX = EventBridge.snapMouseDeltaX
-        EventBridge.mouseDeltaY = EventBridge.snapMouseDeltaY
-        EventBridge.mouseSensitivity = EventBridge.snapMouseSensitivity
-        EventBridge.velocityPacketReceivedThisTick = false
+        if (EventBridge.velocityPacketReceivedThisTick) {
+            EventBridge.mouseDeltaX = EventBridge.snapMouseDeltaX
+            EventBridge.mouseDeltaY = EventBridge.snapMouseDeltaY
+            EventBridge.mouseSensitivity = EventBridge.snapMouseSensitivity
+            EventBridge.velocityPacketReceivedThisTick = false
+        }
     }
 
     override fun onEnable() {

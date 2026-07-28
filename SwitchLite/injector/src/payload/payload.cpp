@@ -8,6 +8,11 @@
 HMODULE g_hModule = NULL;
 jobject g_gameClassLoader = NULL;
 
+// Named event for cross-process sync with injector
+// Event name includes PID so multiple MCs don't collide
+static HANDLE g_hDoneEvent = NULL;
+static char g_doneEventName[64] = {0};
+
 // ── File logger (same dir as agent.jar, guaranteed writable) ──
 
 static FILE* g_logFile = NULL;
@@ -187,6 +192,17 @@ static bool callAgentBootstrap(JNIEnv* env, const char* configDir) {
     return true;
 }
 
+// ── signalDone: notify injector that ThreadProc finished ──
+
+static void signalDone() {
+    if (g_hDoneEvent) {
+        SetEvent(g_hDoneEvent);
+        payloadLog("[SwitchLite] Done event signaled to injector");
+    } else {
+        payloadLog("[SwitchLite] (done event not available, injector may timeout)");
+    }
+}
+
 // ── ThreadProc ──
 
 DWORD WINAPI ThreadProc(LPVOID lpParam) {
@@ -195,8 +211,22 @@ DWORD WINAPI ThreadProc(LPVOID lpParam) {
     snprintf(jarPath, sizeof(jarPath), "%s\\switchlite-agent.jar", configDir);
     payloadLog("[SwitchLite] ThreadProc started, configDir=%s, jarPath=%s", configDir, jarPath);
 
+    // Open the done event created by injector (name includes PID)
+    if (g_doneEventName[0] != '\0') {
+        g_hDoneEvent = OpenEventA(EVENT_MODIFY_STATE, FALSE, g_doneEventName);
+        if (g_hDoneEvent) {
+            payloadLog("[SwitchLite] Opened done event: %s", g_doneEventName);
+        } else {
+            payloadLog("[SwitchLite] WARNING: Failed to open done event: %s (err=%d)", g_doneEventName, GetLastError());
+        }
+    }
+
     JavaVM* vm = findJVM();
-    if (!vm) { payloadLog("[SwitchLite] FATAL: JVM not found"); return 1; }
+    if (!vm) {
+        payloadLog("[SwitchLite] FATAL: JVM not found");
+        signalDone();
+        return 1;
+    }
     payloadLog("[SwitchLite] JVM found: %p", vm);
 
     JNIEnv* env = NULL;
@@ -204,6 +234,7 @@ DWORD WINAPI ThreadProc(LPVOID lpParam) {
     payloadLog("[SwitchLite] AttachCurrentThread returned %d", attachResult);
     if (attachResult != JNI_OK) {
         payloadLog("[SwitchLite] FATAL: AttachCurrentThread failed (code=%d)", attachResult);
+        signalDone();
         return 1;
     }
     payloadLog("[SwitchLite] Thread attached, JNIEnv=%p", env);
@@ -211,17 +242,20 @@ DWORD WINAPI ThreadProc(LPVOID lpParam) {
     if (!addJarToClasspath(env, jarPath)) {
         payloadLog("[SwitchLite] FATAL: addJarToClasspath failed");
         vm->DetachCurrentThread();
+        signalDone();
         return 1;
     }
 
     if (!callAgentBootstrap(env, configDir)) {
         payloadLog("[SwitchLite] FATAL: callAgentBootstrap failed");
         vm->DetachCurrentThread();
+        signalDone();
         return 1;
     }
 
     payloadLog("[SwitchLite] ========== Payload completed successfully ==========");
     vm->DetachCurrentThread();
+    signalDone();
     return 0;
 }
 
@@ -239,6 +273,12 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID lpReserved) {
         char msg[512];
         snprintf(msg, sizeof(msg), "[SwitchLite] DLL loaded in PID %d, temp=%s", GetCurrentProcessId(), tempPath);
         payloadLog(msg);
+
+        // Pre-build the done event name (injector creates the actual event object).
+        // We just record the name here so ThreadProc can OpenEventA() it.
+        _snprintf(g_doneEventName, sizeof(g_doneEventName),
+                  "SwitchLitePayloadDone_%d", GetCurrentProcessId());
+        payloadLog("[SwitchLite] Done event name will be: %s", g_doneEventName);
 
         HANDLE hThread = CreateThread(NULL, 0, ThreadProc, _strdup(tempPath), 0, NULL);
         if (hThread) {

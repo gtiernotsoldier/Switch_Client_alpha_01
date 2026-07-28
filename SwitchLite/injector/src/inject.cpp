@@ -136,21 +136,50 @@ bool injectJavaAgent(int pid, const std::string& agentPath, const VersionInfo& v
         return false;
     }
 
-    // 7. Wait for DLL to initialize
-    std::cout << "[Inject] Waiting for payload to initialize..." << std::endl;
+    // 7. Create Named Event for payload to signal completion
+    //     Name includes PID so multiple MCs don't collide
+    std::string eventName = "SwitchLitePayloadDone_" + std::to_string(pid);
+    HANDLE hDoneEvent = CreateEventA(NULL, TRUE, FALSE, eventName.c_str());
+    if (!hDoneEvent) {
+        std::cerr << "[Inject] Failed to create done event (error: " << GetLastError() << ")" << std::endl;
+    } else {
+        std::cout << "[Inject] Created done event: " << eventName << std::endl;
+    }
+
+    // 8. Wait for LoadLibraryA thread (DLL load itself)
     WaitForSingleObject(hThread, 10000);
 
-    // 8. Cleanup
-    VirtualFreeEx(hProcess, pRemoteMem, 0, MEM_RELEASE);
+    // 9. Cleanup thread handle (keep event for now)
     CloseHandle(hThread);
-    CloseHandle(hProcess);
 
-    // Give agent time to initialize
-    std::cout << "[Inject] Waiting 5s for agent to initialize..." << std::endl;
-    for (int i = 5; i > 0; i--) {
-        Sleep(1000);
-        std::cout << "[Inject] " << i << "..." << std::endl;
+    // 10. Wait for payload ThreadProc to signal done (real completion, not just DLL load)
+    if (hDoneEvent) {
+        std::cout << "[Inject] Waiting for payload to complete (up to 15s)..." << std::endl;
+        DWORD waitResult = WaitForSingleObject(hDoneEvent, 15000);
+        switch (waitResult) {
+            case WAIT_OBJECT_0:
+                std::cout << "[Inject] [+] Payload signaled completion (Agent loaded)" << std::endl;
+                break;
+            case WAIT_TIMEOUT:
+                std::cerr << "[Inject] [!] Payload timed out after 15s — Agent may not have loaded" << std::endl;
+                break;
+            default:
+                std::cerr << "[Inject] [!] Wait error: " << GetLastError() << std::endl;
+                break;
+        }
+        CloseHandle(hDoneEvent);
+    } else {
+        // Fallback: old behavior (just wait fixed time)
+        std::cout << "[Inject] [!] No done event, waiting 5s as fallback..." << std::endl;
+        for (int i = 5; i > 0; i--) {
+            Sleep(1000);
+            std::cout << "[Inject] " << i << "..." << std::endl;
+        }
     }
+
+    // 11. Cleanup process handle
+    VirtualFreeEx(hProcess, pRemoteMem, 0, MEM_RELEASE);
+    CloseHandle(hProcess);
 
     std::cout << "[+] Java Agent injected successfully via DLL" << std::endl;
     return true;

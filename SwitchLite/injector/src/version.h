@@ -16,6 +16,9 @@ struct VersionInfo {
 // Parse Minecraft version from installation directory
 VersionInfo parseMinecraftVersion(const std::string& mcPath);
 
+// Parse version from exe path + window title (title goes through fast path)
+VersionInfo parseMinecraftVersion(const std::string& mcPath, const std::string& windowTitle);
+
 // Read versions.json from .minecraft/versions
 std::string readVersionsJson(const std::string& versionsDir);
 

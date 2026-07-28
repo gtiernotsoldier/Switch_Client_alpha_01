@@ -65,7 +65,7 @@ int main(int argc, char* argv[]) {
     std::cout << "[*] Detecting version & platform..." << std::endl;
     setConColor(COLOR_WHITE);
 
-    VersionInfo versionInfo = parseMinecraftVersion(mcProcess.path);
+    VersionInfo versionInfo = parseMinecraftVersion(mcProcess.path, mcProcess.windowTitle);
     if (!versionInfo.valid) {
         setConColor(COLOR_RED);
         std::cerr << "[x] Failed to identify Minecraft version." << std::endl;

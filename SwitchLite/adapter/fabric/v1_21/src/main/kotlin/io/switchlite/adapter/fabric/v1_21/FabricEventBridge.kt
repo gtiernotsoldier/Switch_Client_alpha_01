@@ -189,6 +189,28 @@ object FabricEventBridge : IEventBridge {
             mc.itemUseCooldown = ticks
         }
 
+        // Register team detection (Teams)
+        EventBridge.registerScoreboardTeamChecker { name ->
+            mc.world?.players?.find { it.name.string == name }
+                ?.scoreboardTeam?.name
+        }
+        EventBridge.registerDisplayNameProvider { name ->
+            mc.world?.players?.find { it.name.string == name }
+                ?.displayName?.string ?: name
+        }
+        EventBridge.registerArmorColorChecker { name ->
+            val entity = mc.world?.players?.find { it.name.string == name }
+                ?: return@registerArmorColorChecker -1
+            for (stack in entity.armorItems) {
+                if (stack.isEmpty) continue
+                val nbt = stack.nbt ?: continue
+                val display = nbt.getCompound("display") ?: continue
+                if (display.contains("color"))
+                    return@registerArmorColorChecker display.getInt("color")
+            }
+            -1
+        }
+
         // Register attack trigger (AutoClicker)
         // Uses the input pipeline via options.attackKey.isPressed rather than
         // sending packets directly — required by client-side anti-cheat monitors.

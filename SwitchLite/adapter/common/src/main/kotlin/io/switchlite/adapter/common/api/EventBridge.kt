@@ -230,6 +230,15 @@ object EventBridge {
     fun setPlayerRotation(yaw: Float, pitch: Float) { rotationApplier?.invoke(yaw, pitch) }
     fun registerRotationApplier(handler: (Float, Float) -> Unit) { rotationApplier = handler }
 
+    // ========== Render Overrides (NoFOV, NoHurtCam — Render) ==========
+    private var resetHurtCamHandler: (() -> Unit)? = null
+    private var resetFovModifierHandler: (() -> Unit)? = null
+
+    fun resetHurtCam() { resetHurtCamHandler?.invoke() }
+    fun resetFovModifier() { resetFovModifierHandler?.invoke() }
+    fun registerResetHurtCamHandler(handler: () -> Unit) { resetHurtCamHandler = handler }
+    fun registerResetFovModifierHandler(handler: () -> Unit) { resetFovModifierHandler = handler }
+
     // ========== Reach (Reach — 1.8 exclusive) ==========
     private var reachSetter: ((Float) -> Unit)? = null
 
@@ -376,6 +385,8 @@ object EventBridge {
         edgeDetector = null
         isSafeWalkEnabled = false
         rotationApplier = null
+        resetHurtCamHandler = null
+        resetFovModifierHandler = null
         keyListeners.clear()
         tickCounter = 0
         mouseDeltaX = 0f

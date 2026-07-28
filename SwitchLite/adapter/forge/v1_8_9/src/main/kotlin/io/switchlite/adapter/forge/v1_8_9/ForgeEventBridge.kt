@@ -174,6 +174,14 @@ object ForgeEventBridge : IEventBridge {
             world.getBlockState(posBelow).block == net.minecraft.init.Blocks.AIR
         }
 
+        // Register rotation applier (BridgeAssist)
+        EventBridge.registerRotationApplier { yaw, pitch ->
+            mc.thePlayer?.run {
+                rotationYaw = yaw
+                rotationPitch = pitch
+            }
+        }
+
         // Register attack trigger (AutoClicker)
         // Uses the LWJGL input pipeline (keyBindAttack.pressed) rather than
         // sending C02 packets directly — required by client-side anti-cheat

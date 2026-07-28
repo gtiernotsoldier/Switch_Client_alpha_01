@@ -146,6 +146,23 @@ object FabricEventBridge : IEventBridge {
             if (bestSpeed > 1.0f) bestSlot else -1
         }
 
+        // Register sneak key handlers + edge detector (Eagle)
+        EventBridge.registerPressSneakHandler {
+            mc.options.sneakKey.isPressed = true
+        }
+        EventBridge.registerReleaseSneakHandler {
+            mc.options.sneakKey.isPressed = false
+        }
+        EventBridge.registerEdgeDetector {
+            val p = mc.player ?: return@registerEdgeDetector false
+            if (!p.isOnGround) return@registerEdgeDetector false
+            val world = mc.world ?: return@registerEdgeDetector false
+            val posBelow = net.minecraft.util.math.BlockPos(
+                p.x.toInt(), (p.y - 1.0).toInt(), p.z.toInt()
+            )
+            world.getBlockState(posBelow).isAir
+        }
+
         // Register attack trigger (AutoClicker)
         // Uses the input pipeline via options.attackKey.isPressed rather than
         // sending packets directly — required by client-side anti-cheat monitors.

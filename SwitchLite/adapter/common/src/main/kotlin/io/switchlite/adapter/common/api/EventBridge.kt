@@ -209,6 +209,18 @@ object EventBridge {
     fun registerSwitchSlotHandler(handler: (Int) -> Unit) { switchSlotHandler = handler }
     fun registerGetBestSlotHandler(handler: () -> Int) { getBestSlotHandler = handler }
 
+    // ========== Sneak Key (Eagle — Player) ==========
+    private var pressSneakHandler: (() -> Unit)? = null
+    private var releaseSneakHandler: (() -> Unit)? = null
+    private var edgeDetector: (() -> Boolean)? = null
+
+    fun pressSneak() { pressSneakHandler?.invoke() }
+    fun releaseSneak() { releaseSneakHandler?.invoke() }
+    fun isOnBlockEdge(): Boolean = edgeDetector?.invoke() ?: false
+    fun registerPressSneakHandler(handler: () -> Unit) { pressSneakHandler = handler }
+    fun registerReleaseSneakHandler(handler: () -> Unit) { releaseSneakHandler = handler }
+    fun registerEdgeDetector(handler: () -> Boolean) { edgeDetector = handler }
+
     // ========== Reach (Reach — 1.8 exclusive) ==========
     private var reachSetter: ((Float) -> Unit)? = null
 
@@ -350,6 +362,9 @@ object EventBridge {
         cancelAttackHandler = null
         switchSlotHandler = null
         getBestSlotHandler = null
+        pressSneakHandler = null
+        releaseSneakHandler = null
+        edgeDetector = null
         keyListeners.clear()
         tickCounter = 0
         mouseDeltaX = 0f

@@ -217,6 +217,11 @@ object EventBridge {
     /** Player's food level (0-20). Vanilla sprint cancels at <= 6. */
     @Volatile var foodLevel: Int = 20
 
+    // ========== WASD Key States (StrafeFix) ==========
+    @Volatile var isKeyBackDown: Boolean = false
+    @Volatile var isKeyLeftDown: Boolean = false
+    @Volatile var isKeyRightDown: Boolean = false
+
     // ========== Item Use ==========
     private var releaseUsingItemHandler: (() -> Unit)? = null
     private var pressUseItemHandler: (() -> Unit)? = null
@@ -318,5 +323,8 @@ object EventBridge {
         isLookingAtBlock = false
         isInFluid = false
         foodLevel = 20
+        isKeyBackDown = false
+        isKeyLeftDown = false
+        isKeyRightDown = false
     }
 }

@@ -190,6 +190,16 @@ object EventBridge {
     fun resetJumpDelay() { resetJumpDelayHandler?.invoke() }
     fun registerResetJumpDelayHandler(handler: () -> Unit) { resetJumpDelayHandler = handler }
 
+    // ========== Render Offset (ParallaxStrike — Player) ==========
+    @Volatile var renderOffsetX: Float = 0f
+    @Volatile var renderOffsetY: Float = 0f
+    @Volatile var renderOffsetZ: Float = 0f
+
+    /** Clear all render offsets (modules call this, adapter reads on render). */
+    fun clearRenderOffset() {
+        renderOffsetX = 0f; renderOffsetY = 0f; renderOffsetZ = 0f
+    }
+
     // ========== Reach (Reach — 1.8 exclusive) ==========
     private var reachSetter: ((Float) -> Unit)? = null
 
@@ -344,6 +354,9 @@ object EventBridge {
         isKeyLeftDown = false
         isKeyRightDown = false
         velocityPacketReceivedThisTick = false
+        renderOffsetX = 0f
+        renderOffsetY = 0f
+        renderOffsetZ = 0f
         // Snapshot fields
         snapMouseDeltaX = 0f
         snapMouseDeltaY = 0f

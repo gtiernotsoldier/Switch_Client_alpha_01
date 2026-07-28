@@ -82,6 +82,8 @@ object FabricStateExtractor : IStateExtractor {
             isUsingItem = player.isUsingItem,
             isLookingAtTarget = false, // handled by ConditionChecker angle calc (method B)
             isMining = MappingContext.getFieldValue(mc.interactionManager, "fabric:interactionManager_isBreakingBlock") as? Boolean ?: false,
+            isSneaking = player.isSneaking,
+            selectedSlot = player.inventory.selectedSlot,
             weaponType = classifyWeapon(player.mainHandStack?.item),
             isAttackKeyDown = isAttackKeyDown,
             ticks = mc.world?.time ?: 0L

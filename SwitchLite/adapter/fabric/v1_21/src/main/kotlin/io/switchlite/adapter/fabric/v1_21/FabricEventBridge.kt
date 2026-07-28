@@ -122,6 +122,30 @@ object FabricEventBridge : IEventBridge {
             mc.crosshairTarget = net.minecraft.util.hit.EntityHitResult(entity)
         }
 
+        // Register hotbar slot switching (AutoTool)
+        EventBridge.registerSwitchSlotHandler { slot ->
+            mc.player?.inventory?.selectedSlot = slot
+            mc.player?.networkHandler?.sendPacket(
+                net.minecraft.network.packet.c2s.play.UpdateSelectedSlotC2SPacket(slot)
+            )
+        }
+        EventBridge.registerGetBestSlotHandler {
+            var bestSlot = -1
+            var bestSpeed = 1.0f
+            val player = mc.player ?: return@registerGetBestSlotHandler -1
+            val target = mc.crosshairTarget ?: return@registerGetBestSlotHandler -1
+            if (target.type != net.minecraft.util.hit.HitResult.Type.BLOCK) return@registerGetBestSlotHandler -1
+            val pos = (target as net.minecraft.util.hit.BlockHitResult).blockPos
+            val state = mc.world?.getBlockState(pos) ?: return@registerGetBestSlotHandler -1
+            for (i in 0..8) {
+                val stack = player.inventory.getStack(i)
+                if (stack.isEmpty) continue
+                val speed = stack.getItem().getMiningSpeed(stack, state)
+                if (speed > bestSpeed) { bestSpeed = speed; bestSlot = i }
+            }
+            if (bestSpeed > 1.0f) bestSlot else -1
+        }
+
         // Register attack trigger (AutoClicker)
         // Uses the input pipeline via options.attackKey.isPressed rather than
         // sending packets directly — required by client-side anti-cheat monitors.

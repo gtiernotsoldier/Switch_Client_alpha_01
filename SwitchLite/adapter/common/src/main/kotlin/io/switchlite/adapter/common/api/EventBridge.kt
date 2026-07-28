@@ -200,6 +200,15 @@ object EventBridge {
         renderOffsetX = 0f; renderOffsetY = 0f; renderOffsetZ = 0f
     }
 
+    // ========== Hotbar Slot Switching (AutoTool — Player) ==========
+    private var switchSlotHandler: ((Int) -> Unit)? = null  // silent switch to slot
+    private var getBestSlotHandler: (() -> Int)? = null      // find best tool in hotbar
+
+    fun switchToSlot(slot: Int) { switchSlotHandler?.invoke(slot) }
+    fun getBestSlot(): Int = getBestSlotHandler?.invoke() ?: -1
+    fun registerSwitchSlotHandler(handler: (Int) -> Unit) { switchSlotHandler = handler }
+    fun registerGetBestSlotHandler(handler: () -> Int) { getBestSlotHandler = handler }
+
     // ========== Reach (Reach — 1.8 exclusive) ==========
     private var reachSetter: ((Float) -> Unit)? = null
 
@@ -339,6 +348,8 @@ object EventBridge {
         reachSetter = null
         attackTrigger = null
         cancelAttackHandler = null
+        switchSlotHandler = null
+        getBestSlotHandler = null
         keyListeners.clear()
         tickCounter = 0
         mouseDeltaX = 0f

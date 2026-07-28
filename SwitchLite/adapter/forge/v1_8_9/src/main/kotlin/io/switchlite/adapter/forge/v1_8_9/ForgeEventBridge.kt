@@ -134,6 +134,31 @@ object ForgeEventBridge : IEventBridge {
             mc.objectMouseOver = net.minecraft.util.MovingObjectPosition(entity)
         }
 
+        // Register hotbar slot switching (AutoTool)
+        EventBridge.registerSwitchSlotHandler { slot ->
+            mc.thePlayer?.inventory?.currentItem = slot
+            mc.thePlayer?.sendQueue?.addToSendQueue(
+                net.minecraft.network.play.client.C09PacketHeldItemChange(slot)
+            )
+        }
+        EventBridge.registerGetBestSlotHandler {
+            var bestSlot = -1
+            var bestSpeed = 1.0f
+            val player = mc.thePlayer ?: return@registerGetBestSlotHandler -1
+            val obj = mc.objectMouseOver ?: return@registerGetBestSlotHandler -1
+            if (obj.typeOfHit != net.minecraft.util.MovingObjectPosition.MovingObjectType.BLOCK) return@registerGetBestSlotHandler -1
+            val block = mc.theWorld?.getBlockState(obj.blockPos)?.block ?: return@registerGetBestSlotHandler -1
+            for (i in 0..8) {
+                val stack = player.inventory.getStackInSlot(i) ?: continue
+                val speed = stack.getItem().getDigSpeed(stack, block)
+                if (speed > bestSpeed) {
+                    bestSpeed = speed
+                    bestSlot = i
+                }
+            }
+            if (bestSpeed > 1.0f) bestSlot else -1
+        }
+
         // Register attack trigger (AutoClicker)
         // Uses the LWJGL input pipeline (keyBindAttack.pressed) rather than
         // sending C02 packets directly — required by client-side anti-cheat

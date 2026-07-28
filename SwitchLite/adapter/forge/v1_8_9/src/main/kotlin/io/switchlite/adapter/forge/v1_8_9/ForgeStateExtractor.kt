@@ -80,6 +80,8 @@ object ForgeStateExtractor : IStateExtractor {
             isUsingItem = false, // 1.8 has no unified isUsingItem; not used by 1.8 path
             isLookingAtTarget = false, // handled by ConditionChecker angle calc (method B)
             isMining = MappingContext.getFieldValue(mc.playerController, "forge:playerController_isHittingBlock") as? Boolean ?: false,
+            isSneaking = player.isSneaking,
+            selectedSlot = player.inventory.currentItem,
             weaponType = classifyWeapon(player.heldItem?.item),
             isAttackKeyDown = isAttackKeyDown,
             ticks = mc.theWorld?.worldTime?.toLong() ?: 0L

@@ -1,5 +1,7 @@
 package io.switchlite.adapter.common.module
 
+import io.switchlite.adapter.common.option.ConfigManager
+
 /**
  * Base class for all modules.
  * Provides lifecycle management, enabled state, and config caching.
@@ -13,6 +15,10 @@ abstract class Module(
     val name: String,
     val category: Category
 ) {
+    init {
+        ConfigManager.onModuleDirty(name) { markConfigDirty() }
+    }
+
     var enabled: Boolean = false
         private set
 

@@ -39,6 +39,10 @@ endif()
 if(WIN32)
     set(PAYLOAD_SOURCES src/payload/payload.cpp src/payload/payload.h)
     add_library(payload SHARED ${PAYLOAD_SOURCES})
+
+    find_package(JNI REQUIRED)
+    target_include_directories(payload PRIVATE ${JNI_INCLUDE_DIRS})
+
     target_link_libraries(payload psapi)
 
     # Copy payload.dll to resources/ for embedding via agent.rc (ID=102)

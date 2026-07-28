@@ -73,6 +73,9 @@ jobs:
         with:
           name: switchlite-agent-jar
           path: SwitchLite/injector/resources
+      - name: Set up JDK 8 (for jni.h in payload build)
+        uses: actions/setup-java@v4
+        with: { java-version: '8', distribution: 'temurin' }
       - name: Build injector
         run: cd SwitchLite/injector && mkdir build && cd build && cmake .. && cmake --build . --config Release
       - name: Upload artifact

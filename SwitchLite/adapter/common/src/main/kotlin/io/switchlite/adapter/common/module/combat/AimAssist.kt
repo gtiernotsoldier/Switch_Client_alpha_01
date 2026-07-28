@@ -99,7 +99,7 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
     fun onClientTick(player: PlayerState, target: TargetState?) {
         when (mode) {
             "SelfAdaptive" -> {
-                val config = buildConfig(AimMode.SELF_ADAPTIVE)
+                val config = cachedConfig("adaptive") { buildConfig(AimMode.SELF_ADAPTIVE) }
                 val input = AimInput(
                     player = player,
                     target = target,
@@ -115,7 +115,7 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
             }
             else -> {
                 // Legit / Normal — delegate to LegitAimStrategy
-                val config = buildConfig()
+                val config = cachedConfig("legit") { buildConfig() }
                 val input = AimInput(player, target)
                 val result = legitStrategy.execute(config, legitState, input)
                 when (result) {

@@ -129,7 +129,7 @@ object KeepSprint : Module("KeepSprint", Category.COMBAT) {
         // Track sprint state FIRST (before condition gate) — must update
         // prevSprinting and sprintCancelledTick every tick regardless of
         // conditions, otherwise a jump/crit scenario leaves stale state.
-        val config = buildConfig()
+        val config = cachedConfig { buildConfig() }
         val input = buildInput(player, target)
 
         // Unified condition check

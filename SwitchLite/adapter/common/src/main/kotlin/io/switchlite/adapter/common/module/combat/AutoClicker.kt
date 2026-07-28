@@ -105,7 +105,7 @@ object AutoClicker : Module("AutoClicker", Category.COMBAT) {
     // ====================================================================
 
     private fun onTick18(player: PlayerState, target: TargetState?) {
-        val config = ClickConfig(
+        val config = cachedConfig("18") { ClickConfig(
             minCps = minCps,
             maxCps = maxCps,
             clickMode = when (clickMode) {
@@ -120,7 +120,7 @@ object AutoClicker : Module("AutoClicker", Category.COMBAT) {
             },
             disableOnBlock = disableOnBlock,
             triggerOptions = triggerOptions
-        )
+        ) }
         val input = ClickInput(player = player, target = target)
         val result = strategy18.execute(config, state18, input)
 
@@ -173,14 +173,14 @@ object AutoClicker : Module("AutoClicker", Category.COMBAT) {
             "Normal" -> CooldownClickMode.NORMAL
             else -> CooldownClickMode.NORMAL
         }
-        val config = CooldownClickConfig(
+        val config = cachedConfig("19") { CooldownClickConfig(
             cooldownThreshold = cooldownThreshold,
             critMode = critModeEnum,
             critStopSprint = critStopSprint,
             cooldownMode = mode19Enum,
             disableOnBlock = disableOnBlock,
             triggerOptions = triggerOptions
-        )
+        ) }
         val input = ClickInput(
             player = player,
             target = null,

@@ -69,24 +69,24 @@ object TriggerBot : Module("TriggerBot", Category.COMBAT) {
 
         when (combatVersion) {
             "1.8" -> {
-                val config = ClickConfig(
+                val config = cachedConfig("18") { ClickConfig(
                     minCps = minCps, maxCps = maxCps,
                     clickMode = ClickMode.SINGLE,
                     mode = ClickOperatingMode.LEGIT,
                     disableOnBlock = true,
                     triggerOptions = io.switchlite.core.option.TriggerOptions(chance = 100)
-                )
+                ) }
                 val input = ClickInput(player = player, target = target)
                 val result = strategy18.execute(config, state18, input)
                 if (result is ClickResult.Click) EventBridge.triggerAttack()
             }
             "1.9+" -> {
-                val config = CooldownClickConfig(
+                val config = cachedConfig("19") { CooldownClickConfig(
                     cooldownThreshold = cooldownThreshold / 100f,
                     cooldownMode = CooldownClickMode.LEGIT,
                     disableOnBlock = true,
                     triggerOptions = io.switchlite.core.option.TriggerOptions(chance = 100)
-                )
+                ) }
                 val input = ClickInput(
                     player = player, target = null,
                     attackCooldown = player.attackCooldownProgress,

@@ -34,6 +34,10 @@ object ParallaxStrike : Module("ParallaxStrike", Category.PLAYER) {
     private val minOffset by float("MinOffset", 0.3f, 0.0f..0.8f, "blocks")
     private val maxOffset by float("MaxOffset", 0.8f, 0.0f..0.8f, "blocks")
 
+    // ========== Offset Direction ==========
+    private val offsetX by float("OffsetX", 0.35f, -0.8f..0.8f, "blocks")
+    private val offsetZ by float("OffsetZ", 0.65f, -0.8f..0.8f, "blocks")
+
     // ========== Timing ==========
     private val duration by int("Duration", 400, 0..800, "ms")
     private val cooldown by int("Cooldown", 4000, 0..6000, "ms")
@@ -135,11 +139,10 @@ object ParallaxStrike : Module("ParallaxStrike", Category.PLAYER) {
         hitThreshold = eval.hitThreshold
         if (!eval.fire) return
 
-        // Compute random offset (X horizontal, Z primary-direction)
+        // Compute random offset within configured per-axis ranges
         val scale = minOffset + Random.nextFloat() * (maxOffset - minOffset)
-        // Random sign on X, always positive Z (forward bias)
-        currentOffsetX = scale * (if (Random.nextBoolean()) 1f else -1f) * 0.5f
-        currentOffsetZ = scale * (0.7f + Random.nextFloat() * 0.3f)
+        currentOffsetX = offsetX * scale
+        currentOffsetZ = offsetZ * scale
 
         // Delay → ACTIVE
         if (delay > 0) {

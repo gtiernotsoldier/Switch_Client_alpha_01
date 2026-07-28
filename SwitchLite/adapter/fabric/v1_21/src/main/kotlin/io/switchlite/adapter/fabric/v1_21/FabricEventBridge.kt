@@ -171,6 +171,14 @@ object FabricEventBridge : IEventBridge {
             }
         }
 
+        // Register render overrides (NoHurtCam, NoFOV)
+        EventBridge.registerResetHurtCamHandler {
+            mc.player?.hurtTime = 0
+        }
+        EventBridge.registerResetFovModifierHandler {
+            mc.options.fovEffectScale.value = 0.0
+        }
+
         // Register attack trigger (AutoClicker)
         // Uses the input pipeline via options.attackKey.isPressed rather than
         // sending packets directly — required by client-side anti-cheat monitors.

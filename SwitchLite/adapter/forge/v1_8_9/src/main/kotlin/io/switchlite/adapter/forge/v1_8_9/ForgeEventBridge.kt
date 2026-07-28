@@ -182,6 +182,14 @@ object ForgeEventBridge : IEventBridge {
             }
         }
 
+        // Register render overrides (NoHurtCam, NoFOV)
+        EventBridge.registerResetHurtCamHandler {
+            mc.thePlayer?.hurtTime = 0
+        }
+        EventBridge.registerResetFovModifierHandler {
+            mc.entityRenderer.fovModifierHand = 1.0f
+        }
+
         // Register attack trigger (AutoClicker)
         // Uses the LWJGL input pipeline (keyBindAttack.pressed) rather than
         // sending C02 packets directly — required by client-side anti-cheat

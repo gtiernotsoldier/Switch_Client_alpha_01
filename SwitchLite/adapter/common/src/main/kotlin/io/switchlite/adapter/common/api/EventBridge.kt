@@ -239,6 +239,15 @@ object EventBridge {
     fun registerResetHurtCamHandler(handler: () -> Unit) { resetHurtCamHandler = handler }
     fun registerResetFovModifierHandler(handler: () -> Unit) { resetFovModifierHandler = handler }
 
+    // ========== Gamma (Fullbright — Render) ==========
+    private var gammaSetter: ((Float) -> Unit)? = null
+
+    fun setGamma(value: Float) { gammaSetter?.invoke(value) }
+    fun registerGammaSetter(handler: (Float) -> Unit) { gammaSetter = handler }
+
+    // ========== HUD Text (HUD — Render) ==========
+    @Volatile var hudTextLine: String = ""
+
     // ========== Reach (Reach — 1.8 exclusive) ==========
     private var reachSetter: ((Float) -> Unit)? = null
 
@@ -387,6 +396,8 @@ object EventBridge {
         rotationApplier = null
         resetHurtCamHandler = null
         resetFovModifierHandler = null
+        gammaSetter = null
+        hudTextLine = ""
         keyListeners.clear()
         tickCounter = 0
         mouseDeltaX = 0f

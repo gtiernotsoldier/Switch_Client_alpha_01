@@ -179,6 +179,11 @@ object FabricEventBridge : IEventBridge {
             mc.options.fovEffectScale.value = 0.0
         }
 
+        // Register gamma setter (Fullbright)
+        EventBridge.registerGammaSetter { gamma ->
+            mc.options.gamma.value = gamma.toDouble()
+        }
+
         // Register attack trigger (AutoClicker)
         // Uses the input pipeline via options.attackKey.isPressed rather than
         // sending packets directly — required by client-side anti-cheat monitors.

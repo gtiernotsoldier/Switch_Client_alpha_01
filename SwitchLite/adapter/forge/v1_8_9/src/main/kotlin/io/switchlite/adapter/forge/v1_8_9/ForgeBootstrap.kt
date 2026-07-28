@@ -68,6 +68,7 @@ object ForgeBootstrap {
                 // Food level (Sprint: vanilla cancels at <= 6)
                 EventBridge.foodLevel = mc.thePlayer?.foodStats?.foodLevel ?: 20
                 // WASD key states (StrafeFix)
+                EventBridge.isKeyForwardDown = mc.gameSettings.keyBindForward.pressed
                 EventBridge.isKeyBackDown = mc.gameSettings.keyBindBack.pressed
                 EventBridge.isKeyLeftDown = mc.gameSettings.keyBindLeft.pressed
                 EventBridge.isKeyRightDown = mc.gameSettings.keyBindRight.pressed

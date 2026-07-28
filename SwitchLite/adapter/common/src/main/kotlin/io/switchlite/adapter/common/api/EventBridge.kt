@@ -263,6 +263,15 @@ object EventBridge {
     fun registerDisplayNameProvider(handler: (String) -> String) { displayNameProvider = handler }
     fun registerArmorColorChecker(handler: (String) -> Int) { armorColorChecker = handler }
 
+    // ========== Entity Info (AntiBot — Player) ==========
+    private var entityTicksProvider: ((String) -> Int)? = null
+    private var entityOnGroundChecker: ((String) -> Boolean)? = null
+
+    fun getEntityTicksExisted(name: String): Int = entityTicksProvider?.invoke(name) ?: 0
+    fun isEntityOnGround(name: String): Boolean = entityOnGroundChecker?.invoke(name) ?: false
+    fun registerEntityTicksProvider(handler: (String) -> Int) { entityTicksProvider = handler }
+    fun registerEntityOnGroundChecker(handler: (String) -> Boolean) { entityOnGroundChecker = handler }
+
     // ========== HUD Text (HUD — Render) ==========
     @Volatile var hudTextLine: String = ""
 
@@ -419,6 +428,8 @@ object EventBridge {
         scoreboardTeamChecker = null
         displayNameProvider = null
         armorColorChecker = null
+        entityTicksProvider = null
+        entityOnGroundChecker = null
         hudTextLine = ""
         keyListeners.clear()
         tickCounter = 0

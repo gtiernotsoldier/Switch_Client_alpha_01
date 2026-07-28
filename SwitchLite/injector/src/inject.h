@@ -11,6 +11,9 @@ bool injectJavaAgent(int pid, const std::string& agentPath, const VersionInfo& v
 // Get path to embedded agent.jar
 std::string getEmbeddedAgentPath();
 
+// Get path to embedded payload.dll (DLL injection)
+std::string getEmbeddedPayloadPath();
+
 // Get Fabric mod deployment path
 std::string getFabricModPath();
 

@@ -39,13 +39,15 @@ abstract class Module(
 
     private var configDirty: Boolean = true
     @Volatile private var configCache: Any? = null
+    private var taggedCaches: MutableMap<String, Any?>? = null
 
     /**
      * Call this from the GUI whenever any option value changes.
-     * Invalidates the config cache so the next [cachedConfig] rebuilds.
+     * Invalidates ALL config caches so the next [cachedConfig] rebuilds.
      */
     fun markConfigDirty() {
         configDirty = true
+        taggedCaches?.clear()
     }
 
     /**
@@ -61,6 +63,22 @@ abstract class Module(
         if (!configDirty && configCache != null) return configCache as T
         val fresh = builder()
         configCache = fresh
+        configDirty = false
+        return fresh
+    }
+
+    /**
+     * Tagged variant for modules with multiple config variants
+     * (e.g. AimAssist with SELF_ADAPTIVE vs LEGIT mode).
+     * Each tag gets its own cache slot.
+     */
+    @Suppress("UNCHECKED_CAST")
+    protected fun <T : Any> cachedConfig(tag: String, builder: () -> T): T {
+        if (taggedCaches == null) taggedCaches = mutableMapOf()
+        val map = taggedCaches!!
+        if (!configDirty && map.containsKey(tag)) return map[tag] as T
+        val fresh = builder()
+        map[tag] = fresh
         configDirty = false
         return fresh
     }

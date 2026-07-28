@@ -114,7 +114,7 @@ object Velocity : Module("Velocity", Category.COMBAT) {
     // ========== Entry Point ==========
 
     fun onVelocityPacket(ctx: VelocityContext): PlatformCommand {
-        val config = buildConfig()
+        val config = cachedConfig { buildConfig() }
         val result = currentStrategy().execute(config, strategyState, ctx)
         return mapResultToCommand(result)
     }
@@ -152,7 +152,7 @@ object Velocity : Module("Velocity", Category.COMBAT) {
      * strategy's delay queue (managed by LegitVelocityStrategy/DelayVelocityStrategy).
      */
     fun onTick(currentTick: Int) {
-        val config = buildConfig()
+        val config = cachedConfig { buildConfig() }
         val strategy = currentStrategy()
         val results = strategy.pumpDelayed(config, strategyState, currentTick)
         for (result in results) {

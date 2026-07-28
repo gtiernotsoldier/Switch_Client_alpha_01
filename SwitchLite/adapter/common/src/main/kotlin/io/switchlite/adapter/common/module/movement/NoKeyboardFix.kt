@@ -26,12 +26,13 @@ object NoKeyboardFix : Module("NoKeyboardFix", Category.MOVEMENT) {
     }
 
     private val endListener: (PlayerState, TargetState?) -> Unit = { _, _ ->
-        if (!EventBridge.velocityPacketReceivedThisTick) return
-        EventBridge.isKeyForwardDown = EventBridge.snapKeyForward
-        EventBridge.isKeyBackDown = EventBridge.snapKeyBack
-        EventBridge.isKeyLeftDown = EventBridge.snapKeyLeft
-        EventBridge.isKeyRightDown = EventBridge.snapKeyRight
-        EventBridge.velocityPacketReceivedThisTick = false
+        if (EventBridge.velocityPacketReceivedThisTick) {
+            EventBridge.isKeyForwardDown = EventBridge.snapKeyForward
+            EventBridge.isKeyBackDown = EventBridge.snapKeyBack
+            EventBridge.isKeyLeftDown = EventBridge.snapKeyLeft
+            EventBridge.isKeyRightDown = EventBridge.snapKeyRight
+            EventBridge.velocityPacketReceivedThisTick = false
+        }
     }
 
     override fun onEnable() {

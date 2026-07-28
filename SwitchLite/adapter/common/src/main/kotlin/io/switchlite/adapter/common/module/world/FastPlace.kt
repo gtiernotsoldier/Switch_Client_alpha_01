@@ -25,9 +25,13 @@ object FastPlace : Module("FastPlace", Category.WORLD) {
     private val onlyWhenFacingBlocks by boolean("OnlyWhenFacingBlocks", true)
 
     private val tickListener: (PlayerState, TargetState?) -> Unit = { p, _ ->
-        if (!enabled || speed == 0) return@let
-        if (onlyBlocks && p.isUsingItem) return@let
-        if (onlyWhenFacingBlocks && !EventBridge.isLookingAtBlock) return@let
+        if (enabled) onTick(p)
+    }
+
+    private fun onTick(player: PlayerState) {
+        if (speed == 0) return
+        if (onlyBlocks && player.isUsingItem) return
+        if (onlyWhenFacingBlocks && !EventBridge.isLookingAtBlock) return
         EventBridge.setRightClickDelay(speed)
     }
 

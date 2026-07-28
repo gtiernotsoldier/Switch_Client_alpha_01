@@ -19,7 +19,10 @@ import io.switchlite.adapter.common.module.ModuleRegistry
 object HUD : Module("HUD", Category.RENDER) {
 
     private val tickListener: (PlayerState, TargetState?) -> Unit = { _, _ ->
-        if (!enabled) return
+        if (enabled) onTick()
+    }
+
+    private fun onTick() {
         val names = ModuleRegistry.getEnabled()
             .joinToString(" | ") { it.name }
         EventBridge.hudTextLine = if (names.isNotEmpty()) "SwitchLite | $names" else "SwitchLite"

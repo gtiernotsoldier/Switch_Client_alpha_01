@@ -29,6 +29,14 @@ object ConfigManager {
     /** Change listeners: key = option key, listeners notified on value change. */
     private val listeners = mutableMapOf<String, MutableList<(Any) -> Unit>>()
 
+    /** Module-level dirty callbacks: key = "ModuleName", fired when any option changes. */
+    private val moduleDirtyCallbacks = mutableMapOf<String, MutableList<() -> Unit>>()
+
+    /** Register a callback invoked when any option under [moduleName] changes. */
+    fun onModuleDirty(moduleName: String, callback: () -> Unit) {
+        moduleDirtyCallbacks.getOrPut(moduleName) { mutableListOf() }.add(callback)
+    }
+
     // ========== Registration ==========
 
     fun register(key: String, default: Any, meta: OptionMeta) {
@@ -54,6 +62,9 @@ object ConfigManager {
         if (old != value) {
             CoreLogger.debug("[ConfigManager] $key: $old -> $value")
             listeners[key]?.forEach { it(value as Any) }
+            // Notify module-level dirty callbacks (config caching)
+            val moduleName = key.substringBefore('.')
+            moduleDirtyCallbacks[moduleName]?.forEach { it() }
         }
     }
 

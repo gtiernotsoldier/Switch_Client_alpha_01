@@ -57,7 +57,7 @@ int main(int argc, char* argv[]) {
     }
 
     setConColor(COLOR_GREEN);
-    std::cout << "[+] Found Minecraft (PID: " << mcProcess.pid << ")" << std::endl;
+    std::cout << "[+] Found Minecraft (PID: " << mcProcess.pid << ", Window: \"" << mcProcess.windowTitle << "\")" << std::endl;
     setConColor(COLOR_WHITE);
 
     // Step 2: Identify platform and version

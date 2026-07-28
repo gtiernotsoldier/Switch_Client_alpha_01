@@ -312,6 +312,7 @@ object EventBridge {
         velocityNotifiers.clear()
         tickListeners.clear()
         simpleTickListeners.clear()
+        startTickListeners.clear()
         rotationSetter = null
         motionApplier = null
         sprintSetter = null
@@ -343,5 +344,14 @@ object EventBridge {
         isKeyLeftDown = false
         isKeyRightDown = false
         velocityPacketReceivedThisTick = false
+        // Snapshot fields
+        snapMouseDeltaX = 0f
+        snapMouseDeltaY = 0f
+        snapMouseSensitivity = 1.0f
+        snapKeyForward = false
+        snapKeyBack = false
+        snapKeyLeft = false
+        snapKeyRight = false
+        snapKeyAttack = false
     }
 }

@@ -51,7 +51,9 @@ class RotationCalculatorTest {
 
     @Test
     fun `isWithinFov - exactly at boundary`() {
-        assertTrue(RotationCalculator.isWithinFov(Vec2(90f, 0f), 90f, 30f))
+        // horizontalFov=90 → half=45, boundary at yaw=45
+        assertTrue(RotationCalculator.isWithinFov(Vec2(45f, 0f), 90f, 30f))
+        assertFalse(RotationCalculator.isWithinFov(Vec2(45.01f, 0f), 90f, 30f))
     }
 
     // ── interpolate ──
@@ -108,6 +110,6 @@ class RotationCalculatorTest {
     @Test
     fun `calculateRotation - target above`() {
         val rot = RotationCalculator.calculateRotation(Vec3(0.0, 64.0, 0.0), Vec3(0.0, 69.0, 5.0))
-        assertTrue(rot.pitch > 0)
+        assertTrue(rot.pitch < 0)  // negative pitch = looking up (MC convention)
     }
 }

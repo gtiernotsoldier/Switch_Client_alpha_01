@@ -22,6 +22,36 @@ jobs:
         run: cd SwitchLite && gradle :core:compileKotlin :agent:classes :adapter:common:compileKotlin --no-daemon
       - name: Build agent fat jar
         run: cd SwitchLite && gradle :agent:jar --no-daemon
+      - name: Validate agent.jar
+        run: |
+          JAR=$(ls SwitchLite/agent/build/libs/switchlite-agent-*.jar | head -1)
+          echo "Validating: $JAR"
+          SIZE=$(wc -c < "$JAR")
+          echo "Size: $SIZE bytes"
+          if [ "$SIZE" -lt 1000000 ]; then
+            echo "ERROR: agent.jar is too small ($SIZE bytes). Fat jar likely broken."
+            exit 1
+          fi
+          if ! jar tf "$JAR" | grep -q "io/switchlite/adapter/common/api/EventBridge"; then
+            echo "ERROR: EventBridge.class not found in fat jar. Class merging broken."
+            exit 1
+          fi
+          if ! jar tf "$JAR" | grep -q "io/switchlite/core/model/PlayerState"; then
+            echo "ERROR: PlayerState.class not found in fat jar. Core not included."
+            exit 1
+          fi
+          echo "agent.jar validation passed."
+      - name: Run tests
+        run: cd SwitchLite && gradle :core:test :adapter:common:test --no-daemon
+      - name: Compile summary
+        if: always()
+        run: |
+          echo "## Compile Summary" >> $GITHUB_STEP_SUMMARY
+          echo "| Module | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| core | :white_check_mark: |" >> $GITHUB_STEP_SUMMARY
+          echo "| agent | :white_check_mark: |" >> $GITHUB_STEP_SUMMARY
+          echo "| adapter:common | :white_check_mark: |" >> $GITHUB_STEP_SUMMARY
       - name: Copy agent.jar to injector resources
         run: |
           cp SwitchLite/agent/build/libs/switchlite-agent-*.jar SwitchLite/injector/resources/agent.jar

@@ -159,6 +159,21 @@ object ForgeEventBridge : IEventBridge {
             if (bestSpeed > 1.0f) bestSlot else -1
         }
 
+        // Register sneak key handlers + edge detector (Eagle)
+        EventBridge.registerPressSneakHandler {
+            mc.gameSettings.keyBindSneak.pressed = true
+        }
+        EventBridge.registerReleaseSneakHandler {
+            mc.gameSettings.keyBindSneak.pressed = false
+        }
+        EventBridge.registerEdgeDetector {
+            val p = mc.thePlayer ?: return@registerEdgeDetector false
+            if (!p.onGround) return@registerEdgeDetector false
+            val world = mc.theWorld ?: return@registerEdgeDetector false
+            val posBelow = net.minecraft.util.BlockPos(p.posX, p.posY - 1.0, p.posZ)
+            world.getBlockState(posBelow).block == net.minecraft.init.Blocks.AIR
+        }
+
         // Register attack trigger (AutoClicker)
         // Uses the LWJGL input pipeline (keyBindAttack.pressed) rather than
         // sending C02 packets directly — required by client-side anti-cheat

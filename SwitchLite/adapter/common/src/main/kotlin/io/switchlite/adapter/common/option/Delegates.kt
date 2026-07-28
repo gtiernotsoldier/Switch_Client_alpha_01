@@ -202,27 +202,38 @@ fun triggerOptions(
     name: String,
     builder: TriggerOptions.Builder.() -> Unit
 ): ReadWriteProperty<Any?, TriggerOptions> {
-    val defaultOptions = TriggerOptions.Builder().apply(builder).build()
+    /**
+     * TriggerOptions delegate with live rebuild.
+     *
+     * Unlike other delegates that cache a default value, this rebuilds the
+     * TriggerOptions on every getValue() by re-executing the builder lambda.
+     * This is necessary because the builder references other property delegates
+     * (e.g. `onlyGround = onlyPlane`) that the user can change at runtime
+     * via the GUI. A cached snapshot would miss those changes.
+     *
+     * Cost: negligible — Builder sets a few booleans/ints per tick per module.
+     */
     return object : ReadWriteProperty<Any?, TriggerOptions> {
         private var key: String? = null
 
         override fun getValue(thisRef: Any?, property: KProperty<*>): TriggerOptions {
-            val k = resolveKey(thisRef, name, property)
-            return ConfigManager.get<TriggerOptions>(k)
+            resolveKey(thisRef, name, property) // register metadata on first access
+            return TriggerOptions.Builder().apply(builder).build()
         }
 
         override fun setValue(thisRef: Any?, property: KProperty<*>, value: TriggerOptions) {
-            val k = resolveKey(thisRef, name, property)
-            ConfigManager.set(k, value)
+            // No-op: triggerOptions is always computed from its builder + live delegates.
+            // Direct set is not supported; change the individual boolean options instead.
         }
 
         private fun resolveKey(thisRef: Any?, optName: String, property: KProperty<*>): String {
             key?.let { return it }
             val modulePrefix = resolveModulePrefix(thisRef)
             val k = "$modulePrefix.$optName"
-            ConfigManager.register(k, defaultOptions, OptionMeta(
+            val placeholder = TriggerOptions.Builder().apply(builder).build()
+            ConfigManager.register(k, placeholder, OptionMeta(
                 type = OptionType.TRIGGER_OPTIONS,
-                default = defaultOptions
+                default = placeholder
             ))
             key = k
             return k

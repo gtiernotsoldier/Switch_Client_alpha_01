@@ -221,6 +221,15 @@ object EventBridge {
     fun registerReleaseSneakHandler(handler: () -> Unit) { releaseSneakHandler = handler }
     fun registerEdgeDetector(handler: () -> Boolean) { edgeDetector = handler }
 
+    // ========== Module Cross-Check (BridgeAssist ↔ SafeWalk) ==========
+    @Volatile var isSafeWalkEnabled: Boolean = false
+
+    // ========== Rotation (BridgeAssist, AimAssist) ==========
+    private var rotationApplier: ((Float, Float) -> Unit)? = null
+
+    fun setPlayerRotation(yaw: Float, pitch: Float) { rotationApplier?.invoke(yaw, pitch) }
+    fun registerRotationApplier(handler: (Float, Float) -> Unit) { rotationApplier = handler }
+
     // ========== Reach (Reach — 1.8 exclusive) ==========
     private var reachSetter: ((Float) -> Unit)? = null
 
@@ -365,6 +374,8 @@ object EventBridge {
         pressSneakHandler = null
         releaseSneakHandler = null
         edgeDetector = null
+        isSafeWalkEnabled = false
+        rotationApplier = null
         keyListeners.clear()
         tickCounter = 0
         mouseDeltaX = 0f

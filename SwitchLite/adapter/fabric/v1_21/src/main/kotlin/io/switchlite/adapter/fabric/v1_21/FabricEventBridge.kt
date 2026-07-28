@@ -163,6 +163,14 @@ object FabricEventBridge : IEventBridge {
             world.getBlockState(posBelow).isAir
         }
 
+        // Register rotation applier (BridgeAssist)
+        EventBridge.registerRotationApplier { y, p ->
+            mc.player?.run {
+                yaw = y
+                pitch = p
+            }
+        }
+
         // Register attack trigger (AutoClicker)
         // Uses the input pipeline via options.attackKey.isPressed rather than
         // sending packets directly — required by client-side anti-cheat monitors.

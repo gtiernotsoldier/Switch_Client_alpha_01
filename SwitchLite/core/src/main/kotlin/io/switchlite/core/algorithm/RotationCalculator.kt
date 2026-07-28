@@ -233,13 +233,13 @@ object RotationCalculator {
      * Minecraft convention: yaw=0 faces south (-Z), yaw=90 faces west (-X).
      */
     private fun aimToDirection(aim: Vec2): Vec3 {
-        val yawRad = (aim.yaw + 90f) * (kotlin.math.PI.toFloat() / 180f)
-        val pitchRad = aim.pitch * (kotlin.math.PI.toFloat() / 180f)
-        val cosPitch = kotlin.math.cos(pitchRad.toDouble()).toFloat()
+        val yawRad = Math.toRadians(aim.yaw.toDouble())
+        val pitchRad = Math.toRadians(aim.pitch.toDouble())
+        val cosPitch = kotlin.math.cos(pitchRad)
         return Vec3(
-            -kotlin.math.cos(yawRad.toDouble()).toFloat() * cosPitch,
-            -kotlin.math.sin(pitchRad.toDouble()).toFloat(),
-            -kotlin.math.sin(yawRad.toDouble()).toFloat() * cosPitch
+            -kotlin.math.sin(yawRad) * cosPitch,
+            -kotlin.math.sin(pitchRad),
+            kotlin.math.cos(yawRad) * cosPitch
         )
     }
 
@@ -373,11 +373,11 @@ object RotationCalculator {
      * (ConditionChecker).
      */
     fun yawToDirection(yaw: Float): Vec3 {
-        val yawRad = (yaw + 90f) * (kotlin.math.PI.toFloat() / 180f)
+        val yawRad = Math.toRadians(yaw.toDouble())
         return Vec3(
-            -kotlin.math.cos(yawRad.toDouble()),
+            -kotlin.math.sin(yawRad),
             0.0,
-            -kotlin.math.sin(yawRad.toDouble())
+            kotlin.math.cos(yawRad)
         )
     }
 }

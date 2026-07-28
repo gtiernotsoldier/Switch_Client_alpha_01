@@ -60,6 +60,34 @@ public class Agent {
         System.out.println("[Agent] Skipping transformer (stub, no Instrumentation)");
         MappingContext.initialize();
         System.out.println("[SwitchLite Agent] Ready (JNI bootstrap)");
+
+        // Verify injection by sending a chat message
+        sendChatVerification();
+    }
+
+    // ── Chat verification ──
+
+    private static void sendChatVerification() {
+        try {
+            Class<?> mcClass = Class.forName("net.minecraft.client.Minecraft");
+            java.lang.reflect.Method getMc = mcClass.getMethod("getMinecraft");
+            Object mc = getMc.invoke(null);
+            if (mc == null) {
+                System.out.println("[Agent] MC instance null — not fully loaded. Injection OK.");
+                return;
+            }
+            java.lang.reflect.Field pf = mcClass.getField("thePlayer");
+            Object player = pf.get(mc);
+            if (player == null) {
+                System.out.println("[Agent] Player null — not in world yet. Injection OK.");
+                return;
+            }
+            player.getClass().getMethod("sendChatMessage", String.class)
+                .invoke(player, "\u00a7a[SwitchLite] \u00a7fInjected! Press R for GUI");
+            System.out.println("[Agent] Chat verification sent");
+        } catch (Exception e) {
+            System.err.println("[Agent] Verification failed: " + e.getMessage());
+        }
     }
 
     private static void init(Instrumentation inst) {

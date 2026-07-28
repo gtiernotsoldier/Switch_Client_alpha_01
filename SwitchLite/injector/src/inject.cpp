@@ -146,7 +146,11 @@ bool injectJavaAgent(int pid, const std::string& agentPath, const VersionInfo& v
     CloseHandle(hProcess);
 
     // Give agent time to initialize
-    Sleep(2000);
+    std::cout << "[Inject] Waiting 5s for agent to initialize..." << std::endl;
+    for (int i = 5; i > 0; i--) {
+        Sleep(1000);
+        std::cout << "[Inject] " << i << "..." << std::endl;
+    }
 
     std::cout << "[+] Java Agent injected successfully via DLL" << std::endl;
     return true;
@@ -155,6 +159,38 @@ bool injectJavaAgent(int pid, const std::string& agentPath, const VersionInfo& v
     std::cout << "[Inject] DLL injection not supported on this platform (stub)" << std::endl;
     return false;
 #endif
+}
+
+// ── dumpLogFile: read and display a log file if it exists ──
+
+static void dumpLogFile(const char* label, const char* path) {
+    std::ifstream f(path);
+    if (!f.is_open()) {
+        std::cout << "[" << label << "] (no log file at " << path << ")" << std::endl;
+        return;
+    }
+    std::cout << "[" << label << "] === " << path << " ===" << std::endl;
+    std::string line;
+    while (std::getline(f, line)) {
+        std::cout << "[" << label << "] " << line << std::endl;
+    }
+    f.close();
+}
+
+// ── showDiagnosticLogs ──
+
+void showDiagnosticLogs() {
+    char tempPath[MAX_PATH];
+    GetTempPathA(MAX_PATH, tempPath);
+    std::string payloadLog = std::string(tempPath) + "switchlite-payload.log";
+    std::string agentLog = std::string(tempPath) + "switchlite-agent.log";
+
+    std::cout << std::endl;
+    std::cout << "========== DIAGNOSTIC LOGS ==========" << std::endl;
+    dumpLogFile("PAYLOAD", payloadLog.c_str());
+    std::cout << std::endl;
+    dumpLogFile("AGENT", agentLog.c_str());
+    std::cout << "====================================" << std::endl;
 }
 
 // ── deployFabricMod ──

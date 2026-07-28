@@ -195,6 +195,39 @@ object ForgeEventBridge : IEventBridge {
             mc.gameSettings.gammaSetting = gamma
         }
 
+        // Register right-click delay (FastPlace)
+        EventBridge.registerRightClickDelayHandler { ticks ->
+            mc.rightClickDelayTimer = ticks
+        }
+
+        // Register team detection (Teams)
+        EventBridge.registerScoreboardTeamChecker { name ->
+            mc.theWorld?.scoreboard?.teams?.firstOrNull { team ->
+                team.membershipCollection.func_96562_d(name) ?: false
+            }?.registeredName
+        }
+        EventBridge.registerDisplayNameProvider { name ->
+            mc.theWorld?.loadedEntityList?.find {
+                it is net.minecraft.entity.EntityLivingBase && it.name == name
+            }?.displayName?.formattedText ?: name
+        }
+        EventBridge.registerArmorColorChecker { name ->
+            val entity = mc.theWorld?.loadedEntityList?.find {
+                it is net.minecraft.entity.EntityLivingBase && it.name == name
+            } as? net.minecraft.entity.EntityLivingBase ?: return@registerArmorColorChecker -1
+            for (i in 1..4) {
+                val stack = entity.getEquipmentInSlot(i) ?: continue
+                if (stack.item !is net.minecraft.item.ItemArmor) continue
+                val armor = stack.item as net.minecraft.item.ItemArmor
+                if (armor.getArmorMaterial() != net.minecraft.item.ItemArmor.ArmorMaterial.CLOTH) continue
+                if (stack.hasTagCompound() && stack.tagCompound.hasKey("display", 10)) {
+                    val display = stack.tagCompound.getCompoundTag("display")
+                    if (display.hasKey("color", 3)) return@registerArmorColorChecker display.getInteger("color")
+                }
+            }
+            -1
+        }
+
         // Register attack trigger (AutoClicker)
         // Uses the LWJGL input pipeline (keyBindAttack.pressed) rather than
         // sending C02 packets directly — required by client-side anti-cheat

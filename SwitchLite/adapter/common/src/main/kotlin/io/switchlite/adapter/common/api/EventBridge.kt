@@ -36,8 +36,12 @@ object EventBridge {
     }
 
     fun notifyVelocityPacket(ctx: VelocityContext) {
+        velocityPacketReceivedThisTick = true
         velocityNotifiers.forEach { it(ctx) }
     }
+
+    /** Set true by notifyVelocityPacket, cleared each tick by modules. */
+    @Volatile var velocityPacketReceivedThisTick: Boolean = false
 
     // ========== PreTick (START phase, before game processes input) ==========
     private val startTickListeners = mutableListOf<(PlayerState, TargetState?) -> Unit>()
@@ -218,9 +222,20 @@ object EventBridge {
     @Volatile var foodLevel: Int = 20
 
     // ========== WASD Key States (StrafeFix) ==========
+    @Volatile var isKeyForwardDown: Boolean = false
     @Volatile var isKeyBackDown: Boolean = false
     @Volatile var isKeyLeftDown: Boolean = false
     @Volatile var isKeyRightDown: Boolean = false
+
+    // ========== Input Snapshots (NoMouseFix, NoKeyboardFix) ==========
+    @Volatile var snapMouseDeltaX: Float = 0f
+    @Volatile var snapMouseDeltaY: Float = 0f
+    @Volatile var snapMouseSensitivity: Float = 1.0f
+    @Volatile var snapKeyForward: Boolean = false
+    @Volatile var snapKeyBack: Boolean = false
+    @Volatile var snapKeyLeft: Boolean = false
+    @Volatile var snapKeyRight: Boolean = false
+    @Volatile var snapKeyAttack: Boolean = false
 
     // ========== Item Use ==========
     private var releaseUsingItemHandler: (() -> Unit)? = null
@@ -323,8 +338,10 @@ object EventBridge {
         isLookingAtBlock = false
         isInFluid = false
         foodLevel = 20
+        isKeyForwardDown = false
         isKeyBackDown = false
         isKeyLeftDown = false
         isKeyRightDown = false
+        velocityPacketReceivedThisTick = false
     }
 }

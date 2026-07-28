@@ -77,6 +77,7 @@ object FabricBootstrap : ClientModInitializer {
         // Food level (Sprint: vanilla cancels at <= 6)
         EventBridge.foodLevel = client.player?.hungerManager?.foodLevel ?: 20
         // WASD key states (StrafeFix)
+        EventBridge.isKeyForwardDown = client.options.forwardKey.isPressed
         EventBridge.isKeyBackDown = client.options.backKey.isPressed
         EventBridge.isKeyLeftDown = client.options.leftKey.isPressed
         EventBridge.isKeyRightDown = client.options.rightKey.isPressed

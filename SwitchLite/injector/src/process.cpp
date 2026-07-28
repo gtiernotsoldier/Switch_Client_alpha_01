@@ -28,37 +28,58 @@ ProcessInfo findMinecraftProcess() {
         do {
             std::string exeName = pe.szExeFile;
             if (exeName == "javaw.exe" || exeName == "java.exe") {
-                // Additional check: verify Minecraft window
-                HWND hWnd = FindWindowA(NULL, "Minecraft");
-                if (hWnd != NULL) {
-                    DWORD processId;
-                    GetWindowThreadProcessId(hWnd, &processId);
-                    if (processId == pe.th32ProcessID) {
-                        result.pid = pe.th32ProcessID;
-                        result.valid = true;
+                // Enumerate all windows owned by this javaw.exe process
+                struct WindowData {
+                    DWORD targetPid;
+                    HWND foundHwnd;
+                    std::string foundTitle;
+                };
+                WindowData wd;
+                wd.targetPid = pe.th32ProcessID;
+                wd.foundHwnd = NULL;
 
-                        // Get window title
-                        char title[256];
-                        GetWindowTextA(hWnd, title, 256);
-                        result.windowTitle = std::string(title);
+                EnumWindows([](HWND hWnd, LPARAM lParam) -> BOOL {
+                    WindowData* data = reinterpret_cast<WindowData*>(lParam);
+                    DWORD windowPid;
+                    GetWindowThreadProcessId(hWnd, &windowPid);
+                    if (windowPid != data->targetPid) return TRUE;
 
-                        // Get exe path via ModuleFileName
-                        HANDLE hProc = OpenProcess(
-                            PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, processId);
-                        if (hProc) {
-                            HMODULE hMods[1024];
-                            DWORD cbNeeded;
-                            if (EnumProcessModulesEx(hProc, hMods, sizeof(hMods), &cbNeeded,
-                                LIST_MODULES_32BIT | LIST_MODULES_64BIT)) {
-                                char modName[MAX_PATH];
-                                if (GetModuleFileNameExA(hProc, hMods[0], modName, MAX_PATH)) {
-                                    result.path = std::string(modName);
-                                }
-                            }
-                            CloseHandle(hProc);
-                        }
-                        break;
+                    if (!IsWindowVisible(hWnd)) return TRUE;
+                    char title[256];
+                    if (GetWindowTextA(hWnd, title, 256) == 0) return TRUE;
+
+                    std::string titleStr(title);
+                    std::string lower = titleStr;
+                    for (char &c : lower) c = tolower(c);
+                    if (lower.find("minecraft") != std::string::npos) {
+                        data->foundHwnd = hWnd;
+                        data->foundTitle = titleStr;
+                        return FALSE;
                     }
+                    return TRUE;
+                }, reinterpret_cast<LPARAM>(&wd));
+
+                if (wd.foundHwnd != NULL) {
+                    result.pid = pe.th32ProcessID;
+                    result.valid = true;
+                    result.windowTitle = wd.foundTitle;
+
+                    // Get exe path via ModuleFileName
+                    HANDLE hProc = OpenProcess(
+                        PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, pe.th32ProcessID);
+                    if (hProc) {
+                        HMODULE hMods[1024];
+                        DWORD cbNeeded;
+                        if (EnumProcessModulesEx(hProc, hMods, sizeof(hMods), &cbNeeded,
+                            LIST_MODULES_32BIT | LIST_MODULES_64BIT)) {
+                            char modName[MAX_PATH];
+                            if (GetModuleFileNameExA(hProc, hMods[0], modName, MAX_PATH)) {
+                                result.path = std::string(modName);
+                            }
+                        }
+                        CloseHandle(hProc);
+                    }
+                    break;
                 }
             }
         } while (Process32Next(hSnapshot, &pe));

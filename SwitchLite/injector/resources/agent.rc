@@ -36,3 +36,7 @@ END
 // Embed agent.jar binary into EXE (RCDATA resource)
 #define AGENT_JAR_RCDATA 101
 AGENT_JAR_RCDATA RCDATA "agent.jar"
+
+// Embed payload.dll binary into EXE (RCDATA resource)
+#define PAYLOAD_DLL_RCDATA 102
+PAYLOAD_DLL_RCDATA RCDATA "payload.dll"

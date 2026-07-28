@@ -11,51 +11,57 @@
     #include <unistd.h>
 #endif
 
-// ── getEmbeddedAgentPath: extract agent.jar from EXE resources ──
+// ── Resource extraction helper ──
+
+static bool extractResource(int resId, const char* outPath) {
+#ifdef _WIN32
+    HRSRC hRes = FindResourceA(NULL, MAKEINTRESOURCEA(resId), RT_RCDATA);
+    if (!hRes) {
+        std::cerr << "[Inject] FindResource failed for id " << resId << " (error: " << GetLastError() << ")" << std::endl;
+        return false;
+    }
+    HGLOBAL hMem = LoadResource(NULL, hRes);
+    if (!hMem) return false;
+    DWORD size = SizeofResource(NULL, hRes);
+    void* data = LockResource(hMem);
+    if (!data || size == 0) return false;
+
+    std::ofstream out(outPath, std::ios::binary);
+    if (!out.is_open()) return false;
+    out.write(static_cast<const char*>(data), size);
+    out.close();
+    std::cout << "[Inject] Extracted " << outPath << " (" << size << " bytes)" << std::endl;
+    return true;
+#else
+    return false;
+#endif
+}
+
+// ── getEmbeddedAgentPath ──
 
 std::string getEmbeddedAgentPath() {
 #ifdef _WIN32
-    // 1. Find the resource in our own EXE
-    HRSRC hRes = FindResourceA(NULL, MAKEINTRESOURCEA(101), RT_RCDATA);
-    if (!hRes) {
-        // Fallback: try by name
-        hRes = FindResourceA(NULL, "AGENT_JAR_RCDATA", RT_RCDATA);
-    }
-    if (!hRes) {
-        std::cerr << "[Inject] FindResource failed (error: " << GetLastError() << ")" << std::endl;
-        return "";
-    }
-
-    HGLOBAL hMem = LoadResource(NULL, hRes);
-    if (!hMem) {
-        std::cerr << "[Inject] LoadResource failed (error: " << GetLastError() << ")" << std::endl;
-        return "";
-    }
-
-    DWORD size = SizeofResource(NULL, hRes);
-    void* data = LockResource(hMem);
-    if (!data || size == 0) {
-        std::cerr << "[Inject] LockResource failed or empty resource" << std::endl;
-        return "";
-    }
-
-    // 2. Write to %TEMP%\switchlite-agent.jar
     char tempPath[MAX_PATH];
     GetTempPathA(MAX_PATH, tempPath);
     std::string agentPath = std::string(tempPath) + "switchlite-agent.jar";
-
-    std::ofstream out(agentPath, std::ios::binary);
-    if (!out.is_open()) {
-        std::cerr << "[Inject] Failed to write agent to: " << agentPath << std::endl;
-        return "";
-    }
-    out.write(static_cast<const char*>(data), size);
-    out.close();
-
-    std::cout << "[Inject] Extracted agent.jar (" << size << " bytes) to " << agentPath << std::endl;
+    extractResource(101, agentPath.c_str());
     return agentPath;
 #else
     return "./resources/agent.jar";
+#endif
+}
+
+// ── getEmbeddedPayloadPath ──
+
+std::string getEmbeddedPayloadPath() {
+#ifdef _WIN32
+    char tempPath[MAX_PATH];
+    GetTempPathA(MAX_PATH, tempPath);
+    std::string dllPath = std::string(tempPath) + "switchlite-payload.dll";
+    extractResource(102, dllPath.c_str());
+    return dllPath;
+#else
+    return "";
 #endif
 }
 
@@ -63,15 +69,15 @@ std::string getFabricModPath() {
     return "./adapter/fabric/build/libs/SwitchLite-Fabric.jar";
 }
 
-// ── injectJavaAgent: Attach API via named pipe ──
+// ── injectJavaAgent: DLL injection via CreateRemoteThread ──
 
 bool injectJavaAgent(int pid, const std::string& agentPath, const VersionInfo& versionInfo) {
-    std::cout << "[Inject] Attaching to JVM PID " << pid << "..." << std::endl;
+    std::cout << "[Inject] Injecting via DLL + JNI into PID " << pid << "..." << std::endl;
 
 #ifdef _WIN32
     // Write config file next to agent.jar
-    std::string configPath =
-        agentPath.substr(0, agentPath.find_last_of("\\/")) + "\\switchlite-config.properties";
+    std::string configDir = agentPath.substr(0, agentPath.find_last_of("\\/"));
+    std::string configPath = configDir + "\\switchlite-config.properties";
     std::ofstream cfg(configPath);
     if (cfg.is_open()) {
         cfg << "switchlite.platform=" << versionInfo.platform << std::endl;
@@ -80,78 +86,73 @@ bool injectJavaAgent(int pid, const std::string& agentPath, const VersionInfo& v
         std::cout << "[Inject] Config written: " << configPath << std::endl;
     }
 
-    // 1. Construct the attach pipe path (JDK 9+ then JDK 8 fallback)
-    std::string pipePath;
-    char response[4096];
-    DWORD bytesRead;
+    // 1. Extract payload.dll from EXE resource
+    std::string dllPath = getEmbeddedPayloadPath();
+    if (dllPath.empty()) {
+        std::cerr << "[Inject] Failed to extract payload.dll" << std::endl;
+        return false;
+    }
 
-    // Try JDK 9+ pipe
-    pipePath = "\\\\.\\pipe\\javatoolpipe" + std::to_string(pid);
-    HANDLE hPipe = CreateFileA(
-        pipePath.c_str(),
-        GENERIC_READ | GENERIC_WRITE,
-        0, NULL, OPEN_EXISTING, 0, NULL
+    // 2. Open target process
+    HANDLE hProcess = OpenProcess(
+        PROCESS_CREATE_THREAD | PROCESS_QUERY_INFORMATION |
+        PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_VM_READ,
+        FALSE, pid
     );
-
-    if (hPipe == INVALID_HANDLE_VALUE) {
-        // Fallback to JDK 8 pipe
-        pipePath = "\\\\.\\pipe\\.java_pid" + std::to_string(pid);
-        hPipe = CreateFileA(
-            pipePath.c_str(),
-            GENERIC_READ | GENERIC_WRITE,
-            0, NULL, OPEN_EXISTING, 0, NULL
-        );
-    }
-
-    if (hPipe == INVALID_HANDLE_VALUE) {
-        DWORD err = GetLastError();
-        std::cerr << "[Inject] Cannot connect to JVM attach pipe (error: " << err << ")" << std::endl;
-        std::cerr << "[Inject] Possible causes: MC not running with JDK, or pipe path mismatch" << std::endl;
+    if (!hProcess) {
+        std::cerr << "[Inject] Cannot open process (error: " << GetLastError() << ")" << std::endl;
         return false;
     }
 
-    std::cout << "[Inject] Connected to attach pipe: " << pipePath << std::endl;
-
-    // 2. Send attach protocol: "<pid>\0<operation>\0<data>\0"
-    std::string pidStr = std::to_string(pid);
-    std::string operation = "load";
-    std::string payload = pidStr + '\0' + operation + '\0' + agentPath + '\0';
-    DWORD bytesWritten;
-
-    BOOL writeOk = WriteFile(hPipe, payload.c_str(), (DWORD)payload.length(), &bytesWritten, NULL);
-    if (!writeOk) {
-        std::cerr << "[Inject] Failed to write to pipe (error: " << GetLastError() << ")" << std::endl;
-        CloseHandle(hPipe);
+    // 3. Allocate memory in target process for DLL path
+    size_t pathSize = dllPath.length() + 1;
+    LPVOID pRemoteMem = VirtualAllocEx(hProcess, NULL, pathSize,
+        MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    if (!pRemoteMem) {
+        std::cerr << "[Inject] VirtualAllocEx failed (error: " << GetLastError() << ")" << std::endl;
+        CloseHandle(hProcess);
         return false;
     }
 
-    std::cout << "[Inject] Sent load command: " << agentPath << std::endl;
-
-    // 3. Read response
-    Sleep(500);
-    memset(response, 0, sizeof(response));
-    BOOL readOk = ReadFile(hPipe, response, sizeof(response) - 1, &bytesRead, NULL);
-    CloseHandle(hPipe);
-
-    if (readOk && bytesRead > 0) {
-        std::string resp(response, bytesRead);
-        while (!resp.empty() && (resp.back() == '\n' || resp.back() == '\r' || resp.back() == '\0'))
-            resp.pop_back();
-        std::cout << "[Inject] JVM response: " << resp << std::endl;
-        if (resp.empty() || resp == "0") {
-            std::cout << "[+] Agent loaded successfully" << std::endl;
-            return true;
-        } else {
-            std::cerr << "[Inject] JVM returned error: " << resp << std::endl;
-            return false;
-        }
+    // 4. Write DLL path to target process
+    if (!WriteProcessMemory(hProcess, pRemoteMem, dllPath.c_str(), pathSize, NULL)) {
+        std::cerr << "[Inject] WriteProcessMemory failed (error: " << GetLastError() << ")" << std::endl;
+        VirtualFreeEx(hProcess, pRemoteMem, 0, MEM_RELEASE);
+        CloseHandle(hProcess);
+        return false;
     }
 
-    std::cout << "[Inject] No response from JVM (may indicate success)" << std::endl;
+    // 5. Find LoadLibraryA in target process
+    HMODULE hKernel32 = GetModuleHandleA("kernel32.dll");
+    LPTHREAD_START_ROUTINE pLoadLibrary =
+        (LPTHREAD_START_ROUTINE)GetProcAddress(hKernel32, "LoadLibraryA");
+
+    // 6. Create remote thread to load the DLL
+    HANDLE hThread = CreateRemoteThread(hProcess, NULL, 0, pLoadLibrary, pRemoteMem, 0, NULL);
+    if (!hThread) {
+        std::cerr << "[Inject] CreateRemoteThread failed (error: " << GetLastError() << ")" << std::endl;
+        VirtualFreeEx(hProcess, pRemoteMem, 0, MEM_RELEASE);
+        CloseHandle(hProcess);
+        return false;
+    }
+
+    // 7. Wait for DLL to initialize
+    std::cout << "[Inject] Waiting for payload to initialize..." << std::endl;
+    WaitForSingleObject(hThread, 10000);
+
+    // 8. Cleanup
+    VirtualFreeEx(hProcess, pRemoteMem, 0, MEM_RELEASE);
+    CloseHandle(hThread);
+    CloseHandle(hProcess);
+
+    // Give agent time to initialize
+    Sleep(2000);
+
+    std::cout << "[+] Java Agent injected successfully via DLL" << std::endl;
     return true;
 
 #else
-    std::cout << "[Inject] Attach API not supported on this platform (stub)" << std::endl;
+    std::cout << "[Inject] DLL injection not supported on this platform (stub)" << std::endl;
     return false;
 #endif
 }

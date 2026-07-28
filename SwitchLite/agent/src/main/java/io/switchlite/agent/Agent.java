@@ -22,6 +22,46 @@ public class Agent {
         init(inst);
     }
 
+    /**
+     * Bootstrap entry for DLL injection + JNI (no Instrumentation).
+     * Called by payload.dll via JNI CallStaticVoidMethod.
+     * Transformer is a stub — we skip registration in this path.
+     */
+    public static void bootstrap(String configDir) {
+        System.out.println("[SwitchLite Agent] Bootstrapped via JNI (no Instrumentation)");
+
+        String platform = "Unknown";
+        String version = "Unknown";
+        File configFile = new File(configDir, "switchlite-config.properties");
+        if (configFile.exists()) {
+            Properties props = new Properties();
+            try (FileInputStream fis = new FileInputStream(configFile)) {
+                props.load(fis);
+                platform = props.getProperty("switchlite.platform", "Unknown");
+                version = props.getProperty("switchlite.version", "Unknown");
+                System.out.println("[Agent] Config loaded from: " + configFile.getAbsolutePath());
+            } catch (IOException e) {
+                System.err.println("[Agent] Failed to read config: " + e.getMessage());
+            }
+        }
+
+        System.out.println("[Agent] Platform: " + platform);
+        System.out.println("[Agent] Version: " + version);
+
+        String mappingsDir = detectMappingsDir();
+        try {
+            MappingLoader.loadMappings(platform, version, mappingsDir);
+        } catch (Exception e) {
+            System.err.println("[Agent] Failed to load mappings: " + e.getMessage());
+            return;
+        }
+
+        // Transformer is a stub, skip registration
+        System.out.println("[Agent] Skipping transformer (stub, no Instrumentation)");
+        MappingContext.initialize();
+        System.out.println("[SwitchLite Agent] Ready (JNI bootstrap)");
+    }
+
     private static void init(Instrumentation inst) {
         instrumentation = inst;
 

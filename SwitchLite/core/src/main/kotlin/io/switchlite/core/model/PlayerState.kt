@@ -28,6 +28,8 @@ data class PlayerState(
     val isUsingItem: Boolean,
     val isLookingAtTarget: Boolean,
     val isMining: Boolean,
+    val isSneaking: Boolean,
+    val selectedSlot: Int,
     val weaponType: WeaponType,
     val isAttackKeyDown: Boolean,
     val ticks: Long
@@ -55,7 +57,7 @@ data class PlayerState(
         isBlocking = false,
         isUsingItem = false,
         isLookingAtTarget = false,
-        isMining = false,
+        isMining = false, isSneaking = false, selectedSlot = 0,
         weaponType = WeaponType.OTHER,
         isAttackKeyDown = false,
         ticks = ticks
@@ -77,7 +79,7 @@ data class PlayerState(
             isBlocking = false,
             isUsingItem = false,
             isLookingAtTarget = false,
-            isMining = false,
+            isMining = false, isSneaking = false, selectedSlot = 0,
             weaponType = WeaponType.OTHER,
             isAttackKeyDown = false,
             ticks = 0

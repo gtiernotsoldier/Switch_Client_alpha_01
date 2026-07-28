@@ -228,6 +228,20 @@ object ForgeEventBridge : IEventBridge {
             -1
         }
 
+        // Register entity info (AntiBot)
+        EventBridge.registerEntityTicksProvider { name ->
+            val entity = mc.theWorld?.loadedEntityList?.find {
+                it is net.minecraft.entity.EntityLivingBase && it.name == name
+            } ?: return@registerEntityTicksProvider 0
+            (entity as net.minecraft.entity.Entity).ticksExisted
+        }
+        EventBridge.registerEntityOnGroundChecker { name ->
+            val entity = mc.theWorld?.loadedEntityList?.find {
+                it is net.minecraft.entity.EntityLivingBase && it.name == name
+            } as? net.minecraft.entity.EntityLivingBase ?: return@registerEntityOnGroundChecker false
+            entity.onGround
+        }
+
         // Register attack trigger (AutoClicker)
         // Uses the LWJGL input pipeline (keyBindAttack.pressed) rather than
         // sending C02 packets directly — required by client-side anti-cheat

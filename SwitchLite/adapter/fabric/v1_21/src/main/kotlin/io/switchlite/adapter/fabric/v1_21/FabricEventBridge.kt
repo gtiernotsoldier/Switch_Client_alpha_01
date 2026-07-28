@@ -211,6 +211,16 @@ object FabricEventBridge : IEventBridge {
             -1
         }
 
+        // Register entity info (AntiBot)
+        EventBridge.registerEntityTicksProvider { name ->
+            val entity = mc.world?.players?.find { it.name.string == name }
+            entity?.age ?: 0
+        }
+        EventBridge.registerEntityOnGroundChecker { name ->
+            val entity = mc.world?.players?.find { it.name.string == name }
+            entity?.isOnGround ?: false
+        }
+
         // Register attack trigger (AutoClicker)
         // Uses the input pipeline via options.attackKey.isPressed rather than
         // sending packets directly — required by client-side anti-cheat monitors.

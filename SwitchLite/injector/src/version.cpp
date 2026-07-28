@@ -50,24 +50,53 @@ static bool fileExists(const std::string& path) {
 
 /** Find .minecraft directory by walking up from exe/modules path. */
 static std::string findMinecraftDir(const std::string& exePath) {
+    // 1. Walk up from exe path (existing logic)
     std::string current = exePath;
     for (int i = 0; i < 10; i++) {
-        // Strip to parent dir
         size_t pos = current.find_last_of("/\\");
         if (pos == std::string::npos) break;
         current = current.substr(0, pos);
-
-        // Check if this is .minecraft
         std::string mcDir = pathJoin(current, ".minecraft");
         if (dirExists(mcDir)) return mcDir;
-
-        // Also check if current itself is the .minecraft dir
         size_t nameStart = current.find_last_of("/\\");
         std::string dirName = (nameStart == std::string::npos) ? current : current.substr(nameStart + 1);
         if (dirName == ".minecraft") return current;
     }
-    // Fallback: try APPDATA or HOME
-    return getDefaultMinecraftDir();
+
+    // 2. Fallback: %APPDATA%/.minecraft
+    std::string appdataDir = getDefaultMinecraftDir();
+    if (dirExists(appdataDir)) return appdataDir;
+
+    // 3. Same-drive root .minecraft (PCL2 often stores game in D:\\.minecraft etc.)
+    if (exePath.length() >= 2 && exePath[1] == ':') {
+        char driveRoot[4] = { exePath[0], ':', '\\', '\0' };
+        std::string driveMc = pathJoin(std::string(driveRoot), ".minecraft");
+        if (dirExists(driveMc)) return driveMc;
+    }
+
+    // 4. Walk up further looking for PCL2/HMCL launcher folders
+    current = exePath;
+    for (int i = 0; i < 15; i++) {
+        size_t pos = current.find_last_of("/\\");
+        if (pos == std::string::npos) break;
+        current = current.substr(0, pos);
+        size_t nameStart = current.find_last_of("/\\");
+        std::string name = (nameStart == std::string::npos) ? current : current.substr(nameStart + 1);
+        std::string lower = name;
+        for (auto& c : lower) c = tolower(c);
+        if (lower.find("pcl") != std::string::npos || lower.find("hmcl") != std::string::npos ||
+            lower.find("launcher") != std::string::npos) {
+            std::string sibling = pathJoin(current, ".minecraft");
+            if (dirExists(sibling)) return sibling;
+            size_t parentPos = current.find_last_of("/\\");
+            if (parentPos != std::string::npos) {
+                std::string parentMc = pathJoin(current.substr(0, parentPos), ".minecraft");
+                if (dirExists(parentMc)) return parentMc;
+            }
+        }
+    }
+
+    return "";
 }
 
 /** List subdirectory names under a path. */
@@ -119,8 +148,33 @@ static std::string jsonGet(const std::string& json, const std::string& key) {
 }
 
 std::string readVersionsJson(const std::string& versionsDir) {
-    // Try reading the version JSON that matches the directory name
-    return ""; // used if we had a specific version name
+    return "";
+}
+
+// ── Window title version parser ──────────────────────────
+
+/** Extract Minecraft version from window title, e.g. "Minecraft 1.8.9" → "1.8.9" */
+static std::string parseVersionFromTitle(const std::string& title) {
+    std::string lower = title;
+    for (auto& c : lower) c = tolower(c);
+    size_t mcPos = lower.find("minecraft");
+    if (mcPos == std::string::npos) return "";
+    size_t pos = mcPos + 9; // skip "minecraft"
+
+    // Skip whitespace/asterisks/dashes
+    while (pos < title.length() && (title[pos] == ' ' || title[pos] == '*' || title[pos] == '-'))
+        pos++;
+
+    // Read version: digits and dots only
+    std::string version;
+    while (pos < title.length() && (isdigit(title[pos]) || title[pos] == '.')) {
+        version += title[pos];
+        pos++;
+    }
+
+    // Must have at least "X.Y" format
+    if (version.length() < 3 || version.find('.') == std::string::npos) return "";
+    return version;
 }
 
 std::string detectPlatform(const std::string& mcDir) {
@@ -173,61 +227,60 @@ std::string detectPlatform(const std::string& mcDir) {
 // ── Main entry ──────────────────────────────────────
 
 VersionInfo parseMinecraftVersion(const std::string& mcPath) {
+    return parseMinecraftVersion(mcPath, "");
+}
+
+VersionInfo parseMinecraftVersion(const std::string& mcPath, const std::string& windowTitle) {
     VersionInfo result;
 
-    // 1. Locate .minecraft directory
+    // 1. Fast path: extract version from window title
+    std::string titleVersion = parseVersionFromTitle(windowTitle);
+    if (!titleVersion.empty()) {
+        result.version = titleVersion;
+    }
+
+    // 2. Locate .minecraft directory
     std::string mcDir = findMinecraftDir(mcPath);
     result.mcDir = mcDir;
-    if (mcDir.empty()) {
+
+    // 3. Detect platform from filesystem
+    if (!mcDir.empty()) {
+        result.platform = detectPlatform(mcDir);
+    } else {
         result.platform = "Unknown";
-        result.version = "Unknown";
-        result.valid = false;
-        return result;
     }
 
-    // 2. Detect platform
-    result.platform = detectPlatform(mcDir);
+    // 4. Fallback: try versions/ directory if title didn't give us one
+    if (result.version.empty() && !mcDir.empty()) {
+        std::string versionsDir = pathJoin(mcDir, "versions");
+        auto versionDirs = listDirs(versionsDir);
 
-    // 3. Detect version from versions directory
-    std::string versionsDir = pathJoin(mcDir, "versions");
-    auto versionDirs = listDirs(versionsDir);
-
-    std::string bestVersion;
-    for (auto& dirName : versionDirs) {
-        // Skip forge/fabric wrapper dirs (e.g. "1.8.9-forge-11.15.1.2318")
-        // but we still want to extract the base version from them
-        std::string candidate = dirName;
-
-        // Try reading <dirName>/<dirName>.json for "id" field
-        std::string jsonPath = pathJoin(pathJoin(versionsDir, dirName), dirName + ".json");
-        std::ifstream jsonFile(jsonPath);
-        if (jsonFile.is_open()) {
-            std::stringstream ss;
-            ss << jsonFile.rdbuf();
-            std::string json = ss.str();
-            std::string id = jsonGet(json, "id");
-            if (!id.empty()) {
-                // Prefer vanilla versions over forge/fabric wrappers
-                if (id.find("forge") == std::string::npos && id.find("fabric") == std::string::npos) {
-                    bestVersion = id;
-                    break; // found a clean vanilla version
+        for (auto& dirName : versionDirs) {
+            std::string jsonPath = pathJoin(pathJoin(versionsDir, dirName), dirName + ".json");
+            std::ifstream jsonFile(jsonPath);
+            if (jsonFile.is_open()) {
+                std::stringstream ss;
+                ss << jsonFile.rdbuf();
+                std::string json = ss.str();
+                std::string id = jsonGet(json, "id");
+                if (!id.empty()) {
+                    if (id.find("forge") == std::string::npos && id.find("fabric") == std::string::npos) {
+                        result.version = id;
+                        break;
+                    }
+                    if (result.version.empty()) result.version = id;
                 }
-                if (bestVersion.empty()) bestVersion = id;
+            }
+            if (result.version.empty() && !dirName.empty()) {
+                result.version = dirName;
             }
         }
-
-        // Fallback: use dir name itself (strip forge/fabric suffix for display)
-        if (bestVersion.empty() && !candidate.empty()) {
-            bestVersion = candidate;
-        }
     }
 
-    // 4. Final validation
-    if (!bestVersion.empty()) {
-        result.version = bestVersion;
+    // 5. Validation: version from any source is enough
+    if (!result.version.empty()) {
         result.valid = true;
     } else {
-        result.version = "Unknown";
         result.valid = false;
     }
 

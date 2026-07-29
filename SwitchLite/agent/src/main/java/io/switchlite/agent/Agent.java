@@ -151,7 +151,9 @@ public class Agent {
                 // Disable old EventBridge.onTick(null,null) dispatch — ForgeBootstrap.tick() handles it now
                 // The HUD thread still reads hudText for action bar fallback
             } catch (ClassNotFoundException e) {
-                log("[Agent] ForgeBootstrap not in classpath — modules only, no render");
+                log("[Agent] ForgeBootstrap not in classpath — using inline renderer");
+                // Initialize inline HUD renderer (pure reflection, no ForgeGradle needed)
+                initInlineRenderer();
             } catch (Exception e) {
                 log("[Agent] ForgeBootstrap init failed: " + e.getMessage());
                 e.printStackTrace();
@@ -202,7 +204,7 @@ public class Agent {
                             forgeBootstrapTick.invoke(null);
                         }
 
-                        // Schedule render on MC's main thread (for OpenGL rendering)
+                        // Schedule render on MC's main thread
                         if (forgeBootstrapAvailable && forgeBootstrapRender != null && mcAddScheduledTask != null) {
                             try {
                                 Object mc = Class.forName("net.minecraft.client.Minecraft")
@@ -217,6 +219,9 @@ public class Agent {
                                     mcAddScheduledTask.invoke(mc, renderRunnable);
                                 }
                             } catch (Exception ignored) {}
+                        } else if (inlineRendererReady) {
+                            // Use inline renderer (pure reflection, no ForgeBootstrap needed)
+                            scheduleInlineRender();
                         }
 
                         // Read HUD text for chat-based fallback
@@ -305,6 +310,175 @@ public class Agent {
     private static java.lang.reflect.Method forgeBootstrapOnDisconnect = null;
     private static java.lang.reflect.Method mcAddScheduledTask = null;
     private static boolean forgeBootstrapAvailable = false;
+
+    // ═══════════════════════════════════════════
+    //  Inline HUD Renderer (pure reflection, no ForgeGradle needed)
+    // ═══════════════════════════════════════════
+
+    // Cached MC reflection handles for rendering
+    private static java.lang.reflect.Method mcGetMinecraft = null;
+    private static java.lang.reflect.Field mcFontRenderer = null;
+    private static java.lang.reflect.Method fontDrawStringWithShadow = null;
+    private static java.lang.reflect.Method glPushMatrix = null;
+    private static java.lang.reflect.Method glPopMatrix = null;
+    private static java.lang.reflect.Method glEnable = null;
+    private static java.lang.reflect.Method glDisable = null;
+    private static java.lang.reflect.Method glScalef = null;
+    private static java.lang.reflect.Method glColor4f = null;
+    private static java.lang.reflect.Field mcDisplayWidth = null;
+    private static java.lang.reflect.Field mcDisplayHeight = null;
+    private static java.lang.reflect.Field mcCurrentScreen = null;
+    private static boolean inlineRendererReady = false;
+    private static volatile boolean renderScheduled = false; // prevent queue flood
+
+    private static void initInlineRenderer() {
+        try {
+            // Cache getMinecraft
+            Class<?> mcClass = Class.forName("net.minecraft.client.Minecraft");
+            for (String name : MC_GET_MC) {
+                try {
+                    java.lang.reflect.Method m = mcClass.getMethod(name);
+                    Object mcInst = m.invoke(null);
+                    if (mcInst != null) { mcGetMinecraft = m; break; }
+                } catch (Exception ignored) {}
+            }
+            if (mcGetMinecraft == null) { log("[Render] getMinecraft not found"); return; }
+
+            // FontRenderer: mc.fontRendererObj / field_71466_p
+            for (String fn : new String[]{"fontRendererObj", "field_71466_p"}) {
+                try {
+                    mcFontRenderer = mcClass.getField(fn);
+                    break;
+                } catch (Exception ignored) {}
+            }
+            if (mcFontRenderer == null) { log("[Render] fontRenderer field not found"); return; }
+
+            // FontRenderer.drawStringWithShadow(String, float, float, int)
+            Class<?> fontClass = mcFontRenderer.getType();
+            for (String mn : new String[]{"drawStringWithShadow", "func_78266_a"}) {
+                try {
+                    fontDrawStringWithShadow = fontClass.getMethod(mn, String.class, float.class, float.class, int.class);
+                    break;
+                } catch (Exception ignored) {}
+            }
+            if (fontDrawStringWithShadow == null) { log("[Render] drawStringWithShadow not found"); return; }
+
+            // GL11 static methods
+            Class<?> gl11Class = Class.forName("org.lwjgl.opengl.GL11");
+            glPushMatrix = gl11Class.getMethod("glPushMatrix");
+            glPopMatrix = gl11Class.getMethod("glPopMatrix");
+            glScalef = gl11Class.getMethod("glScalef", float.class, float.class, float.class);
+            glColor4f = gl11Class.getMethod("glColor4f", float.class, float.class, float.class, float.class);
+            glEnable = gl11Class.getMethod("glEnable", int.class);
+            glDisable = gl11Class.getMethod("glDisable", int.class);
+
+            // MC display size: mc.displayWidth / field_71313_c, displayHeight / field_71314_d
+            for (String fn : new String[]{"displayWidth", "field_71313_c"}) {
+                try { mcDisplayWidth = mcClass.getField(fn); break; } catch (Exception ignored) {}
+            }
+            for (String fn : new String[]{"displayHeight", "field_71314_d"}) {
+                try { mcDisplayHeight = mcClass.getField(fn); break; } catch (Exception ignored) {}
+            }
+
+            // mc.currentScreen / field_71462_r (null when in-game)
+            for (String fn : new String[]{"currentScreen", "field_71462_r"}) {
+                try { mcCurrentScreen = mcClass.getField(fn); break; } catch (Exception ignored) {}
+            }
+
+            // Cache mc.addScheduledTask
+            for (String mn : new String[]{"addScheduledTask", "func_152344_a"}) {
+                try {
+                    mcAddScheduledTask = mcClass.getMethod(mn, Runnable.class);
+                    break;
+                } catch (Exception ignored) {}
+            }
+
+            inlineRendererReady = true;
+            log("[Render] Inline HUD renderer initialized successfully");
+        } catch (ClassNotFoundException e) {
+            log("[Render] LWJGL/MC classes not found — renderer disabled");
+        } catch (Exception e) {
+            log("[Render] Init error: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Renders HUD text directly using MC FontRenderer + GL11, scheduled on MC render thread.
+     * This is the fallback when ForgeBootstrap is not available.
+     */
+    private static void scheduleInlineRender() {
+        if (!inlineRendererReady || mcAddScheduledTask == null || renderScheduled) return;
+        try {
+            Object mc = mcGetMinecraft.invoke(null);
+            if (mc == null) return;
+            // Don't render when a screen (inventory, pause, etc.) is open
+            if (mcCurrentScreen != null && mcCurrentScreen.get(mc) != null) return;
+
+            final String hudText = lastHudText;
+            final boolean guiOpen = guiVisible;
+            renderScheduled = true;
+
+            Runnable renderTask = new Runnable() {
+                public void run() {
+                    try {
+                        Object mc = mcGetMinecraft.invoke(null);
+                        if (mc == null) return;
+                        Object fontRenderer = mcFontRenderer.get(mc);
+                        if (fontRenderer == null) return;
+
+                        int width = (mcDisplayWidth != null) ? mcDisplayWidth.getInt(mc) : 854;
+                        int height = (mcDisplayHeight != null) ? mcDisplayHeight.getInt(mc) : 480;
+
+                        float scale = 1.0f;
+                        // On high-res screens, scale up so text is readable
+                        if (width > 1200) scale = 1.5f;
+                        else if (width > 900) scale = 1.2f;
+
+                        // Push GL state
+                        glPushMatrix.invoke(null);
+                        glScalef.invoke(null, scale, scale, scale);
+
+                        // Background panel (top-left)
+                        int bgAlpha = 0x60; // ~37% opacity
+                        // We use drawStringWithShadow which handles its own GL state;
+                        // just draw the text. Shadow provides enough contrast.
+
+                        int y = 4; // start near top-left
+                        int white = 0xFFFFFF;
+                        int green = 0x55FF55;
+                        int gray = 0xAAAAAA;
+                        int gold = 0xFFFF55;
+
+                        // Header line
+                        String header = "\u00a7a[SwitchLite] \u00a7f" + (guiOpen ? "GUI: ON" : "v" + System.currentTimeMillis() % 1000);
+                        fontDrawStringWithShadow.invoke(fontRenderer, header, 4, y, gold);
+                        y += 12;
+
+                        if (guiOpen) {
+                            // Draw simple module list when GUI is open
+                            fontDrawStringWithShadow.invoke(fontRenderer, "\u00a77Right Shift = toggle", 4, y, gray);
+                            y += 12;
+                            fontDrawStringWithShadow.invoke(fontRenderer, "\u00a77Modules active", 4, y, green);
+                        }
+
+                        // If HUD text has content, show it below
+                        if (hudText != null && !hudText.isEmpty() && !"".equals(hudText)) {
+                            y += 4;
+                            // HUD text may contain color codes, render directly
+                            fontDrawStringWithShadow.invoke(fontRenderer, hudText, 4, y, white);
+                        }
+
+                        // Restore GL state
+                        glPopMatrix.invoke(null);
+                    } catch (Exception ignored) {}
+                    finally {
+                        renderScheduled = false;
+                    }
+                }
+            };
+            mcAddScheduledTask.invoke(mc, renderTask);
+        } catch (Exception ignored) {}
+    }
 
     private static void cacheForgeBootstrapMethods() {
         try {

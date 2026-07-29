@@ -127,26 +127,39 @@ bool injectJavaAgent(int pid, const std::string& agentPath, const VersionInfo& v
     LPTHREAD_START_ROUTINE pLoadLibrary =
         (LPTHREAD_START_ROUTINE)GetProcAddress(hKernel32, "LoadLibraryA");
 
-    // 6. Create remote thread to load the DLL
+    // 6. Create the done event BEFORE launching the remote thread
+    char eventName[256];
+    snprintf(eventName, sizeof(eventName), "SwitchLitePayloadDone_%d", pid);
+    HANDLE hDoneEvent = CreateEventA(NULL, FALSE, FALSE, eventName);
+    std::cout << "[Inject] Created done event: " << eventName << std::endl;
+
+    // 7. Create remote thread to load the DLL
     HANDLE hThread = CreateRemoteThread(hProcess, NULL, 0, pLoadLibrary, pRemoteMem, 0, NULL);
     if (!hThread) {
         std::cerr << "[Inject] CreateRemoteThread failed (error: " << GetLastError() << ")" << std::endl;
+        CloseHandle(hDoneEvent);
         VirtualFreeEx(hProcess, pRemoteMem, 0, MEM_RELEASE);
         CloseHandle(hProcess);
         return false;
     }
 
-    // 7. Wait for DLL to initialize
-    std::cout << "[Inject] Waiting for payload to initialize..." << std::endl;
-    WaitForSingleObject(hThread, 10000);
+    // 8. Wait for payload to signal completion (via done event)
+    std::cout << "[Inject] Waiting for payload to complete (up to 15s)..." << std::endl;
+    DWORD waitResult = WaitForSingleObject(hDoneEvent, 15000);
+    if (waitResult == WAIT_OBJECT_0) {
+        std::cout << "[Inject] [+] Payload signaled completion (Agent loaded)" << std::endl;
+    } else {
+        std::cerr << "[Inject] [!] Payload did not signal within timeout (may still have loaded)" << std::endl;
+    }
 
-    // 8. Cleanup
+    // 9. Cleanup
+    CloseHandle(hDoneEvent);
     VirtualFreeEx(hProcess, pRemoteMem, 0, MEM_RELEASE);
     CloseHandle(hThread);
     CloseHandle(hProcess);
 
-    // Give agent time to initialize
-    Sleep(2000);
+    // Give agent a moment to finish init
+    Sleep(500);
 
     std::cout << "[+] Java Agent injected successfully via DLL" << std::endl;
     return true;

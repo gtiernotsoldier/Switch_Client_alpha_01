@@ -84,12 +84,12 @@ jobs:
       - name: Set up JDK 8 (for jni.h in payload build)
         uses: actions/setup-java@v4
         with: { java-version: '8', distribution: 'temurin' }
-      - name: Build injector (x86 for 32-bit MC javaw.exe)
+      - name: Build injector
         run: |
           cd SwitchLite/injector
           mkdir build
           cd build
-          cmake .. -A Win32
+          cmake ..
           cmake --build . --config Release
       - name: Show build info
         shell: pwsh

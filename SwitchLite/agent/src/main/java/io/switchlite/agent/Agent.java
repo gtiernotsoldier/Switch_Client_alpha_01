@@ -363,24 +363,36 @@ public class Agent {
                     break;
                 } catch (Exception ignored) {}
             }
-            // Fallback: scan all declared methods (handles non-standard access)
+            // Fallback: scan all methods for any draw* with (String, float, float, int)
             if (fontDrawStringWithShadow == null) {
                 for (java.lang.reflect.Method m : fontClass.getMethods()) {
-                    if (m.getName().equals("drawStringWithShadow") || m.getName().equals("func_78266_a")) {
-                        Class<?>[] params = m.getParameterTypes();
-                        if (params.length >= 4 && params[0] == String.class) {
-                            fontDrawStringWithShadow = m;
-                            log("[Render] Found " + m.getName() + " via scan (params=" + params.length + ")");
-                            break;
-                        }
+                    Class<?>[] params = m.getParameterTypes();
+                    if (params.length == 4
+                        && params[0] == String.class
+                        && (params[1] == float.class || params[1] == int.class)
+                        && (params[2] == float.class || params[2] == int.class)
+                        && params[3] == int.class
+                        && m.getReturnType() == int.class) {
+                        fontDrawStringWithShadow = m;
+                        log("[Render] Found draw method " + m.getName() + " via scan");
+                        break;
                     }
                 }
             }
             if (fontDrawStringWithShadow == null) {
-                // Last resort: log all methods for debugging
-                StringBuilder sb = new StringBuilder("[Render] Available font methods: ");
+                // Last resort: try drawString (without shadow) as fallback
+                for (String mn : new String[]{"drawString", "func_78266_b"}) {
+                    try {
+                        fontDrawStringWithShadow = fontClass.getMethod(mn, String.class, float.class, float.class, int.class);
+                        log("[Render] Using drawString (no shadow) as fallback");
+                        break;
+                    } catch (Exception ignored) {}
+                }
+            }
+            if (fontDrawStringWithShadow == null) {
+                StringBuilder sb = new StringBuilder("[Render] No draw method found. Font methods with 'draw': ");
                 for (java.lang.reflect.Method m : fontClass.getMethods()) {
-                    if (m.getName().contains("draw") || m.getName().contains("func_78266")) {
+                    if (m.getName().contains("draw")) {
                         sb.append(m.getName()).append("(");
                         for (Class<?> p : m.getParameterTypes()) sb.append(p.getSimpleName()).append(",");
                         sb.append(") ");

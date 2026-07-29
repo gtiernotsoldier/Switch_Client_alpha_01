@@ -7,6 +7,7 @@
 
 HMODULE g_hModule = NULL;
 jobject g_gameClassLoader = NULL;
+static bool g_isForge = false;
 
 // Named event for cross-process sync with injector
 // Event name includes PID so multiple MCs don't collide
@@ -82,11 +83,12 @@ static jobject findGameClassLoader(JNIEnv* env) {
     jclass launchClass = env->FindClass("net/minecraft/launchwrapper/Launch");
     if (launchClass) {
         payloadLog("[SwitchLite] Found Launch class");
-        jfieldID clField = env->GetStaticFieldID(launchClass, "classLoader", "Ljava/net/URLClassLoader;");
+        jfieldID clField = env->GetStaticFieldID(launchClass, "classLoader", "Lnet/minecraft/launchwrapper/LaunchClassLoader;");
         if (clField) {
             jobject cl = env->GetStaticObjectField(launchClass, clField);
             if (cl) {
                 payloadLog("[SwitchLite] Found Forge Launch.classLoader");
+                g_isForge = true;
                 return cl;
             } else {
                 payloadLog("[SwitchLite] Launch.classLoader field is NULL");
@@ -203,6 +205,33 @@ static void signalDone() {
     }
 }
 
+// ── updateConfigPlatform: fix Vanilla→Forge when Launch class detected ──
+
+static void updateConfigPlatform(const char* configDir) {
+    char cfgPath[MAX_PATH];
+    _snprintf(cfgPath, sizeof(cfgPath), "%s\\switchlite-config.properties", configDir);
+    FILE* f = fopen(cfgPath, "r");
+    char version[64] = "1.8.9";
+    if (f) {
+        char line[256];
+        while (fgets(line, sizeof(line), f)) {
+            if (strncmp(line, "switchlite.version=", 18) == 0) {
+                strncpy(version, line + 18, sizeof(version) - 1);
+                char* nl = strchr(version, '\n'); if (nl) *nl = '\0';
+                char* cr = strchr(version, '\r'); if (cr) *cr = '\0';
+            }
+        }
+        fclose(f);
+    }
+    f = fopen(cfgPath, "w");
+    if (f) {
+        fprintf(f, "switchlite.platform=Forge\n");
+        fprintf(f, "switchlite.version=%s\n", version);
+        fclose(f);
+        payloadLog("[SwitchLite] Config updated: platform=Forge, version=%s", version);
+    }
+}
+
 // ── ThreadProc ──
 
 DWORD WINAPI ThreadProc(LPVOID lpParam) {
@@ -244,6 +273,11 @@ DWORD WINAPI ThreadProc(LPVOID lpParam) {
         vm->DetachCurrentThread();
         signalDone();
         return 1;
+    }
+
+    // Fix platform detection: if Launch class found, it's Forge
+    if (g_isForge) {
+        updateConfigPlatform(configDir);
     }
 
     if (!callAgentBootstrap(env, configDir)) {

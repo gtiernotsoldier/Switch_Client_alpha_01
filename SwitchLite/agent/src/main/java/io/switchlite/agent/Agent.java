@@ -333,6 +333,8 @@ public class Agent {
     private static java.lang.reflect.Field mcCurrentScreen = null;
     private static boolean inlineRendererReady = false;
     private static volatile boolean renderScheduled = false; // prevent queue flood
+    private static boolean fontMethodUsesFloat = true; // true = draw(String,float,float,int), false = draw(String,int,int,int)
+    private static int renderCallCount = 0; // diagnostic counter
 
     private static void initInlineRenderer() {
         try {
@@ -362,7 +364,8 @@ public class Agent {
             for (String mn : new String[]{"drawStringWithShadow", "func_78266_a"}) {
                 try {
                     fontDrawStringWithShadow = fontClass.getMethod(mn, String.class, float.class, float.class, int.class);
-                    log("[Render] Found " + mn + " via getMethod");
+                    fontMethodUsesFloat = true; // this path explicitly uses float
+                    log("[Render] Found " + mn + " via getMethod (float)");
                     break;
                 } catch (Exception ignored) {}
             }
@@ -377,7 +380,8 @@ public class Agent {
                         && params[3] == int.class
                         && m.getReturnType() == int.class) {
                         fontDrawStringWithShadow = m;
-                        log("[Render] Found draw method " + m.getName() + " via scan");
+                        fontMethodUsesFloat = (params[1] == float.class);
+                        log("[Render] Found draw method " + m.getName() + " via scan (x/y=" + (fontMethodUsesFloat ? "float" : "int") + ")");
                         break;
                     }
                 }
@@ -480,12 +484,7 @@ public class Agent {
                         glPushMatrix.invoke(null);
                         glScalef.invoke(null, scale, scale, scale);
 
-                        // Background panel (top-left)
-                        int bgAlpha = 0x60; // ~37% opacity
-                        // We use drawStringWithShadow which handles its own GL state;
-                        // just draw the text. Shadow provides enough contrast.
-
-                        int y = 4; // start near top-left
+                        int y = 4; // start near top-left (in scaled coords)
                         int white = 0xFFFFFF;
                         int green = 0x55FF55;
                         int gray = 0xAAAAAA;
@@ -493,33 +492,64 @@ public class Agent {
 
                         // Header line
                         String header = "\u00a7a[SwitchLite] \u00a7f" + (guiOpen ? "GUI: ON" : "v" + System.currentTimeMillis() % 1000);
-                        fontDrawStringWithShadow.invoke(fontRenderer, header, 4, y, gold);
+                        // Use correct param types: float or int depending on what the scan found
+                        if (fontMethodUsesFloat) {
+                            fontDrawStringWithShadow.invoke(fontRenderer, header, 4.0f, (float)y, gold);
+                        } else {
+                            fontDrawStringWithShadow.invoke(fontRenderer, header, 4, y, gold);
+                        }
                         y += 12;
 
                         if (guiOpen) {
-                            // Draw simple module list when GUI is open
-                            fontDrawStringWithShadow.invoke(fontRenderer, "\u00a77Right Shift = toggle", 4, y, gray);
+                            if (fontMethodUsesFloat) {
+                                fontDrawStringWithShadow.invoke(fontRenderer, "\u00a77Right Shift = toggle", 4.0f, (float)y, gray);
+                            } else {
+                                fontDrawStringWithShadow.invoke(fontRenderer, "\u00a77Right Shift = toggle", 4, y, gray);
+                            }
                             y += 12;
-                            fontDrawStringWithShadow.invoke(fontRenderer, "\u00a77Modules active", 4, y, green);
+                            if (fontMethodUsesFloat) {
+                                fontDrawStringWithShadow.invoke(fontRenderer, "\u00a77Modules active", 4.0f, (float)y, green);
+                            } else {
+                                fontDrawStringWithShadow.invoke(fontRenderer, "\u00a77Modules active", 4, y, green);
+                            }
                         }
 
                         // If HUD text has content, show it below
                         if (hudText != null && !hudText.isEmpty() && !"".equals(hudText)) {
                             y += 4;
-                            // HUD text may contain color codes, render directly
-                            fontDrawStringWithShadow.invoke(fontRenderer, hudText, 4, y, white);
+                            if (fontMethodUsesFloat) {
+                                fontDrawStringWithShadow.invoke(fontRenderer, hudText, 4.0f, (float)y, white);
+                            } else {
+                                fontDrawStringWithShadow.invoke(fontRenderer, hudText, 4, y, white);
+                            }
                         }
 
                         // Restore GL state
                         glPopMatrix.invoke(null);
-                    } catch (Exception ignored) {}
+
+                        // Periodic diagnostic (every ~5s = 100 calls at 20Hz)
+                        renderCallCount++;
+                        if (renderCallCount % 100 == 1) {
+                            log("[Render] Render OK, calls=" + renderCallCount + " res=" + width + "x" + height + " scale=" + scale);
+                        }
+                    } catch (Exception e) {
+                        renderCallCount++;
+                        if (renderCallCount <= 3) {
+                            log("[Render] Render error: " + e.getClass().getSimpleName() + ": " + e.getMessage());
+                        }
+                    }
                     finally {
                         renderScheduled = false;
                     }
                 }
             };
             mcAddScheduledTask.invoke(mc, renderTask);
-        } catch (Exception ignored) {}
+        } catch (Exception e) {
+            if (renderCallCount <= 3) {
+                log("[Render] scheduleInlineRender error: " + e.getClass().getSimpleName() + ": " + e.getMessage());
+            }
+            renderScheduled = false;
+        }
     }
 
     private static void cacheForgeBootstrapMethods() {

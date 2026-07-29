@@ -43,6 +43,11 @@ import io.switchlite.adapter.common.option.triggerOptions
  */
 object AutoClicker : Module("AutoClicker", Category.COMBAT) {
 
+    init {
+        // AutoClicker is a stealth module — no visible red indicator on HUD
+        showRedIndicator = false
+    }
+
     // ====================================================================
     // Version Selection
     // ====================================================================

@@ -31,6 +31,11 @@ import io.switchlite.adapter.common.option.triggerOptions
  */
 object AimAssist : Module("AimAssist", Category.COMBAT) {
 
+    init {
+        // Aim is a stealth module — no visible red indicator on HUD
+        showRedIndicator = false
+    }
+
     // ========== Configuration (Delegated Properties) ==========
     // Range settings
     private val rangeMin by float("RangeMin", 3.0f, 0.0f..10.0f, "blocks")

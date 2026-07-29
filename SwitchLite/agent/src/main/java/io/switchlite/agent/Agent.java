@@ -407,7 +407,28 @@ public class Agent {
                 clazz = clazz.getSuperclass();
             }
 
-            log("[Chat] Failed to send local message — no method found");
+            log("[Chat] Local path failed, falling back to sendChatMessage...");
+            // Fallback: sendChatMessage(String) — proven working, use plain ASCII
+            Class<?> clz = player.getClass();
+            while (clz != null) {
+                try {
+                    java.lang.reflect.Method m = clz.getDeclaredMethod("sendChatMessage", String.class);
+                    m.setAccessible(true);
+                    m.invoke(player, "SwitchLite Agent injected successfully");
+                    log("[Chat] Sent via fallback sendChatMessage");
+                    return;
+                } catch (NoSuchMethodException e) {
+                    clz = clz.getSuperclass();
+                } catch (Exception e) { break; }
+            }
+            // Try SRG name func_71165_d
+            try {
+                java.lang.reflect.Method m = player.getClass().getMethod("func_71165_d", String.class);
+                m.invoke(player, "SwitchLite Agent injected successfully");
+                log("[Chat] Sent via SRG func_71165_d");
+                return;
+            } catch (Exception ignored) {}
+            log("[Chat] Failed to send message — all paths exhausted");
         } catch (ClassNotFoundException e) {
             log("[Chat] MC class not found — wrong classloader or MC not loaded");
         } catch (Exception e) {

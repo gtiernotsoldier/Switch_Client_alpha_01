@@ -109,7 +109,7 @@ public class Agent {
         startKeyPollThread();
 
         // Try immediate chat verification (may fail if not in world yet)
-        sendChatMessage("\u00a7a[SwitchLite] \u00a7fAgent injected! Press R to toggle GUI (log: %TEMP%\\switchlite-agent.log)");
+        sendChatMessage("[SwitchLite] Agent injected! Press R to toggle GUI");
         log("[SwitchLite Agent] Ready — R key listener active");
     }
 
@@ -190,13 +190,13 @@ public class Agent {
 
     private static void onRKeyPressed() {
         guiVisible = !guiVisible;
-        String status = guiVisible ? "\u00a7aON" : "\u00a7cOFF";
+        String status = guiVisible ? "ON" : "OFF";
         log("[KeyPoll] R pressed — GUI toggled: " + (guiVisible ? "ON" : "OFF"));
 
         if (guiVisible) {
-            sendChatMessage("\u00a7a[SwitchLite] \u00a7fGUI: " + status + " \u00a77| Agent alive! Tick=" + System.currentTimeMillis());
+            sendChatMessage("[SwitchLite] GUI: " + status + " | Agent alive! Tick=" + System.currentTimeMillis());
         } else {
-            sendChatMessage("\u00a7a[SwitchLite] \u00a7fGUI: " + status);
+            sendChatMessage("[SwitchLite] GUI: " + status);
         }
     }
 

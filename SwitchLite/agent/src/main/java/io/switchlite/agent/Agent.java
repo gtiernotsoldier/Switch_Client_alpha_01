@@ -125,7 +125,11 @@ public class Agent {
             log("[Agent] AgentBridge.initModules() method not found");
         } catch (Exception e) {
             log("[Agent] AgentBridge.initModules() failed: " + e.getClass().getSimpleName() + ": " + e.getMessage());
-            e.printStackTrace();
+            Throwable cause = e.getCause();
+            if (cause != null) {
+                log("[Agent]   Caused by: " + cause.getClass().getSimpleName() + ": " + cause.getMessage());
+            }
+            // Don't print full stack trace — it may recurse. Continue boot.
         }
 
         // Initialize Forge adapter (pure reflection — no ForgeGradle needed at compile time).
@@ -155,8 +159,7 @@ public class Agent {
                 // Initialize inline HUD renderer (pure reflection, no ForgeGradle needed)
                 initInlineRenderer();
             } catch (Exception e) {
-                log("[Agent] ForgeBootstrap init failed: " + e.getMessage());
-                e.printStackTrace();
+                log("[Agent] ForgeBootstrap init failed: " + e.getClass().getSimpleName() + ": " + e.getMessage());
             }
         }
 

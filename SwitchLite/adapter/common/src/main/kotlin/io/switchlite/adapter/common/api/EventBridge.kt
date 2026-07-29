@@ -282,6 +282,7 @@ object EventBridge {
      * Set by ClickGUI module, read by adapter render hook to draw the GUI overlay.
      * When true, the adapter should cancel vanilla input handling (mouse/keyboard).
      */
+    @get:JvmName("getIsGuiOpen")
     @Volatile var isGuiOpen: Boolean = false
 
     /**

@@ -19,9 +19,10 @@ object ClickGUI : Module("ClickGUI", Category.RENDER) {
         when (keyCode) {
             KeyCode.RIGHT_SHIFT -> {
                 isOpen = !isOpen
+                EventBridge.isGuiOpen = isOpen
             }
             KeyCode.ESC -> {
-                if (isOpen) isOpen = false
+                if (isOpen) { isOpen = false; EventBridge.isGuiOpen = false }
             }
         }
     }
@@ -33,6 +34,7 @@ object ClickGUI : Module("ClickGUI", Category.RENDER) {
     override fun onDisable() {
         EventBridge.unregisterKeyListener(keyListener)
         isOpen = false
+        EventBridge.isGuiOpen = false
     }
 
     fun isOpen(): Boolean = isOpen

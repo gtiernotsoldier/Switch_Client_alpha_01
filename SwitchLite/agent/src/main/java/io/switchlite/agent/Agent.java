@@ -128,20 +128,33 @@ public class Agent {
             e.printStackTrace();
         }
 
-        // Also try to initialize platform-specific adapter (Forge event bus, render hooks).
-        // This is a best-effort call — the Forge adapter jar may or may not be in classpath.
-        // If it IS present (local dev build), we get full GUI/HUD rendering.
-        // If it is NOT (CI build), we still have modules + keybinds working.
+        // Initialize Forge adapter (pure reflection — no ForgeGradle needed at compile time).
+        // ForgeBootstrap registers modules, wires EventBridge, injects packet interceptor.
         if ("Forge".equals(platform)) {
             try {
                 Class<?> bootstrapClass = Class.forName("io.switchlite.adapter.forge.v1_8_9.ForgeBootstrap");
                 java.lang.reflect.Method initMethod = bootstrapClass.getMethod("init");
                 initMethod.invoke(null);
-                log("[Agent] ForgeBootstrap.init() — Forge event bus + render hooks active");
+                log("[Agent] ForgeBootstrap.init() complete (pure reflection mode)");
+
+                // Cache method refs for tick/render dispatch
+                cacheForgeBootstrapMethods();
+
+                // Cache mc.addScheduledTask for render thread dispatch
+                try {
+                    Class<?> mcClass = Class.forName("net.minecraft.client.Minecraft");
+                    mcAddScheduledTask = mcClass.getMethod("addScheduledTask", Runnable.class);
+                } catch (Exception e) {
+                    log("[Agent] addScheduledTask not found — render will use fallback");
+                }
+
+                // Disable old EventBridge.onTick(null,null) dispatch — ForgeBootstrap.tick() handles it now
+                // The HUD thread still reads hudText for action bar fallback
             } catch (ClassNotFoundException e) {
-                log("[Agent] ForgeBootstrap not in classpath — no Forge render hooks (GUI text-only)");
+                log("[Agent] ForgeBootstrap not in classpath — modules only, no render");
             } catch (Exception e) {
                 log("[Agent] ForgeBootstrap init failed: " + e.getMessage());
+                e.printStackTrace();
             }
         }
 
@@ -175,7 +188,7 @@ public class Agent {
      */
     private static void startHudTickThread() {
         hudTickThread = new Thread(() -> {
-            log("[HudTick] Thread started");
+            log("[HudTick] Thread started (20Hz tick + render dispatch)");
             try {
                 Class<?> ebClass = Class.forName("io.switchlite.adapter.common.api.EventBridge");
                 java.lang.reflect.Method onTickMethod = null;
@@ -184,23 +197,34 @@ public class Agent {
 
                 while (running) {
                     try {
-                        // Dispatch tick to EventBridge (triggers HUD.onTick → rebuilds hudEntries)
-                        if (onTickMethod == null) {
-                            onTickMethod = ebClass.getMethod("onTick",
-                                Class.forName("io.switchlite.core.model.PlayerState"),
-                                Class.forName("io.switchlite.core.model.TargetState"));
+                        // Dispatch tick to ForgeBootstrap (extracts player state, modules process)
+                        if (forgeBootstrapAvailable && forgeBootstrapTick != null) {
+                            forgeBootstrapTick.invoke(null);
                         }
-                        // Pass null player/target — HUD only reads enabled modules, not player state
-                        onTickMethod.invoke(null, (Object) null, (Object) null);
 
-                        // Read HUD text
+                        // Schedule render on MC's main thread (for OpenGL rendering)
+                        if (forgeBootstrapAvailable && forgeBootstrapRender != null && mcAddScheduledTask != null) {
+                            try {
+                                Object mc = Class.forName("net.minecraft.client.Minecraft")
+                                    .getMethod("getMinecraft").invoke(null);
+                                if (mc != null) {
+                                    final java.lang.reflect.Method renderMethod = forgeBootstrapRender;
+                                    Runnable renderRunnable = new Runnable() {
+                                        public void run() {
+                                            try { renderMethod.invoke(null); } catch (Exception ignored) {}
+                                        }
+                                    };
+                                    mcAddScheduledTask.invoke(mc, renderRunnable);
+                                }
+                            } catch (Exception ignored) {}
+                        }
+
+                        // Read HUD text for chat-based fallback
                         String hudText = (String) getHudText.invoke(null);
                         boolean guiOpen = (Boolean) isGuiOpen.invoke(null);
 
-                        // Chat-based HUD fallback when Forge render hook is absent
                         if (!guiOpen && hudText != null && !hudText.isEmpty() && !hudText.equals(lastHudText)) {
                             lastHudText = hudText;
-                            // Send as action bar (above hotbar) via GuiIngame
                             sendActionBarMessage(hudText);
                         }
 
@@ -209,7 +233,7 @@ public class Agent {
                             sendActionBarMessage("\u00a7a[SwitchLite GUI Open] \u00a77RShift=close");
                         }
                     } catch (Exception ignored) {}
-                    Thread.sleep(500); // 2 Hz
+                    Thread.sleep(50); // 20 Hz (was 2 Hz, upgraded for module processing)
                 }
             } catch (ClassNotFoundException e) {
                 log("[HudTick] EventBridge not found — HUD disabled");
@@ -274,17 +298,52 @@ public class Agent {
     //  Right Shift Key Polling (LWJGL2 Keyboard)
     // ═══════════════════════════════════════════
 
+    // Cached reflection for ForgeBootstrap.tick()/render()/onKey() calls
+    private static java.lang.reflect.Method forgeBootstrapTick = null;
+    private static java.lang.reflect.Method forgeBootstrapOnKey = null;
+    private static java.lang.reflect.Method forgeBootstrapRender = null;
+    private static java.lang.reflect.Method forgeBootstrapOnDisconnect = null;
+    private static java.lang.reflect.Method mcAddScheduledTask = null;
+    private static boolean forgeBootstrapAvailable = false;
+
+    private static void cacheForgeBootstrapMethods() {
+        try {
+            Class<?> fbClass = Class.forName("io.switchlite.adapter.forge.v1_8_9.ForgeBootstrap");
+            forgeBootstrapTick = fbClass.getMethod("tick");
+            forgeBootstrapOnKey = fbClass.getMethod("onKey", int.class, boolean.class);
+            forgeBootstrapRender = fbClass.getMethod("render");
+            forgeBootstrapOnDisconnect = fbClass.getMethod("onDisconnect");
+            forgeBootstrapAvailable = true;
+            log("[Agent] ForgeBootstrap methods cached (pure reflection mode)");
+        } catch (Exception e) {
+            log("[Agent] ForgeBootstrap not available: " + e.getMessage());
+        }
+    }
+
     private static void startKeyPollThread() {
         keyPollThread = new Thread(() -> {
-            log("[KeyPoll] Thread started, polling LWJGL2 Keyboard for Right Shift");
+            log("[KeyPoll] Thread started, polling LWJGL2 Keyboard");
             try {
-                // Access LWJGL2 Keyboard via reflection (agent layer, no direct MC dependency)
                 Class<?> keyboardClass = Class.forName("org.lwjgl.input.Keyboard");
                 java.lang.reflect.Method isKeyDown = keyboardClass.getMethod("isKeyDown", int.class);
+                java.lang.reflect.Method getEventKey = keyboardClass.getMethod("getEventKey");
+                java.lang.reflect.Method getEventKeyState = keyboardClass.getMethod("getEventKeyState");
+                java.lang.reflect.Method isNext = keyboardClass.getMethod("next");
 
                 boolean keyWasDown = false;
                 while (running) {
                     try {
+                        // Poll all LWJGL2 key events and dispatch to ForgeBootstrap
+                        boolean nextResult = (Boolean) isNext.invoke(null);
+                        if (nextResult) {
+                            int lwjglCode = (Integer) getEventKey.invoke(null);
+                            boolean pressed = (Boolean) getEventKeyState.invoke(null);
+                            if (lwjglCode != 0 && forgeBootstrapAvailable && forgeBootstrapOnKey != null) {
+                                forgeBootstrapOnKey.invoke(null, lwjglCode, pressed);
+                            }
+                        }
+
+                        // Also keep the old Right Shift toggle for backward compat
                         boolean keyDown = (Boolean) isKeyDown.invoke(null, KEY_RIGHT_SHIFT);
                         if (keyDown && !keyWasDown) {
                             onToggleKeyPressed();

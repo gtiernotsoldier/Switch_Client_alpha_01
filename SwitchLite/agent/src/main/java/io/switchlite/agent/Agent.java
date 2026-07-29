@@ -10,13 +10,18 @@ import java.util.Properties;
  * Sandwich Architecture - Java Agent Entry Point
  * Layer 2: Class loading bytecode manipulation, mapping provider
  *
- * Verification mode: after bootstrap, polls R key (LWJGL2) and sends chat messages.
+ * Verification mode: after bootstrap, polls Right Shift key (LWJGL2) and sends chat messages.
+ * This is a bootstrap-only verification mechanism. Once the adapter layer loads,
+ * the ClickGUI module takes over key handling via EventBridge.
  * All diagnostics also write to %TEMP%\switchlite-agent.log for reliable output.
  */
 public class Agent {
 
     private static Instrumentation instrumentation;
     private static volatile boolean guiVisible = false;
+
+    // LWJGL2 key code for Right Shift = 54
+    private static final int KEY_RIGHT_SHIFT = 54;
     private static volatile boolean running = true;
     private static Thread keyPollThread = null;
     private static File logFile = null;
@@ -105,13 +110,13 @@ public class Agent {
         MappingContext.initialize();
         log("[Agent] MappingContext initialized");
 
-        // Start R key polling thread for persistent verification
+        // Start Right Shift key polling thread for bootstrap verification
         startKeyPollThread();
 
         // Wait for player to enter world before sending welcome message
         // (bootstrap completes in ~400ms, but player may not be loaded yet)
         waitForPlayerThenWelcome();
-        log("[SwitchLite Agent] Ready — R key listener active");
+        log("[SwitchLite Agent] Ready — Right Shift key listener active");
     }
 
     // ═══════════════════════════════════════════
@@ -146,7 +151,7 @@ public class Agent {
                                 if (player != null) {
                                     log("[Welcome] Player detected! Sending welcome messages.");
                                     sendLocalMessage("Agent injected successfully!", GREEN);
-                                    sendLocalMessage("Press R to toggle module status", GRAY);
+                                    sendLocalMessage("Press Right Shift to toggle module status", GRAY);
                                     return; // done
                                 }
                             } catch (Exception ignored) {}
@@ -154,7 +159,7 @@ public class Agent {
                     }
                     Thread.sleep(500);
                 }
-                log("[Welcome] Timeout (60s) — player never joined. R key still works.");
+                log("[Welcome] Timeout (60s) — player never joined. Right Shift still works.");
             } catch (Exception e) {
                 log("[Welcome] Error: " + e.getMessage());
             }
@@ -171,24 +176,27 @@ public class Agent {
         keyPollThread = new Thread(() -> {
             log("[KeyPoll] Thread started, polling LWJGL2 Keyboard for Right Shift");
             try {
+                // Access LWJGL2 Keyboard via reflection (agent layer, no direct MC dependency)
                 Class<?> keyboardClass = Class.forName("org.lwjgl.input.Keyboard");
                 java.lang.reflect.Method isKeyDown = keyboardClass.getMethod("isKeyDown", int.class);
 
-                // LWJGL2 key code: Right Shift = 54
-                boolean rWasDown = false;
+                boolean keyWasDown = false;
                 while (running) {
                     try {
-                        boolean rDown = (Boolean) isKeyDown.invoke(null, 54);
-                        if (rDown && !rWasDown) {
-                            onRKeyPressed();
+                        boolean keyDown = (Boolean) isKeyDown.invoke(null, KEY_RIGHT_SHIFT);
+                        if (keyDown && !keyWasDown) {
+                            onToggleKeyPressed();
                         }
-                        rWasDown = rDown;
-                    } catch (Exception e) { /* polling before Display init */ }
-                    Thread.sleep(50);
+                        keyWasDown = keyDown;
+                    } catch (Exception e) {
+                        // Silently ignore polling errors (e.g., before Display is created)
+                    }
+                    Thread.sleep(50); // 20 Hz poll rate
                 }
                 log("[KeyPoll] Thread stopped");
             } catch (ClassNotFoundException e) {
                 log("[KeyPoll] LWJGL Keyboard class not found! MC not fully loaded yet.");
+                // Retry in a loop until LWJGL is available
                 retryKeyPoll();
             } catch (Exception e) {
                 log("[KeyPoll] Fatal error: " + e.getMessage());
@@ -207,22 +215,23 @@ public class Agent {
                     try {
                         Class.forName("org.lwjgl.input.Keyboard");
                         log("[KeyPoll] LWJGL Keyboard found! Starting poll...");
+                        // Now start the actual poll
                         java.lang.reflect.Method isKeyDown =
                             Class.forName("org.lwjgl.input.Keyboard").getMethod("isKeyDown", int.class);
-                        boolean rWasDown = false;
+                        boolean keyWasDown = false;
                         while (running) {
                             try {
-                                boolean rDown = (Boolean) isKeyDown.invoke(null, 54);
-                                if (rDown && !rWasDown) {
-                                    onRKeyPressed();
+                                boolean keyDown = (Boolean) isKeyDown.invoke(null, KEY_RIGHT_SHIFT);
+                                if (keyDown && !keyWasDown) {
+                                    onToggleKeyPressed();
                                 }
-                                rWasDown = rDown;
+                                keyWasDown = keyDown;
                             } catch (Exception ignored) {}
                             Thread.sleep(50);
                         }
                         started = true;
                     } catch (ClassNotFoundException e) {
-                        Thread.sleep(2000);
+                        Thread.sleep(2000); // Wait and retry
                     }
                 }
             } catch (Exception e) {
@@ -233,7 +242,7 @@ public class Agent {
         retryThread.start();
     }
 
-    private static void onRKeyPressed() {
+    private static void onToggleKeyPressed() {
         guiVisible = !guiVisible;
         String status = guiVisible ? "ON" : "OFF";
         log("[KeyPoll] Right Shift pressed — GUI toggled: " + status);
@@ -290,7 +299,6 @@ public class Agent {
      */
     private static void sendLocalMessage(String text, String color) {
         try {
-            // --- Step 1: Find Minecraft instance via runtime scanning ---
             Class<?> mcClass = Class.forName("net.minecraft.client.Minecraft");
             Class<?> ichatCompClass = Class.forName("net.minecraft.util.IChatComponent");
             Class<?> chatCompClass = Class.forName("net.minecraft.util.ChatComponentText");
@@ -402,28 +410,7 @@ public class Agent {
                 clazz = clazz.getSuperclass();
             }
 
-            log("[Chat] Local path failed, falling back to sendChatMessage...");
-            // Fallback: sendChatMessage(String) — proven working, use plain ASCII
-            Class<?> clz = player.getClass();
-            while (clz != null) {
-                try {
-                    java.lang.reflect.Method m = clz.getDeclaredMethod("sendChatMessage", String.class);
-                    m.setAccessible(true);
-                    m.invoke(player, "SwitchLite Agent injected successfully");
-                    log("[Chat] Sent via fallback sendChatMessage");
-                    return;
-                } catch (NoSuchMethodException e) {
-                    clz = clz.getSuperclass();
-                } catch (Exception e) { break; }
-            }
-            // Try SRG name func_71165_d
-            try {
-                java.lang.reflect.Method m = player.getClass().getMethod("func_71165_d", String.class);
-                m.invoke(player, "SwitchLite Agent injected successfully");
-                log("[Chat] Sent via SRG func_71165_d");
-                return;
-            } catch (Exception ignored) {}
-            log("[Chat] Failed to send message — all paths exhausted");
+            log("[Chat] Failed to send local message — no method found");
         } catch (ClassNotFoundException e) {
             log("[Chat] MC class not found — wrong classloader or MC not loaded");
         } catch (Exception e) {

@@ -72,7 +72,19 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: switchlite-agent-jar
-          path: SwitchLite/injector/resources
+          path: .
+      - name: Verify agent.jar is real (not 0-byte placeholder)
+        shell: pwsh
+        run: |
+          $jar = "SwitchLite\injector\resources\agent.jar"
+          if (-not (Test-Path $jar)) { Write-Error "agent.jar missing at $jar"; exit 1 }
+          $size = (Get-Item $jar).Length
+          Write-Host "agent.jar size: $size bytes"
+          if ($size -lt 1000000) {
+            Write-Error "agent.jar too small ($size bytes) — artifact download likely failed"
+            exit 1
+          }
+          Write-Host "agent.jar OK"
       - name: Set up JDK 8 (for jni.h in payload build)
         uses: actions/setup-java@v4
         with: { java-version: '8', distribution: 'temurin' }

@@ -28,7 +28,6 @@ if(WIN32)
     target_sources(injector PRIVATE resources/agent.rc)
     set_target_properties(injector PROPERTIES
         WIN32_EXECUTABLE FALSE
-        LINK_FLAGS "/SUBSYSTEM:CONSOLE"
     )
 else()
     target_link_libraries(injector dl)

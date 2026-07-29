@@ -115,7 +115,10 @@ int main(int argc, char* argv[]) {
     std::cout << "[+] Java Agent injected successfully." << std::endl;
     setConColor(COLOR_WHITE);
 
-    // Step 5: For Fabric, deploy mod to mods directory
+    // Step 5: Show diagnostic logs from payload & agent
+    showDiagnosticLogs();
+
+    // Step 6: For Fabric, deploy mod to mods directory
     if (versionInfo.platform == "Fabric") {
         std::string modPath = getFabricModPath();
         if (!deployFabricMod(versionInfo.mcDir, modPath, versionInfo.version)) {

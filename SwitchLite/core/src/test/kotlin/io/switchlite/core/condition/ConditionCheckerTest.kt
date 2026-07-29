@@ -2,6 +2,7 @@ package io.switchlite.core.condition
 
 import io.switchlite.core.model.*
 import io.switchlite.core.option.TriggerOptions
+import io.switchlite.core.strategy.click.WeaponType
 import io.switchlite.core.util.Vec2
 import io.switchlite.core.util.Vec3
 import org.junit.jupiter.api.Assertions.*

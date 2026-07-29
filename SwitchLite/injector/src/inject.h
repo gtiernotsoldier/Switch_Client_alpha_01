@@ -20,4 +20,7 @@ std::string getFabricModPath();
 // Deploy Fabric mod to mods directory
 bool deployFabricMod(const std::string& mcDir, const std::string& modPath, const std::string& version);
 
+// Show diagnostic logs from %TEMP% after injection
+void showDiagnosticLogs();
+
 #endif // INJECT_H

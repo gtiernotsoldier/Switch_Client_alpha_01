@@ -52,15 +52,11 @@ jobs:
           echo "| core | :white_check_mark: |" >> $GITHUB_STEP_SUMMARY
           echo "| agent | :white_check_mark: |" >> $GITHUB_STEP_SUMMARY
           echo "| adapter:common | :white_check_mark: |" >> $GITHUB_STEP_SUMMARY
-      - name: Copy agent.jar to injector resources
-        run: |
-          cp SwitchLite/agent/build/libs/switchlite-agent-*.jar SwitchLite/injector/resources/agent.jar
-          echo "agent.jar size: $(wc -c < SwitchLite/injector/resources/agent.jar) bytes"
       - name: Upload agent.jar artifact
         uses: actions/upload-artifact@v4
         with:
           name: switchlite-agent-jar
-          path: SwitchLite/injector/resources/agent.jar
+          path: SwitchLite/agent/build/libs/switchlite-agent-*.jar
 
   # ─── Injector (Windows) ───
   injector:
@@ -72,12 +68,38 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: switchlite-agent-jar
-          path: SwitchLite/injector/resources
+          path: _temp_agent_jar
+      - name: Copy agent.jar into injector resources (overwrite 0-byte git placeholder)
+        shell: pwsh
+        run: |
+          $src = Get-ChildItem -Path _temp_agent_jar -Recurse -Filter "*.jar" | Select-Object -First 1
+          if (-not $src) { Write-Error "No jar found in downloaded artifact"; exit 1 }
+          Write-Host "Found artifact jar: $($src.FullName) ($($src.Length) bytes)"
+          # Overwrite the 0-byte git placeholder
+          Copy-Item $src.FullName -Destination "SwitchLite\injector\resources\agent.jar" -Force
+          $dest = Get-Item "SwitchLite\injector\resources\agent.jar"
+          Write-Host "agent.jar ready: $($dest.Length) bytes"
+          if ($dest.Length -lt 1000000) { Write-Error "agent.jar too small"; exit 1 }
+          Remove-Item _temp_agent_jar -Recurse -Force
       - name: Set up JDK 8 (for jni.h in payload build)
         uses: actions/setup-java@v4
         with: { java-version: '8', distribution: 'temurin' }
       - name: Build injector
-        run: cd SwitchLite/injector && mkdir build && cd build && cmake .. && cmake --build . --config Release
+        run: |
+          cd SwitchLite/injector
+          mkdir build
+          cd build
+          cmake ..
+          cmake --build . --config Release
+      - name: Show build info
+        shell: pwsh
+        run: |
+          echo "Commit: ${{ github.sha }}"
+          echo "Build time: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss UTC')"
+          $exe = "SwitchLite\injector\build\Release\injector.exe"
+          if (Test-Path $exe) { echo "injector.exe: $((Get-Item $exe).Length) bytes" } else { echo "WARNING: injector.exe not found" }
       - name: Upload artifact
         uses: actions/upload-artifact@v4
-        with: { name: switchlite-injector, path: SwitchLite/injector/build/Release/injector.exe }
+        with:
+          name: switchlite-injector
+          path: SwitchLite/injector/build/Release/injector.exe

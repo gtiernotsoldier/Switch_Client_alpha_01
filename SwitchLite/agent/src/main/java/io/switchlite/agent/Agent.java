@@ -110,6 +110,31 @@ public class Agent {
         MappingContext.initialize();
         log("[Agent] MappingContext initialized");
 
+        // ========== Start adapter layer ==========
+        // DLL injection runs AFTER Forge @Mod lifecycle is complete.
+        // ForgeMod.onInit() will never fire, so we must call ForgeBootstrap.init()
+        // directly from the agent. Uses reflection to keep agent launcher-agnostic.
+        boolean adapterStarted = false;
+        if ("Forge".equals(platform) || "Forge".equals(System.getProperty("switchlite.platform"))) {
+            try {
+                Class<?> bootstrapClass = Class.forName("io.switchlite.adapter.forge.v1_8_9.ForgeBootstrap");
+                java.lang.reflect.Method initMethod = bootstrapClass.getMethod("init");
+                initMethod.invoke(null);
+                adapterStarted = true;
+                log("[Agent] ForgeBootstrap.init() completed — adapter layer active");
+            } catch (ClassNotFoundException e) {
+                log("[Agent] ForgeBootstrap class not found in agent.jar — adapter NOT loaded");
+            } catch (NoSuchMethodException e) {
+                log("[Agent] ForgeBootstrap.init() method not found");
+            } catch (Exception e) {
+                log("[Agent] ForgeBootstrap.init() failed: " + e.getClass().getSimpleName() + ": " + e.getMessage());
+                e.printStackTrace();
+            }
+        }
+        if (!adapterStarted) {
+            log("[Agent] No adapter loaded — running in agent-only verification mode");
+        }
+
         // Start Right Shift key polling thread for bootstrap verification
         startKeyPollThread();
 

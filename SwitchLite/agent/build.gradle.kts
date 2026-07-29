@@ -19,6 +19,9 @@ repositories {
 dependencies {
     implementation(project(":core"))
     implementation(project(":adapter:common"))
+    implementation(project(":adapter:forge:v1_8_9"))
+    // Fabric adapter — not yet used but bundled for future 1.21+ support
+    // implementation(project(":adapter:fabric:v1_21"))
 
     // Javassist for bytecode manipulation
     implementation("org.javassist:javassist:3.29.2-GA")

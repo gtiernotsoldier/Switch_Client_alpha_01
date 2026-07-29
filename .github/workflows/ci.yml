@@ -85,8 +85,12 @@ jobs:
         uses: actions/setup-java@v4
         with: { java-version: '8', distribution: 'temurin' }
       - name: Build injector (x86 for 32-bit MC javaw.exe)
-        shell: cmd
-        run: cd SwitchLite\injector && mkdir build && cd build && cmake .. -G "Visual Studio 17 2022" -A Win32 && cmake --build . --config Release
+        run: |
+          cd SwitchLite/injector
+          mkdir build
+          cd build
+          cmake .. -A Win32
+          cmake --build . --config Release
       - name: Show build info
         shell: pwsh
         run: |

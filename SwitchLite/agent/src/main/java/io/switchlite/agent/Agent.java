@@ -295,6 +295,7 @@ public class Agent {
      */
     private static void sendLocalMessage(String text, String color) {
         try {
+            // --- Step 1: Find Minecraft instance via runtime scanning ---
             Class<?> mcClass = Class.forName("net.minecraft.client.Minecraft");
             Class<?> ichatCompClass = Class.forName("net.minecraft.util.IChatComponent");
             Class<?> chatCompClass = Class.forName("net.minecraft.util.ChatComponentText");

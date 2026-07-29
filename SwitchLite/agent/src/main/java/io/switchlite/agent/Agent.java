@@ -355,13 +355,40 @@ public class Agent {
 
             // FontRenderer.drawStringWithShadow(String, float, float, int)
             Class<?> fontClass = mcFontRenderer.getType();
+            log("[Render] fontClass = " + fontClass.getName());
             for (String mn : new String[]{"drawStringWithShadow", "func_78266_a"}) {
                 try {
                     fontDrawStringWithShadow = fontClass.getMethod(mn, String.class, float.class, float.class, int.class);
+                    log("[Render] Found " + mn + " via getMethod");
                     break;
                 } catch (Exception ignored) {}
             }
-            if (fontDrawStringWithShadow == null) { log("[Render] drawStringWithShadow not found"); return; }
+            // Fallback: scan all declared methods (handles non-standard access)
+            if (fontDrawStringWithShadow == null) {
+                for (java.lang.reflect.Method m : fontClass.getMethods()) {
+                    if (m.getName().equals("drawStringWithShadow") || m.getName().equals("func_78266_a")) {
+                        Class<?>[] params = m.getParameterTypes();
+                        if (params.length >= 4 && params[0] == String.class) {
+                            fontDrawStringWithShadow = m;
+                            log("[Render] Found " + m.getName() + " via scan (params=" + params.length + ")");
+                            break;
+                        }
+                    }
+                }
+            }
+            if (fontDrawStringWithShadow == null) {
+                // Last resort: log all methods for debugging
+                StringBuilder sb = new StringBuilder("[Render] Available font methods: ");
+                for (java.lang.reflect.Method m : fontClass.getMethods()) {
+                    if (m.getName().contains("draw") || m.getName().contains("func_78266")) {
+                        sb.append(m.getName()).append("(");
+                        for (Class<?> p : m.getParameterTypes()) sb.append(p.getSimpleName()).append(",");
+                        sb.append(") ");
+                    }
+                }
+                log(sb.toString());
+                return;
+            }
 
             // GL11 static methods
             Class<?> gl11Class = Class.forName("org.lwjgl.opengl.GL11");

@@ -108,8 +108,9 @@ public class Agent {
         // Start R key polling thread for persistent verification
         startKeyPollThread();
 
-        // Try immediate chat verification (may fail if not in world yet)
-        sendChatMessage("[SwitchLite] Agent injected! Press R to toggle GUI");
+        // Send local-only injection confirmation (safe on any server)
+        sendLocalMessage("Agent injected successfully!", GREEN);
+        sendLocalMessage("Press R to toggle module status", GRAY);
         log("[SwitchLite Agent] Ready — R key listener active");
     }
 
@@ -191,12 +192,13 @@ public class Agent {
     private static void onRKeyPressed() {
         guiVisible = !guiVisible;
         String status = guiVisible ? "ON" : "OFF";
-        log("[KeyPoll] R pressed — GUI toggled: " + (guiVisible ? "ON" : "OFF"));
+        log("[KeyPoll] R pressed — GUI toggled: " + status);
 
+        // Local-only message — no server interaction, no kick risk
         if (guiVisible) {
-            sendChatMessage("[SwitchLite] GUI: " + status + " | Agent alive! Tick=" + System.currentTimeMillis());
+            sendLocalMessage("Modules: ACTIVE (alive at " + System.currentTimeMillis() + ")", GREEN);
         } else {
-            sendChatMessage("[SwitchLite] GUI: " + status);
+            sendLocalMessage("Modules: DISABLED", RED);
         }
     }
 
@@ -204,82 +206,130 @@ public class Agent {
     //  Chat message helper (reflection)
     // ═══════════════════════════════════════════
 
-    // Forge 1.8.9 SRG names — these are the ACTUAL runtime names in Forge's deobfuscated jar.
-    // MCP mapped names (getMinecraft, thePlayer, sendChatMessage) do NOT exist at runtime.
-    private static final String[] MC_GET_MC   = {"getMinecraft", "func_71410_x"};
-    private static final String[] MC_THE_PLAYER = {"thePlayer", "field_71439_g"};
-    private static final String[] PLAYER_SEND_CHAT = {"sendChatMessage", "func_71165_d", "addChatMessage", "func_146235_e"};
+    // ═══════════════════════════════════════════
+    //  Chat message — LOCAL only via addChatMessage(IChatComponent)
+    //  Uses addChatMessage (NOT sendChatMessage) so messages are purely client-side.
+    //  sendChatMessage goes to the server and gets filtered (Illegal characters, kick).
+    //  addChatMessage + ChatComponentText = local HUD text, no server interaction.
+    // ═══════════════════════════════════════════
 
-    private static void sendChatMessage(String text) {
+    // Forge 1.8.9 SRG names — ACTUAL runtime names in Forge's deobfuscated jar.
+    private static final String[] MC_GET_MC      = {"getMinecraft", "func_71410_x"};
+    private static final String[] MC_THE_PLAYER   = {"thePlayer", "field_71439_g"};
+    // ONLY addChatMessage — local-only, no server kick risk
+    private static final String[] PLAYER_ADD_CHAT  = {"addChatMessage", "func_146235_e"};
+
+    // EnumChatFormatting color codes for styled messages
+    private static final char COLOR_CHAR = '\u00a7'; // section sign (MC color code prefix)
+    private static final String GOLD   = COLOR_CHAR + "6";  // gold
+    private static final String GREEN  = COLOR_CHAR + "a";  // green
+    private static final String RED    = COLOR_CHAR + "c";  // red
+    private static final String GRAY   = COLOR_CHAR + "7";  // gray
+    private static final String WHITE  = COLOR_CHAR + "f";  // white
+    private static final String BOLD   = COLOR_CHAR + "l";  // bold
+    private static final String RESET  = COLOR_CHAR + "r";  // reset
+
+    private static String mcGetInstance; // cache which name worked
+    private static String mcPlayerField; // cache which name worked
+    private static String mcAddChatMethod; // cache which name worked
+
+    /**
+     * Send a LOCAL chat message (client-side only). Uses addChatMessage(IChatComponent)
+     * which does NOT go through the server — no "Illegal characters" kick risk.
+     *
+     * @param text  the message text (plain, no color codes)
+     * @param color one of: GREEN, GOLD, RED, GRAY, WHITE
+     */
+    private static void sendLocalMessage(String text, String color) {
         try {
             Class<?> mcClass = Class.forName("net.minecraft.client.Minecraft");
 
-            // Step 1: Get Minecraft instance
+            // Step 1: Get Minecraft instance (cached after first success)
             Object mc = null;
-            for (String name : MC_GET_MC) {
+            if (mcGetInstance != null) {
                 try {
-                    java.lang.reflect.Method m = mcClass.getMethod(name);
+                    java.lang.reflect.Method m = mcClass.getMethod(mcGetInstance);
                     mc = m.invoke(null);
-                    if (mc != null) { log("[Chat] getMC via: " + name); break; }
-                } catch (Exception ignored) {}
+                } catch (Exception e) {
+                    mcGetInstance = null; // cache miss, re-resolve
+                }
+            }
+            if (mc == null) {
+                for (String name : MC_GET_MC) {
+                    try {
+                        java.lang.reflect.Method m = mcClass.getMethod(name);
+                        mc = m.invoke(null);
+                        if (mc != null) { mcGetInstance = name; log("[Chat] getMC via: " + name); break; }
+                    } catch (Exception ignored) {}
+                }
             }
             if (mc == null) {
                 log("[Chat] MC instance is null — game not fully loaded");
                 return;
             }
 
-            // Step 2: Get thePlayer
+            // Step 2: Get thePlayer (cached)
             Object player = null;
-            for (String name : MC_THE_PLAYER) {
+            if (mcPlayerField != null) {
                 try {
-                    java.lang.reflect.Field f = mcClass.getField(name);
+                    java.lang.reflect.Field f = mcClass.getField(mcPlayerField);
                     player = f.get(mc);
-                    if (player != null) { log("[Chat] player via: " + name); break; }
-                } catch (Exception ignored) {}
+                } catch (Exception e) {
+                    mcPlayerField = null;
+                }
+            }
+            if (player == null) {
+                for (String name : MC_THE_PLAYER) {
+                    try {
+                        java.lang.reflect.Field f = mcClass.getField(name);
+                        player = f.get(mc);
+                        if (player != null) { mcPlayerField = name; log("[Chat] player via: " + name); break; }
+                    } catch (Exception ignored) {}
+                }
             }
             if (player == null) {
                 log("[Chat] Player is null — not in world yet");
                 return;
             }
 
-            // Step 3: Send chat message
-            boolean sent = false;
-            for (String name : PLAYER_SEND_CHAT) {
+            // Step 3: Build IChatComponent with styled text
+            String styledText = color + BOLD + "SwitchLite> " + RESET + color + text;
+            Class<?> ichatCompClass = Class.forName("net.minecraft.util.IChatComponent");
+            Class<?> chatCompClass = Class.forName("net.minecraft.util.ChatComponentText");
+            Object chatComp = chatCompClass.getConstructor(String.class).newInstance(styledText);
+
+            // Step 4: Call addChatMessage(IChatComponent) — LOCAL only
+            if (mcAddChatMethod != null) {
                 try {
-                    java.lang.reflect.Method m = player.getClass().getMethod(name, String.class);
-                    m.invoke(player, text);
-                    log("[Chat] Sent via: " + name + " → " + text);
-                    sent = true;
-                    break;
-                } catch (Exception ignored) {}
+                    java.lang.reflect.Method m = player.getClass().getMethod(mcAddChatMethod, ichatCompClass);
+                    m.invoke(player, chatComp);
+                    return; // success
+                } catch (Exception e) {
+                    mcAddChatMethod = null; // cache miss
+                }
             }
-            if (!sent) {
-                // Last resort: try EntityPlayerSP.sendChatMessage(IChatComponent) for newer mappings
+            for (String name : PLAYER_ADD_CHAT) {
                 try {
                     Class<?> ichatComp = Class.forName("net.minecraft.util.IChatComponent");
-                    Class<?> chatComp = Class.forName("net.minecraft.util.ChatComponentText");
-                    Object comp = chatComp.getConstructor(String.class).newInstance(text);
-                    for (String name : PLAYER_SEND_CHAT) {
-                        try {
-                            java.lang.reflect.Method m = player.getClass().getMethod(name, ichatComp);
-                            m.invoke(player, comp);
-                            log("[Chat] Sent via IChatComponent: " + name);
-                            sent = true;
-                            break;
-                        } catch (Exception ignored) {}
-                    }
+                    java.lang.reflect.Method m = player.getClass().getMethod(name, ichatComp);
+                    m.invoke(player, chatComp);
+                    mcAddChatMethod = name;
+                    log("[Chat] Local msg via: " + name);
+                    return; // success
                 } catch (Exception ignored) {}
             }
-            if (!sent) {
-                log("[Chat] Failed to send chat — no compatible method found");
-            }
+            log("[Chat] Failed to send local message — addChatMessage not found");
         } catch (ClassNotFoundException e) {
             log("[Chat] MC class not found — wrong classloader or MC not loaded");
         } catch (Exception e) {
             log("[Chat] Error: " + e.getClass().getSimpleName() + ": " + e.getMessage());
         }
     }
-    private static boolean sendChatDumped = false;
+
+    /** Convenience: send with default GOLD color. */
+    private static void sendLocalMessage(String text) {
+        sendLocalMessage(text, GOLD);
+    }
 
     // ═══════════════════════════════════════════
     //  Original init (Instrumentation path)

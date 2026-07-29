@@ -55,6 +55,20 @@ tasks.jar {
         configurations.runtimeClasspath.get().filter { it.name.endsWith("jar") }.map { zipTree(it) }
     })
 
+    // Include platform adapter jars if they were built locally.
+    // CI does NOT build these (they need ForgeGradle / Fabric Loom),
+    // so this is a no-op in CI and only takes effect in local dev builds.
+    // Agent.java calls ForgeBootstrap.init() via reflection — the class
+    // will be available in the classpath only if the jar was bundled here.
+    val forgeAdapterDir = file("../adapter/forge/v1_8_9/build/libs")
+    if (forgeAdapterDir.exists()) {
+        from({
+            forgeAdapterDir.listFiles { f -> f.name.endsWith(".jar") && !f.name.contains("sources") }
+                ?.map { zipTree(it) } ?: emptyList()
+        })
+        logger.lifecycle("[agent jar] Bundled Forge 1.8.9 adapter")
+    }
+
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
 }
 

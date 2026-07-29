@@ -108,10 +108,59 @@ public class Agent {
         // Start R key polling thread for persistent verification
         startKeyPollThread();
 
-        // Send local-only injection confirmation (safe on any server)
-        sendLocalMessage("Agent injected successfully!", GREEN);
-        sendLocalMessage("Press R to toggle module status", GRAY);
+        // Wait for player to enter world before sending welcome message
+        // (bootstrap completes in ~400ms, but player may not be loaded yet)
+        waitForPlayerThenWelcome();
         log("[SwitchLite Agent] Ready — R key listener active");
+    }
+
+    // ═══════════════════════════════════════════
+    //  Wait for player, then send welcome message
+    // ═══════════════════════════════════════════
+
+    /**
+     * Polls until thePlayer is non-null (player entered a world),
+     * then sends the welcome messages. Runs on a daemon thread so it
+     * doesn't block bootstrap completion.
+     */
+    private static void waitForPlayerThenWelcome() {
+        Thread waitThread = new Thread(() -> {
+            log("[Welcome] Waiting for player to enter world...");
+            try {
+                Class<?> mcClass = Class.forName("net.minecraft.client.Minecraft");
+                int maxWait = 120; // 120 x 500ms = 60s max wait
+                for (int i = 0; i < maxWait; i++) {
+                    Object mc = null;
+                    for (String name : MC_GET_MC) {
+                        try {
+                            java.lang.reflect.Method m = mcClass.getMethod(name);
+                            mc = m.invoke(null);
+                            if (mc != null) break;
+                        } catch (Exception ignored) {}
+                    }
+                    if (mc != null) {
+                        for (String name : MC_THE_PLAYER) {
+                            try {
+                                java.lang.reflect.Field f = mcClass.getField(name);
+                                Object player = f.get(mc);
+                                if (player != null) {
+                                    log("[Welcome] Player detected! Sending welcome messages.");
+                                    sendLocalMessage("Agent injected successfully!", GREEN);
+                                    sendLocalMessage("Press R to toggle module status", GRAY);
+                                    return; // done
+                                }
+                            } catch (Exception ignored) {}
+                        }
+                    }
+                    Thread.sleep(500);
+                }
+                log("[Welcome] Timeout (60s) — player never joined. R key still works.");
+            } catch (Exception e) {
+                log("[Welcome] Error: " + e.getMessage());
+            }
+        }, "SwitchLite-WelcomeWait");
+        waitThread.setDaemon(true);
+        waitThread.start();
     }
 
     // ═══════════════════════════════════════════

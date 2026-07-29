@@ -10,13 +10,18 @@ import java.util.Properties;
  * Sandwich Architecture - Java Agent Entry Point
  * Layer 2: Class loading bytecode manipulation, mapping provider
  *
- * Verification mode: after bootstrap, polls R key (LWJGL2) and sends chat messages.
+ * Verification mode: after bootstrap, polls Right Shift key (LWJGL2) and sends chat messages.
+ * This is a bootstrap-only verification mechanism. Once the adapter layer loads,
+ * the ClickGUI module takes over key handling via EventBridge.
  * All diagnostics also write to %TEMP%\switchlite-agent.log for reliable output.
  */
 public class Agent {
 
     private static Instrumentation instrumentation;
     private static volatile boolean guiVisible = false;
+
+    // LWJGL2 key code for Right Shift = 54
+    private static final int KEY_RIGHT_SHIFT = 54;
     private static volatile boolean running = true;
     private static Thread keyPollThread = null;
     private static File logFile = null;
@@ -105,13 +110,13 @@ public class Agent {
         MappingContext.initialize();
         log("[Agent] MappingContext initialized");
 
-        // Start R key polling thread for persistent verification
+        // Start Right Shift key polling thread for bootstrap verification
         startKeyPollThread();
 
         // Wait for player to enter world before sending welcome message
         // (bootstrap completes in ~400ms, but player may not be loaded yet)
         waitForPlayerThenWelcome();
-        log("[SwitchLite Agent] Ready — R key listener active");
+        log("[SwitchLite Agent] Ready — Right Shift key listener active");
     }
 
     // ═══════════════════════════════════════════
@@ -146,7 +151,7 @@ public class Agent {
                                 if (player != null) {
                                     log("[Welcome] Player detected! Sending welcome messages.");
                                     sendLocalMessage("Agent injected successfully!", GREEN);
-                                    sendLocalMessage("Press R to toggle module status", GRAY);
+                                    sendLocalMessage("Press Right Shift to toggle module status", GRAY);
                                     return; // done
                                 }
                             } catch (Exception ignored) {}
@@ -154,7 +159,7 @@ public class Agent {
                     }
                     Thread.sleep(500);
                 }
-                log("[Welcome] Timeout (60s) — player never joined. R key still works.");
+                log("[Welcome] Timeout (60s) — player never joined. Right Shift still works.");
             } catch (Exception e) {
                 log("[Welcome] Error: " + e.getMessage());
             }
@@ -164,26 +169,25 @@ public class Agent {
     }
 
     // ═══════════════════════════════════════════
-    //  R Key Polling (LWJGL2 Keyboard)
+    //  Right Shift Key Polling (LWJGL2 Keyboard)
     // ═══════════════════════════════════════════
 
     private static void startKeyPollThread() {
         keyPollThread = new Thread(() -> {
-            log("[KeyPoll] Thread started, polling LWJGL2 Keyboard for R key");
+            log("[KeyPoll] Thread started, polling LWJGL2 Keyboard for Right Shift");
             try {
                 // Access LWJGL2 Keyboard via reflection (agent layer, no direct MC dependency)
                 Class<?> keyboardClass = Class.forName("org.lwjgl.input.Keyboard");
                 java.lang.reflect.Method isKeyDown = keyboardClass.getMethod("isKeyDown", int.class);
 
-                // LWJGL2 key code: R = 19
-                boolean rWasDown = false;
+                boolean keyWasDown = false;
                 while (running) {
                     try {
-                        boolean rDown = (Boolean) isKeyDown.invoke(null, 19);
-                        if (rDown && !rWasDown) {
-                            onRKeyPressed();
+                        boolean keyDown = (Boolean) isKeyDown.invoke(null, KEY_RIGHT_SHIFT);
+                        if (keyDown && !keyWasDown) {
+                            onToggleKeyPressed();
                         }
-                        rWasDown = rDown;
+                        keyWasDown = keyDown;
                     } catch (Exception e) {
                         // Silently ignore polling errors (e.g., before Display is created)
                     }
@@ -214,14 +218,14 @@ public class Agent {
                         // Now start the actual poll
                         java.lang.reflect.Method isKeyDown =
                             Class.forName("org.lwjgl.input.Keyboard").getMethod("isKeyDown", int.class);
-                        boolean rWasDown = false;
+                        boolean keyWasDown = false;
                         while (running) {
                             try {
-                                boolean rDown = (Boolean) isKeyDown.invoke(null, 19);
-                                if (rDown && !rWasDown) {
-                                    onRKeyPressed();
+                                boolean keyDown = (Boolean) isKeyDown.invoke(null, KEY_RIGHT_SHIFT);
+                                if (keyDown && !keyWasDown) {
+                                    onToggleKeyPressed();
                                 }
-                                rWasDown = rDown;
+                                keyWasDown = keyDown;
                             } catch (Exception ignored) {}
                             Thread.sleep(50);
                         }
@@ -238,10 +242,10 @@ public class Agent {
         retryThread.start();
     }
 
-    private static void onRKeyPressed() {
+    private static void onToggleKeyPressed() {
         guiVisible = !guiVisible;
         String status = guiVisible ? "ON" : "OFF";
-        log("[KeyPoll] R pressed — GUI toggled: " + status);
+        log("[KeyPoll] Right Shift pressed — GUI toggled: " + status);
 
         // Local-only message — no server interaction, no kick risk
         if (guiVisible) {

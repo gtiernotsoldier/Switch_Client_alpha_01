@@ -22,6 +22,32 @@ abstract class Module(
     var enabled: Boolean = false
         private set
 
+    /** Whether this module is hidden from the HUD and GUI module list. */
+    var hidden: Boolean = false
+
+    /**
+     * GLFW key code to toggle this module (-1 = unbound).
+     * The GUI lets users rebind this at runtime.
+     */
+    var keybind: Int = -1
+
+    /**
+     * Whether this module shows a red indicator on the HUD when active.
+     * Set to false for stealth modules (e.g. AimAssist, AutoClicker)
+     * where a visible indicator would be undesirable.
+     *
+     * Note: this is only effective when the global red-indicator toggle
+     * (EventBridge.isGuiRedIndicatorEnabled) is ON.
+     */
+    var showRedIndicator: Boolean = true
+
+    /**
+     * Whether this module should be included in HUD display.
+     * Hidden modules are excluded regardless of enabled state.
+     * Modules with showRedIndicator=false are included but shown in default color.
+     */
+    val visible: Boolean get() = !hidden
+
     fun enable() {
         if (enabled) return
         enabled = true
@@ -40,6 +66,18 @@ abstract class Module(
 
     open fun onEnable() {}
     open fun onDisable() {}
+
+    // ── Toggle via keybind (called by adapter key dispatch) ──
+
+    /**
+     * Check if the given GLFW key code matches this module's keybind.
+     * Returns true if keybind matches and the module was toggled.
+     */
+    fun tryKeybindToggle(keyCode: Int): Boolean {
+        if (keybind != keyCode) return false
+        toggle()
+        return true
+    }
 
     // ── Config caching ──
 

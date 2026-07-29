@@ -204,97 +204,74 @@ public class Agent {
     //  Chat message helper (reflection)
     // ═══════════════════════════════════════════
 
+    // Forge 1.8.9 SRG names — these are the ACTUAL runtime names in Forge's deobfuscated jar.
+    // MCP mapped names (getMinecraft, thePlayer, sendChatMessage) do NOT exist at runtime.
+    private static final String[] MC_GET_MC   = {"getMinecraft", "func_71410_x"};
+    private static final String[] MC_THE_PLAYER = {"thePlayer", "field_71439_g"};
+    private static final String[] PLAYER_SEND_CHAT = {"sendChatMessage", "func_71165_d", "addChatMessage", "func_146235_e"};
+
     private static void sendChatMessage(String text) {
         try {
             Class<?> mcClass = Class.forName("net.minecraft.client.Minecraft");
 
-            // Dump all methods for debugging (first call only)
-            if (!sendChatDumped) {
-                sendChatDumped = true;
-                StringBuilder sb = new StringBuilder("[Chat] Minecraft.class methods:");
-                for (java.lang.reflect.Method m : mcClass.getMethods()) {
-                    if (m.getName().contains("Minecraft") || m.getName().contains("minecraft")
-                        || m.getName().contains("Player") || m.getName().contains("player")) {
-                        sb.append("\n  ").append(m.toGenericString());
-                    }
-                }
-                // Also list all fields with 'player' in name
-                sb.append("\n[Chat] Minecraft.class fields:");
-                for (java.lang.reflect.Field f : mcClass.getFields()) {
-                    if (f.getName().contains("player") || f.getName().contains("Player")) {
-                        sb.append("\n  ").append(f.toGenericString());
-                    }
-                }
-                log(sb.toString());
-            }
-
-            // Try getMinecraft — use getDeclaredMethods to bypass bridge method issues
+            // Step 1: Get Minecraft instance
             Object mc = null;
-            try {
-                java.lang.reflect.Method getMc = mcClass.getMethod("getMinecraft");
-                mc = getMc.invoke(null);
-            } catch (NoSuchMethodException e) {
-                // Fallback: search all methods for one that returns Minecraft and takes no args
-                log("[Chat] getMinecraft() not found, searching all methods...");
-                for (java.lang.reflect.Method m : mcClass.getMethods()) {
-                    if (m.getParameterTypes().length == 0
-                        && m.getReturnType() == mcClass
-                        && java.lang.reflect.Modifier.isStatic(m.getModifiers())) {
-                        log("[Chat] Found alternative: " + m.toGenericString());
-                        mc = m.invoke(null);
-                        break;
-                    }
-                }
+            for (String name : MC_GET_MC) {
+                try {
+                    java.lang.reflect.Method m = mcClass.getMethod(name);
+                    mc = m.invoke(null);
+                    if (mc != null) { log("[Chat] getMC via: " + name); break; }
+                } catch (Exception ignored) {}
             }
             if (mc == null) {
                 log("[Chat] MC instance is null — game not fully loaded");
                 return;
             }
-            log("[Chat] MC instance: " + mc.getClass().getName());
 
-            // Find thePlayer field
-            java.lang.reflect.Field pf = null;
-            try {
-                pf = mcClass.getField("thePlayer");
-            } catch (NoSuchFieldException e) {
-                // Fallback: search fields for EntityPlayer type
-                log("[Chat] thePlayer field not found, searching...");
-                for (java.lang.reflect.Field f : mcClass.getFields()) {
-                    if (f.getType().getName().contains("EntityPlayer")
-                        || f.getType().getName().contains("AbstractClientPlayer")) {
-                        log("[Chat] Found player field: " + f.toGenericString());
-                        pf = f;
-                        break;
-                    }
-                }
+            // Step 2: Get thePlayer
+            Object player = null;
+            for (String name : MC_THE_PLAYER) {
+                try {
+                    java.lang.reflect.Field f = mcClass.getField(name);
+                    player = f.get(mc);
+                    if (player != null) { log("[Chat] player via: " + name); break; }
+                } catch (Exception ignored) {}
             }
-            if (pf == null) {
-                log("[Chat] Player field not found");
-                return;
-            }
-            Object player = pf.get(mc);
             if (player == null) {
                 log("[Chat] Player is null — not in world yet");
                 return;
             }
-            log("[Chat] Player: " + player.getClass().getName());
 
-            // Find sendChatMessage
-            java.lang.reflect.Method sendChat = null;
-            try {
-                sendChat = player.getClass().getMethod("sendChatMessage", String.class);
-            } catch (NoSuchMethodException e) {
-                log("[Chat] sendChatMessage not found on " + player.getClass().getName() + ", searching...");
-                for (java.lang.reflect.Method m : player.getClass().getMethods()) {
-                    if (m.getName().contains("Chat") || m.getName().contains("chat")
-                        || m.getName().contains("Message") || m.getName().contains("message")) {
-                        log("[Chat]   candidate: " + m.toGenericString());
-                    }
-                }
+            // Step 3: Send chat message
+            boolean sent = false;
+            for (String name : PLAYER_SEND_CHAT) {
+                try {
+                    java.lang.reflect.Method m = player.getClass().getMethod(name, String.class);
+                    m.invoke(player, text);
+                    log("[Chat] Sent via: " + name + " → " + text);
+                    sent = true;
+                    break;
+                } catch (Exception ignored) {}
             }
-            if (sendChat != null) {
-                sendChat.invoke(player, text);
-                log("[Chat] Sent: " + text);
+            if (!sent) {
+                // Last resort: try EntityPlayerSP.sendChatMessage(IChatComponent) for newer mappings
+                try {
+                    Class<?> ichatComp = Class.forName("net.minecraft.util.IChatComponent");
+                    Class<?> chatComp = Class.forName("net.minecraft.util.ChatComponentText");
+                    Object comp = chatComp.getConstructor(String.class).newInstance(text);
+                    for (String name : PLAYER_SEND_CHAT) {
+                        try {
+                            java.lang.reflect.Method m = player.getClass().getMethod(name, ichatComp);
+                            m.invoke(player, comp);
+                            log("[Chat] Sent via IChatComponent: " + name);
+                            sent = true;
+                            break;
+                        } catch (Exception ignored) {}
+                    }
+                } catch (Exception ignored) {}
+            }
+            if (!sent) {
+                log("[Chat] Failed to send chat — no compatible method found");
             }
         } catch (ClassNotFoundException e) {
             log("[Chat] MC class not found — wrong classloader or MC not loaded");

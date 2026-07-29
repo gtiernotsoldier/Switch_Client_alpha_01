@@ -22,6 +22,17 @@ abstract class Module(
     var enabled: Boolean = false
         private set
 
+    /** Hidden from GUI panel and HUD. Can still be toggled via keybind. */
+    var hidden: Boolean = false
+
+    /** Custom keybind for toggling this module (0 = unbound). */
+    var keybind: Int = 0
+
+    /** Set of category names whose modules should NOT show red in HUD. */
+    companion object {
+        val silentCategories = setOf(Category.COMBAT)
+    }
+
     fun enable() {
         if (enabled) return
         enabled = true

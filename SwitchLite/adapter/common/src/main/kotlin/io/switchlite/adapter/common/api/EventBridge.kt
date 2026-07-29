@@ -275,6 +275,9 @@ object EventBridge {
     // ========== HUD Text (HUD — Render) ==========
     @Volatile var hudTextLine: String = ""
 
+    /** Whether ClickGUI is currently open (read by ForgeMod for render hook). */
+    @Volatile var isGuiOpen: Boolean = false
+
     // ========== Reach (Reach — 1.8 exclusive) ==========
     private var reachSetter: ((Float) -> Unit)? = null
 
@@ -431,6 +434,7 @@ object EventBridge {
         entityTicksProvider = null
         entityOnGroundChecker = null
         hudTextLine = ""
+        isGuiOpen = false
         keyListeners.clear()
         tickCounter = 0
         mouseDeltaX = 0f

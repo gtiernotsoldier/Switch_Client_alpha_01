@@ -164,35 +164,31 @@ public class Agent {
     }
 
     // ═══════════════════════════════════════════
-    //  R Key Polling (LWJGL2 Keyboard)
+    //  Right Shift Key Polling (LWJGL2 Keyboard)
     // ═══════════════════════════════════════════
 
     private static void startKeyPollThread() {
         keyPollThread = new Thread(() -> {
-            log("[KeyPoll] Thread started, polling LWJGL2 Keyboard for R key");
+            log("[KeyPoll] Thread started, polling LWJGL2 Keyboard for Right Shift");
             try {
-                // Access LWJGL2 Keyboard via reflection (agent layer, no direct MC dependency)
                 Class<?> keyboardClass = Class.forName("org.lwjgl.input.Keyboard");
                 java.lang.reflect.Method isKeyDown = keyboardClass.getMethod("isKeyDown", int.class);
 
-                // LWJGL2 key code: R = 19
+                // LWJGL2 key code: Right Shift = 54
                 boolean rWasDown = false;
                 while (running) {
                     try {
-                        boolean rDown = (Boolean) isKeyDown.invoke(null, 19);
+                        boolean rDown = (Boolean) isKeyDown.invoke(null, 54);
                         if (rDown && !rWasDown) {
                             onRKeyPressed();
                         }
                         rWasDown = rDown;
-                    } catch (Exception e) {
-                        // Silently ignore polling errors (e.g., before Display is created)
-                    }
-                    Thread.sleep(50); // 20 Hz poll rate
+                    } catch (Exception e) { /* polling before Display init */ }
+                    Thread.sleep(50);
                 }
                 log("[KeyPoll] Thread stopped");
             } catch (ClassNotFoundException e) {
                 log("[KeyPoll] LWJGL Keyboard class not found! MC not fully loaded yet.");
-                // Retry in a loop until LWJGL is available
                 retryKeyPoll();
             } catch (Exception e) {
                 log("[KeyPoll] Fatal error: " + e.getMessage());
@@ -211,13 +207,12 @@ public class Agent {
                     try {
                         Class.forName("org.lwjgl.input.Keyboard");
                         log("[KeyPoll] LWJGL Keyboard found! Starting poll...");
-                        // Now start the actual poll
                         java.lang.reflect.Method isKeyDown =
                             Class.forName("org.lwjgl.input.Keyboard").getMethod("isKeyDown", int.class);
                         boolean rWasDown = false;
                         while (running) {
                             try {
-                                boolean rDown = (Boolean) isKeyDown.invoke(null, 19);
+                                boolean rDown = (Boolean) isKeyDown.invoke(null, 54);
                                 if (rDown && !rWasDown) {
                                     onRKeyPressed();
                                 }
@@ -227,7 +222,7 @@ public class Agent {
                         }
                         started = true;
                     } catch (ClassNotFoundException e) {
-                        Thread.sleep(2000); // Wait and retry
+                        Thread.sleep(2000);
                     }
                 }
             } catch (Exception e) {
@@ -241,7 +236,7 @@ public class Agent {
     private static void onRKeyPressed() {
         guiVisible = !guiVisible;
         String status = guiVisible ? "ON" : "OFF";
-        log("[KeyPoll] R pressed — GUI toggled: " + status);
+        log("[KeyPoll] Right Shift pressed — GUI toggled: " + status);
 
         // Local-only message — no server interaction, no kick risk
         if (guiVisible) {

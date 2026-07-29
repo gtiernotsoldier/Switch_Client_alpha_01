@@ -275,6 +275,9 @@ object EventBridge {
     // ========== HUD Text (HUD — Render) ==========
     @Volatile var hudTextLine: String = ""
 
+    @JvmStatic
+    fun getHudTextLine(): String = hudTextLine
+
     // ========== GUI State (ClickGUI — Render) ==========
 
     /**
@@ -283,6 +286,9 @@ object EventBridge {
      * When true, the adapter should cancel vanilla input handling (mouse/keyboard).
      */
     @Volatile var isGuiOpen: Boolean = false
+
+    @JvmStatic
+    fun getIsGuiOpen(): Boolean = isGuiOpen
 
     /**
      * Global toggle for red indicator on HUD.

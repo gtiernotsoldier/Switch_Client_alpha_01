@@ -283,8 +283,12 @@ public class Agent {
     private static String mcAddChatMethod; // cache which name worked
 
     /**
-     * Send a LOCAL chat message (client-side only). Uses addChatMessage(IChatComponent)
-     * which does NOT go through the server — no "Illegal characters" kick risk.
+     * Send a LOCAL chat message (client-side only).
+     * Uses GuiIngame.getChatGUI().printChatMessage(IChatComponent) which
+     * does NOT go through the server — no "Illegal characters" kick risk.
+     *
+     * Fallback path: EntityPlayer.addChatMessage(IChatComponent) via getDeclaredMethods
+     * walking up the class hierarchy (method may be on AbstractClientPlayer, not EntityPlayerSP).
      *
      * @param text  the message text (plain, no color codes)
      * @param color one of: GREEN, GOLD, RED, GRAY, WHITE
@@ -292,6 +296,8 @@ public class Agent {
     private static void sendLocalMessage(String text, String color) {
         try {
             Class<?> mcClass = Class.forName("net.minecraft.client.Minecraft");
+            Class<?> ichatCompClass = Class.forName("net.minecraft.util.IChatComponent");
+            Class<?> chatCompClass = Class.forName("net.minecraft.util.ChatComponentText");
 
             // Step 1: Get Minecraft instance (cached after first success)
             Object mc = null;
@@ -300,7 +306,7 @@ public class Agent {
                     java.lang.reflect.Method m = mcClass.getMethod(mcGetInstance);
                     mc = m.invoke(null);
                 } catch (Exception e) {
-                    mcGetInstance = null; // cache miss, re-resolve
+                    mcGetInstance = null;
                 }
             }
             if (mc == null) {
@@ -343,31 +349,64 @@ public class Agent {
 
             // Step 3: Build IChatComponent with styled text
             String styledText = color + BOLD + "SwitchLite> " + RESET + color + text;
-            Class<?> ichatCompClass = Class.forName("net.minecraft.util.IChatComponent");
-            Class<?> chatCompClass = Class.forName("net.minecraft.util.ChatComponentText");
             Object chatComp = chatCompClass.getConstructor(String.class).newInstance(styledText);
 
-            // Step 4: Call addChatMessage(IChatComponent) — LOCAL only
-            if (mcAddChatMethod != null) {
+            // ── Path A (preferred): GuiIngame → GuiNewChat → printChatMessage ──
+            // This is the most direct way to add a message to the chat HUD.
+            // ingameGUI field names: "ingameGUI" (MCP) / "field_71438_f" (SRG)
+            boolean sent = false;
+            String[] mcIngameGuiFields = {"ingameGUI", "field_71438_f"};
+            for (String fieldName : mcIngameGuiFields) {
                 try {
-                    java.lang.reflect.Method m = player.getClass().getMethod(mcAddChatMethod, ichatCompClass);
-                    m.invoke(player, chatComp);
-                    return; // success
-                } catch (Exception e) {
-                    mcAddChatMethod = null; // cache miss
-                }
-            }
-            for (String name : PLAYER_ADD_CHAT) {
-                try {
-                    Class<?> ichatComp = Class.forName("net.minecraft.util.IChatComponent");
-                    java.lang.reflect.Method m = player.getClass().getMethod(name, ichatComp);
-                    m.invoke(player, chatComp);
-                    mcAddChatMethod = name;
-                    log("[Chat] Local msg via: " + name);
-                    return; // success
+                    java.lang.reflect.Field f = mcClass.getField(fieldName);
+                    Object ingameGUI = f.get(mc);
+                    if (ingameGUI == null) continue;
+                    // GuiNewChat from GuiIngame: getChatGUI() / field_146244_j
+                    String[] getChatGuiNames = {"getChatGUI", "func_146244_j"};
+                    Object chatGui = null;
+                    for (String mname : getChatGuiNames) {
+                        try {
+                            java.lang.reflect.Method m = ingameGUI.getClass().getMethod(mname);
+                            chatGui = m.invoke(ingameGUI);
+                            if (chatGui != null) break;
+                        } catch (Exception ignored) {}
+                    }
+                    if (chatGui == null) continue;
+                    // GuiNewChat.printChatMessage(IChatComponent) / func_146227_a
+                    String[] printMsgNames = {"printChatMessage", "func_146227_a",
+                                              "printChatMessageWithOptionalDelete", "func_146237_a"};
+                    for (String mname : printMsgNames) {
+                        try {
+                            java.lang.reflect.Method m = chatGui.getClass().getMethod(mname, ichatCompClass);
+                            m.invoke(chatGui, chatComp);
+                            log("[Chat] Local msg via GuiNewChat." + mname);
+                            sent = true;
+                            break;
+                        } catch (Exception ignored) {}
+                    }
+                    if (sent) return;
                 } catch (Exception ignored) {}
             }
-            log("[Chat] Failed to send local message — addChatMessage not found");
+
+            // ── Path B (fallback): walk inheritance chain for addChatMessage ──
+            // getMethod only searches the concrete class; addChatMessage may be
+            // declared on a superclass (AbstractClientPlayer or EntityPlayer).
+            Class<?> clazz = player.getClass();
+            while (clazz != null && clazz != Object.class) {
+                for (java.lang.reflect.Method m : clazz.getDeclaredMethods()) {
+                    if (m.getName().equals("addChatMessage") || m.getName().equals("func_146235_e")) {
+                        try {
+                            m.setAccessible(true);
+                            m.invoke(player, chatComp);
+                            log("[Chat] Local msg via " + clazz.getSimpleName() + "." + m.getName());
+                            return;
+                        } catch (Exception ignored) {}
+                    }
+                }
+                clazz = clazz.getSuperclass();
+            }
+
+            log("[Chat] Failed to send local message — no method found");
         } catch (ClassNotFoundException e) {
             log("[Chat] MC class not found — wrong classloader or MC not loaded");
         } catch (Exception e) {

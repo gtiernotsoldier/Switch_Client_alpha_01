@@ -52,15 +52,11 @@ jobs:
           echo "| core | :white_check_mark: |" >> $GITHUB_STEP_SUMMARY
           echo "| agent | :white_check_mark: |" >> $GITHUB_STEP_SUMMARY
           echo "| adapter:common | :white_check_mark: |" >> $GITHUB_STEP_SUMMARY
-      - name: Copy agent.jar to injector resources
-        run: |
-          cp SwitchLite/agent/build/libs/switchlite-agent-*.jar SwitchLite/injector/resources/agent.jar
-          echo "agent.jar size: $(wc -c < SwitchLite/injector/resources/agent.jar) bytes"
       - name: Upload agent.jar artifact
         uses: actions/upload-artifact@v4
         with:
           name: switchlite-agent-jar
-          path: SwitchLite/injector/resources/agent.jar
+          path: SwitchLite/agent/build/libs/switchlite-agent-*.jar
 
   # ─── Injector (Windows) ───
   injector:
@@ -72,19 +68,19 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: switchlite-agent-jar
-          path: .
-      - name: Verify agent.jar is real (not 0-byte placeholder)
+          path: _temp_agent_jar
+      - name: Copy agent.jar into injector resources (overwrite 0-byte git placeholder)
         shell: pwsh
         run: |
-          $jar = "SwitchLite\injector\resources\agent.jar"
-          if (-not (Test-Path $jar)) { Write-Error "agent.jar missing at $jar"; exit 1 }
-          $size = (Get-Item $jar).Length
-          Write-Host "agent.jar size: $size bytes"
-          if ($size -lt 1000000) {
-            Write-Error "agent.jar too small ($size bytes) — artifact download likely failed"
-            exit 1
-          }
-          Write-Host "agent.jar OK"
+          $src = Get-ChildItem -Path _temp_agent_jar -Recurse -Filter "*.jar" | Select-Object -First 1
+          if (-not $src) { Write-Error "No jar found in downloaded artifact"; exit 1 }
+          Write-Host "Found artifact jar: $($src.FullName) ($($src.Length) bytes)"
+          # Overwrite the 0-byte git placeholder
+          Copy-Item $src.FullName -Destination "SwitchLite\injector\resources\agent.jar" -Force
+          $dest = Get-Item "SwitchLite\injector\resources\agent.jar"
+          Write-Host "agent.jar ready: $($dest.Length) bytes"
+          if ($dest.Length -lt 1000000) { Write-Error "agent.jar too small"; exit 1 }
+          Remove-Item _temp_agent_jar -Recurse -Force
       - name: Set up JDK 8 (for jni.h in payload build)
         uses: actions/setup-java@v4
         with: { java-version: '8', distribution: 'temurin' }

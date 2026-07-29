@@ -19,7 +19,8 @@ repositories {
 dependencies {
     implementation(project(":core"))
     implementation(project(":adapter:common"))
-    implementation(project(":adapter:forge:v1_8_9"))
+    // Forge adapter (requires ForgeGradle — not available in CI):
+    // implementation(project(":adapter:forge:v1_8_9"))
 
     // Javassist for bytecode manipulation
     implementation("org.javassist:javassist:3.29.2-GA")
@@ -56,8 +57,8 @@ tasks.jar {
         configurations.runtimeClasspath.get().filter { it.name.endsWith("jar") }.map { zipTree(it) }
     })
 
-    // Forge adapter is now a regular gradle project dependency (no ForgeGradle needed).
-    // It compiles with pure reflection — all MC/Forge access via MappingContext at runtime.
+    // Forge adapter is excluded from CI builds (requires ForgeGradle).
+    // TODO: When local build with ForgeGradle is available, re-enable.
 
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
 }

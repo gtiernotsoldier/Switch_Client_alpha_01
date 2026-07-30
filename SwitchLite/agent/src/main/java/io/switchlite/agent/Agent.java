@@ -709,11 +709,11 @@ public class Agent {
                 "    net.minecraft.client.gui.FontRenderer fr = mc." + fontRendererFieldName + ";" +
                 "    if (fr == null) return;" +
                 "    " + xType + " y = 4;" +
-                "    String hdr = slGuiVisible ? "\u00a7a[SwitchLite] \u00a7fGUI: ON" : "\u00a7a[SwitchLite] \u00a7fv0.1-alpha";" +
+                "    String hdr = slGuiVisible ? \"\u00a7a[SwitchLite] \u00a7fGUI: ON\" : \"\u00a7a[SwitchLite] \u00a7fv0.1-alpha\";" +
                 "    fr." + drawMethodName + "(hdr, (" + xType + ")4, y, 0xFFFF55);" +
                 "    y += (" + xType + ")12;" +
                 "    if (slGuiVisible) {" +
-                "      fr." + drawMethodName + "("\u00a77Right Shift = toggle", (" + xType + ")4, y, 0xAAAAAA);" +
+                "      fr." + drawMethodName + "(\"\u00a77Right Shift = toggle\", (" + xType + ")4, y, 0xAAAAAA);" +
                 "      y += (" + xType + ")12;" +
                 "    }" +
                 "    if (slHudText != null && slHudText.length() > 0) {" +

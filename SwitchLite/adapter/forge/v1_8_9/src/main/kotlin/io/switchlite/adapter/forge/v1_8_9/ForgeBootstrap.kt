@@ -7,7 +7,10 @@ import io.switchlite.adapter.common.module.combat.*
 import io.switchlite.adapter.common.module.movement.*
 import io.switchlite.adapter.common.module.player.*
 import io.switchlite.adapter.common.module.render.ClickGUI
+import io.switchlite.adapter.common.module.render.Fullbright
 import io.switchlite.adapter.common.module.render.HUD
+import io.switchlite.adapter.common.module.render.NoFOV
+import io.switchlite.adapter.common.module.render.NoHurtCam
 import io.switchlite.adapter.common.module.world.FastPlace
 import io.switchlite.core.logging.CoreLogger
 import io.switchlite.agent.MappingContext
@@ -166,8 +169,8 @@ object ForgeBootstrap {
             try {
                 val gs = MappingContext.getFieldValue(mc, "forge:mc_gameSettings") ?: return
                 val readPressed: (String) -> Boolean = { key ->
-                    val kb = MappingContext.getFieldValue(gs, key) ?: return@readPressed false
-                    keybindingPressedField?.getBoolean(kb) ?: false
+                    val kb = MappingContext.getFieldValue(gs, key)
+                    if (kb == null) false else keybindingPressedField?.getBoolean(kb) ?: false
                 }
                 EventBridge.isKeyForwardDown = readPressed("forge:gs_keyBindForward")
                 EventBridge.isKeyBackDown = readPressed("forge:gs_keyBindBack")

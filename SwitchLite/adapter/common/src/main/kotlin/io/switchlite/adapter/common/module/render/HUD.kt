@@ -1,5 +1,7 @@
 package io.switchlite.adapter.common.module.render
 
+import io.switchlite.core.model.PlayerState
+import io.switchlite.core.model.TargetState
 import io.switchlite.adapter.common.api.EventBridge
 import io.switchlite.adapter.common.module.Module
 import io.switchlite.adapter.common.module.Category
@@ -8,17 +10,20 @@ import io.switchlite.adapter.common.module.ModuleRegistry
 /**
  * HUD — on-screen display of active module states.
  *
- * Renders in ALL game states: main menu, server list, in-world, death screen.
- * Uses render listener (fires unconditionally every frame) instead of
- * tick listener (fires only in-world when PlayerState is available).
+ * Builds a text line of enabled module names every tick and exposes
+ * it via EventBridge.hudTextLine for the adapter to render.
  *
- * Hidden modules are excluded. Combat category modules are shown in
- * default text — no red highlight for anti-cheat stealth.
+ * Hidden modules are excluded. Combat modules (silent) show in white
+ * instead of red for anti-cheat stealth.
  */
 object HUD : Module("HUD", Category.RENDER) {
 
-    private val renderListener: () -> Unit = {
-        if (!enabled) return
+    /** Per-line format: "ModuleName" — silent categories get §7 prefix. */
+    private val tickListener: (PlayerState, TargetState?) -> Unit = { _, _ ->
+        if (enabled) onTick()
+    }
+
+    private fun onTick() {
         val names = ModuleRegistry.getEnabled()
             .filter { !it.hidden }
             .joinToString(" | ") { it.name }
@@ -26,11 +31,11 @@ object HUD : Module("HUD", Category.RENDER) {
     }
 
     override fun onEnable() {
-        EventBridge.registerRenderListener(renderListener)
+        EventBridge.registerTickListener(tickListener)
     }
 
     override fun onDisable() {
-        EventBridge.unregisterRenderListener(renderListener)
+        EventBridge.unregisterTickListener(tickListener)
         EventBridge.hudTextLine = ""
     }
 }

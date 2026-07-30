@@ -91,13 +91,6 @@ object EventBridge {
 
     fun getCurrentTick(): Int = tickCounter
 
-    // ========== Render Listeners (HUD, GUI — fires every frame, no PlayerState needed) ==========
-    private val renderListeners = mutableListOf<() -> Unit>()
-
-    fun registerRenderListener(listener: () -> Unit) { renderListeners.add(listener) }
-    fun unregisterRenderListener(listener: () -> Unit) { renderListeners.remove(listener) }
-    fun onRender() { renderListeners.forEach { it() } }
-
     // ========== Rotation ==========
     private var rotationSetter: ((Vec2) -> Unit)? = null
 
@@ -408,7 +401,6 @@ object EventBridge {
         tickListeners.clear()
         simpleTickListeners.clear()
         startTickListeners.clear()
-        renderListeners.clear()
         rotationSetter = null
         motionApplier = null
         sprintSetter = null

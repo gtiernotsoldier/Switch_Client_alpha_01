@@ -362,6 +362,9 @@ public class Agent {
                         System.setProperty("switchlite.guiOpen", String.valueOf(guiOpen));
                         System.setProperty("switchlite.hudText", hudText != null ? hudText : "");
 
+                        // Queue a render task on the MC main thread (the only thread with GL context)
+                        dispatchRender();
+
                         if (!guiOpen && hudText != null && !hudText.isEmpty() && !hudText.equals(lastHudText)) {
                             lastHudText = hudText;
                             sendActionBarMessage(hudText);
@@ -382,6 +385,88 @@ public class Agent {
         }, "SwitchLite-HudTick");
         hudTickThread.setDaemon(true);
         hudTickThread.start();
+    }
+
+    /**
+     * Queue a render task on the MC main thread via addScheduledTask.
+     * This is the ONLY thread that holds the OpenGL context.
+     */
+    private static void dispatchRender() {
+        try {
+            Class<?> mcClass = Class.forName("net.minecraft.client.Minecraft");
+            if (mcFactory == null) {
+                for (String name : MC_GET_MC) {
+                    try {
+                        mcFactory = mcClass.getMethod(name);
+                        break;
+                    } catch (NoSuchMethodException ignored) {}
+                }
+                if (mcFactory == null) return;
+            }
+            Object mc = mcFactory.invoke(null);
+            if (mc == null) return;
+
+            // Minecraft.addScheduledTask(Runnable) / func_152343_a
+            java.lang.reflect.Method addTask = null;
+            for (String name : new String[]{"addScheduledTask", "func_152343_a"}) {
+                try {
+                    addTask = mcClass.getMethod(name, Runnable.class);
+                    break;
+                } catch (NoSuchMethodException ignored) {}
+            }
+            if (addTask == null) return;
+
+            addTask.invoke(mc, (Runnable) () -> drawOverlay());
+        } catch (Exception ignored) {}
+    }
+
+    /**
+     * Draw the 2D overlay on the MC render thread.
+     * FontRenderer is verified working via reflection (func_78276_b / func_175063_a).
+     */
+    private static void drawOverlay() {
+        try {
+            String hudText = System.getProperty("switchlite.hudText", "");
+            boolean guiOpen = "true".equals(System.getProperty("switchlite.guiOpen", ""));
+
+            if (hudText.isEmpty() && !guiOpen) return;
+
+            // FontRenderer already verified working in previous logs
+            Object fr = getFontRenderer();
+            if (fr == null) return;
+
+            // Draw HUD text at top-left
+            if (!hudText.isEmpty()) {
+                fr.getClass().getMethod("drawStringWithShadow", String.class, int.class, int.class, int.class)
+                    .invoke(fr, hudText, 4, 4, 0xFFFFFF);
+            }
+
+            // Draw GUI toggle indicator
+            String status = guiOpen ? "\u00a7a[GUI OPEN]" : "\u00a77[GUI OFF]";
+            fr.getClass().getMethod("drawStringWithShadow", String.class, int.class, int.class, int.class)
+                .invoke(fr, status, 4, 16, guiOpen ? 0x55FF55 : 0xAAAAAA);
+        } catch (Exception ignored) {}
+    }
+
+    private static Object getFontRenderer() {
+        try {
+            Class<?> mcClass = Class.forName("net.minecraft.client.Minecraft");
+            if (mcFactory == null) return null;
+            Object mc = mcFactory.invoke(null);
+            if (mc == null) return null;
+
+            for (java.lang.reflect.Field f : mcClass.getDeclaredFields()) {
+                if (f.getType().getName().contains("FontRenderer")) {
+                    return f.get(mc);
+                }
+            }
+            for (java.lang.reflect.Field f : mcClass.getFields()) {
+                if (f.getType().getName().contains("FontRenderer")) {
+                    return f.get(mc);
+                }
+            }
+        } catch (Exception ignored) {}
+        return null;
     }
 
     // ═══════════════════════════════════════════
@@ -442,6 +527,7 @@ public class Agent {
     private static java.lang.reflect.Method forgeBootstrapOnKey = null;
     private static java.lang.reflect.Method forgeBootstrapOnDisconnect = null;
     private static boolean forgeBootstrapAvailable = false;
+    private static java.lang.reflect.Method mcFactory = null;
 
     // ═══════════════════════════════════════════
     //  ForgeBootstrap method cache

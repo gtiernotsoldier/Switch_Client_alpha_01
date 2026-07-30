@@ -3,6 +3,11 @@ package io.switchlite.adapter.common
 import io.switchlite.adapter.common.module.ModuleRegistry
 import io.switchlite.adapter.common.module.Module
 import io.switchlite.adapter.common.module.Category
+import io.switchlite.adapter.common.module.combat.*
+import io.switchlite.adapter.common.module.movement.*
+import io.switchlite.adapter.common.module.player.*
+import io.switchlite.adapter.common.module.render.*
+import io.switchlite.adapter.common.module.world.*
 import io.switchlite.core.logging.CoreLogger
 import java.io.PrintWriter
 import java.io.StringWriter

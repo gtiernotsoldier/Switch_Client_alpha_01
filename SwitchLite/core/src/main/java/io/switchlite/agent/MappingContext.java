@@ -4,16 +4,34 @@ import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Global mapping cache and runtime resolver
  * Provides unified access to Minecraft classes/methods/fields across versions
+ *
+ * Aliases mechanism:
+ *   Each mapping entry can declare an "aliases" array of alternative keys.
+ *   When resolving a key, MappingContext first tries exact match, then checks aliases.
+ *   This allows shared code to use platform-agnostic keys like "entity_posX"
+ *   while platform-specific code uses "forge:entity_posX" or "fabric:entity_posX".
+ *
+ *   Example JSON:
+ *     "forge:entity_posX": {
+ *       "class": "net.minecraft.entity.Entity",
+ *       "field": "posX",
+ *       "aliases": ["entity_posX"]
+ *     }
+ *
+ *   Now both MappingContext.getFieldValue(obj, "forge:entity_posX") and
+ *   MappingContext.getFieldValue(obj, "entity_posX") resolve to the same entry.
  */
 public class MappingContext {
     
     private static Map<String, Object> MAPPINGS = new ConcurrentHashMap<>();
+    private static Map<String, String> ALIASES = new ConcurrentHashMap<>();
     private static Map<String, Class<?>> CLASS_CACHE = new ConcurrentHashMap<>();
     private static Map<String, MethodHandle> METHOD_CACHE = new ConcurrentHashMap<>();
     private static Map<String, Field> FIELD_CACHE = new ConcurrentHashMap<>();
@@ -22,14 +40,45 @@ public class MappingContext {
      * Initialize MappingContext after mappings are loaded
      */
     public static void initialize() {
-        System.out.println("[MappingContext] Initialized with " + MAPPINGS.size() + " entries");
+        System.out.println("[MappingContext] Initialized with " + MAPPINGS.size() + " entries, " + ALIASES.size() + " aliases");
     }
     
     /**
-     * Store mappings from MappingLoader
+     * Store mappings from MappingLoader and register aliases.
      */
+    @SuppressWarnings("unchecked")
     public static void storeMappings(Map<String, Object> mappings) {
         MAPPINGS = mappings;
+        ALIASES.clear();
+        for (Map.Entry<String, Object> entry : mappings.entrySet()) {
+            String primaryKey = entry.getKey();
+            Object value = entry.getValue();
+            if (value instanceof Map) {
+                Object aliasesObj = ((Map<String, Object>) value).get("aliases");
+                if (aliasesObj instanceof List) {
+                    for (Object alias : (List<?>) aliasesObj) {
+                        if (alias instanceof String) {
+                            ALIASES.put((String) alias, primaryKey);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    /**
+     * Resolve a key to its primary mapping key.
+     * First tries exact match, then checks aliases.
+     */
+    private static String resolveKey(String key) {
+        if (MAPPINGS.containsKey(key)) {
+            return key;
+        }
+        String resolved = ALIASES.get(key);
+        if (resolved != null) {
+            return resolved;
+        }
+        return key; // Return original key — will fail in lookup with clear error
     }
     
     /**
@@ -38,10 +87,11 @@ public class MappingContext {
      * @return Resolved Class object
      */
     public static Class<?> getClass(String key) {
-        return CLASS_CACHE.computeIfAbsent(key, k -> {
+        String resolvedKey = resolveKey(key);
+        return CLASS_CACHE.computeIfAbsent(resolvedKey, k -> {
             Object mapping = MAPPINGS.get(k);
             if (mapping == null) {
-                System.err.println("[MappingContext] No mapping found for key: " + k);
+                System.err.println("[MappingContext] No mapping found for key: " + key + " (resolved: " + k + ")");
                 return null;
             }
             try {
@@ -66,10 +116,11 @@ public class MappingContext {
      * @return MethodHandle for invocation
      */
     public static MethodHandle getMethod(String key) {
-        return METHOD_CACHE.computeIfAbsent(key, k -> {
+        String resolvedKey = resolveKey(key);
+        return METHOD_CACHE.computeIfAbsent(resolvedKey, k -> {
             Object mapping = MAPPINGS.get(k);
             if (mapping == null) {
-                System.err.println("[MappingContext] No method mapping found for key: " + k);
+                System.err.println("[MappingContext] No method mapping found for key: " + key + " (resolved: " + k + ")");
                 return null;
             }
             try {
@@ -120,10 +171,11 @@ public class MappingContext {
      * @return Field object for reflection access
      */
     public static Field getField(String key) {
-        return FIELD_CACHE.computeIfAbsent(key, k -> {
+        String resolvedKey = resolveKey(key);
+        return FIELD_CACHE.computeIfAbsent(resolvedKey, k -> {
             Object mapping = MAPPINGS.get(k);
             if (mapping == null) {
-                System.err.println("[MappingContext] No field mapping found for key: " + k);
+                System.err.println("[MappingContext] No field mapping found for key: " + key + " (resolved: " + k + ")");
                 return null;
             }
             String className = null;
@@ -157,13 +209,14 @@ public class MappingContext {
      * @return Access path configuration
      */
     public static Object getAccessPath(String key) {
-        return MAPPINGS.get(key);
+        String resolvedKey = resolveKey(key);
+        return MAPPINGS.get(resolvedKey);
     }
     
     /**
      * Get a field value from an object using a semantic key.
      * @param obj The target object
-     * @param key Semantic key (e.g., "forge:entity_posX")
+     * @param key Semantic key (e.g., "forge:entity_posX" or "entity_posX")
      * @return The field value
      */
     public static Object getFieldValue(Object obj, String key) {
@@ -181,7 +234,7 @@ public class MappingContext {
     /**
      * Invoke a method on an object using a semantic key.
      * @param obj The target object
-     * @param key Semantic key (e.g., "forge:world_getEntityByID")
+     * @param key Semantic key (e.g., "forge:world_getEntityByID" or "world_getEntityByID")
      * @param args Method arguments
      * @return The method return value
      */

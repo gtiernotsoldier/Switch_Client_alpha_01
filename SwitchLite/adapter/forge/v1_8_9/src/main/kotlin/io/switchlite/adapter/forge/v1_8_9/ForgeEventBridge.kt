@@ -308,7 +308,7 @@ object ForgeEventBridge : IEventBridge {
                 val scoreboard = MappingContext.getFieldValue(world, "forge:world_scoreboard") ?: return@registerScoreboardTeamChecker null
                 val teams = MappingContext.getFieldValue(scoreboard, "forge:scoreboard_teams") as? Collection<*> ?: return@registerScoreboardTeamChecker null
                 for (team in teams) {
-                    val containsResult = MappingContext.invokeMethod(team, "forge:team_func_96562_d", name) as? Boolean
+                    val containsResult = MappingContext.invokeMethod(team, "forge:team_contains", name) as? Boolean
                     if (containsResult == true) {
                         return@registerScoreboardTeamChecker MappingContext.getFieldValue(team, "forge:scorePlayerTeam_registeredName") as? String
                     }

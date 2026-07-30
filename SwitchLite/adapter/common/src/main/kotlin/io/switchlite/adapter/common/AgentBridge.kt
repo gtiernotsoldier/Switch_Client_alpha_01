@@ -96,7 +96,7 @@ object AgentBridge {
                 failed++
                 failedNames.add(name)
                 logErr("Module '$name' failed: ${e.javaClass.simpleName}")
-                if (e.cause != null) logErr("  cause: ${e.cause.javaClass.simpleName}: ${e.cause.message}")
+                e.cause?.let { cause -> logErr("  cause: ${cause.javaClass.simpleName}: ${cause.message}") }
             } catch (e: NoClassDefFoundError) {
                 failed++
                 failedNames.add(name)

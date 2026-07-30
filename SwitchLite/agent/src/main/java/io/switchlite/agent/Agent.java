@@ -27,14 +27,12 @@ import java.util.Properties;
  *   - Getting Instrumentation → Transformer.install()
  *   - Self-attach → Transformer.install()
  *   - Drawing overlays → ForgeBootstrap.render()
+ *   - Chat messages → ForgeBootstrap / modules
+ *   - GUI state → EventBridge.isGuiOpen / ClickGUI
  */
 public class Agent {
 
     private static Instrumentation instrumentation;
-    private static volatile boolean guiVisible = false;
-
-    // LWJGL2 key code for Right Shift = 54
-    private static final int KEY_RIGHT_SHIFT = 54;
     private static volatile boolean running = true;
     private static Thread keyPollThread = null;
     private static File logFile = null;
@@ -78,13 +76,13 @@ public class Agent {
             return;
         }
 
-        init(inst);
+        coreInit(inst, detectConfigPath());
     }
 
     public static void premain(String agentArgs, Instrumentation inst) {
         initLogFile();
         log("[SwitchLite Agent] Loaded at JVM startup");
-        init(inst);
+        coreInit(inst, detectConfigPath());
     }
 
     /**
@@ -99,26 +97,42 @@ public class Agent {
         log("[Agent] Thread = " + Thread.currentThread().getName());
         log("[Agent] ClassLoader = " + Agent.class.getClassLoader().getClass().getName());
 
+        String configPath = configDir + File.separator + "switchlite-config.properties";
+        coreInit(null, configPath);
+    }
+
+    // ═══════════════════════════════════════════
+    //  Core initialization (shared by all entry points)
+    // ═══════════════════════════════════════════
+
+    private static void coreInit(Instrumentation inst, String configPath) {
+        // 1. Load config
         String platform = "Unknown";
         String version = "Unknown";
-        File configFile = new File(configDir, "switchlite-config.properties");
-        log("[Agent] Config file path: " + configFile.getAbsolutePath() + " (exists=" + configFile.exists() + ")");
 
-        if (configFile.exists()) {
-            Properties props = new Properties();
-            try (FileInputStream fis = new FileInputStream(configFile)) {
-                props.load(fis);
-                platform = props.getProperty("switchlite.platform", "Unknown");
-                version = props.getProperty("switchlite.version", "Unknown");
-                log("[Agent] Config loaded successfully");
-            } catch (IOException e) {
-                log("[Agent] Failed to read config: " + e.getMessage());
+        if (configPath != null) {
+            File configFile = new File(configPath);
+            log("[Agent] Config file path: " + configFile.getAbsolutePath() + " (exists=" + configFile.exists() + ")");
+            if (configFile.exists()) {
+                Properties props = new Properties();
+                try (FileInputStream fis = new FileInputStream(configFile)) {
+                    props.load(fis);
+                    platform = props.getProperty("switchlite.platform", "Unknown");
+                    version = props.getProperty("switchlite.version", "Unknown");
+                    log("[Agent] Config loaded successfully");
+                } catch (IOException e) {
+                    log("[Agent] Failed to read config: " + e.getMessage());
+                }
+            } else {
+                log("[Agent] Config file not found, using defaults");
             }
+        } else {
+            log("[Agent] No config path provided, using defaults");
         }
 
         log("[Agent] Platform: " + platform + " | Version: " + version);
 
-        // Load mappings
+        // 2. Load mappings
         String mappingsDir = detectMappingsDir();
         try {
             MappingLoader.loadMappings(platform, version, mappingsDir);
@@ -130,7 +144,7 @@ public class Agent {
         MappingContext.initialize();
         log("[Agent] MappingContext initialized");
 
-        // ========== Initialize adapter layer ==========
+        // 3. Initialize adapter layer (AgentBridge — registers modules)
         try {
             Class<?> bridgeClass = Class.forName("io.switchlite.adapter.common.AgentBridge");
             Method initMethod = bridgeClass.getMethod("initModules");
@@ -154,7 +168,7 @@ public class Agent {
             }
         }
 
-        // Initialize Forge adapter (pure reflection — no ForgeGradle needed)
+        // 4. Initialize Forge adapter (pure reflection — no ForgeGradle needed)
         if ("Forge".equals(platform)) {
             try {
                 Class<?> bootstrapClass = Class.forName("io.switchlite.adapter.forge.v1_8_9.ForgeBootstrap");
@@ -165,8 +179,6 @@ public class Agent {
 
                 // Cache method refs for tick/render/onKey dispatch
                 cacheForgeBootstrapMethods(bootstrapClass, fbInstance);
-
-                // Disable old EventBridge.onTick(null,null) dispatch — ForgeBootstrap.tick() handles it now
             } catch (ClassNotFoundException e) {
                 log("[Agent] ForgeBootstrap not in classpath — HUD via Display.update() hook");
             } catch (Exception e) {
@@ -174,24 +186,19 @@ public class Agent {
             }
         }
 
-        // ========== Ask Transformer to install Display.update() hook ==========
-        // This is Javassist's job, not Agent's. We just call install().
-        boolean hookInstalled = Transformer.install(instrumentation);
+        // 5. Install Transformer hook (Javassist's job, not Agent's)
+        boolean hookInstalled = Transformer.install(inst);
         if (hookInstalled) {
             log("[Agent] Render path: Transformer + RenderHook → ForgeBootstrap.render() (every frame, stealthy)");
         } else {
             log("[Agent] Render path: addScheduledTask → ForgeBootstrap.render() (20Hz fallback, less stealthy)");
         }
 
-        // Start Right Shift key polling thread
+        // 6. Start threads
         startKeyPollThread();
-
-        // Start HUD tick thread — dispatches tick events + render fallback
         startHudTickThread();
 
-        // Wait for player to enter world before sending welcome message
-        waitForPlayerThenWelcome();
-        log("[SwitchLite Agent] Ready — Right Shift key listener active");
+        log("[SwitchLite Agent] Ready — key listener active");
     }
 
     // ═══════════════════════════════════════════
@@ -226,6 +233,9 @@ public class Agent {
 
     private static volatile String lastHudText = "";
     private static Thread hudTickThread = null;
+
+    // Forge 1.8.9 SRG names
+    private static final String[] MC_GET_MC = {"getMinecraft", "func_71410_x"};
 
     /**
      * Runs at 20Hz. Dispatches tick events to ForgeBootstrap.tick(),
@@ -263,7 +273,7 @@ public class Agent {
                             dispatchRenderFallback();
                         }
 
-                        // Chat-based HUD fallback (action bar)
+                        // Chat-based HUD fallback (action bar) — safety net when GL overlay is not visible
                         if (!guiOpen && hudText != null && !hudText.isEmpty() && !hudText.equals(lastHudText)) {
                             lastHudText = hudText;
                             sendActionBarMessage(hudText);
@@ -335,15 +345,15 @@ public class Agent {
             log("[KeyPoll] Thread started, polling LWJGL2 Keyboard");
             try {
                 Class<?> keyboardClass = Class.forName("org.lwjgl.input.Keyboard");
-                Method isKeyDown = keyboardClass.getMethod("isKeyDown", int.class);
                 Method getEventKey = keyboardClass.getMethod("getEventKey");
                 Method getEventKeyState = keyboardClass.getMethod("getEventKeyState");
                 Method isNext = keyboardClass.getMethod("next");
 
-                boolean keyWasDown = false;
                 while (running) {
                     try {
                         // Poll all LWJGL2 key events and dispatch to ForgeBootstrap
+                        // All keys (including Right Shift) go through the proper pipeline:
+                        // KeyPollThread → ForgeBootstrap.onKey() → EventBridge.onKey() → ClickGUI
                         boolean nextResult = (Boolean) isNext.invoke(null);
                         if (nextResult) {
                             int lwjglCode = (Integer) getEventKey.invoke(null);
@@ -352,13 +362,6 @@ public class Agent {
                                 forgeBootstrapOnKey.invoke(forgeBootstrapInstance, lwjglCode, pressed);
                             }
                         }
-
-                        // Also keep the old Right Shift toggle for backward compat
-                        boolean keyDown = (Boolean) isKeyDown.invoke(null, KEY_RIGHT_SHIFT);
-                        if (keyDown && !keyWasDown) {
-                            onToggleKeyPressed();
-                        }
-                        keyWasDown = keyDown;
                     } catch (Exception e) {
                         // Silently ignore polling errors (e.g., before Display is created)
                     }
@@ -379,131 +382,34 @@ public class Agent {
         log("[KeyPoll] Will retry every 2s until LWJGL Keyboard is available...");
         Thread retryThread = new Thread(() -> {
             try {
-                boolean started = false;
-                while (running && !started) {
+                while (running) {
                     try {
-                        Class.forName("org.lwjgl.input.Keyboard");
-                        log("[KeyPoll] LWJGL Keyboard found! Starting poll...");
-                        java.lang.reflect.Method isKeyDown =
-                            Class.forName("org.lwjgl.input.Keyboard").getMethod("isKeyDown", int.class);
-                        boolean keyWasDown = false;
-                        while (running) {
-                            try {
-                                boolean keyDown = (Boolean) isKeyDown.invoke(null, KEY_RIGHT_SHIFT);
-                                if (keyDown && !keyWasDown) {
-                                    onToggleKeyPressed();
-                                }
-                                keyWasDown = keyDown;
-                            } catch (Exception ignored) {}
-                            Thread.sleep(50);
-                        }
-                        started = true;
-                    } catch (ClassNotFoundException e) {
                         Thread.sleep(2000);
+                        Class.forName("org.lwjgl.input.Keyboard");
+                        log("[KeyPoll] LWJGL Keyboard found! Restarting poll...");
+                        startKeyPollThread();
+                        return;
+                    } catch (ClassNotFoundException e) {
+                        // Keep retrying
                     }
                 }
-            } catch (Exception e) {
-                log("[KeyPoll] Retry loop error: " + e.getMessage());
-            }
+            } catch (InterruptedException ignored) {}
         }, "SwitchLite-KeyPollRetry");
         retryThread.setDaemon(true);
         retryThread.start();
     }
 
-    private static void onToggleKeyPressed() {
-        guiVisible = !guiVisible;
-        String status = guiVisible ? "ON" : "OFF";
-        log("[KeyPoll] Right Shift pressed — GUI toggled: " + status);
-
-        System.setProperty("switchlite.guiOpen", String.valueOf(guiVisible));
-        System.setProperty("switchlite.hudText", lastHudText != null ? lastHudText : "");
-
-        // Dispatch to EventBridge so module-layer keyListeners (ClickGUI) receive it
-        try {
-            Class<?> ebClass = Class.forName("io.switchlite.adapter.common.api.EventBridge");
-            Method onKeyMethod = ebClass.getMethod("onKey", int.class, boolean.class);
-            onKeyMethod.invoke(null, 344, true); // GLFW RIGHT_SHIFT, pressed
-        } catch (ClassNotFoundException e) {
-            // EventBridge not available — adapter:common not loaded
-        } catch (Exception ignored) {}
-
-        if (guiVisible) {
-            sendLocalMessage("Modules: ACTIVE (alive at " + System.currentTimeMillis() + ")", GREEN);
-        } else {
-            sendLocalMessage("Modules: DISABLED", RED);
-        }
-    }
-
     // ═══════════════════════════════════════════
-    //  Wait for player, then send welcome message
+    //  Action bar message — fallback HUD display
     // ═══════════════════════════════════════════
-
-    private static void waitForPlayerThenWelcome() {
-        Thread waitThread = new Thread(() -> {
-            log("[Welcome] Waiting for player to enter world...");
-            try {
-                Class<?> mcClass = Class.forName("net.minecraft.client.Minecraft");
-                int maxWait = 120;
-                for (int i = 0; i < maxWait; i++) {
-                    Object mc = null;
-                    for (String name : MC_GET_MC) {
-                        try {
-                            Method m = mcClass.getMethod(name);
-                            mc = m.invoke(null);
-                            if (mc != null) break;
-                        } catch (Exception ignored) {}
-                    }
-                    if (mc != null) {
-                        for (String name : MC_THE_PLAYER) {
-                            try {
-                                java.lang.reflect.Field f = mcClass.getField(name);
-                                Object player = f.get(mc);
-                                if (player != null) {
-                                    log("[Welcome] Player detected! Sending welcome messages.");
-                                    sendLocalMessage("Agent injected successfully!", GREEN);
-                                    sendLocalMessage("Press Right Shift to toggle module status", GRAY);
-                                    return;
-                                }
-                            } catch (Exception ignored) {}
-                        }
-                    }
-                    Thread.sleep(500);
-                }
-                log("[Welcome] Timeout (60s) — player never joined. Right Shift still works.");
-            } catch (Exception e) {
-                log("[Welcome] Error: " + e.getMessage());
-            }
-        }, "SwitchLite-WelcomeWait");
-        waitThread.setDaemon(true);
-        waitThread.start();
-    }
-
-    // ═══════════════════════════════════════════
-    //  Chat message — LOCAL only via addChatMessage(IChatComponent)
-    // ═══════════════════════════════════════════
-
-    // Forge 1.8.9 SRG names
-    private static final String[] MC_GET_MC      = {"getMinecraft", "func_71410_x"};
-    private static final String[] MC_THE_PLAYER   = {"thePlayer", "field_71439_g"};
-
-    // Color codes
-    private static final char COLOR_CHAR = '\u00a7';
-    private static final String GOLD   = COLOR_CHAR + "6";
-    private static final String GREEN  = COLOR_CHAR + "a";
-    private static final String RED    = COLOR_CHAR + "c";
-    private static final String GRAY   = COLOR_CHAR + "7";
-    private static final String WHITE  = COLOR_CHAR + "f";
-    private static final String BOLD   = COLOR_CHAR + "l";
-    private static final String RESET  = COLOR_CHAR + "r";
 
     private static String mcGetInstance;
-    private static String mcPlayerField;
 
     /**
-     * Send a LOCAL chat message (client-side only).
-     * Uses GuiIngame.getChatGUI().printChatMessage(IChatComponent).
+     * Send a message to the action bar (client-side only).
+     * Used as a HUD text fallback when GL overlay is not available.
      */
-    private static void sendLocalMessage(String text, String color) {
+    private static void sendActionBarMessage(String text) {
         try {
             Class<?> mcClass = Class.forName("net.minecraft.client.Minecraft");
             Class<?> ichatCompClass = Class.forName("net.minecraft.util.IChatComponent");
@@ -523,91 +429,6 @@ public class Agent {
                         if (mc != null) { mcGetInstance = name; break; }
                     } catch (Exception ignored) {}
                 }
-            }
-            if (mc == null) return;
-
-            Object player = null;
-            if (mcPlayerField != null) {
-                try {
-                    player = mcClass.getField(mcPlayerField).get(mc);
-                } catch (Exception e) { mcPlayerField = null; }
-            }
-            if (player == null) {
-                for (String name : MC_THE_PLAYER) {
-                    try {
-                        java.lang.reflect.Field f = mcClass.getField(name);
-                        player = f.get(mc);
-                        if (player != null) { mcPlayerField = name; break; }
-                    } catch (Exception ignored) {}
-                }
-            }
-            if (player == null) return;
-
-            String styledText = color + BOLD + "SwitchLite> " + RESET + color + text;
-            Object chatComp = chatCompClass.getConstructor(String.class).newInstance(styledText);
-
-            boolean sent = false;
-            String[] mcIngameGuiFields = {"ingameGUI", "field_71438_f"};
-            for (String fieldName : mcIngameGuiFields) {
-                try {
-                    java.lang.reflect.Field f = mcClass.getField(fieldName);
-                    Object ingameGUI = f.get(mc);
-                    if (ingameGUI == null) continue;
-                    String[] getChatGuiNames = {"getChatGUI", "func_146244_j"};
-                    Object chatGui = null;
-                    for (String mname : getChatGuiNames) {
-                        try {
-                            chatGui = ingameGUI.getClass().getMethod(mname).invoke(ingameGUI);
-                            if (chatGui != null) break;
-                        } catch (Exception ignored) {}
-                    }
-                    if (chatGui == null) continue;
-                    String[] printMsgNames = {"printChatMessage", "func_146227_a",
-                                              "printChatMessageWithOptionalDelete", "func_146237_a"};
-                    for (String mname : printMsgNames) {
-                        try {
-                            Method m = chatGui.getClass().getMethod(mname, ichatCompClass);
-                            m.invoke(chatGui, chatComp);
-                            sent = true;
-                            break;
-                        } catch (Exception ignored) {}
-                    }
-                    if (sent) return;
-                } catch (Exception ignored) {}
-            }
-
-            // Fallback: walk inheritance chain for addChatMessage
-            Class<?> clazz = player.getClass();
-            while (clazz != null && clazz != Object.class) {
-                for (Method m : clazz.getDeclaredMethods()) {
-                    if (m.getName().equals("addChatMessage") || m.getName().equals("func_146235_e")) {
-                        try {
-                            m.setAccessible(true);
-                            m.invoke(player, chatComp);
-                            return;
-                        } catch (Exception ignored) {}
-                    }
-                }
-                clazz = clazz.getSuperclass();
-            }
-        } catch (Exception ignored) {}
-    }
-
-    private static void sendLocalMessage(String text) {
-        sendLocalMessage(text, GOLD);
-    }
-
-    private static void sendActionBarMessage(String text) {
-        try {
-            Class<?> mcClass = Class.forName("net.minecraft.client.Minecraft");
-            Class<?> ichatCompClass = Class.forName("net.minecraft.util.IChatComponent");
-            Class<?> chatCompClass = Class.forName("net.minecraft.util.ChatComponentText");
-
-            Object mc = null;
-            if (mcGetInstance != null) {
-                try {
-                    mc = mcClass.getMethod(mcGetInstance).invoke(null);
-                } catch (Exception e) { mcGetInstance = null; }
             }
             if (mc == null) return;
 
@@ -631,51 +452,6 @@ public class Agent {
                 } catch (Exception ignored) {}
             }
         } catch (Exception ignored) {}
-    }
-
-    // ═══════════════════════════════════════════
-    //  Original init (Instrumentation path)
-    // ═══════════════════════════════════════════
-
-    private static void init(Instrumentation inst) {
-        instrumentation = inst;
-
-        String platform = "Unknown";
-        String version = "Unknown";
-        String configPath = detectConfigPath();
-
-        if (configPath != null) {
-            Properties props = new Properties();
-            try (FileInputStream fis = new FileInputStream(configPath)) {
-                props.load(fis);
-                platform = props.getProperty("switchlite.platform", "Unknown");
-                version = props.getProperty("switchlite.version", "Unknown");
-                log("[Agent] Config loaded from: " + configPath);
-            } catch (IOException e) {
-                log("[Agent] Failed to read config: " + e.getMessage());
-            }
-        } else {
-            log("[Agent] Config file not found, using defaults");
-        }
-
-        log("[Agent] Platform: " + platform);
-        log("[Agent] Version: " + version);
-
-        String mappingsDir = detectMappingsDir();
-
-        try {
-            MappingLoader.loadMappings(platform, version, mappingsDir);
-        } catch (Exception e) {
-            log("[Agent] Failed to load mappings: " + e.getMessage());
-            e.printStackTrace();
-            return;
-        }
-
-        inst.addTransformer(new Transformer());
-        log("[Agent] Transformer registered");
-
-        MappingContext.initialize();
-        log("[SwitchLite Agent] Ready");
     }
 
     // ═══════════════════════════════════════════

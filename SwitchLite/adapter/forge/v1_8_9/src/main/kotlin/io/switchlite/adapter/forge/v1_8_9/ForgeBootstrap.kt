@@ -154,15 +154,10 @@ object ForgeBootstrap {
             } catch (_: Exception) {}
 
             try {
-                val foodStats = MappingContext.getFieldValue(player, "forge:mc_thePlayer")
-                    ?.let { /* FoodStats is a sub-object, access via player's field chain */ null }
-                // foodStats is accessed via player.foodStats in MC — use direct field
-                val fsField = player.javaClass.getDeclaredField("foodStats")
-                fsField.isAccessible = true
-                val fs = fsField.get(player)
-                val flField = fs.javaClass.getDeclaredField("foodLevel")
-                flField.isAccessible = true
-                EventBridge.foodLevel = flField.getInt(fs)
+                val foodStats = MappingContext.getFieldValue(player, "forge:player_foodStats")
+                if (foodStats != null) {
+                    EventBridge.foodLevel = MappingContext.getFieldValue(foodStats, "forge:foodStats_foodLevel") as? Int ?: 20
+                }
             } catch (_: Exception) {}
 
             // WASD key states

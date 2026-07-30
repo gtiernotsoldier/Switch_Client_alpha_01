@@ -56,7 +56,22 @@ public class Agent {
 
     public static void agentmain(String agentArgs, Instrumentation inst) {
         initLogFile();
-        log("[SwitchLite Agent] Attached to running JVM");
+        log("[SwitchLite Agent] Attached to running JVM (args=" + agentArgs + ")");
+        instrumentation = inst;
+
+        // If called via attach API for retransform
+        if ("retransform-display".equals(agentArgs)) {
+            try {
+                Class<?> displayClass = Class.forName("org.lwjgl.opengl.Display");
+                inst.addTransformer(new Transformer(), true);
+                inst.retransformClasses(displayClass);
+                log("[Agent] Display.update() hooked via attach + retransform");
+            } catch (Exception e) {
+                log("[Agent] Retransform failed: " + e.getMessage());
+            }
+            return;
+        }
+
         init(inst);
     }
 
@@ -147,11 +162,16 @@ public class Agent {
                 // Disable old EventBridge.onTick(null,null) dispatch — ForgeBootstrap.tick() handles it now
                 // The HUD thread still reads hudText for action bar fallback
             } catch (ClassNotFoundException e) {
-                log("[Agent] ForgeBootstrap not in classpath — HUD via Display.update() hook (Transformer)");
+                log("[Agent] ForgeBootstrap not in classpath — HUD via Display.update() hook");
             } catch (Exception e) {
                 log("[Agent] ForgeBootstrap init failed: " + e.getClass().getSimpleName() + ": " + e.getMessage());
             }
         }
+
+        // ========== Hook Display.update() for HUD rendering ==========
+        // bootstrap() has no Instrumentation, so we use Javassist directly
+        // to redefine the already-loaded Display class.
+        hookDisplayUpdate();
 
         // Start Right Shift key polling thread for bootstrap verification
         startKeyPollThread();
@@ -165,6 +185,180 @@ public class Agent {
         // (bootstrap completes in ~400ms, but player may not be loaded yet)
         waitForPlayerThenWelcome();
         log("[SwitchLite Agent] Ready — Right Shift key listener active");
+    }
+
+    /**
+     * Direct Javassist redefine of Display.update() — no Instrumentation needed.
+     *
+     * Since bootstrap() is called via JNI (not premain/agentmain), we don't have
+     * an Instrumentation instance. Display is already loaded, so the normal
+     * ClassFileTransformer won't fire. We try three strategies:
+     *   1. Instrumentation.retransformClasses (if inst available)
+     *   2. com.sun.tools.attach to re-attach and get Instrumentation
+     *   3. Direct Javassist patch + ClassLoader.defineClass via reflection
+     */
+    private static void hookDisplayUpdate() {
+        try {
+            Class<?> displayClass = Class.forName("org.lwjgl.opengl.Display");
+            ClassLoader cl = displayClass.getClassLoader();
+            log("[Hook] Display class found, classloader=" + (cl != null ? cl.getClass().getName() : "bootstrap"));
+
+            // Strategy 1: If we somehow have Instrumentation, use retransform
+            if (instrumentation != null && instrumentation.isModifiableClass(displayClass)) {
+                try {
+                    instrumentation.addTransformer(new Transformer(), true);
+                    instrumentation.retransformClasses(displayClass);
+                    log("[Hook] Display.update() hooked via Instrumentation.retransformClasses");
+                    return;
+                } catch (Exception e) {
+                    log("[Hook] Retransform failed: " + e.getMessage() + " — trying direct redefine");
+                }
+            }
+
+            // Strategy 2: Use com.sun.tools.attach to get Instrumentation for this JVM
+            try {
+                // On JDK 8, tools.jar (containing attach API) is not on classpath by default.
+                // Add it dynamically.
+                ensureToolsJar();
+
+                String pid = getProcessPid();
+                if (pid != null) {
+                    log("[Hook] Trying attach API for PID " + pid + "...");
+                    Class<?> vmClass = Class.forName("com.sun.tools.attach.VirtualMachine");
+                    java.lang.reflect.Method attachMethod = vmClass.getMethod("attach", String.class);
+                    Object vm = attachMethod.invoke(null, pid);
+
+                    String agentJarPath = System.getProperty("java.io.tmpdir") + "\\switchlite-agent.jar";
+                    java.io.File testJar = new java.io.File(agentJarPath);
+                    if (!testJar.exists()) {
+                        agentJarPath = System.getProperty("java.io.tmpdir") + "/switchlite-agent.jar";
+                        testJar = new java.io.File(agentJarPath);
+                    }
+                    if (testJar.exists()) {
+                        java.lang.reflect.Method loadAgentMethod = vmClass.getMethod("loadAgent", String.class, String.class);
+                        loadAgentMethod.invoke(vm, agentJarPath, "retransform-display");
+                        log("[Hook] Agent re-attached via attach API — agentmain will handle hook");
+                        java.lang.reflect.Method detachMethod = vmClass.getMethod("detach");
+                        detachMethod.invoke(vm);
+                        return;
+                    } else {
+                        log("[Hook] agent.jar not found at " + agentJarPath);
+                    }
+                }
+            } catch (Exception e) {
+                log("[Hook] Attach API failed: " + e.getClass().getSimpleName() + ": " + e.getMessage());
+            }
+
+            // Strategy 3: Direct Javassist patch + ClassLoader redefine
+            try {
+                log("[Hook] Attempting direct Javassist redefine...");
+                javassist.ClassPool pool = javassist.ClassPool.getDefault();
+                try {
+                    pool.insertClassPath(new javassist.LoaderClassPath(Agent.class.getClassLoader()));
+                } catch (Exception ignored) {}
+
+                String classFile = "org/lwjgl/opengl/Display.class";
+                java.io.InputStream classStream = (cl != null)
+                    ? cl.getResourceAsStream(classFile)
+                    : ClassLoader.getSystemResourceAsStream(classFile);
+                if (classStream == null) {
+                    log("[Hook] Cannot find Display.class resource");
+                    return;
+                }
+                byte[] originalBytes = readStream(classStream);
+                classStream.close();
+                log("[Hook] Display.class bytes read: " + originalBytes.length + " bytes");
+
+                javassist.CtClass ctClass = pool.makeClass(new java.io.ByteArrayInputStream(originalBytes));
+                javassist.CtMethod updateMethod = ctClass.getDeclaredMethod("update");
+                updateMethod.insertBefore("io.switchlite.agent.RenderHook.onFrame();");
+                byte[] patchedBytes = ctClass.toBytecode();
+                ctClass.defrost();
+                log("[Hook] Javassist patch applied, patched size: " + patchedBytes.length + " bytes");
+
+                redefineClass(cl != null ? cl : ClassLoader.getSystemClassLoader(),
+                              displayClass, patchedBytes);
+                log("[Hook] Display.update() hooked via direct redefine!");
+
+            } catch (Exception e) {
+                log("[Hook] Direct redefine failed: " + e.getClass().getSimpleName() + ": " + e.getMessage());
+            }
+
+        } catch (ClassNotFoundException e) {
+            log("[Hook] Display class not found — LWJGL not loaded yet?");
+        } catch (Throwable t) {
+            log("[Hook] Failed: " + t.getClass().getSimpleName() + ": " + t.getMessage());
+        }
+    }
+
+    private static void redefineClass(ClassLoader loader, Class<?> existingClass, byte[] newBytes) throws Exception {
+        java.lang.reflect.Method defineClass = ClassLoader.class.getDeclaredMethod(
+            "defineClass", String.class, byte[].class, int.class, int.class);
+        defineClass.setAccessible(true);
+        defineClass.invoke(loader, null, newBytes, 0, newBytes.length);
+    }
+
+    private static byte[] readStream(java.io.InputStream is) throws java.io.IOException {
+        java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
+        byte[] buf = new byte[4096];
+        int n;
+        while ((n = is.read(buf)) != -1) baos.write(buf, 0, n);
+        return baos.toByteArray();
+    }
+
+    private static String getProcessPid() {
+        try {
+            Class<?> rtMxBeanClass = Class.forName("java.lang.management.RuntimeMXBean");
+            java.lang.reflect.Method getNameMethod = rtMxBeanClass.getMethod("getName");
+            Object rtMxBean = java.lang.management.ManagementFactory.getRuntimeMXBean();
+            String name = (String) getNameMethod.invoke(rtMxBean);
+            int at = name.indexOf('@');
+            return at > 0 ? name.substring(0, at) : null;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /**
+     * On JDK 8, com.sun.tools.attach lives in tools.jar which is not on
+     * the default classpath. This method adds it dynamically so we can
+     * use VirtualMachine.attach() to obtain an Instrumentation instance.
+     */
+    private static volatile boolean toolsJarLoaded = false;
+
+    private static void ensureToolsJar() {
+        if (toolsJarLoaded) return;
+        // Check if already available
+        try {
+            Class.forName("com.sun.tools.attach.VirtualMachine");
+            toolsJarLoaded = true;
+            return;
+        } catch (ClassNotFoundException ignored) {}
+
+        String javaHome = System.getProperty("java.home");
+        // java.home points to JRE dir; tools.jar is in the parent (JDK dir)
+        java.io.File toolsJar = new java.io.File(javaHome, "../lib/tools.jar");
+        if (!toolsJar.exists()) {
+            // Some installs have it directly in java.home/lib
+            toolsJar = new java.io.File(javaHome, "lib/tools.jar");
+        }
+        if (toolsJar.exists()) {
+            try {
+                java.net.URL jarUrl = toolsJar.toURI().toURL();
+                java.lang.reflect.Method addUrl = java.net.URLClassLoader.class
+                    .getDeclaredMethod("addURL", java.net.URL.class);
+                addUrl.setAccessible(true);
+                // Use the system classloader (or ext classloader) to load it
+                ClassLoader sysCl = ClassLoader.getSystemClassLoader();
+                addUrl.invoke(sysCl, jarUrl);
+                toolsJarLoaded = true;
+                log("[Hook] tools.jar added to classpath: " + toolsJar.getAbsolutePath());
+            } catch (Exception e) {
+                log("[Hook] Failed to add tools.jar: " + e.getMessage());
+            }
+        } else {
+            log("[Hook] tools.jar not found (searched " + javaHome + ")");
+        }
     }
 
     // ═══════════════════════════════════════════

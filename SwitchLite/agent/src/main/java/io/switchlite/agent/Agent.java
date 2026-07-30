@@ -62,6 +62,21 @@ public class Agent {
         // If called via attach API for retransform
         if ("retransform-display".equals(agentArgs)) {
             try {
+                // Critical: add agent.jar to bootstrap classloader search path.
+                // Display is loaded by bootstrap CL. After retransform, the new
+                // bytecode references RenderHook — bootstrap CL must be able to find it.
+                String agentJar = System.getProperty("java.io.tmpdir") + "/switchlite-agent.jar";
+                java.io.File jarFile = new java.io.File(agentJar);
+                if (!jarFile.exists()) {
+                    jarFile = new java.io.File(agentJar.replace("/", "\\"));
+                }
+                if (jarFile.exists()) {
+                    inst.appendToBootstrapClassLoaderSearch(new java.util.jar.JarFile(jarFile));
+                    log("[Agent] Agent jar appended to bootstrap classloader: " + jarFile.getAbsolutePath());
+                } else {
+                    log("[Agent] WARNING: agent.jar not found for bootstrap CL append");
+                }
+
                 Class<?> displayClass = Class.forName("org.lwjgl.opengl.Display");
                 inst.addTransformer(new Transformer(), true);
                 inst.retransformClasses(displayClass);
@@ -192,16 +207,14 @@ public class Agent {
      *
      * Since bootstrap() is called via JNI (not premain/agentmain), we don't have
      * an Instrumentation instance. Display is already loaded, so the normal
-     * ClassFileTransformer won't fire. We try three strategies:
+     * ClassFileTransformer won't fire. Strategy:
      *   1. Instrumentation.retransformClasses (if inst available)
-     *   2. com.sun.tools.attach to re-attach and get Instrumentation
-     *   3. Direct Javassist patch + ClassLoader.defineClass via reflection
+     *   2. com.sun.tools.attach to self-attach, then loadAgent to get Instrumentation
      */
     private static void hookDisplayUpdate() {
         try {
             Class<?> displayClass = Class.forName("org.lwjgl.opengl.Display");
-            ClassLoader cl = displayClass.getClassLoader();
-            log("[Hook] Display class found, classloader=" + (cl != null ? cl.getClass().getName() : "bootstrap"));
+            log("[Hook] Display class found");
 
             // Strategy 1: If we somehow have Instrumentation, use retransform
             if (instrumentation != null && instrumentation.isModifiableClass(displayClass)) {
@@ -249,61 +262,11 @@ public class Agent {
                 log("[Hook] Attach API failed: " + e.getClass().getSimpleName() + ": " + e.getMessage());
             }
 
-            // Strategy 3: Direct Javassist patch + ClassLoader redefine
-            try {
-                log("[Hook] Attempting direct Javassist redefine...");
-                javassist.ClassPool pool = javassist.ClassPool.getDefault();
-                try {
-                    pool.insertClassPath(new javassist.LoaderClassPath(Agent.class.getClassLoader()));
-                } catch (Exception ignored) {}
-
-                String classFile = "org/lwjgl/opengl/Display.class";
-                java.io.InputStream classStream = (cl != null)
-                    ? cl.getResourceAsStream(classFile)
-                    : ClassLoader.getSystemResourceAsStream(classFile);
-                if (classStream == null) {
-                    log("[Hook] Cannot find Display.class resource");
-                    return;
-                }
-                byte[] originalBytes = readStream(classStream);
-                classStream.close();
-                log("[Hook] Display.class bytes read: " + originalBytes.length + " bytes");
-
-                javassist.CtClass ctClass = pool.makeClass(new java.io.ByteArrayInputStream(originalBytes));
-                javassist.CtMethod updateMethod = ctClass.getDeclaredMethod("update");
-                updateMethod.insertBefore("io.switchlite.agent.RenderHook.onFrame();");
-                byte[] patchedBytes = ctClass.toBytecode();
-                ctClass.defrost();
-                log("[Hook] Javassist patch applied, patched size: " + patchedBytes.length + " bytes");
-
-                redefineClass(cl != null ? cl : ClassLoader.getSystemClassLoader(),
-                              displayClass, patchedBytes);
-                log("[Hook] Display.update() hooked via direct redefine!");
-
-            } catch (Exception e) {
-                log("[Hook] Direct redefine failed: " + e.getClass().getSimpleName() + ": " + e.getMessage());
-            }
-
         } catch (ClassNotFoundException e) {
             log("[Hook] Display class not found — LWJGL not loaded yet?");
         } catch (Throwable t) {
             log("[Hook] Failed: " + t.getClass().getSimpleName() + ": " + t.getMessage());
         }
-    }
-
-    private static void redefineClass(ClassLoader loader, Class<?> existingClass, byte[] newBytes) throws Exception {
-        java.lang.reflect.Method defineClass = ClassLoader.class.getDeclaredMethod(
-            "defineClass", String.class, byte[].class, int.class, int.class);
-        defineClass.setAccessible(true);
-        defineClass.invoke(loader, null, newBytes, 0, newBytes.length);
-    }
-
-    private static byte[] readStream(java.io.InputStream is) throws java.io.IOException {
-        java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
-        byte[] buf = new byte[4096];
-        int n;
-        while ((n = is.read(buf)) != -1) baos.write(buf, 0, n);
-        return baos.toByteArray();
     }
 
     private static String getProcessPid() {
@@ -395,9 +358,9 @@ public class Agent {
                         String hudText = (String) getHudText.invoke(null);
                         boolean guiOpen = (Boolean) isGuiOpen.invoke(null);
 
-                        // Push state to RenderHook (Display.update callback)
-                        RenderHook.guiVisible = guiOpen;
-                        RenderHook.hudText = hudText != null ? hudText : "";
+                        // Push state via System.getProperties (cross-classloader safe)
+                        System.setProperty("switchlite.guiOpen", String.valueOf(guiOpen));
+                        System.setProperty("switchlite.hudText", hudText != null ? hudText : "");
 
                         if (!guiOpen && hudText != null && !hudText.isEmpty() && !hudText.equals(lastHudText)) {
                             lastHudText = hudText;
@@ -585,9 +548,9 @@ public class Agent {
         String status = guiVisible ? "ON" : "OFF";
         log("[KeyPoll] Right Shift pressed — GUI toggled: " + status);
 
-        // Immediately update RenderHook state (no 50ms delay)
-        RenderHook.guiVisible = guiVisible;
-        RenderHook.hudText = lastHudText != null ? lastHudText : "";
+        // Immediately update HUD state via System.getProperties (cross-classloader safe)
+        System.setProperty("switchlite.guiOpen", String.valueOf(guiVisible));
+        System.setProperty("switchlite.hudText", lastHudText != null ? lastHudText : "");
 
         // Dispatch to EventBridge so module-layer keyListeners (ClickGUI) receive it.
         // GLFW RIGHT_SHIFT = 344, pressed = true (this is a key-down edge).

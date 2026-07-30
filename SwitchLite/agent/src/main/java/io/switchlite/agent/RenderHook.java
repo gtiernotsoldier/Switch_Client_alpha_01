@@ -16,9 +16,10 @@ import java.lang.reflect.*;
  */
 public class RenderHook {
 
-    // ── State (written by Agent from HudTick thread, read by MC render thread) ──
-    public static volatile boolean guiVisible = false;
-    public static volatile String hudText = "";
+    // ── State is read from System.getProperties() to avoid cross-classloader issues.
+    // bootstrap CL (hooked Display) and game CL (HudTick) see different class instances.
+    // System.getProperties() is shared across all classloaders.
+    // Keys: switchlite.guiOpen, switchlite.hudText
 
     // ── GL constants ──
     private static final int GL_ALL_ATTRIB_BITS     = 0xFFFFFFFF;
@@ -194,6 +195,10 @@ public class RenderHook {
             guiH = rawH;
         }
 
+        // ── Read HUD state from System.getProperties (cross-classloader safe) ──
+        boolean guiVisible = "true".equals(System.getProperty("switchlite.guiOpen", "false"));
+        String ht = System.getProperty("switchlite.hudText", "");
+
         // ══════════════════════════════════════
         //  GL State: Save
         // ══════════════════════════════════════
@@ -232,8 +237,7 @@ public class RenderHook {
         // -- Lines when GUI open --
         float totalH = headerH;
         if (guiVisible) totalH += 24.0f; // 2 extra lines
-        String ht = hudText;
-        if (ht != null && !ht.isEmpty()) totalH += 16.0f;
+        if (!ht.isEmpty()) totalH += 16.0f;
 
         // Background rect
         drawRect(x - 2, y - 2, 200, totalH + 4, 0.0f, 0.0f, 0.0f, 0.5f);
@@ -249,7 +253,7 @@ public class RenderHook {
             y += 12;
         }
 
-        if (ht != null && !ht.isEmpty()) {
+        if (!ht.isEmpty()) {
             y += 4;
             if (hasFont) drawText(fr, ht, x, y, 0xFFFFFF);
         }

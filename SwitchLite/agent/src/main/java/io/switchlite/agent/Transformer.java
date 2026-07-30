@@ -1,49 +1,66 @@
 package io.switchlite.agent;
 
+import java.io.ByteArrayInputStream;
 import java.lang.instrument.ClassFileTransformer;
 import java.security.ProtectionDomain;
 
+import javassist.ClassPool;
+import javassist.CtClass;
+import javassist.CtMethod;
+
 /**
- * Class file transformer for bytecode manipulation
- * Uses Javassist or ASM to modify classes at load time
+ * Class file transformer — hooks Display.update() for HUD rendering.
+ *
+ * Architecture: Single hook point.
+ *   org.lwjgl.opengl.Display.update()
+ *     -> insertBefore: RenderHook.onFrame()
+ *     -> original update() (swap buffers)
+ *
+ * This runs every frame BEFORE the buffer swap.
+ * GL context is current, MC has finished its render.
+ * RenderHook.onFrame() handles all GL state save/restore.
  */
 public class Transformer implements ClassFileTransformer {
-    
+
+    private static boolean hooked = false;
+
     @Override
-    public byte[] transform(ClassLoader loader, String className, 
-                           Class<?> classBeingRedefined, ProtectionDomain protectionDomain, 
+    public byte[] transform(ClassLoader loader, String className,
+                           Class<?> classBeingRedefined, ProtectionDomain protectionDomain,
                            byte[] classfileBuffer) {
-        // Skip SwitchLite internal classes
-        if (className.startsWith("io/switchlite/")) {
+        // Only hook LWJGL Display class
+        if (!"org/lwjgl/opengl/Display".equals(className)) {
             return null;
         }
-        
-        // TODO: Implement bytecode transformation logic
-        // Examples:
-        // - Inject hooks into Minecraft classes for event system
-        // - Modify class constructors for MappingContext integration
-        // - Add debugging/tracing capabilities
-        
-        // For now, return null (no transformation)
+        if (hooked) return null; // already transformed
+
+        try {
+            ClassPool pool = ClassPool.getDefault();
+            CtClass ctClass = pool.makeClass(new ByteArrayInputStream(classfileBuffer));
+
+            // Find the update() method
+            CtMethod updateMethod = ctClass.getDeclaredMethod("update");
+
+            // Insert our render callback at the very beginning
+            // Before: Display processes events + swaps buffers
+            // After:  RenderHook.onFrame() -> Display processes events + swaps buffers
+            updateMethod.insertBefore(
+                "io.switchlite.agent.RenderHook.onFrame();"
+            );
+
+            byte[] result = ctClass.toBytecode();
+            ctClass.defrost(); // release for potential re-transformation
+            hooked = true;
+
+            Agent.log("[Transformer] Hooked Display.update() for HUD rendering");
+            return result;
+        } catch (javassist.NotFoundException e) {
+            Agent.log("[Transformer] Display.update() not found: " + e.getMessage());
+        } catch (javassist.CannotCompileException e) {
+            Agent.log("[Transformer] Compile error: " + e.getMessage());
+        } catch (Exception e) {
+            Agent.log("[Transformer] Failed: " + e.getClass().getSimpleName() + ": " + e.getMessage());
+        }
         return null;
-    }
-    
-    /**
-     * Check if a class should be transformed
-     */
-    private boolean shouldTransform(String className) {
-        // List of target classes for transformation
-        // e.g., net.minecraft.client.Minecraft
-        // e.g., net.minecraft.entity.EntityLivingBase
-        return false; // Placeholder
-    }
-    
-    /**
-     * Apply specific transformations using Javassist
-     */
-    private byte[] transformWithJavassist(byte[] classfileBuffer, String className) {
-        // TODO: Implement Javassist-based transformation
-        // This would modify bytecode to inject our hooks
-        return classfileBuffer; // Placeholder
     }
 }

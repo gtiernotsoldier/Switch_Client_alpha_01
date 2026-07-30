@@ -19,8 +19,10 @@ repositories {
 dependencies {
     implementation(project(":core"))
     implementation(project(":adapter:common"))
-    // Forge adapter (requires ForgeGradle — not available in CI):
-    // implementation(project(":adapter:forge:v1_8_9"))
+
+    // Kotlin stdlib — agent is a Java module but its deps are Kotlin.
+    // Must be explicit because the java plugin doesn't resolve Kotlin transitive deps.
+    implementation("org.jetbrains.kotlin:kotlin-stdlib:1.9.10")
 
     // Javassist for bytecode manipulation
     implementation("org.javassist:javassist:3.29.2-GA")

@@ -19,16 +19,16 @@ import java.util.Properties;
  *   - Start tick thread → ForgeBootstrap.tick()
  *   - Start key poll thread → ForgeBootstrap.onKey()
  *   - Ask Transformer to install the Display.update() hook
- *   - Fallback: addScheduledTask → ForgeBootstrap.render() if Transformer fails
  *
  * What Agent DOES NOT do (not its job):
- *   - GL rendering → ForgeBootstrap.render()
- *   - Bytecode injection → Transformer + RenderHook
+ *   - GL rendering → ForgeBootstrap.render() via RenderBridge
+ *   - Bytecode injection → Transformer + RenderBridge
  *   - Getting Instrumentation → Transformer.install()
  *   - Self-attach → Transformer.install()
- *   - Drawing overlays → ForgeBootstrap.render()
+ *   - Drawing overlays → ForgeBootstrap.render() via OverlayRenderer
  *   - Chat messages → ForgeBootstrap / modules
  *   - GUI state → EventBridge.isGuiOpen / ClickGUI
+ *   - Fallback rendering → Transformer fails = Agent reports error, no fallback
  */
 public class Agent {
 
@@ -177,7 +177,7 @@ public class Agent {
                 initMethod.invoke(fbInstance);
                 log("[Agent] ForgeBootstrap.init() complete (pure reflection mode)");
 
-                // Cache method refs for tick/render/onKey dispatch
+                // Cache method refs for tick/onKey dispatch
                 cacheForgeBootstrapMethods(bootstrapClass, fbInstance);
             } catch (ClassNotFoundException e) {
                 log("[Agent] ForgeBootstrap not in classpath — HUD via Display.update() hook");
@@ -189,27 +189,25 @@ public class Agent {
         // 5. Install Transformer hook (Javassist's job, not Agent's)
         boolean hookInstalled = Transformer.install(inst);
         if (hookInstalled) {
-            log("[Agent] Render path: Transformer + RenderHook → ForgeBootstrap.render() (every frame, stealthy)");
+            log("[Agent] Render path: Transformer + RenderBridge → ForgeBootstrap.render() (every frame, stealthy)");
         } else {
-            log("[Agent] Render path: addScheduledTask → ForgeBootstrap.render() (20Hz fallback, less stealthy)");
+            log("[Agent] ERROR: Transformer.install() failed — no rendering will occur. Agent is pure dispatch, no fallback.");
         }
 
-        // 6. Start threads
+        // 6. Start threads (dispatch only — no rendering)
         startKeyPollThread();
-        startHudTickThread();
+        startTickThread();
 
-        log("[SwitchLite Agent] Ready — key listener active");
+        log("[SwitchLite Agent] Ready — tick + key listener active");
     }
 
     // ═══════════════════════════════════════════
-    //  ForgeBootstrap method cache
+    //  ForgeBootstrap method cache (dispatch only)
     // ═══════════════════════════════════════════
 
-    // Cached reflection for ForgeBootstrap.tick()/onKey()/render() calls
     private static Object forgeBootstrapInstance = null;
     private static Method forgeBootstrapTick = null;
     private static Method forgeBootstrapOnKey = null;
-    private static Method forgeBootstrapRender = null;
     private static Method forgeBootstrapOnDisconnect = null;
     private static boolean forgeBootstrapAvailable = false;
 
@@ -218,122 +216,47 @@ public class Agent {
             forgeBootstrapInstance = fbInstance;
             forgeBootstrapTick = fbClass.getMethod("tick");
             forgeBootstrapOnKey = fbClass.getMethod("onKey", int.class, boolean.class);
-            forgeBootstrapRender = fbClass.getMethod("render");
             forgeBootstrapOnDisconnect = fbClass.getMethod("onDisconnect");
             forgeBootstrapAvailable = true;
-            log("[Agent] ForgeBootstrap methods cached including render() (pure reflection mode)");
+            log("[Agent] ForgeBootstrap methods cached (tick, onKey, onDisconnect)");
         } catch (Exception e) {
             log("[Agent] ForgeBootstrap method cache failed: " + e.getMessage());
         }
     }
 
     // ═══════════════════════════════════════════
-    //  HUD Tick Thread — tick dispatch + render fallback
+    //  Tick Thread — dispatch only, no rendering
     // ═══════════════════════════════════════════
 
-    private static volatile String lastHudText = "";
-    private static Thread hudTickThread = null;
-
-    // Forge 1.8.9 SRG names
-    private static final String[] MC_GET_MC = {"getMinecraft", "func_71410_x"};
+    private static Thread tickThread = null;
 
     /**
-     * Runs at 20Hz. Dispatches tick events to ForgeBootstrap.tick(),
-     * and if the Transformer hook is NOT installed, uses addScheduledTask
-     * to schedule ForgeBootstrap.render() on the MC main thread.
+     * Runs at 20Hz. Dispatches tick events to ForgeBootstrap.tick().
      *
-     * If Transformer IS installed, RenderHook.onFrame() handles rendering
-     * automatically every frame — no need for this thread to do rendering.
-     */
-    private static void startHudTickThread() {
-        hudTickThread = new Thread(() -> {
-            log("[HudTick] Thread started (20Hz tick + render fallback)");
-            try {
-                Class<?> ebClass = Class.forName("io.switchlite.adapter.common.api.EventBridge");
-                Method getHudText = ebClass.getMethod("getHudTextLine");
-                Method isGuiOpen = ebClass.getMethod("getIsGuiOpen");
-
-                while (running) {
-                    try {
-                        // Dispatch tick to ForgeBootstrap (extracts player state, modules process)
-                        if (forgeBootstrapAvailable && forgeBootstrapTick != null && forgeBootstrapInstance != null) {
-                            forgeBootstrapTick.invoke(forgeBootstrapInstance);
-                        }
-
-                        // Read HUD text for chat-based fallback
-                        String hudText = (String) getHudText.invoke(null);
-                        boolean guiOpen = (Boolean) isGuiOpen.invoke(null);
-
-                        // Push state via System.getProperties (cross-classloader safe, used by RenderHook)
-                        System.setProperty("switchlite.guiOpen", String.valueOf(guiOpen));
-                        System.setProperty("switchlite.hudText", hudText != null ? hudText : "");
-
-                        // Render fallback: if Transformer hook is NOT installed, use addScheduledTask
-                        if (!Transformer.isInstalled()) {
-                            dispatchRenderFallback();
-                        }
-
-                        // Chat-based HUD fallback (action bar) — safety net when GL overlay is not visible
-                        if (!guiOpen && hudText != null && !hudText.isEmpty() && !hudText.equals(lastHudText)) {
-                            lastHudText = hudText;
-                            sendActionBarMessage(hudText);
-                        }
-
-                        if (guiOpen && !lastHudText.contains("[GUI]")) {
-                            lastHudText = "[GUI] " + hudText;
-                            sendActionBarMessage("\u00a7a[SwitchLite GUI Open] \u00a77RShift=close");
-                        }
-                    } catch (Exception ignored) {}
-                    Thread.sleep(50); // 20 Hz
-                }
-            } catch (ClassNotFoundException e) {
-                log("[HudTick] EventBridge not found — HUD disabled");
-            } catch (Exception e) {
-                log("[HudTick] Error: " + e.getMessage());
-            }
-        }, "SwitchLite-HudTick");
-        hudTickThread.setDaemon(true);
-        hudTickThread.start();
-    }
-
-    /**
-     * Fallback render dispatch: schedule ForgeBootstrap.render() on the MC main thread
-     * via addScheduledTask. This is the ONLY thread that holds the OpenGL context.
+     * This thread is PURE DISPATCH — it does NOT:
+     * - Read HUD text or GUI state
+     * - Write System.setProperty for rendering
+     * - Call render() or dispatchRenderFallback()
+     * - Send action bar messages
      *
-     * This path is only used when Transformer.install() failed (no Instrumentation).
-     * It's less stealthy than the bytecode injection path, but it works.
+     * All rendering is handled by the Javassist-injected RenderBridge → ForgeBootstrap.render() pipeline.
      */
-    private static void dispatchRenderFallback() {
-        try {
-            if (!forgeBootstrapAvailable || forgeBootstrapRender == null || forgeBootstrapInstance == null) return;
-
-            Class<?> mcClass = Class.forName("net.minecraft.client.Minecraft");
-            java.lang.reflect.Method mcFactory = null;
-            for (String name : MC_GET_MC) {
-                try { mcFactory = mcClass.getMethod(name); break; }
-                catch (NoSuchMethodException ignored) {}
-            }
-            if (mcFactory == null) return;
-
-            Object mc = mcFactory.invoke(null);
-            if (mc == null) return;
-
-            // Schedule ForgeBootstrap.render() on MC main thread (has GL context)
-            java.lang.reflect.Method addTask = null;
-            for (String name : new String[]{"addScheduledTask", "func_152343_a"}) {
-                try { addTask = mcClass.getMethod(name, Runnable.class); break; }
-                catch (NoSuchMethodException ignored) {}
-            }
-            if (addTask == null) return;
-
-            final Object fbInst = forgeBootstrapInstance;
-            final Method fbRender = forgeBootstrapRender;
-            addTask.invoke(mc, (Runnable) () -> {
+    private static void startTickThread() {
+        tickThread = new Thread(() -> {
+            log("[TickThread] Started (20Hz tick dispatch)");
+            while (running) {
                 try {
-                    fbRender.invoke(fbInst);
+                    if (forgeBootstrapAvailable && forgeBootstrapTick != null && forgeBootstrapInstance != null) {
+                        forgeBootstrapTick.invoke(forgeBootstrapInstance);
+                    }
                 } catch (Exception ignored) {}
-            });
-        } catch (Exception ignored) {}
+                try {
+                    Thread.sleep(50); // 20 Hz
+                } catch (InterruptedException ignored) {}
+            }
+        }, "SwitchLite-Tick");
+        tickThread.setDaemon(true);
+        tickThread.start();
     }
 
     // ═══════════════════════════════════════════
@@ -351,9 +274,6 @@ public class Agent {
 
                 while (running) {
                     try {
-                        // Poll all LWJGL2 key events and dispatch to ForgeBootstrap
-                        // All keys (including Right Shift) go through the proper pipeline:
-                        // KeyPollThread → ForgeBootstrap.onKey() → EventBridge.onKey() → ClickGUI
                         boolean nextResult = (Boolean) isNext.invoke(null);
                         if (nextResult) {
                             int lwjglCode = (Integer) getEventKey.invoke(null);
@@ -397,61 +317,6 @@ public class Agent {
         }, "SwitchLite-KeyPollRetry");
         retryThread.setDaemon(true);
         retryThread.start();
-    }
-
-    // ═══════════════════════════════════════════
-    //  Action bar message — fallback HUD display
-    // ═══════════════════════════════════════════
-
-    private static String mcGetInstance;
-
-    /**
-     * Send a message to the action bar (client-side only).
-     * Used as a HUD text fallback when GL overlay is not available.
-     */
-    private static void sendActionBarMessage(String text) {
-        try {
-            Class<?> mcClass = Class.forName("net.minecraft.client.Minecraft");
-            Class<?> ichatCompClass = Class.forName("net.minecraft.util.IChatComponent");
-            Class<?> chatCompClass = Class.forName("net.minecraft.util.ChatComponentText");
-
-            Object mc = null;
-            if (mcGetInstance != null) {
-                try {
-                    mc = mcClass.getMethod(mcGetInstance).invoke(null);
-                } catch (Exception e) { mcGetInstance = null; }
-            }
-            if (mc == null) {
-                for (String name : MC_GET_MC) {
-                    try {
-                        Method m = mcClass.getMethod(name);
-                        mc = m.invoke(null);
-                        if (mc != null) { mcGetInstance = name; break; }
-                    } catch (Exception ignored) {}
-                }
-            }
-            if (mc == null) return;
-
-            Object chatComp = chatCompClass.getConstructor(String.class).newInstance(text);
-
-            String[] ingameGuiFields = {"ingameGUI", "field_71438_f"};
-            for (String fn : ingameGuiFields) {
-                try {
-                    java.lang.reflect.Field f = mcClass.getField(fn);
-                    Object ingameGUI = f.get(mc);
-                    if (ingameGUI == null) continue;
-                    String[] displayNames = {"displayActionBar", "func_146237_a",
-                                              "setOverlayMessage", "func_110326_a"};
-                    for (String mn : displayNames) {
-                        try {
-                            Method m = ingameGUI.getClass().getMethod(mn, ichatCompClass);
-                            m.invoke(ingameGUI, chatComp);
-                            return;
-                        } catch (Exception ignored) {}
-                    }
-                } catch (Exception ignored) {}
-            }
-        } catch (Exception ignored) {}
     }
 
     // ═══════════════════════════════════════════

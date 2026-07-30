@@ -3,7 +3,7 @@ package io.switchlite.agent;
 import java.lang.reflect.Method;
 
 /**
- * Bridge between Javassist-injected Display.update() and ForgeBootstrap.render().
+ * ClassLoader bridge between Javassist-injected Display.update() and ForgeBootstrap.render().
  *
  * Architecture role: This is the Javassist render bridge.
  * - Called every frame from Display.update() BEFORE buffer swap
@@ -11,16 +11,20 @@ import java.lang.reflect.Method;
  * - Delegates ALL rendering to ForgeBootstrap.render() via reflection
  * - Does NOT do any GL drawing itself — that's ForgeBootstrap's job
  *
- * Classloader note: RenderHook is on the bootstrap CL (after appendToBootstrapClassLoaderSearch).
+ * Classloader note: RenderBridge is on the bootstrap CL (after appendToBootstrapClassLoaderSearch).
  * ForgeBootstrap is on the game CL. We use Thread.currentThread().getContextClassLoader()
  * to bridge the classloader gap.
+ *
+ * Why this bridge exists: Javassist injects bytecode into Display.update() which runs in
+ * LWJGL's ClassLoader. ForgeBootstrap lives in the agent's ClassLoader. The injected code
+ * can reference RenderBridge because it's on the bootstrap CL (visible to all).
+ * RenderBridge then uses the context ClassLoader to find and call ForgeBootstrap.
  */
-public class RenderHook {
+public class RenderBridge {
 
     private static volatile boolean bridgeReady = false;
     private static Object forgeBootstrapInstance = null;
     private static Method forgeBootstrapRender = null;
-    private static int initAttempts = 0;
 
     /**
      * Called every frame from Display.update() before buffer swap.
@@ -38,11 +42,6 @@ public class RenderHook {
             }
         } catch (Throwable t) {
             // Silently ignore — don't crash the game
-            // Only log first few failures
-            if (initAttempts < 3) {
-                initAttempts++;
-                Agent.log("[RenderHook] render invoke failed: " + t.getClass().getSimpleName() + ": " + t.getMessage());
-            }
         }
     }
 
@@ -55,7 +54,6 @@ public class RenderHook {
      */
     private static void initBridge() {
         try {
-            // Use context classloader to bridge bootstrap CL → game CL
             ClassLoader gameCL = Thread.currentThread().getContextClassLoader();
             if (gameCL == null) return;
 
@@ -67,15 +65,11 @@ public class RenderHook {
             forgeBootstrapRender = fbClass.getMethod("render");
             bridgeReady = true;
 
-            Agent.log("[RenderHook] Bridge established — ForgeBootstrap.render() will be called every frame");
+            Agent.log("[RenderBridge] Bridge established — ForgeBootstrap.render() will be called every frame");
         } catch (ClassNotFoundException e) {
             // ForgeBootstrap not loaded yet — will retry next frame
-        } catch (NoSuchFieldException e) {
-            Agent.log("[RenderHook] ForgeBootstrap.INSTANCE not found: " + e.getMessage());
-        } catch (NoSuchMethodException e) {
-            Agent.log("[RenderHook] ForgeBootstrap.render() not found: " + e.getMessage());
         } catch (Exception e) {
-            Agent.log("[RenderHook] Bridge init failed: " + e.getClass().getSimpleName() + ": " + e.getMessage());
+            Agent.log("[RenderBridge] Bridge init failed: " + e.getClass().getSimpleName() + ": " + e.getMessage());
         }
     }
 }

@@ -396,27 +396,31 @@ public class Agent {
             Class<?> mcClass = Class.forName("net.minecraft.client.Minecraft");
             if (mcFactory == null) {
                 for (String name : MC_GET_MC) {
-                    try {
-                        mcFactory = mcClass.getMethod(name);
-                        break;
-                    } catch (NoSuchMethodException ignored) {}
+                    try { mcFactory = mcClass.getMethod(name); break; }
+                    catch (NoSuchMethodException ignored) {}
                 }
-                if (mcFactory == null) return;
+                if (mcFactory == null) { secondLog("[Render] No Minecraft factory method"); return; }
             }
             Object mc = mcFactory.invoke(null);
-            if (mc == null) return;
+            if (mc == null) { secondLog("[Render] MC instance null — not loaded"); return; }
 
-            // Minecraft.addScheduledTask(Runnable) / func_152343_a
             java.lang.reflect.Method addTask = null;
             for (String name : new String[]{"addScheduledTask", "func_152343_a"}) {
-                try {
-                    addTask = mcClass.getMethod(name, Runnable.class);
-                    break;
-                } catch (NoSuchMethodException ignored) {}
+                try { addTask = mcClass.getMethod(name, Runnable.class); break; }
+                catch (NoSuchMethodException ignored) {}
             }
-            if (addTask == null) return;
+            if (addTask == null) { secondLog("[Render] addScheduledTask not found"); return; }
 
             addTask.invoke(mc, (Runnable) () -> drawOverlay());
+        } catch (Exception e) {
+            secondLog("[Render] dispatch error: " + e.getClass().getSimpleName() + ": " + e.getMessage());
+        }
+    }
+
+    private static void secondLog(String msg) {
+        try { System.out.println(msg); } catch (Exception ignored) {}
+        try {
+            if (logStream != null) { logStream.println(msg); logStream.flush(); }
         } catch (Exception ignored) {}
     }
 
@@ -431,21 +435,36 @@ public class Agent {
 
             if (hudText.isEmpty() && !guiOpen) return;
 
-            // FontRenderer already verified working in previous logs
             Object fr = getFontRenderer();
             if (fr == null) return;
 
-            // Draw HUD text at top-left
-            if (!hudText.isEmpty()) {
-                fr.getClass().getMethod("drawStringWithShadow", String.class, int.class, int.class, int.class)
-                    .invoke(fr, hudText, 4, 4, 0xFFFFFF);
+            // Scan for draw method — signatures vary (float vs int coords)
+            java.lang.reflect.Method drawMethod = null;
+            for (java.lang.reflect.Method m : fr.getClass().getMethods()) {
+                if (m.getName().startsWith("draw") && m.getParameterCount() == 4) {
+                    Class<?>[] p = m.getParameterTypes();
+                    if (p[0] == String.class && (p[3] == int.class || p[3] == Integer.TYPE)) {
+                        drawMethod = m;
+                        break;
+                    }
+                }
             }
+            if (drawMethod == null) return;
 
-            // Draw GUI toggle indicator
-            String status = guiOpen ? "\u00a7a[GUI OPEN]" : "\u00a77[GUI OFF]";
-            fr.getClass().getMethod("drawStringWithShadow", String.class, int.class, int.class, int.class)
-                .invoke(fr, status, 4, 16, guiOpen ? 0x55FF55 : 0xAAAAAA);
-        } catch (Exception ignored) {}
+            Object[] args4 = new Object[4];
+            args4[0] = (hudText.isEmpty() ? "SwitchLite" : hudText);
+            args4[1] = 4; args4[2] = 4; args4[3] = 0xFFFFFF;
+            drawMethod.invoke(fr, args4);
+
+            if (guiOpen) {
+                Object[] argsG = new Object[4];
+                argsG[0] = "\u00a7a[GUI OPEN]";
+                argsG[1] = 4; argsG[2] = 16; argsG[3] = 0x55FF55;
+                drawMethod.invoke(fr, argsG);
+            }
+        } catch (Exception e) {
+            secondLog("[Render] drawOverlay error: " + e.getClass().getSimpleName());
+        }
     }
 
     private static Object getFontRenderer() {

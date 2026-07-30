@@ -51,6 +51,26 @@ public class Agent {
 
     public static void agentmain(String agentArgs, Instrumentation inst) {
         initLogFile();
+
+        // ── retransform-display path: hook LWJGL Display.update() via retransformClasses ──
+        if ("retransform-display".equals(agentArgs)) {
+            try {
+                String agentJar = System.getProperty("java.io.tmpdir") + "/switchlite-agent.jar";
+                java.io.File jarFile = new java.io.File(agentJar);
+                if (!jarFile.exists()) jarFile = new java.io.File(agentJar.replace("/", "\\"));
+                if (jarFile.exists()) {
+                    inst.appendToBootstrapClassLoaderSearch(new java.util.jar.JarFile(jarFile));
+                }
+                Class<?> displayClass = Class.forName("org.lwjgl.opengl.Display");
+                inst.addTransformer(new Transformer(), true);
+                inst.retransformClasses(displayClass);
+                log("[Agent] Display.update() hooked via attach + retransform");
+            } catch (Exception e) {
+                log("[Agent] Retransform failed: " + e.getMessage());
+            }
+            return;
+        }
+
         log("[SwitchLite Agent] Attached to running JVM");
         init(inst);
     }
@@ -107,6 +127,9 @@ public class Agent {
 
         // Start R key polling thread for persistent verification
         startKeyPollThread();
+
+        // Start HUD tick thread: writes state via System.setProperty for RenderHook
+        startHudTickThread();
 
         // Wait for player to enter world before sending welcome message
         // (bootstrap completes in ~400ms, but player may not be loaded yet)
@@ -238,12 +261,47 @@ public class Agent {
         String status = guiVisible ? "ON" : "OFF";
         log("[KeyPoll] Right Shift pressed — GUI toggled: " + status);
 
-        // Local-only message — no server interaction, no kick risk
+        // Write state via System properties for RenderHook (cross-thread)
+        System.setProperty("switchlite.guiOpen", String.valueOf(guiVisible));
+
         if (guiVisible) {
             sendLocalMessage("Modules: ACTIVE (alive at " + System.currentTimeMillis() + ")", GREEN);
         } else {
             sendLocalMessage("Modules: DISABLED", RED);
         }
+    }
+
+    // ═══════════════════════════════════════════
+    //  HUD tick: write state via System.setProperty for RenderHook
+    // ═══════════════════════════════════════════
+
+    private static void startHudTickThread() {
+        Thread hudThread = new Thread(() -> {
+            while (running) {
+                try {
+                    // Build HUD text from enabled modules (via reflection since adapter:common may not be in classpath yet)
+                    buildAndSetHudText();
+                    System.setProperty("switchlite.guiOpen", String.valueOf(guiVisible));
+                    Thread.sleep(100);
+                } catch (Exception ignored) {}
+            }
+        }, "SwitchLite-HudTick");
+        hudThread.setDaemon(true);
+        hudThread.start();
+    }
+
+    private static void buildAndSetHudText() {
+        StringBuilder sb = new StringBuilder("SwitchLite");
+        try {
+            // Try AgentBridge via reflection (in adapter:common, always in fat jar)
+            Class<?> bridge = Class.forName("io.switchlite.adapter.common.AgentBridge");
+            java.lang.reflect.Method getHudText = bridge.getMethod("getHudText");
+            String text = (String) getHudText.invoke(null);
+            if (text != null && !text.isEmpty()) sb = new StringBuilder(text);
+        } catch (Exception e) {
+            // AgentBridge not loaded yet — use fallback
+        }
+        System.setProperty("switchlite.hudText", sb.toString());
     }
 
     // ═══════════════════════════════════════════

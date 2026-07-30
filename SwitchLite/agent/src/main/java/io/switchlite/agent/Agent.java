@@ -28,7 +28,7 @@ import java.util.Properties;
  *   - Drawing overlays → ForgeBootstrap.render() via OverlayRenderer
  *   - Chat messages → ForgeBootstrap / modules
  *   - GUI state → EventBridge.isGuiOpen / ClickGUI
- *   - Fallback rendering → Transformer fails = Agent reports error, no fallback
+ *   - Transformer.install() failure → Agent reports error and exits, no fallback
  */
 public class Agent {
 
@@ -188,11 +188,13 @@ public class Agent {
 
         // 5. Install Transformer hook (Javassist's job, not Agent's)
         boolean hookInstalled = Transformer.install(inst);
-        if (hookInstalled) {
-            log("[Agent] Render path: Transformer + RenderBridge → ForgeBootstrap.render() (every frame, stealthy)");
-        } else {
-            log("[Agent] ERROR: Transformer.install() failed — no rendering will occur. Agent is pure dispatch, no fallback.");
+        if (!hookInstalled) {
+            log("[Agent] FATAL: Transformer.install() failed — rendering pipeline is broken. Agent is pure dispatch, no fallback.");
+            log("[Agent] Cannot operate without rendering. Shutting down.");
+            running = false;
+            return;
         }
+        log("[Agent] Render path: Transformer + RenderBridge → ForgeBootstrap.render() (every frame, stealthy)");
 
         // 6. Start threads (dispatch only — no rendering)
         startKeyPollThread();

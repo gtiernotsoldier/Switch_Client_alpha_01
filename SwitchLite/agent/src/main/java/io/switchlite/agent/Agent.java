@@ -144,22 +144,10 @@ public class Agent {
                 // Cache method refs for tick/render dispatch
                 cacheForgeBootstrapMethods();
 
-                // Cache mc.addScheduledTask for render thread dispatch
-                try {
-                    Class<?> mcClass = Class.forName("net.minecraft.client.Minecraft");
-                    mcAddScheduledTask = mcClass.getMethod("addScheduledTask", Runnable.class);
-                } catch (Exception e) {
-                    log("[Agent] addScheduledTask not found — render will use fallback");
-                }
-
                 // Disable old EventBridge.onTick(null,null) dispatch — ForgeBootstrap.tick() handles it now
                 // The HUD thread still reads hudText for action bar fallback
             } catch (ClassNotFoundException e) {
-                log("[Agent] ForgeBootstrap not in classpath — using Javassist + inline renderer");
-                // Try Javassist render hook first (renders in render phase — correct)
-                hookRenderViaJavassist();
-                // Also init inline renderer as fallback diagnostics
-                initInlineRenderer();
+                log("[Agent] ForgeBootstrap not in classpath — HUD via Display.update() hook (Transformer)");
             } catch (Exception e) {
                 log("[Agent] ForgeBootstrap init failed: " + e.getClass().getSimpleName() + ": " + e.getMessage());
             }
@@ -209,32 +197,13 @@ public class Agent {
                             forgeBootstrapTick.invoke(null);
                         }
 
-                        // Schedule render on MC's main thread
-                        if (forgeBootstrapAvailable && forgeBootstrapRender != null && mcAddScheduledTask != null) {
-                            try {
-                                Object mc = Class.forName("net.minecraft.client.Minecraft")
-                                    .getMethod("getMinecraft").invoke(null);
-                                if (mc != null) {
-                                    final java.lang.reflect.Method renderMethod = forgeBootstrapRender;
-                                    Runnable renderRunnable = new Runnable() {
-                                        public void run() {
-                                            try { renderMethod.invoke(null); } catch (Exception ignored) {}
-                                        }
-                                    };
-                                    mcAddScheduledTask.invoke(mc, renderRunnable);
-                                }
-                            } catch (Exception ignored) {}
-                        } else if (inlineRendererReady && !javassistHookReady) {
-                            // Use inline renderer ONLY if Javassist hook failed (tick-phase, invisible)
-                            scheduleInlineRender();
-                        }
-
-                        // Read HUD text for chat-based fallback + Javassist state update
+                        // Read HUD text for chat-based fallback + push state to RenderHook
                         String hudText = (String) getHudText.invoke(null);
                         boolean guiOpen = (Boolean) isGuiOpen.invoke(null);
 
-                        // Push state to Javassist hook (renders in render phase — correct!)
-                        updateJavassistHookState(guiOpen, hudText);
+                        // Push state to RenderHook (Display.update callback)
+                        RenderHook.guiVisible = guiOpen;
+                        RenderHook.hudText = hudText != null ? hudText : "";
 
                         if (!guiOpen && hudText != null && !hudText.isEmpty() && !hudText.equals(lastHudText)) {
                             lastHudText = hudText;
@@ -311,467 +280,27 @@ public class Agent {
     //  Right Shift Key Polling (LWJGL2 Keyboard)
     // ═══════════════════════════════════════════
 
-    // Cached reflection for ForgeBootstrap.tick()/render()/onKey() calls
+    // Cached reflection for ForgeBootstrap.tick()/onKey() calls
     private static java.lang.reflect.Method forgeBootstrapTick = null;
     private static java.lang.reflect.Method forgeBootstrapOnKey = null;
-    private static java.lang.reflect.Method forgeBootstrapRender = null;
     private static java.lang.reflect.Method forgeBootstrapOnDisconnect = null;
-    private static java.lang.reflect.Method mcAddScheduledTask = null;
     private static boolean forgeBootstrapAvailable = false;
 
     // ═══════════════════════════════════════════
-    //  Inline HUD Renderer (pure reflection, no ForgeGradle needed)
+    //  ForgeBootstrap method cache
     // ═══════════════════════════════════════════
-
-    // Cached MC reflection handles for rendering
-    private static java.lang.reflect.Method mcGetMinecraft = null;
-    private static java.lang.reflect.Field mcFontRenderer = null;
-    private static java.lang.reflect.Method fontDrawStringWithShadow = null;
-    private static java.lang.reflect.Method glPushMatrix = null;
-    private static java.lang.reflect.Method glPopMatrix = null;
-    private static java.lang.reflect.Method glEnable = null;
-    private static java.lang.reflect.Method glDisable = null;
-    private static java.lang.reflect.Method glScalef = null;
-    private static java.lang.reflect.Method glColor4f = null;
-    private static java.lang.reflect.Field mcDisplayWidth = null;
-    private static java.lang.reflect.Field mcDisplayHeight = null;
-    private static java.lang.reflect.Field mcCurrentScreen = null;
-    private static boolean inlineRendererReady = false;
-    private static volatile boolean renderScheduled = false; // prevent queue flood
-    private static boolean fontMethodUsesFloat = true; // true = draw(String,float,float,int), false = draw(String,int,int,int)
-    private static int renderCallCount = 0; // diagnostic counter
-
-    // ═══════════════════════════════════════════
-    //  Javassist Render Hook — subclass GuiIngame in MC's ClassLoader
-    // ═══════════════════════════════════════════
-
-    private static Class<?> hookedGuiClass = null;      // the Javassist-generated class
-    private static java.lang.reflect.Field hookedGuiVisibleField = null;  // static field on hooked class
-    private static java.lang.reflect.Field hookedHudTextField = null;      // static field on hooked class
-    private static volatile boolean javassistHookReady = false;
-
-    private static void initInlineRenderer() {
-        try {
-            // Cache getMinecraft
-            Class<?> mcClass = Class.forName("net.minecraft.client.Minecraft");
-            for (String name : MC_GET_MC) {
-                try {
-                    java.lang.reflect.Method m = mcClass.getMethod(name);
-                    Object mcInst = m.invoke(null);
-                    if (mcInst != null) { mcGetMinecraft = m; break; }
-                } catch (Exception ignored) {}
-            }
-            if (mcGetMinecraft == null) { log("[Render] getMinecraft not found"); return; }
-
-            // FontRenderer: mc.fontRendererObj / field_71466_p
-            for (String fn : new String[]{"fontRendererObj", "field_71466_p"}) {
-                try {
-                    mcFontRenderer = mcClass.getField(fn);
-                    break;
-                } catch (Exception ignored) {}
-            }
-            if (mcFontRenderer == null) { log("[Render] fontRenderer field not found"); return; }
-
-            // FontRenderer.drawStringWithShadow(String, float, float, int)
-            Class<?> fontClass = mcFontRenderer.getType();
-            log("[Render] fontClass = " + fontClass.getName());
-            for (String mn : new String[]{"drawStringWithShadow", "func_78266_a"}) {
-                try {
-                    fontDrawStringWithShadow = fontClass.getMethod(mn, String.class, float.class, float.class, int.class);
-                    fontMethodUsesFloat = true; // this path explicitly uses float
-                    log("[Render] Found " + mn + " via getMethod (float)");
-                    break;
-                } catch (Exception ignored) {}
-            }
-            // Fallback: scan all methods for any draw* with (String, float, float, int)
-            if (fontDrawStringWithShadow == null) {
-                for (java.lang.reflect.Method m : fontClass.getMethods()) {
-                    Class<?>[] params = m.getParameterTypes();
-                    if (params.length == 4
-                        && params[0] == String.class
-                        && (params[1] == float.class || params[1] == int.class)
-                        && (params[2] == float.class || params[2] == int.class)
-                        && params[3] == int.class
-                        && m.getReturnType() == int.class) {
-                        fontDrawStringWithShadow = m;
-                        fontMethodUsesFloat = (params[1] == float.class);
-                        log("[Render] Found draw method " + m.getName() + " via scan (x/y=" + (fontMethodUsesFloat ? "float" : "int") + ")");
-                        break;
-                    }
-                }
-            }
-            if (fontDrawStringWithShadow == null) {
-                // Last resort: try drawString (without shadow) as fallback
-                for (String mn : new String[]{"drawString", "func_78266_b"}) {
-                    try {
-                        fontDrawStringWithShadow = fontClass.getMethod(mn, String.class, float.class, float.class, int.class);
-                        log("[Render] Using drawString (no shadow) as fallback");
-                        break;
-                    } catch (Exception ignored) {}
-                }
-            }
-            if (fontDrawStringWithShadow == null) {
-                StringBuilder sb = new StringBuilder("[Render] No draw method found. Font methods with 'draw': ");
-                for (java.lang.reflect.Method m : fontClass.getMethods()) {
-                    if (m.getName().contains("draw")) {
-                        sb.append(m.getName()).append("(");
-                        for (Class<?> p : m.getParameterTypes()) sb.append(p.getSimpleName()).append(",");
-                        sb.append(") ");
-                    }
-                }
-                log(sb.toString());
-                return;
-            }
-
-            // GL11 static methods
-            Class<?> gl11Class = Class.forName("org.lwjgl.opengl.GL11");
-            glPushMatrix = gl11Class.getMethod("glPushMatrix");
-            glPopMatrix = gl11Class.getMethod("glPopMatrix");
-            glScalef = gl11Class.getMethod("glScalef", float.class, float.class, float.class);
-            glColor4f = gl11Class.getMethod("glColor4f", float.class, float.class, float.class, float.class);
-            glEnable = gl11Class.getMethod("glEnable", int.class);
-            glDisable = gl11Class.getMethod("glDisable", int.class);
-
-            // MC display size: mc.displayWidth / field_71313_c, displayHeight / field_71314_d
-            for (String fn : new String[]{"displayWidth", "field_71313_c"}) {
-                try { mcDisplayWidth = mcClass.getField(fn); break; } catch (Exception ignored) {}
-            }
-            for (String fn : new String[]{"displayHeight", "field_71314_d"}) {
-                try { mcDisplayHeight = mcClass.getField(fn); break; } catch (Exception ignored) {}
-            }
-
-            // mc.currentScreen / field_71462_r (null when in-game)
-            for (String fn : new String[]{"currentScreen", "field_71462_r"}) {
-                try { mcCurrentScreen = mcClass.getField(fn); break; } catch (Exception ignored) {}
-            }
-
-            // Cache mc.addScheduledTask
-            for (String mn : new String[]{"addScheduledTask", "func_152344_a"}) {
-                try {
-                    mcAddScheduledTask = mcClass.getMethod(mn, Runnable.class);
-                    break;
-                } catch (Exception ignored) {}
-            }
-
-            inlineRendererReady = true;
-            log("[Render] Inline HUD renderer initialized successfully");
-        } catch (ClassNotFoundException e) {
-            log("[Render] LWJGL/MC classes not found — renderer disabled");
-        } catch (Exception e) {
-            log("[Render] Init error: " + e.getMessage());
-        }
-    }
-
-    /**
-     * Renders HUD text directly using MC FontRenderer + GL11, scheduled on MC render thread.
-     * This is the fallback when ForgeBootstrap is not available.
-     */
-    private static void scheduleInlineRender() {
-        if (!inlineRendererReady || mcAddScheduledTask == null || renderScheduled) return;
-        try {
-            Object mc = mcGetMinecraft.invoke(null);
-            if (mc == null) return;
-            // Don't render when a screen (inventory, pause, etc.) is open
-            if (mcCurrentScreen != null && mcCurrentScreen.get(mc) != null) return;
-
-            final String hudText = lastHudText;
-            final boolean guiOpen = guiVisible;
-            renderScheduled = true;
-
-            Runnable renderTask = new Runnable() {
-                public void run() {
-                    try {
-                        Object mc = mcGetMinecraft.invoke(null);
-                        if (mc == null) return;
-                        Object fontRenderer = mcFontRenderer.get(mc);
-                        if (fontRenderer == null) return;
-
-                        int width = (mcDisplayWidth != null) ? mcDisplayWidth.getInt(mc) : 854;
-                        int height = (mcDisplayHeight != null) ? mcDisplayHeight.getInt(mc) : 480;
-
-                        float scale = 1.0f;
-                        // On high-res screens, scale up so text is readable
-                        if (width > 1200) scale = 1.5f;
-                        else if (width > 900) scale = 1.2f;
-
-                        // Push GL state
-                        glPushMatrix.invoke(null);
-                        glScalef.invoke(null, scale, scale, scale);
-
-                        int y = 4; // start near top-left (in scaled coords)
-                        int white = 0xFFFFFF;
-                        int green = 0x55FF55;
-                        int gray = 0xAAAAAA;
-                        int gold = 0xFFFF55;
-
-                        // Header line
-                        String header = "\u00a7a[SwitchLite] \u00a7f" + (guiOpen ? "GUI: ON" : "v" + System.currentTimeMillis() % 1000);
-                        // Use correct param types: float or int depending on what the scan found
-                        if (fontMethodUsesFloat) {
-                            fontDrawStringWithShadow.invoke(fontRenderer, header, 4.0f, (float)y, gold);
-                        } else {
-                            fontDrawStringWithShadow.invoke(fontRenderer, header, 4, y, gold);
-                        }
-                        y += 12;
-
-                        if (guiOpen) {
-                            if (fontMethodUsesFloat) {
-                                fontDrawStringWithShadow.invoke(fontRenderer, "\u00a77Right Shift = toggle", 4.0f, (float)y, gray);
-                            } else {
-                                fontDrawStringWithShadow.invoke(fontRenderer, "\u00a77Right Shift = toggle", 4, y, gray);
-                            }
-                            y += 12;
-                            if (fontMethodUsesFloat) {
-                                fontDrawStringWithShadow.invoke(fontRenderer, "\u00a77Modules active", 4.0f, (float)y, green);
-                            } else {
-                                fontDrawStringWithShadow.invoke(fontRenderer, "\u00a77Modules active", 4, y, green);
-                            }
-                        }
-
-                        // If HUD text has content, show it below
-                        if (hudText != null && !hudText.isEmpty() && !"".equals(hudText)) {
-                            y += 4;
-                            if (fontMethodUsesFloat) {
-                                fontDrawStringWithShadow.invoke(fontRenderer, hudText, 4.0f, (float)y, white);
-                            } else {
-                                fontDrawStringWithShadow.invoke(fontRenderer, hudText, 4, y, white);
-                            }
-                        }
-
-                        // Restore GL state
-                        glPopMatrix.invoke(null);
-
-                        // Periodic diagnostic (every ~5s = 100 calls at 20Hz)
-                        renderCallCount++;
-                        if (renderCallCount % 100 == 1) {
-                            log("[Render] Render OK, calls=" + renderCallCount + " res=" + width + "x" + height + " scale=" + scale);
-                        }
-                    } catch (Exception e) {
-                        renderCallCount++;
-                        if (renderCallCount <= 3) {
-                            log("[Render] Render error: " + e.getClass().getSimpleName() + ": " + e.getMessage());
-                        }
-                    }
-                    finally {
-                        renderScheduled = false;
-                    }
-                }
-            };
-            mcAddScheduledTask.invoke(mc, renderTask);
-        } catch (Exception e) {
-            if (renderCallCount <= 3) {
-                log("[Render] scheduleInlineRender error: " + e.getClass().getSimpleName() + ": " + e.getMessage());
-            }
-            renderScheduled = false;
-        }
-    }
 
     private static void cacheForgeBootstrapMethods() {
         try {
             Class<?> fbClass = Class.forName("io.switchlite.adapter.forge.v1_8_9.ForgeBootstrap");
             forgeBootstrapTick = fbClass.getMethod("tick");
             forgeBootstrapOnKey = fbClass.getMethod("onKey", int.class, boolean.class);
-            forgeBootstrapRender = fbClass.getMethod("render");
             forgeBootstrapOnDisconnect = fbClass.getMethod("onDisconnect");
             forgeBootstrapAvailable = true;
             log("[Agent] ForgeBootstrap methods cached (pure reflection mode)");
         } catch (Exception e) {
             log("[Agent] ForgeBootstrap not available: " + e.getMessage());
         }
-    }
-
-    /**
-     * Javassist Render Hook — creates a GuiIngame subclass in MC's ClassLoader
-     * that overrides renderGameOverlay. This runs in the RENDER phase (not tick),
-     * so GL text rendering actually appears on screen.
-     *
-     * No Instrumentation needed — uses Javassist CtClass.toClass(loader) to
-     * define the subclass directly in MC's ClassLoader.
-     *
-     * State communication: Agent writes to static volatile fields on the
-     * generated class via reflection (cross-ClassLoader compatible).
-     */
-    private static void hookRenderViaJavassist() {
-        try {
-            Class<?> mcClass = Class.forName("net.minecraft.client.Minecraft");
-            Object mcInst = null;
-            String getMcName = null;
-            for (String name : MC_GET_MC) {
-                try {
-                    java.lang.reflect.Method m = mcClass.getMethod(name);
-                    Object obj = m.invoke(null);
-                    if (obj != null) { mcInst = obj; getMcName = name; break; }
-                } catch (Exception ignored) {}
-            }
-            if (mcInst == null) { log("[Javassist] getMinecraft returned null"); return; }
-
-            ClassLoader mcClassLoader = mcInst.getClass().getClassLoader();
-            log("[Javassist] MC ClassLoader: " + mcClassLoader.getClass().getName());
-
-            // ── Step 1: Detect actual runtime method/field names ──
-            String fontRendererFieldName = null;
-            for (String fn : new String[]{"fontRendererObj", "field_71466_p"}) {
-                try { mcClass.getField(fn); fontRendererFieldName = fn; break; } catch (Exception ignored) {}
-            }
-            if (fontRendererFieldName == null) { log("[Javassist] fontRenderer field not found"); return; }
-
-            String ingameGuiFieldName = null;
-            for (String fn : new String[]{"ingameGUI", "field_71438_f"}) {
-                try { mcClass.getField(fn); ingameGuiFieldName = fn; break; } catch (Exception ignored) {}
-            }
-            if (ingameGuiFieldName == null) { log("[Javassist] ingameGUI field not found"); return; }
-
-            // Detect renderGameOverlay method name on GuiIngame
-            String renderOverlayMethodName = null;
-            Class<?> guiIngameClass = Class.forName("net.minecraft.client.gui.GuiIngame");
-            for (java.lang.reflect.Method m : guiIngameClass.getMethods()) {
-                if (m.getReturnType() == void.class
-                    && m.getParameterTypes().length == 1
-                    && m.getParameterTypes()[0] == float.class) {
-                    // Accept known names — MCP, SRG, or any void(float) method on GuiIngame
-                    String n = m.getName();
-                    if (n.equals("renderGameOverlay") || n.equals("func_175180_a")
-                        || (n.startsWith("func_") && !n.contains("chat"))) {
-                        renderOverlayMethodName = n;
-                        log("[Javassist] renderGameOverlay candidate: " + n);
-                        break;
-                    }
-                }
-            }
-            if (renderOverlayMethodName == null) { log("[Javassist] renderGameOverlay method not found"); return; }
-            log("[Javassist] renderGameOverlay = " + renderOverlayMethodName);
-
-            // Detect FontRenderer draw method (with shadow preferred)
-            Class<?> fontClass = Class.forName("net.minecraft.client.gui.FontRenderer");
-            String drawMethodName = null;
-            boolean drawUsesFloat = true;
-            // Try drawStringWithShadow first
-            for (String mn : new String[]{"drawStringWithShadow", "func_78266_a"}) {
-                try {
-                    fontClass.getMethod(mn, String.class, float.class, float.class, int.class);
-                    drawMethodName = mn; drawUsesFloat = true; break;
-                } catch (Exception ignored) {}
-            }
-            // Fallback: scan for any (String, num, num, int) -> int
-            if (drawMethodName == null) {
-                for (java.lang.reflect.Method m : fontClass.getMethods()) {
-                    Class<?>[] p = m.getParameterTypes();
-                    if (p.length == 4 && p[0] == String.class
-                        && (p[1] == float.class || p[1] == int.class)
-                        && (p[2] == float.class || p[2] == int.class)
-                        && p[3] == int.class && m.getReturnType() == int.class) {
-                        drawMethodName = m.getName();
-                        drawUsesFloat = (p[1] == float.class);
-                        break;
-                    }
-                }
-            }
-            if (drawMethodName == null) { log("[Javassist] FontRenderer draw method not found"); return; }
-            log("[Javassist] draw method = " + drawMethodName + " (float=" + drawUsesFloat + ")");
-
-            // ── Step 2: Create GuiIngame subclass via Javassist ──
-            javassist.ClassPool pool = javassist.ClassPool.getDefault();
-            pool.appendClassPath(new javassist.LoaderClassPath(mcClassLoader));
-
-            javassist.CtClass ctGuiIngame = pool.get("net.minecraft.client.gui.GuiIngame");
-            javassist.CtClass ctMinecraft = pool.get("net.minecraft.client.Minecraft");
-            javassist.CtClass ctFontRenderer = pool.get("net.minecraft.client.gui.FontRenderer");
-            javassist.CtClass ctFloat = pool.get("float");
-
-            javassist.CtClass ctHook = pool.makeClass("sl_switchlite_hud");
-            ctHook.setSuperclass(ctGuiIngame);
-
-            // Static volatile fields for cross-ClassLoader state communication
-            javassist.CtField guiVisField = new javassist.CtField(
-                javassist.CtClass.booleanType, "slGuiVisible", ctHook);
-            guiVisField.setModifiers(java.lang.reflect.Modifier.PUBLIC
-                | java.lang.reflect.Modifier.STATIC | java.lang.reflect.Modifier.VOLATILE);
-            ctHook.addField(guiVisField, javassist.CtField.Initializer.constant(false));
-
-            javassist.CtField hudTxtField = new javassist.CtField(
-                pool.get("java.lang.String"), "slHudText", ctHook);
-            hudTxtField.setModifiers(java.lang.reflect.Modifier.PUBLIC
-                | java.lang.reflect.Modifier.STATIC | java.lang.reflect.Modifier.VOLATILE);
-            ctHook.addField(hudTxtField, javassist.CtField.Initializer.constant(""));
-
-            // Constructor: forward to GuiIngame(Minecraft)
-            javassist.CtConstructor ctor = new javassist.CtConstructor(
-                new javassist.CtClass[]{ctMinecraft}, ctHook);
-            ctor.setBody("{ super($1); }");
-            ctHook.addConstructor(ctor);
-
-            // Override renderGameOverlay(float)
-            String xType = drawUsesFloat ? "float" : "int";
-            String renderBody =
-                "{ super." + renderOverlayMethodName + "($1);" +
-                "  try {" +
-                "    net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft." + getMcName + "();" +
-                "    net.minecraft.client.gui.FontRenderer fr = mc." + fontRendererFieldName + ";" +
-                "    if (fr == null) return;" +
-                "    " + xType + " y = 4;" +
-                "    String hdr = slGuiVisible ? \"\u00a7a[SwitchLite] \u00a7fGUI: ON\" : \"\u00a7a[SwitchLite] \u00a7fv0.1-alpha\";" +
-                "    fr." + drawMethodName + "(hdr, (" + xType + ")4, y, 0xFFFF55);" +
-                "    y += (" + xType + ")12;" +
-                "    if (slGuiVisible) {" +
-                "      fr." + drawMethodName + "(\"\u00a77Right Shift = toggle\", (" + xType + ")4, y, 0xAAAAAA);" +
-                "      y += (" + xType + ")12;" +
-                "    }" +
-                "    if (slHudText != null && slHudText.length() > 0) {" +
-                "      y += (" + xType + ")4;" +
-                "      fr." + drawMethodName + "(slHudText, (" + xType + ")4, y, 0xFFFFFF);" +
-                "    }" +
-                "  } catch (Exception e) {}" +
-                "}";
-
-            javassist.CtMethod renderMethod = new javassist.CtMethod(
-                javassist.CtClass.voidType, renderOverlayMethodName,
-                new javassist.CtClass[]{ctFloat}, ctHook);
-            renderMethod.setModifiers(java.lang.reflect.Modifier.PUBLIC);
-            renderMethod.setBody(renderBody);
-            ctHook.addMethod(renderMethod);
-
-            // ── Step 3: Load class into MC's ClassLoader & create instance ──
-            Class<?> hookClass = ctHook.toClass(mcClassLoader);
-            ctHook.detach(); // release CtClass memory
-
-            java.lang.reflect.Constructor<?> hookCtor = hookClass.getConstructor(
-                Class.forName("net.minecraft.client.Minecraft", false, mcClassLoader));
-            Object hookInstance = hookCtor.newInstance(mcInst);
-
-            // ── Step 4: Replace mc.ingameGUI with our hooked instance ──
-            java.lang.reflect.Field ingameField = mcClass.getField(ingameGuiFieldName);
-            Object oldGui = ingameField.get(mcInst);
-            ingameField.set(mcInst, hookInstance);
-
-            // ── Step 5: Cache references for state updates ──
-            hookedGuiClass = hookClass;
-            hookedGuiVisibleField = hookClass.getField("slGuiVisible");
-            hookedHudTextField = hookClass.getField("slHudText");
-            javassistHookReady = true;
-
-            log("[Javassist] HUD hook installed! class=" + hookClass.getName()
-                + " render=" + renderOverlayMethodName + " draw=" + drawMethodName
-                + " replaced oldGui=" + (oldGui != null ? oldGui.getClass().getSimpleName() : "null"));
-
-        } catch (ClassNotFoundException e) {
-            log("[Javassist] MC classes not found — " + e.getMessage());
-        } catch (javassist.CannotCompileException e) {
-            log("[Javassist] Compile error: " + e.getMessage());
-        } catch (Exception e) {
-            log("[Javassist] Hook failed: " + e.getClass().getSimpleName() + ": " + e.getMessage());
-        }
-    }
-
-    /**
-     * Update the Javassist-hooked GuiIngame's state fields.
-     * Called from HudTick to push guiVisible + hudText into MC's ClassLoader.
-     */
-    private static void updateJavassistHookState(boolean guiOpen, String hudText) {
-        if (!javassistHookReady) return;
-        try {
-            hookedGuiVisibleField.set(null, guiOpen);
-            hookedHudTextField.set(null, hudText != null ? hudText : "");
-        } catch (Exception ignored) {}
     }
 
     private static void startKeyPollThread() {
@@ -862,8 +391,9 @@ public class Agent {
         String status = guiVisible ? "ON" : "OFF";
         log("[KeyPoll] Right Shift pressed — GUI toggled: " + status);
 
-        // Immediately update Javassist hook state (no 50ms delay)
-        updateJavassistHookState(guiVisible, lastHudText);
+        // Immediately update RenderHook state (no 50ms delay)
+        RenderHook.guiVisible = guiVisible;
+        RenderHook.hudText = lastHudText != null ? lastHudText : "";
 
         // Dispatch to EventBridge so module-layer keyListeners (ClickGUI) receive it.
         // GLFW RIGHT_SHIFT = 344, pressed = true (this is a key-down edge).

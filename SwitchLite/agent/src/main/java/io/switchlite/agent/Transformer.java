@@ -18,8 +18,8 @@ import javassist.CtMethod;
  *
  * Architecture role: This is the "stealthy" injection layer.
  * - Gets Instrumentation (via provided inst or self-attach)
- * - Injects RenderHook.onFrame() call into Display.update()
- * - RenderHook then delegates to ForgeBootstrap.render() on the MC render thread
+ * - Injects RenderBridge.onFrame() call into Display.update()
+ * - RenderBridge then delegates to ForgeBootstrap.render() on the MC render thread
  *
  * Stealth advantage: Bytecode injection into the method body is invisible to
  * task-queue scanning and thread-based detection. Anti-cheat that checks
@@ -130,18 +130,18 @@ public class Transformer implements ClassFileTransformer {
 
             CtMethod updateMethod = ctClass.getDeclaredMethod("update");
 
-            // Insert RenderHook.onFrame() at the very beginning of Display.update()
+            // Insert RenderBridge.onFrame() at the very beginning of Display.update()
             // Before: Display processes events + swaps buffers
-            // After:  RenderHook.onFrame() -> Display processes events + swaps buffers
+            // After:  RenderBridge.onFrame() -> Display processes events + swaps buffers
             updateMethod.insertBefore(
-                "io.switchlite.agent.RenderHook.onFrame();"
+                "io.switchlite.agent.RenderBridge.onFrame();"
             );
 
             byte[] result = ctClass.toBytecode();
             ctClass.defrost();
             hooked = true;
 
-            Agent.log("[Transformer] Display.update() bytecode injected — RenderHook.onFrame() will be called every frame");
+            Agent.log("[Transformer] Display.update() bytecode injected — RenderBridge.onFrame() will be called every frame");
             return result;
         } catch (javassist.NotFoundException e) {
             Agent.log("[Transformer] Display.update() not found: " + e.getMessage());

@@ -1,41 +1,28 @@
 package io.switchlite.adapter.common
 
 import io.switchlite.adapter.common.module.ModuleRegistry
+import io.switchlite.adapter.common.module.Module
+import io.switchlite.adapter.common.module.Category
 import io.switchlite.adapter.common.module.combat.*
 import io.switchlite.adapter.common.module.movement.*
 import io.switchlite.adapter.common.module.player.*
-import io.switchlite.adapter.common.module.render.ClickGUI
-import io.switchlite.adapter.common.module.render.HUD
-import io.switchlite.adapter.common.module.render.Fullbright
-import io.switchlite.adapter.common.module.render.NoFOV
-import io.switchlite.adapter.common.module.render.NoHurtCam
-import io.switchlite.adapter.common.module.world.FastPlace
+import io.switchlite.adapter.common.module.render.*
+import io.switchlite.adapter.common.module.world.*
 import io.switchlite.core.logging.CoreLogger
+import java.io.PrintWriter
+import java.io.StringWriter
 
 /**
  * Bridge between Agent.java (Java 8, DLL injection entry) and the common module layer.
  *
- * Agent.java calls [initModules] via reflection after MappingContext is ready.
- * This registers all modules, enables the core UI modules (ClickGUI, HUD),
- * and wires SafetyWrapper auto-disable.
- *
- * This class lives in adapter:common (no Forge/Fabric dependency) so it's
- * always available in the agent fat jar, regardless of which platform adapter
- * is loaded.
+ * Registers modules one-by-one with individual try-catch — a single failing
+ * module won't prevent the rest from loading.
  */
 object AgentBridge {
 
-    /**
-     * Register all modules and enable core UI modules.
-     * Called by Agent.java via reflection: AgentBridge.initModules()
-     *
-     * Returns a status string for Agent.java to log.
-     */
-    @JvmStatic
-    fun initModules(): String {
-        // Register all 35 modules
-        ModuleRegistry.registerAll(
-            // Combat
+    private val allModules: List<Module> by lazy {
+        listOf(
+            // Combat — keep alphabetical
             AimAssist, AutoBlock, AutoClicker, BlockHit, ClickAssist,
             DelayRemover, HitSelect, JumpReset, KeepSprint, Reach,
             SprintReset, STap, SuperKnockback, TriggerBot, Velocity, WTap,
@@ -48,21 +35,53 @@ object AgentBridge {
             // World
             FastPlace
         )
+    }
+
+    private fun stackTrace(e: Throwable): String {
+        val sw = StringWriter()
+        e.printStackTrace(PrintWriter(sw))
+        return sw.toString()
+    }
+
+    @JvmStatic
+    fun initModules(): String {
+        var ok = 0
+        var failed = 0
+        val failedNames = mutableListOf<String>()
+
+        for (module in allModules) {
+            try {
+                ModuleRegistry.register(module)
+                ok++
+            } catch (e: Exception) {
+                failed++
+                failedNames.add(module.name)
+                CoreLogger.error("[AgentBridge] Module '${module.name}' failed: ${e.javaClass.simpleName}: ${e.message}")
+                CoreLogger.error("[AgentBridge] ${stackTrace(e)}")
+            } catch (e: NoClassDefFoundError) {
+                failed++
+                failedNames.add(module.name)
+                CoreLogger.error("[AgentBridge] Module '${module.name}' missing dep: ${e.message}")
+            }
+        }
+
         ModuleRegistry.initSafetyIntegration()
 
-        // Enable core UI modules by default
-        ModuleRegistry.enable("ClickGUI")
-        ModuleRegistry.enable("HUD")
+        // Enable UI modules only if they registered successfully
+        if (ModuleRegistry.isRegistered("ClickGUI")) ModuleRegistry.enable("ClickGUI")
+        if (ModuleRegistry.isRegistered("HUD")) ModuleRegistry.enable("HUD")
 
-        val msg = "[AgentBridge] ${ModuleRegistry.size()} modules registered, ClickGUI + HUD enabled"
+        val msg = "[AgentBridge] $ok registered, $failed failed" +
+            if (failedNames.isNotEmpty()) " (${failedNames.joinToString()})" else ""
         CoreLogger.info(msg)
         return msg
     }
 
-    /**
-     * Check if ClickGUI is currently open.
-     * Used by Agent.java to log GUI state for diagnostics.
-     */
     @JvmStatic
-    fun isGuiOpen(): Boolean = io.switchlite.adapter.common.api.EventBridge.isGuiOpen
+    fun getHudText(): String {
+        val names = ModuleRegistry.getEnabled()
+            .filter { !it.hidden }
+            .joinToString(" | ") { it.name }
+        return if (names.isNotEmpty()) "SwitchLite | $names" else "SwitchLite"
+    }
 }

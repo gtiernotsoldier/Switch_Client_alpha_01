@@ -19,6 +19,7 @@ repositories {
 dependencies {
     implementation(project(":core"))
     implementation(project(":adapter:common"))
+    implementation(project(":adapter:forge:v1_8_9"))
 
     // Kotlin stdlib — agent is a Java module but its deps are Kotlin.
     // Must be explicit because the java plugin doesn't resolve Kotlin transitive deps.
@@ -59,8 +60,7 @@ tasks.jar {
         configurations.runtimeClasspath.get().filter { it.name.endsWith("jar") }.map { zipTree(it) }
     })
 
-    // Forge adapter is excluded from CI builds (requires ForgeGradle).
-    // TODO: When local build with ForgeGradle is available, re-enable.
+    // Forge adapter is now included — pure reflection, no ForgeGradle needed at compile time.
 
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
 }

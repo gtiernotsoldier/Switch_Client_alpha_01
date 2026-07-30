@@ -39,22 +39,43 @@ object ForgeBootstrap {
     // Cached field/method refs for render
     private val keybindingPressedField by lazy { MappingContext.getField("forge:keybinding_pressed") }
 
-    // GL11 reflection cache
+    // GL11 reflection cache — includes 2D projection setup for proper HUD rendering
     private object ReflectGL11 {
         private val gl11 by lazy { Class.forName("org.lwjgl.opengl.GL11") }
+
+        // Constants
         val GL_BLEND by lazy { gl11.getField("GL_BLEND").getInt(null) }
         val GL_DEPTH_TEST by lazy { gl11.getField("GL_DEPTH_TEST").getInt(null) }
         val GL_SRC_ALPHA by lazy { gl11.getField("GL_SRC_ALPHA").getInt(null) }
         val GL_ONE_MINUS_SRC_ALPHA by lazy { gl11.getField("GL_ONE_MINUS_SRC_ALPHA").getInt(null) }
         val GL_TEXTURE_2D by lazy { gl11.getField("GL_TEXTURE_2D").getInt(null) }
         val GL_QUADS by lazy { gl11.getField("GL_QUADS").getInt(null) }
+        val GL_ALL_ATTRIB_BITS by lazy { gl11.getField("GL_ALL_ATTRIB_BITS").getInt(null) }
+        val GL_PROJECTION by lazy { gl11.getField("GL_PROJECTION").getInt(null) }
+        val GL_MODELVIEW by lazy { gl11.getField("GL_MODELVIEW").getInt(null) }
+        val GL_LIGHTING by lazy { try { gl11.getField("GL_LIGHTING").getInt(null) } catch (_: Exception) { 0x0B50 } }
+
+        // State management
+        val glPushAttrib by lazy { gl11.getMethod("glPushAttrib", Int::class.javaPrimitiveType) }
+        val glPopAttrib by lazy { gl11.getMethod("glPopAttrib") }
+        val glMatrixMode by lazy { gl11.getMethod("glMatrixMode", Int::class.javaPrimitiveType) }
+        val glPushMatrix by lazy { gl11.getMethod("glPushMatrix") }
+        val glPopMatrix by lazy { gl11.getMethod("glPopMatrix") }
+        val glLoadIdentity by lazy { gl11.getMethod("glLoadIdentity") }
+        val glOrtho by lazy {
+            gl11.getMethod("glOrtho",
+                Double::class.javaPrimitiveType, Double::class.javaPrimitiveType,
+                Double::class.javaPrimitiveType, Double::class.javaPrimitiveType,
+                Double::class.javaPrimitiveType, Double::class.javaPrimitiveType)
+        }
+
+        // Drawing
         val glEnable by lazy { gl11.getMethod("glEnable", Int::class.javaPrimitiveType) }
         val glDisable by lazy { gl11.getMethod("glDisable", Int::class.javaPrimitiveType) }
         val glDepthMask by lazy { gl11.getMethod("glDepthMask", Boolean::class.java) }
         val glBlendFunc by lazy {
             gl11.getMethod("glBlendFunc", Int::class.javaPrimitiveType, Int::class.javaPrimitiveType)
         }
-        val glPushMatrix by lazy { gl11.getMethod("glPushMatrix") }
         val glColor4f by lazy {
             gl11.getMethod("glColor4f", Float::class.java, Float::class.java, Float::class.java, Float::class.java)
         }
@@ -63,7 +84,6 @@ object ForgeBootstrap {
             gl11.getMethod("glVertex2f", Float::class.java, Float::class.java)
         }
         val glEnd by lazy { gl11.getMethod("glEnd") }
-        val glPopMatrix by lazy { gl11.getMethod("glPopMatrix") }
     }
 
     fun init() {
@@ -181,8 +201,9 @@ object ForgeBootstrap {
     }
 
     /**
-     * Called by Agent.java via mc.addScheduledTask() on MC's main/render thread.
+     * Called by Agent.java via dispatchRender() on MC's main/render thread.
      * Draws HUD text, ClickGUI panel, and notifications.
+     * Includes proper GL state save/restore and 2D orthographic projection.
      */
     fun render() {
         try {
@@ -203,7 +224,35 @@ object ForgeBootstrap {
             val drawStringMethod = MappingContext.getMethod("forge:fontRenderer_drawStringWithShadow")
             val getStringWidthMethod = MappingContext.getMethod("forge:fontRenderer_getStringWidth")
 
-            // Draw HUD
+            val g = ReflectGL11
+
+            // ══════════════════════════════════════
+            //  GL State: Save
+            // ══════════════════════════════════════
+            g.glPushAttrib.invoke(null, g.GL_ALL_ATTRIB_BITS)
+            g.glMatrixMode.invoke(null, g.GL_PROJECTION)
+            g.glPushMatrix.invoke(null)
+            g.glMatrixMode.invoke(null, g.GL_MODELVIEW)
+            g.glPushMatrix.invoke(null)
+
+            // ══════════════════════════════════════
+            //  Setup 2D ortho (origin top-left, y-down)
+            // ══════════════════════════════════════
+            g.glMatrixMode.invoke(null, g.GL_PROJECTION)
+            g.glLoadIdentity.invoke(null)
+            g.glOrtho.invoke(null, 0.0, scaledWidth.toDouble(), scaledHeight.toDouble(), 0.0, -1.0, 1.0)
+            g.glMatrixMode.invoke(null, g.GL_MODELVIEW)
+            g.glLoadIdentity.invoke(null)
+
+            // Disable 3D
+            g.glDisable.invoke(null, g.GL_DEPTH_TEST)
+            g.glDisable.invoke(null, g.GL_LIGHTING)
+            g.glEnable.invoke(null, g.GL_BLEND)
+            g.glBlendFunc.invoke(null, g.GL_SRC_ALPHA, g.GL_ONE_MINUS_SRC_ALPHA)
+
+            // ══════════════════════════════════════
+            //  Draw HUD
+            // ══════════════════════════════════════
             val hudText = EventBridge.hudTextLine
             if (hudText.isNotEmpty()) {
                 try {
@@ -219,7 +268,7 @@ object ForgeBootstrap {
 
             // Draw ClickGUI panel
             if (EventBridge.isGuiOpen) {
-                drawClickGUI(fontRenderer, fontHeight, drawStringMethod, scaledHeight)
+                drawClickGUI(fontRenderer, fontHeight, drawStringMethod, scaledWidth, scaledHeight)
             }
 
             // Draw notifications
@@ -240,10 +289,20 @@ object ForgeBootstrap {
                     notifY += fontHeight + 4
                 }
             }
+
+            // ══════════════════════════════════════
+            //  GL State: Restore
+            // ══════════════════════════════════════
+            g.glMatrixMode.invoke(null, g.GL_PROJECTION)
+            g.glPopMatrix.invoke(null)
+            g.glMatrixMode.invoke(null, g.GL_MODELVIEW)
+            g.glPopMatrix.invoke(null)
+            g.glPopAttrib.invoke(null)
+
         } catch (_: Exception) {}
     }
 
-    private fun drawClickGUI(fontRenderer: Any, fontHeight: Int, drawString: java.lang.invoke.MethodHandle, scaledHeight: Int) {
+    private fun drawClickGUI(fontRenderer: Any, fontHeight: Int, drawString: java.lang.invoke.MethodHandle, scaledWidth: Int, scaledHeight: Int) {
         val categories = io.switchlite.adapter.common.module.Category.values()
         val panelX = 40
         var panelY = 30

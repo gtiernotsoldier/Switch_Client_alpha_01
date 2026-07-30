@@ -35,7 +35,7 @@ public class Agent {
         logFile = new File(tempDir, "switchlite-agent.log");
     }
 
-    private static void log(String msg) {
+    static void log(String msg) {
         // Always stdout (may or may not reach latest.log)
         System.out.println(msg);
         // Also write to file — guaranteed visible

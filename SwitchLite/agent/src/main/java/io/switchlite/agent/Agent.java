@@ -418,10 +418,7 @@ public class Agent {
     }
 
     private static void secondLog(String msg) {
-        try { System.out.println(msg); } catch (Exception ignored) {}
-        try {
-            if (logStream != null) { logStream.println(msg); logStream.flush(); }
-        } catch (Exception ignored) {}
+        log(msg);
     }
 
     /**

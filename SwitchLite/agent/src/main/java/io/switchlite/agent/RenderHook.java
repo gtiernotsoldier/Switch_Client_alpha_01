@@ -46,7 +46,7 @@ public class RenderHook {
     private static Method displayGetWidth, displayGetHeight, displayIsActive;
 
     // ScaledResolution — GUI coordinate scaling
-    private static Method srCtor;
+    private static Constructor<?> srCtor;
     private static Method srGetWidth, srGetHeight;
 
     private static int frameCount = 0;

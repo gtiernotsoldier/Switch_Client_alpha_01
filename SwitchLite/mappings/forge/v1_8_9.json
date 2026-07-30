@@ -286,6 +286,14 @@
     "class": "net.minecraft.entity.player.EntityPlayer",
     "method": "stopUsingItem"
   },
+  "forge:player_inventory": {
+    "class": "net.minecraft.entity.player.EntityPlayer",
+    "field": "inventory"
+  },
+  "forge:player_foodStats": {
+    "class": "net.minecraft.entity.player.EntityPlayer",
+    "field": "foodStats"
+  },
   "forge:player_sendQueue": {
     "class": "net.minecraft.client.entity.EntityPlayerSP",
     "field": "sendQueue"

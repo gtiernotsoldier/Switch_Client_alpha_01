@@ -229,7 +229,7 @@ object ForgeEventBridge : IEventBridge {
             val blockState = try { MappingContext.invokeMethod(world, "forge:world_getBlockState", blockPos) } catch (_: Exception) { null }
             val block = try { MappingContext.getFieldValue(blockState, "forge:iblockstate_block") } catch (_: Exception) { null }
 
-            val inventory = try { MappingContext.getFieldValue(player, "forge:mc_thePlayer") } catch (_: Exception) { null }
+            val inventory = try { MappingContext.getFieldValue(player, "forge:player_inventory") } catch (_: Exception) { null }
             for (i in 0..8) {
                 val stack = try { MappingContext.invokeMethod(inventory, "forge:inventory_getStackInSlot", i) } catch (_: Exception) { null }
                 if (stack == null) continue

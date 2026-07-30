@@ -1,171 +1,293 @@
 package io.switchlite.agent;
 
+import java.lang.reflect.*;
+
 /**
- * RenderHook — injected into LWJGL Display.update() via retransformClasses.
+ * Direct OpenGL render callback for HUD/GUI overlay.
+ * Hooked into Display.update() by Transformer — called every frame BEFORE buffer swap.
  *
- * Called EVERY frame from the LWJGL thread, before and after Display.update().
- * Reads state from System properties (set by Agent HUD thread) instead of
- * direct volatile field access, because this class is loaded by the bootstrap
- * ClassLoader while Agent runs on the system ClassLoader.
+ * Architecture: Independent of MC's render pipeline.
+ * - GL11 for projection, state, rectangles (reflection, no compile dep)
+ * - MC FontRenderer used ONLY as a glyph utility (reflection)
+ * - All GL state saved/restored via glPushAttrib/glPopAttrib — zero impact on MC
  *
- * Only draws 2D overlay (HUD, ClickGUI panel, notifications).
- * 3D ESP rendering lives in ForgeBootstrap.render().
+ * Works on BOTH main menu and in-game because Display.update()
+ * is called every frame regardless of game state.
  */
 public class RenderHook {
 
-    private static final long DO_FRAME_INTERVAL_MS = 50;
+    // ── State (written by Agent from HudTick thread, read by MC render thread) ──
+    public static volatile boolean guiVisible = false;
+    public static volatile String hudText = "";
 
-    // ── Display.update() hook point ──
+    // ── GL constants ──
+    private static final int GL_ALL_ATTRIB_BITS     = 0xFFFFFFFF;
+    private static final int GL_PROJECTION           = 0x1701;
+    private static final int GL_MODELVIEW            = 0x1700;
+    private static final int GL_DEPTH_TEST           = 0x0B71;
+    private static final int GL_LIGHTING             = 0x0B50;
+    private static final int GL_BLEND                = 0x0BE2;
+    private static final int GL_SRC_ALPHA            = 0x0302;
+    private static final int GL_ONE_MINUS_SRC_ALPHA  = 0x0303;
+    private static final int GL_QUADS                = 0x0007;
+
+    // ── Cached reflection handles ──
+    private static volatile boolean ready = false;
+    private static Method mcGet;
+    private static Field mcFontRenderer;
+    private static Method fontDraw;
+    private static boolean fontUsesFloat = true;
+
+    private static Method glPushAttrib, glPopAttrib;
+    private static Method glMatrixMode, glPushMatrix, glPopMatrix;
+    private static Method glLoadIdentity, glOrtho;
+    private static Method glEnable, glDisable, glBlendFunc, glColor4f;
+    private static Method glBegin, glEnd, glVertex2f;
+    private static Method displayGetWidth, displayGetHeight, displayIsActive;
+
+    // ScaledResolution — GUI coordinate scaling
+    private static Constructor<?> srCtor;
+    private static Method srGetWidth, srGetHeight;
+
+    private static int frameCount = 0;
+    private static final int LOG_EVERY_N_FRAMES = 300; // ~5s at 60fps
 
     /**
-     * Called from Transformer-injected code BEFORE Display.update().
-     * The injected bytecode does:
-     *   RenderHook.preUpdate();
-     *   (original Display.update() body)
-     *   RenderHook.postUpdate();
+     * Called every frame from Display.update() before buffer swap.
+     * GL context is current, MC has finished its render.
+     * MUST NOT throw — catches everything internally.
      */
-    public static void preUpdate() {
-        // Reserve for future use (input capture, state snapshot)
-    }
-
-    /**
-     * Called from Transformer-injected code AFTER Display.update().
-     * This is where we draw the overlay — the swap has happened,
-     * so we're rendering on top of the game frame.
-     */
-    public static void postUpdate() {
-        doFrame();
-    }
-
-    // ── Frame logic ──
-
-    private static long lastFrameTime = 0;
-
-    private static void doFrame() {
-        long now = System.currentTimeMillis();
-        if (now - lastFrameTime < DO_FRAME_INTERVAL_MS) return;
-        lastFrameTime = now;
-
-        try {
-            // Read state from System properties (cross-ClassLoader safe)
-            String ht = System.getProperty("switchlite.hudText", "");
-            boolean guiOpen = "true".equals(System.getProperty("switchlite.guiOpen", "false"));
-
-            if (!ht.isEmpty()) {
-                drawHudText(ht);
-            }
-            if (guiOpen) {
-                drawClickGuiPanel();
-            }
-
-            // Draw queued notifications
-            NotificationManager.renderAll();
-        } catch (Exception e) {
-            // Silently ignore — render errors shouldn't crash MC
+    public static void onFrame() {
+        if (!ready) {
+            initOnce();
+            return;
         }
+        try {
+            doFrame();
+        } catch (Throwable t) {
+            if (frameCount < 3) {
+                Agent.log("[HUD] " + t.getClass().getSimpleName() + ": " + t.getMessage());
+            }
+        }
+        frameCount++;
     }
 
-    // ── HUD text rendering ──
-
-    private static void drawHudText(String text) {
+    private static void initOnce() {
         try {
-            // Use OpenGL reflection (same as ForgeBootstrap ReflectGL11)
+            // ── GL11 static methods ──
             Class<?> gl11 = Class.forName("org.lwjgl.opengl.GL11");
+            glPushAttrib = gl11.getMethod("glPushAttrib", int.class);
+            glPopAttrib  = gl11.getMethod("glPopAttrib");
+            glMatrixMode = gl11.getMethod("glMatrixMode", int.class);
+            glPushMatrix = gl11.getMethod("glPushMatrix");
+            glPopMatrix  = gl11.getMethod("glPopMatrix");
+            glLoadIdentity = gl11.getMethod("glLoadIdentity");
+            glOrtho     = gl11.getMethod("glOrtho",
+                double.class, double.class, double.class, double.class, double.class, double.class);
+            glEnable    = gl11.getMethod("glEnable", int.class);
+            glDisable   = gl11.getMethod("glDisable", int.class);
+            glBlendFunc = gl11.getMethod("glBlendFunc", int.class, int.class);
+            glColor4f   = gl11.getMethod("glColor4f", float.class, float.class, float.class, float.class);
+            glBegin     = gl11.getMethod("glBegin", int.class);
+            glEnd       = gl11.getMethod("glEnd");
+            glVertex2f  = gl11.getMethod("glVertex2f", float.class, float.class);
 
-            int GL_DEPTH_TEST = gl11.getField("GL_DEPTH_TEST").getInt(null);
-            int GL_TEXTURE_2D = gl11.getField("GL_TEXTURE_2D").getInt(null);
+            // ── Display ──
+            Class<?> displayClass = Class.forName("org.lwjgl.opengl.Display");
+            displayGetWidth  = displayClass.getMethod("getWidth");
+            displayGetHeight = displayClass.getMethod("getHeight");
+            displayIsActive  = displayClass.getMethod("isActive");
 
-            gl11.getMethod("glPushMatrix").invoke(null);
-            gl11.getMethod("glDisable", int.class).invoke(null, GL_DEPTH_TEST);
-            gl11.getMethod("glDisable", int.class).invoke(null, GL_TEXTURE_2D);
-
-            // Draw background rectangle (top-left, semi-transparent)
-            gl11.getMethod("glColor4f", float.class, float.class, float.class, float.class)
-                .invoke(null, 0.0f, 0.0f, 0.0f, 0.4f);
-            gl11.getMethod("glBegin", int.class).invoke(null, gl11.getField("GL_QUADS").getInt(null));
-            gl11.getMethod("glVertex2f", float.class, float.class).invoke(null, 2f, 2f);
-            gl11.getMethod("glVertex2f", float.class, float.class).invoke(null, 152f, 2f);
-            gl11.getMethod("glVertex2f", float.class, float.class).invoke(null, 152f, 14f);
-            gl11.getMethod("glVertex2f", float.class, float.class).invoke(null, 2f, 14f);
-            gl11.getMethod("glEnd").invoke(null);
-
-            // Use Minecraft FontRenderer to draw text (reflection)
-            drawText(text, 4, 4);
-
-            gl11.getMethod("glEnable", int.class).invoke(null, GL_DEPTH_TEST);
-            gl11.getMethod("glEnable", int.class).invoke(null, GL_TEXTURE_2D);
-            gl11.getMethod("glPopMatrix").invoke(null);
-        } catch (Exception ignored) {}
-    }
-
-    private static void drawText(String text, int x, int y) {
-        try {
+            // ── Minecraft.getMinecraft() ──
             Class<?> mcClass = Class.forName("net.minecraft.client.Minecraft");
-            java.lang.reflect.Method getMc = findStaticFactory(mcClass);
-            if (getMc == null) return;
-            Object mc = getMc.invoke(null);
-            if (mc == null) return;
+            for (String name : new String[]{"getMinecraft", "func_71410_x"}) {
+                try { mcGet = mcClass.getMethod(name); break; } catch (Exception ignored) {}
+            }
 
-            // Minecraft.fontRendererObj (or equivalent)
-            java.lang.reflect.Field frField = findFieldByType(mcClass, "FontRenderer");
-            if (frField == null) return;
-            Object fr = frField.get(mc);
-            if (fr == null) return;
+            // ── ScaledResolution for GUI coordinates ──
+            try {
+                Class<?> srClass = Class.forName("net.minecraft.client.gui.ScaledResolution");
+                // MC 1.8.9: constructor takes (Minecraft) only
+                try {
+                    srCtor = srClass.getConstructor(mcClass);
+                } catch (NoSuchMethodException e) {
+                    // Newer MC: (Minecraft, int, int)
+                    srCtor = srClass.getConstructor(mcClass, int.class, int.class);
+                }
+                srGetWidth  = srClass.getMethod("getScaledWidth");
+                srGetHeight = srClass.getMethod("getScaledHeight");
+            } catch (Exception e) {
+                Agent.log("[HUD] ScaledResolution not found — raw pixel coords");
+            }
 
-            // fontRenderer.drawStringWithShadow(text, x, y, color)
-            fr.getClass().getMethod("drawStringWithShadow", String.class, int.class, int.class, int.class)
-                .invoke(fr, text, x, y, 0xFFFFFF);
-        } catch (Exception ignored) {}
+            ready = true;
+            Agent.log("[HUD] RenderHook ready (Display.update callback)");
+        } catch (Throwable t) {
+            Agent.log("[HUD] Init failed: " + t.getClass().getSimpleName() + ": " + t.getMessage());
+        }
     }
 
-    // ── ClickGUI panel ──
+    private static void doFrame() throws Exception {
+        // Skip if minimized
+        if (displayIsActive != null && !(Boolean) displayIsActive.invoke(null)) return;
 
-    private static void drawClickGuiPanel() {
-        try {
-            Class<?> gl11 = Class.forName("org.lwjgl.opengl.GL11");
-            int GL_QUADS = gl11.getField("GL_QUADS").getInt(null);
+        Object mc = mcGet.invoke(null);
+        if (mc == null) return;
 
-            // Panel background (center, semi-transparent)
-            gl11.getMethod("glColor4f", float.class, float.class, float.class, float.class)
-                .invoke(null, 0.1f, 0.1f, 0.15f, 0.85f);
-            gl11.getMethod("glBegin", int.class).invoke(null, GL_QUADS);
-            gl11.getMethod("glVertex2f", float.class, float.class).invoke(null, 200f, 50f);
-            gl11.getMethod("glVertex2f", float.class, float.class).invoke(null, 500f, 50f);
-            gl11.getMethod("glVertex2f", float.class, float.class).invoke(null, 500f, 400f);
-            gl11.getMethod("glVertex2f", float.class, float.class).invoke(null, 200f, 400f);
-            gl11.getMethod("glEnd").invoke(null);
+        int rawW = (Integer) displayGetWidth.invoke(null);
+        int rawH = (Integer) displayGetHeight.invoke(null);
+        if (rawW <= 0 || rawH <= 0) return;
 
-            // Panel title bar
-            gl11.getMethod("glColor4f", float.class, float.class, float.class, float.class)
-                .invoke(null, 0.2f, 0.6f, 0.2f, 0.9f);
-            gl11.getMethod("glBegin", int.class).invoke(null, GL_QUADS);
-            gl11.getMethod("glVertex2f", float.class, float.class).invoke(null, 200f, 50f);
-            gl11.getMethod("glVertex2f", float.class, float.class).invoke(null, 500f, 50f);
-            gl11.getMethod("glVertex2f", float.class, float.class).invoke(null, 500f, 70f);
-            gl11.getMethod("glVertex2f", float.class, float.class).invoke(null, 200f, 70f);
-            gl11.getMethod("glEnd").invoke(null);
+        // ── Get FontRenderer (lazy init) ──
+        if (mcFontRenderer == null) {
+            Class<?> mcClass = mc.getClass();
+            for (String fn : new String[]{"fontRendererObj", "field_71466_p"}) {
+                try { mcFontRenderer = mcClass.getField(fn); break; } catch (Exception ignored) {}
+            }
+        }
+        Object fr = (mcFontRenderer != null) ? mcFontRenderer.get(mc) : null;
 
-            drawText("SwitchLite v0.1.0-alpha", 208, 54);
-        } catch (Exception ignored) {}
+        // ── Detect FontRenderer draw method (lazy, once) ──
+        if (fr != null && fontDraw == null) {
+            Class<?> frClass = fr.getClass();
+            // Try float params first (MCP)
+            for (String mn : new String[]{"drawStringWithShadow", "func_78266_a"}) {
+                try {
+                    fontDraw = frClass.getMethod(mn, String.class, float.class, float.class, int.class);
+                    fontUsesFloat = true;
+                    break;
+                } catch (Exception ignored) {}
+            }
+            // Fallback: scan for (String, num, num, int) -> int
+            if (fontDraw == null) {
+                for (Method m : frClass.getMethods()) {
+                    Class<?>[] p = m.getParameterTypes();
+                    if (p.length == 4 && p[0] == String.class
+                            && (p[1] == float.class || p[1] == int.class)
+                            && (p[2] == float.class || p[2] == int.class)
+                            && p[3] == int.class && m.getReturnType() == int.class) {
+                        fontDraw = m;
+                        fontUsesFloat = (p[1] == float.class);
+                        Agent.log("[HUD] Font draw: " + m.getName() + " float=" + fontUsesFloat);
+                        break;
+                    }
+                }
+            }
+            if (fontDraw != null) {
+                Agent.log("[HUD] FontRenderer ready: " + fontDraw.getName());
+            }
+        }
+
+        // ── Calculate GUI-scaled dimensions ──
+        int guiW, guiH;
+        if (srCtor != null) {
+            Object sr;
+            if (srCtor.getParameterTypes().length == 1) {
+                sr = srCtor.newInstance(mc);
+            } else {
+                sr = srCtor.newInstance(mc, rawW, rawH);
+            }
+            guiW = (Integer) srGetWidth.invoke(sr);
+            guiH = (Integer) srGetHeight.invoke(sr);
+        } else {
+            guiW = rawW;
+            guiH = rawH;
+        }
+
+        // ══════════════════════════════════════
+        //  GL State: Save
+        // ══════════════════════════════════════
+        glPushAttrib.invoke(null, GL_ALL_ATTRIB_BITS);
+        glMatrixMode.invoke(null, GL_PROJECTION);
+        glPushMatrix.invoke(null);
+        glMatrixMode.invoke(null, GL_MODELVIEW);
+        glPushMatrix.invoke(null);
+
+        // ══════════════════════════════════════
+        //  Setup 2D ortho (origin top-left, y-down)
+        // ══════════════════════════════════════
+        glMatrixMode.invoke(null, GL_PROJECTION);
+        glLoadIdentity.invoke(null);
+        glOrtho.invoke(null, 0.0, (double) guiW, (double) guiH, 0.0, -1.0, 1.0);
+        glMatrixMode.invoke(null, GL_MODELVIEW);
+        glLoadIdentity.invoke(null);
+
+        // Disable 3D
+        glDisable.invoke(null, GL_DEPTH_TEST);
+        glDisable.invoke(null, GL_LIGHTING);
+        glEnable.invoke(null, GL_BLEND);
+        glBlendFunc.invoke(null, GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+        // ══════════════════════════════════════
+        //  Draw HUD
+        // ══════════════════════════════════════
+        float y = 4.0f;
+        float x = 4.0f;
+        boolean hasFont = (fr != null && fontDraw != null);
+
+        // -- Header --
+        String header = guiVisible ? "[SwitchLite] GUI: ON" : "[SwitchLite] v0.1-alpha";
+        float headerH = 12.0f;
+
+        // -- Lines when GUI open --
+        float totalH = headerH;
+        if (guiVisible) totalH += 24.0f; // 2 extra lines
+        String ht = hudText;
+        if (ht != null && !ht.isEmpty()) totalH += 16.0f;
+
+        // Background rect
+        drawRect(x - 2, y - 2, 200, totalH + 4, 0.0f, 0.0f, 0.0f, 0.5f);
+
+        // Header text
+        if (hasFont) drawText(fr, header, x, y, 0xFFFF55);
+        y += headerH;
+
+        if (guiVisible) {
+            if (hasFont) drawText(fr, "Right Shift = toggle", x, y, 0xAAAAAA);
+            y += 12;
+            if (hasFont) drawText(fr, "Modules active", x, y, 0x55FF55);
+            y += 12;
+        }
+
+        if (ht != null && !ht.isEmpty()) {
+            y += 4;
+            if (hasFont) drawText(fr, ht, x, y, 0xFFFFFF);
+        }
+
+        // ══════════════════════════════════════
+        //  GL State: Restore
+        // ══════════════════════════════════════
+        glMatrixMode.invoke(null, GL_PROJECTION);
+        glPopMatrix.invoke(null);
+        glMatrixMode.invoke(null, GL_MODELVIEW);
+        glPopMatrix.invoke(null);
+        glPopAttrib.invoke(null);
+
+        // Periodic log
+        if (frameCount % LOG_EVERY_N_FRAMES == 1) {
+            Agent.log("[HUD] frame=" + frameCount + " gui=" + guiW + "x" + guiH);
+        }
     }
 
-    // ── Reflection helpers ──
+    // ── Helpers ──
 
-    private static java.lang.reflect.Method findStaticFactory(Class<?> cls) {
-        for (java.lang.reflect.Method m : cls.getDeclaredMethods()) {
-            if (m.getParameterCount() == 0 && m.getReturnType() == cls &&
-                java.lang.reflect.Modifier.isStatic(m.getModifiers())) return m;
+    private static void drawText(Object fr, String text, float x, float y, int color) throws Exception {
+        if (fontUsesFloat) {
+            fontDraw.invoke(fr, text, x, y, color);
+        } else {
+            fontDraw.invoke(fr, text, (int) x, (int) y, color);
         }
-        return null;
     }
 
-    private static java.lang.reflect.Field findFieldByType(Class<?> cls, String suffix) {
-        for (java.lang.reflect.Field f : cls.getDeclaredFields()) {
-            if (f.getType().getName().contains(suffix)) return f;
-        }
-        for (java.lang.reflect.Field f : cls.getFields()) {
-            if (f.getType().getName().contains(suffix)) return f;
-        }
-        return null;
+    private static void drawRect(float x, float y, float w, float h,
+                                  float r, float g, float b, float a) throws Exception {
+        glColor4f.invoke(null, r, g, b, a);
+        glBegin.invoke(null, GL_QUADS);
+        glVertex2f.invoke(null, x, y);
+        glVertex2f.invoke(null, x + w, y);
+        glVertex2f.invoke(null, x + w, y + h);
+        glVertex2f.invoke(null, x, y + h);
+        glEnd.invoke(null);
+        glColor4f.invoke(null, 1.0f, 1.0f, 1.0f, 1.0f);
     }
 }

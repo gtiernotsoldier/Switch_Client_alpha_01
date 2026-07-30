@@ -6,37 +6,62 @@ import io.switchlite.core.strategy.click.WeaponType
 import io.switchlite.core.util.Vec2
 import io.switchlite.core.util.Vec3
 import io.switchlite.agent.MappingContext
-import net.minecraft.client.Minecraft
-import net.minecraft.client.entity.EntityPlayerSP
-import net.minecraft.entity.Entity
-import net.minecraft.entity.EntityLivingBase
-import net.minecraft.entity.monster.EntityMob
-import net.minecraft.entity.player.EntityPlayer
-import net.minecraft.item.ItemSword
-import net.minecraft.item.ItemAxe
-import org.lwjgl.input.Mouse
-import net.minecraft.util.MovingObjectPosition
-import net.minecraft.util.AxisAlignedBB
 
 /**
- * Forge 1.8.9 state extractor.
- * Extracts pure data snapshots from Minecraft objects via MappingContext.
- * Zero direct field access — all through semantic mapping keys.
+ * Forge 1.8.9 state extractor — pure reflection, zero MC/Forge compile dependencies.
+ * All Minecraft API access via MappingContext semantic keys or Class.forName().
  */
 object ForgeStateExtractor : IStateExtractor {
 
-    private val mc get() = Minecraft.getMinecraft()
+    // Lazy class references (runtime only — no compile-time MC dependency)
+    private val entityClass by lazy { Class.forName("net.minecraft.entity.Entity") }
+    private val entityLivingBaseClass by lazy { Class.forName("net.minecraft.entity.EntityLivingBase") }
+    private val entityPlayerSPClass by lazy { Class.forName("net.minecraft.client.entity.EntityPlayerSP") }
+    private val itemSwordClass by lazy { Class.forName("net.minecraft.item.ItemSword") }
+    private val itemAxeClass by lazy { Class.forName("net.minecraft.item.ItemAxe") }
+    private val mouseClass by lazy { Class.forName("org.lwjgl.input.Mouse") }
+    private val vec3Class by lazy { Class.forName("net.minecraft.util.Vec3") }
+    private val vec3Constructor by lazy {
+        vec3Class.getConstructor(Double::class.java, Double::class.java, Double::class.java)
+    }
+    private val movingObjectTypeClass by lazy {
+        Class.forName("net.minecraft.util.MovingObjectPosition\$MovingObjectType")
+    }
+    private val movingObjectTypeBlock by lazy {
+        movingObjectTypeClass.enumConstants.firstOrNull { it.toString() == "BLOCK" }
+    }
+    private val movingObjectTypeEntity by lazy {
+        movingObjectTypeClass.enumConstants.firstOrNull { it.toString() == "ENTITY" }
+    }
+    private val mouseIsButtonDown by lazy {
+        mouseClass.getMethod("isButtonDown", Int::class.javaPrimitiveType)
+    }
 
-    /** Maximum target selection range in blocks. */
     private const val MAX_TARGET_RANGE = 6.0
 
-    // ========== Combat Tracking State ==========
     private var combatStartTick: Long = -1
     private var lastAttackTick: Long = 0
     private var lastTrackedTargetId: Int = -1
 
+    // Helpers
+    private fun getMc(): Any? = try {
+        MappingContext.invokeMethod(null, "forge:mc_getMinecraft")
+    } catch (_: Exception) { null }
+
+    private fun getPlayer(): Any? = try {
+        getMc()?.let { MappingContext.getFieldValue(it, "forge:mc_thePlayer") }
+    } catch (_: Exception) { null }
+
+    private fun getWorld(): Any? = try {
+        getMc()?.let { MappingContext.getFieldValue(it, "forge:mc_theWorld") }
+    } catch (_: Exception) { null }
+
+    private fun isMouseButtonDown(button: Int): Boolean = try {
+        mouseIsButtonDown.invoke(null, button) as Boolean
+    } catch (_: Exception) { false }
+
     override fun extractPlayerState(): PlayerState {
-        val player = mc.thePlayer ?: return PlayerState.EMPTY
+        val player = getPlayer() ?: return PlayerState.EMPTY
 
         val posX = MappingContext.getFieldValue(player, "forge:entity_posX") as? Double ?: 0.0
         val posY = MappingContext.getFieldValue(player, "forge:entity_posY") as? Double ?: 0.0
@@ -52,17 +77,37 @@ object ForgeStateExtractor : IStateExtractor {
         val maxHurtResistantTime = MappingContext.getFieldValue(player, "forge:entity_maxHurtResistantTime") as? Int ?: 10
         val health = MappingContext.getFieldValue(player, "forge:entity_health") as? Float ?: 0f
 
-        val moveForward = MappingContext.getFieldValue(player, "forge:player_moveForward") as? Float ?: 0f
-        val moveStrafe = MappingContext.getFieldValue(player, "forge:player_moveStrafing") as? Float ?: 0f
+        val moveForward = MappingContext.getFieldValue(player, "forge:entity_player_moveForward") as? Float ?: 0f
+        val moveStrafe = MappingContext.getFieldValue(player, "forge:entity_player_moveStrafing") as? Float ?: 0f
         val isMoving = (motionX != 0.0 || motionZ != 0.0)
         val isMovingForward = moveForward > 0f
 
-        // Physical mouse left button — decoupled from keyBindAttack to avoid
-        // self-pollution when AutoClicker sets keyBindAttack.pressed = true
-        val isAttackKeyDown = Mouse.isButtonDown(0)
+        val isAttackKeyDown = isMouseButtonDown(0)
+
+        val isBlocking = MappingContext.getFieldValue(player, "forge:player_isBlocking") as? Boolean ?: false
+        val isSneaking = MappingContext.getFieldValue(player, "forge:player_isSneaking") as? Boolean ?: false
+        val selectedSlot = try {
+            val inventory = MappingContext.getFieldValue(player, "forge:mc_thePlayer")
+                ?.let { MappingContext.getFieldValue(it, "forge:inventory_currentItem") } as? Int
+            inventory ?: 0
+        } catch (_: Exception) { 0 }
+
+        val heldItem = MappingContext.getFieldValue(player, "forge:player_heldItem")
+        val weaponType = classifyWeapon(
+            try { MappingContext.getFieldValue(heldItem, "forge:itemStack_item") } catch (_: Exception) { null }
+        )
+
+        val mc = getMc()
+        val isMining = try {
+            val pc = MappingContext.getFieldValue(mc, "forge:mc_playerController")
+            MappingContext.getFieldValue(pc, "forge:playerController_isHittingBlock") as? Boolean ?: false
+        } catch (_: Exception) { false }
+
+        val world = getWorld()
+        val ticks = MappingContext.getFieldValue(world, "forge:world_worldTime") as? Long ?: 0L
 
         return PlayerState(
-            name = player.name ?: "",
+            name = MappingContext.getFieldValue(player, "forge:entity_name") as? String ?: "",
             position = Vec3(posX, posY, posZ),
             rotation = Vec2(rotationYaw, rotationPitch),
             motionX = motionX,
@@ -75,21 +120,21 @@ object ForgeStateExtractor : IStateExtractor {
             health = health,
             hurtTime = hurtTime,
             maxHurtResistantTime = maxHurtResistantTime,
-            attackCooldownProgress = 1.0f, // 1.8 has no cooldown bar — always full
-            isBlocking = player.isBlocking, // 1.8: only shield
-            isUsingItem = false, // 1.8 has no unified isUsingItem; not used by 1.8 path
-            isLookingAtTarget = false, // handled by ConditionChecker angle calc (method B)
-            isMining = MappingContext.getFieldValue(mc.playerController, "forge:playerController_isHittingBlock") as? Boolean ?: false,
-            isSneaking = player.isSneaking,
-            selectedSlot = player.inventory.currentItem,
-            weaponType = classifyWeapon(player.heldItem?.item),
+            attackCooldownProgress = 1.0f,
+            isBlocking = isBlocking,
+            isUsingItem = false,
+            isLookingAtTarget = false,
+            isMining = isMining,
+            isSneaking = isSneaking,
+            selectedSlot = selectedSlot,
+            weaponType = weaponType,
             isAttackKeyDown = isAttackKeyDown,
-            ticks = mc.theWorld?.worldTime?.toLong() ?: 0L
+            ticks = ticks
         )
     }
 
     override fun extractTargetState(entityId: Int): TargetState? {
-        val world = mc.theWorld ?: return null
+        val world = getWorld() ?: return null
         val entity = MappingContext.invokeMethod(world, "forge:world_getEntityByID", entityId) ?: return null
 
         val posX = MappingContext.getFieldValue(entity, "forge:entity_posX") as? Double ?: 0.0
@@ -101,7 +146,6 @@ object ForgeStateExtractor : IStateExtractor {
         val health = MappingContext.getFieldValue(entity, "forge:entity_health") as? Float ?: 0f
         val hurtTime = MappingContext.getFieldValue(entity, "forge:entity_hurtTime") as? Int ?: 0
 
-        // Extract bounding box
         val bb = MappingContext.getFieldValue(entity, "forge:entity_boundingBox")
         val hitbox = if (bb != null) {
             Hitbox(
@@ -116,7 +160,7 @@ object ForgeStateExtractor : IStateExtractor {
             Hitbox(0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
         }
 
-        val player = mc.thePlayer ?: return null
+        val player = getPlayer() ?: return null
         val playerX = MappingContext.getFieldValue(player, "forge:entity_posX") as? Double ?: 0.0
         val playerY = MappingContext.getFieldValue(player, "forge:entity_posY") as? Double ?: 0.0
         val playerZ = MappingContext.getFieldValue(player, "forge:entity_posZ") as? Double ?: 0.0
@@ -125,15 +169,10 @@ object ForgeStateExtractor : IStateExtractor {
         val dz = posZ - playerZ
         val distance = kotlin.math.sqrt(dx * dx + dy * dy + dz * dz).toFloat()
 
-        // Direction from player to target (horizontal)
         val dirToTargetX = posX - playerX
         val dirToTargetZ = posZ - playerZ
         val dirLen = kotlin.math.sqrt(dirToTargetX * dirToTargetX + dirToTargetZ * dirToTargetZ)
 
-        // Target movement direction analysis:
-        // Dot product of target motion with direction FROM player TO target.
-        // Positive = target moving away from player (backward/retreating).
-        // Negative = target moving toward player (approaching).
         val isMovingBackward: Boolean
         val isMovingTowardsPlayer: Boolean
         if (dirLen > 0.01 && (motionX != 0.0 || motionZ != 0.0)) {
@@ -145,9 +184,15 @@ object ForgeStateExtractor : IStateExtractor {
             isMovingTowardsPlayer = false
         }
 
+        val entityName = try {
+            if (entityLivingBaseClass.isInstance(entity)) {
+                MappingContext.getFieldValue(entity, "forge:entity_name") as? String ?: ""
+            } else ""
+        } catch (_: Exception) { "" }
+
         return TargetState(
             entityId = entityId,
-            name = (entity as? EntityLivingBase)?.name ?: "",
+            name = entityName,
             position = Vec3(posX, posY, posZ),
             motionX = motionX,
             motionY = motionY,
@@ -168,21 +213,17 @@ object ForgeStateExtractor : IStateExtractor {
         val targetId = getCurrentTargetId()
         val target = if (targetId != null) extractTargetState(targetId) else null
         val distance = target?.distance ?: 0f
-        val currentTick = mc.theWorld?.worldTime?.toLong() ?: 0L
+        val currentTick = getWorld()?.let { MappingContext.getFieldValue(it, "forge:world_worldTime") as? Long } ?: 0L
 
-        // Track combat start/end
         if (targetId != null) {
             if (lastTrackedTargetId != targetId) {
-                // New target acquired — reset combat timer
                 combatStartTick = currentTick
                 lastTrackedTargetId = targetId
             }
-            // Track attack (player holding attack key while target exists)
             if (player.isAttackKeyDown) {
                 lastAttackTick = currentTick
             }
         } else {
-            // No target — end combat tracking after 3 seconds (60 ticks)
             if (combatStartTick >= 0 && currentTick - combatStartTick > 60) {
                 combatStartTick = -1
                 lastTrackedTargetId = -1
@@ -191,18 +232,15 @@ object ForgeStateExtractor : IStateExtractor {
 
         val ticksInCombat = if (combatStartTick >= 0) currentTick - combatStartTick else 0L
 
-        // Angle difference: horizontal angle between player look direction and direction to target
         val angleDiff: Float = if (target != null) {
             val dx = target.position.x - player.position.x
             val dz = target.position.z - player.position.z
             val yawToTarget = (kotlin.math.atan2(-dx, dz) * (180.0 / kotlin.math.PI)).toFloat()
             var diff = player.rotation.yaw - yawToTarget
-            // Normalize to -180..180
             diff = ((diff + 180f) % 360f + 360f) % 360f - 180f
             kotlin.math.abs(diff)
         } else 0f
 
-        // Visibility: use MC's raytrace (entity raycast)
         val isTargetVisible = if (targetId != null) {
             checkTargetVisibility(targetId)
         } else false
@@ -218,90 +256,80 @@ object ForgeStateExtractor : IStateExtractor {
         )
     }
 
-    /**
-     * Check if the target entity is visible via raytrace (no blocks between player and target).
-     * Uses MC's world.rayTraceBlocks from player eye to target center.
-     */
     private fun checkTargetVisibility(entityId: Int): Boolean {
-        val player = mc.thePlayer ?: return false
-        val world = mc.theWorld ?: return false
+        val player = getPlayer() ?: return false
+        val world = getWorld() ?: return false
         val entity = MappingContext.invokeMethod(world, "forge:world_getEntityByID", entityId) ?: return false
 
         val entityPos = MappingContext.getFieldValue(entity, "forge:entity_posX") as? Double ?: return false
         val entityPosY = MappingContext.getFieldValue(entity, "forge:entity_posY") as? Double ?: return false
         val entityPosZ = MappingContext.getFieldValue(entity, "forge:entity_posZ") as? Double ?: return false
 
-        // Ray from player eye to target center (approximate: feet + 0.9 height)
-        val eyePos = net.minecraft.util.Vec3(
-            player.posX,
-            player.posY + player.eyeHeight,
-            player.posZ
-        )
-        val targetPos = net.minecraft.util.Vec3(
-            entityPos,
-            entityPosY + 0.9,
-            entityPosZ
-        )
+        val playerX = MappingContext.getFieldValue(player, "forge:entity_posX") as? Double ?: 0.0
+        val playerY = MappingContext.getFieldValue(player, "forge:entity_posY") as? Double ?: 0.0
+        val playerZ = MappingContext.getFieldValue(player, "forge:entity_posZ") as? Double ?: 0.0
+        val eyeHeight = MappingContext.getFieldValue(player, "forge:player_eyeHeight") as? Double ?: 0.62
 
-        val result = world.rayTraceBlocks(eyePos, targetPos, false, true, false)
-        return result == null // null = no block hit = visible
+        val eyeVec = vec3Constructor.newInstance(playerX, playerY + eyeHeight, playerZ)
+        val targetVec = vec3Constructor.newInstance(entityPos, entityPosY + 0.9, entityPosZ)
+
+        val result = MappingContext.invokeMethod(world, "forge:world_rayTraceBlocks", eyeVec, targetVec, false, true, false)
+        return result == null
     }
 
     override fun getCurrentTargetId(): Int? {
-        val player = mc.thePlayer ?: return null
-        val world = mc.theWorld ?: return null
+        val player = getPlayer() ?: return null
+        val world = getWorld() ?: return null
+        val mc = getMc()
 
-        // Priority 1: crosshair-targeted entity (raycast result)
-        val pointedEntity = mc.objectMouseOver
-        if (pointedEntity != null && pointedEntity.typeOfHit == MovingObjectPosition.MovingObjectType.ENTITY) {
-            val entity = pointedEntity.entityHit
-            if (isViableTarget(entity, player)) {
-                return entity.entityId
+        // Priority 1: crosshair-targeted entity
+        val objMouseOver = try { MappingContext.getFieldValue(mc, "forge:mc_objectMouseOver") } catch (_: Exception) { null }
+        if (objMouseOver != null) {
+            val typeOfHit = try { MappingContext.getFieldValue(objMouseOver, "forge:movingObjectPosition_typeOfHit") } catch (_: Exception) { null }
+            if (typeOfHit === movingObjectTypeEntity) {
+                val entityHit = try { MappingContext.getFieldValue(objMouseOver, "forge:movingObjectPosition_entityHit") } catch (_: Exception) { null }
+                if (entityHit != null && isViableTarget(entityHit, player)) {
+                    return MappingContext.getFieldValue(entityHit, "forge:entity_entityId") as? Int
+                }
             }
         }
 
-        // Priority 2: nearest viable entity within range
-        var nearestEntity: Entity? = null
+        // Priority 2: nearest viable entity
+        val loadedList = MappingContext.getFieldValue(world, "forge:world_loadedEntityList") as? List<*> ?: return null
+        val playerX = MappingContext.getFieldValue(player, "forge:entity_posX") as? Double ?: 0.0
+        val playerZ = MappingContext.getFieldValue(player, "forge:entity_posZ") as? Double ?: 0.0
+
+        var nearestEntity: Any? = null
         var nearestDistSq = MAX_TARGET_RANGE * MAX_TARGET_RANGE
 
-        val playerX = player.posX
-        val playerZ = player.posZ
-        val playerY = player.posY + player.eyeHeight
-
-        for (entity in world.loadedEntityList) {
+        for (entity in loadedList) {
             if (!isViableTarget(entity, player)) continue
-            val dx = entity.posX - playerX
-            val dz = entity.posZ - playerZ
-            val distSq = dx * dx + dz * dz
+            val ex = MappingContext.getFieldValue(entity, "forge:entity_posX") as? Double ?: continue
+            val ez = MappingContext.getFieldValue(entity, "forge:entity_posZ") as? Double ?: continue
+            val distSq = (ex - playerX) * (ex - playerX) + (ez - playerZ) * (ez - playerZ)
             if (distSq < nearestDistSq) {
                 nearestDistSq = distSq
                 nearestEntity = entity
             }
         }
 
-        return nearestEntity?.entityId
+        return nearestEntity?.let { MappingContext.getFieldValue(it, "forge:entity_entityId") as? Int }
     }
 
-    /**
-     * Check if an entity is a valid attack target.
-     * Viable = not self, alive, is EntityLivingBase (player or mob).
-     */
-    private fun isViableTarget(entity: Entity, player: EntityPlayerSP): Boolean {
+    private fun isViableTarget(entity: Any?, player: Any): Boolean {
         if (entity === player) return false
-        if (entity !is EntityLivingBase) return false
-        if (entity.isDead) return false
-        if (entity.health <= 0f) return false
+        if (!entityLivingBaseClass.isInstance(entity)) return false
+        val isDead = try { MappingContext.getFieldValue(entity, "forge:entity_isDead") } catch (_: Exception) { true }
+        if (isDead == true) return false
+        val health = MappingContext.getFieldValue(entity, "forge:entity_health") as? Float ?: 0f
+        if (health <= 0f) return false
         return true
     }
 
-    /**
-     * Classify the held item into a [WeaponType] for weapon filter logic.
-     * Forge 1.8.9 uses legacy ItemSword / ItemAxe classes.
-     */
-    private fun classifyWeapon(item: net.minecraft.item.Item?): WeaponType {
-        return when (item) {
-            is ItemSword -> WeaponType.SWORD
-            is ItemAxe -> WeaponType.AXE
+    private fun classifyWeapon(item: Any?): WeaponType {
+        return when {
+            itemSwordClass.isInstance(item) -> WeaponType.SWORD
+            itemAxeClass.isInstance(item) -> WeaponType.AXE
             else -> WeaponType.OTHER
         }
     }

@@ -1,68 +1,66 @@
 package io.switchlite.agent;
 
+import java.io.ByteArrayInputStream;
 import java.lang.instrument.ClassFileTransformer;
 import java.security.ProtectionDomain;
+
 import javassist.ClassPool;
 import javassist.CtClass;
 import javassist.CtMethod;
 
 /**
- * Class file transformer — injects RenderHook calls into LWJGL Display.update().
+ * Class file transformer — hooks Display.update() for HUD rendering.
  *
- * When \u0040agentmain is called with "retransform-display", this transformer
- * patches org.lwjgl.opengl.Display.update():
+ * Architecture: Single hook point.
+ *   org.lwjgl.opengl.Display.update()
+ *     -> insertBefore: RenderHook.onFrame()
+ *     -> original update() (swap buffers)
  *
- *   public static void update() {
- *       RenderHook.preUpdate();          // ← injected
- *       // ... original body ...
- *       RenderHook.postUpdate();         // ← injected
- *   }
- *
- * This gives us a per-frame render hook that fires in the LWJGL thread,
- * AFTER the swap — ideal for 2D overlay rendering (HUD, ClickGUI, notifications).
+ * This runs every frame BEFORE the buffer swap.
+ * GL context is current, MC has finished its render.
+ * RenderHook.onFrame() handles all GL state save/restore.
  */
 public class Transformer implements ClassFileTransformer {
 
-    private static final String DISPLAY_CLASS = "org.lwjgl.opengl.Display";
-    private static final String UPDATE_METHOD = "update";
-    private static final String HOOK_CLASS = "io.switchlite.agent.RenderHook";
+    private static boolean hooked = false;
 
     @Override
     public byte[] transform(ClassLoader loader, String className,
                            Class<?> classBeingRedefined, ProtectionDomain protectionDomain,
                            byte[] classfileBuffer) {
+        // Only hook LWJGL Display class
+        if (!"org/lwjgl/opengl/Display".equals(className)) {
+            return null;
+        }
+        if (hooked) return null; // already transformed
 
-        if (className == null) return null;
-
-        // Convert internal name (org/lwjgl/opengl/Display) to dotted
-        String dottedName = className.replace('/', '.');
-
-        if (!DISPLAY_CLASS.equals(dottedName)) return null;
-
-        return transformDisplayUpdate(classfileBuffer);
-    }
-
-    private byte[] transformDisplayUpdate(byte[] classfileBuffer) {
         try {
             ClassPool pool = ClassPool.getDefault();
-            // Append our agent jar to classpath so Javassist can see RenderHook
-            pool.appendClassPath(new javassist.ClassClassPath(RenderHook.class));
+            CtClass ctClass = pool.makeClass(new ByteArrayInputStream(classfileBuffer));
 
-            CtClass cc = pool.makeClass(new java.io.ByteArrayInputStream(classfileBuffer));
-            CtMethod updateMethod = cc.getDeclaredMethod(UPDATE_METHOD);
+            // Find the update() method
+            CtMethod updateMethod = ctClass.getDeclaredMethod("update");
 
-            // Inject: RenderHook.preUpdate(); at the start
-            updateMethod.insertBefore("{ " + HOOK_CLASS + ".preUpdate(); }");
+            // Insert our render callback at the very beginning
+            // Before: Display processes events + swaps buffers
+            // After:  RenderHook.onFrame() -> Display processes events + swaps buffers
+            updateMethod.insertBefore(
+                "io.switchlite.agent.RenderHook.onFrame();"
+            );
 
-            // Inject: RenderHook.postUpdate(); at the end
-            updateMethod.insertAfter("{ " + HOOK_CLASS + ".postUpdate(); }");
+            byte[] result = ctClass.toBytecode();
+            ctClass.defrost(); // release for potential re-transformation
+            hooked = true;
 
-            byte[] result = cc.toBytecode();
-            cc.detach();
+            Agent.log("[Transformer] Hooked Display.update() for HUD rendering");
             return result;
+        } catch (javassist.NotFoundException e) {
+            Agent.log("[Transformer] Display.update() not found: " + e.getMessage());
+        } catch (javassist.CannotCompileException e) {
+            Agent.log("[Transformer] Compile error: " + e.getMessage());
         } catch (Exception e) {
-            System.err.println("[Transformer] Failed to transform Display.update(): " + e.getMessage());
-            return null; // return null = don't transform, let class load normally
+            Agent.log("[Transformer] Failed: " + e.getClass().getSimpleName() + ": " + e.getMessage());
         }
+        return null;
     }
 }

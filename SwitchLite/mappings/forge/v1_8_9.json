@@ -46,5 +46,440 @@
   "forge:playerController_isHittingBlock": {
     "class": "net.minecraft.client.multiplayer.PlayerControllerMP",
     "field": "isHittingBlock"
+  },
+
+  "forge:mc_getMinecraft": {
+    "class": "net.minecraft.client.Minecraft",
+    "method": "getMinecraft"
+  },
+  "forge:mc_addScheduledTask": {
+    "class": "net.minecraft.client.Minecraft",
+    "method": "addScheduledTask"
+  },
+  "forge:mc_thePlayer": {
+    "class": "net.minecraft.client.Minecraft",
+    "field": "thePlayer"
+  },
+  "forge:mc_theWorld": {
+    "class": "net.minecraft.client.Minecraft",
+    "field": "theWorld"
+  },
+  "forge:mc_fontRendererObj": {
+    "class": "net.minecraft.client.Minecraft",
+    "field": "fontRendererObj"
+  },
+  "forge:mc_gameSettings": {
+    "class": "net.minecraft.client.Minecraft",
+    "field": "gameSettings"
+  },
+  "forge:mc_objectMouseOver": {
+    "class": "net.minecraft.client.Minecraft",
+    "field": "objectMouseOver"
+  },
+  "forge:mc_displayWidth": {
+    "class": "net.minecraft.client.Minecraft",
+    "field": "displayWidth"
+  },
+  "forge:mc_displayHeight": {
+    "class": "net.minecraft.client.Minecraft",
+    "field": "displayHeight"
+  },
+  "forge:mc_leftClickCounter": {
+    "class": "net.minecraft.client.Minecraft",
+    "field": "leftClickCounter"
+  },
+  "forge:mc_rightClickDelayTimer": {
+    "class": "net.minecraft.client.Minecraft",
+    "field": "rightClickDelayTimer"
+  },
+  "forge:mc_entityRenderer": {
+    "class": "net.minecraft.client.Minecraft",
+    "field": "entityRenderer"
+  },
+  "forge:mc_netHandler": {
+    "class": "net.minecraft.client.Minecraft",
+    "field": "netHandler"
+  },
+  "forge:mc_playerController": {
+    "class": "net.minecraft.client.Minecraft",
+    "field": "playerController"
+  },
+
+  "forge:gs_keyBindAttack": {
+    "class": "net.minecraft.client.settings.GameSettings",
+    "field": "keyBindAttack"
+  },
+  "forge:gs_keyBindUseItem": {
+    "class": "net.minecraft.client.settings.GameSettings",
+    "field": "keyBindUseItem"
+  },
+  "forge:gs_keyBindForward": {
+    "class": "net.minecraft.client.settings.GameSettings",
+    "field": "keyBindForward"
+  },
+  "forge:gs_keyBindBack": {
+    "class": "net.minecraft.client.settings.GameSettings",
+    "field": "keyBindBack"
+  },
+  "forge:gs_keyBindLeft": {
+    "class": "net.minecraft.client.settings.GameSettings",
+    "field": "keyBindLeft"
+  },
+  "forge:gs_keyBindRight": {
+    "class": "net.minecraft.client.settings.GameSettings",
+    "field": "keyBindRight"
+  },
+  "forge:gs_keyBindSneak": {
+    "class": "net.minecraft.client.settings.GameSettings",
+    "field": "keyBindSneak"
+  },
+  "forge:gs_mouseSensitivity": {
+    "class": "net.minecraft.client.settings.GameSettings",
+    "field": "mouseSensitivity"
+  },
+  "forge:gs_gammaSetting": {
+    "class": "net.minecraft.client.settings.GameSettings",
+    "field": "gammaSetting"
+  },
+  "forge:gs_guiScale": {
+    "class": "net.minecraft.client.settings.GameSettings",
+    "field": "guiScale"
+  },
+
+  "forge:keybinding_pressed": {
+    "class": "net.minecraft.client.settings.KeyBinding",
+    "field": "pressed"
+  },
+
+  "forge:fontRenderer_drawStringWithShadow": {
+    "class": "net.minecraft.client.gui.FontRenderer",
+    "method": "drawStringWithShadow"
+  },
+  "forge:fontRenderer_getStringWidth": {
+    "class": "net.minecraft.client.gui.FontRenderer",
+    "method": "getStringWidth"
+  },
+  "forge:fontRenderer_FONT_HEIGHT": {
+    "class": "net.minecraft.client.gui.FontRenderer",
+    "field": "FONT_HEIGHT"
+  },
+
+  "forge:entityRenderer_fovModifierHand": {
+    "class": "net.minecraft.client.renderer.EntityRenderer",
+    "field": "fovModifierHand"
+  },
+
+  "forge:entity_isInWater": {
+    "class": "net.minecraft.entity.Entity",
+    "method": "isInWater"
+  },
+  "forge:entity_isInLava": {
+    "class": "net.minecraft.entity.Entity",
+    "method": "isInLava"
+  },
+  "forge:entity_isInWeb": {
+    "class": "net.minecraft.entity.Entity",
+    "method": "isInWeb"
+  },
+  "forge:entity_isDead": {
+    "class": "net.minecraft.entity.Entity",
+    "method": "isDead"
+  },
+  "forge:entity_getDistanceToEntity": {
+    "class": "net.minecraft.entity.Entity",
+    "method": "getDistanceToEntity"
+  },
+  "forge:entity_entityId": {
+    "class": "net.minecraft.entity.Entity",
+    "field": "entityId"
+  },
+  "forge:entity_name": {
+    "class": "net.minecraft.entity.Entity",
+    "field": "name"
+  },
+  "forge:entity_ticksExisted": {
+    "class": "net.minecraft.entity.Entity",
+    "field": "ticksExisted"
+  },
+  "forge:entity_health": {
+    "class": "net.minecraft.entity.Entity",
+    "field": "health"
+  },
+  "forge:entity_hurtTime": {
+    "class": "net.minecraft.entity.EntityLivingBase",
+    "field": "hurtTime"
+  },
+  "forge:entity_maxHurtResistantTime": {
+    "class": "net.minecraft.entity.EntityLivingBase",
+    "field": "maxHurtResistantTime"
+  },
+  "forge:entity_boundingBox": {
+    "class": "net.minecraft.entity.Entity",
+    "field": "boundingBox"
+  },
+  "forge:entity_motionX": {
+    "class": "net.minecraft.entity.Entity",
+    "field": "motionX"
+  },
+  "forge:entity_motionY": {
+    "class": "net.minecraft.entity.Entity",
+    "field": "motionY"
+  },
+  "forge:entity_motionZ": {
+    "class": "net.minecraft.entity.Entity",
+    "field": "motionZ"
+  },
+  "forge:entity_posX": {
+    "class": "net.minecraft.entity.Entity",
+    "field": "posX"
+  },
+  "forge:entity_posY": {
+    "class": "net.minecraft.entity.Entity",
+    "field": "posY"
+  },
+  "forge:entity_posZ": {
+    "class": "net.minecraft.entity.Entity",
+    "field": "posZ"
+  },
+  "forge:entity_onGround": {
+    "class": "net.minecraft.entity.Entity",
+    "field": "onGround"
+  },
+  "forge:entity_player_moveForward": {
+    "class": "net.minecraft.entity.player.EntityPlayerSP",
+    "field": "moveForward"
+  },
+  "forge:entity_player_moveStrafing": {
+    "class": "net.minecraft.entity.player.EntityPlayerSP",
+    "field": "moveStrafing"
+  },
+
+  "forge:player_isSprinting": {
+    "class": "net.minecraft.entity.player.EntityPlayer",
+    "field": "isSprinting"
+  },
+  "forge:player_isBlocking": {
+    "class": "net.minecraft.entity.player.EntityPlayer",
+    "field": "isBlocking"
+  },
+  "forge:player_isSneaking": {
+    "class": "net.minecraft.entity.player.EntityPlayer",
+    "field": "isSneaking"
+  },
+  "forge:player_eyeHeight": {
+    "class": "net.minecraft.entity.player.EntityPlayer",
+    "field": "eyeHeight"
+  },
+  "forge:player_jumpTicks": {
+    "class": "net.minecraft.entity.player.EntityPlayer",
+    "field": "jumpTicks"
+  },
+  "forge:player_heldItem": {
+    "class": "net.minecraft.entity.player.EntityPlayer",
+    "field": "heldItem"
+  },
+  "forge:player_jump": {
+    "class": "net.minecraft.entity.player.EntityPlayer",
+    "method": "jump"
+  },
+  "forge:player_stopUsingItem": {
+    "class": "net.minecraft.entity.player.EntityPlayer",
+    "method": "stopUsingItem"
+  },
+  "forge:player_sendQueue": {
+    "class": "net.minecraft.client.entity.EntityPlayerSP",
+    "field": "sendQueue"
+  },
+
+  "forge:inventory_currentItem": {
+    "class": "net.minecraft.entity.player.InventoryPlayer",
+    "field": "currentItem"
+  },
+  "forge:inventory_getStackInSlot": {
+    "class": "net.minecraft.entity.player.InventoryPlayer",
+    "method": "getStackInSlot"
+  },
+  "forge:inventory_getHeldItem": {
+    "class": "net.minecraft.entity.player.InventoryPlayer",
+    "method": "getCurrentItem"
+  },
+
+  "forge:foodStats_foodLevel": {
+    "class": "net.minecraft.util.FoodStats",
+    "field": "foodLevel"
+  },
+
+  "forge:world_loadedEntityList": {
+    "class": "net.minecraft.world.World",
+    "field": "loadedEntityList"
+  },
+  "forge:world_scoreboard": {
+    "class": "net.minecraft.world.World",
+    "field": "scoreboard"
+  },
+  "forge:world_worldTime": {
+    "class": "net.minecraft.world.World",
+    "field": "worldTime"
+  },
+  "forge:world_getBlockState": {
+    "class": "net.minecraft.world.World",
+    "method": "getBlockState"
+  },
+  "forge:world_getEntityByID": {
+    "class": "net.minecraft.world.World",
+    "method": "getEntityByID"
+  },
+  "forge:world_rayTraceBlocks": {
+    "class": "net.minecraft.world.World",
+    "method": "rayTraceBlocks"
+  },
+
+  "forge:scoreboard_teams": {
+    "class": "net.minecraft.scoreboard.Scoreboard",
+    "field": "teams"
+  },
+
+  "forge:iblockstate_block": {
+    "class": "net.minecraft.block.state.IBlockState",
+    "field": "block"
+  },
+
+  "forge:movingObjectPosition_typeOfHit": {
+    "class": "net.minecraft.util.MovingObjectPosition",
+    "field": "typeOfHit"
+  },
+  "forge:movingObjectPosition_entityHit": {
+    "class": "net.minecraft.util.MovingObjectPosition",
+    "field": "entityHit"
+  },
+  "forge:movingObjectPosition_blockPos": {
+    "class": "net.minecraft.util.MovingObjectPosition",
+    "field": "blockPos"
+  },
+
+  "forge:itemStack_item": {
+    "class": "net.minecraft.item.ItemStack",
+    "field": "item"
+  },
+  "forge:itemStack_hasTagCompound": {
+    "class": "net.minecraft.item.ItemStack",
+    "method": "hasTagCompound"
+  },
+  "forge:itemStack_tagCompound": {
+    "class": "net.minecraft.item.ItemStack",
+    "field": "tagCompound"
+  },
+  "forge:item_getDigSpeed": {
+    "class": "net.minecraft.item.Item",
+    "method": "getDigSpeed"
+  },
+
+  "forge:nbtBase_getCompoundTag": {
+    "class": "net.minecraft.nbt.NBTTagCompound",
+    "method": "getCompoundTag"
+  },
+  "forge:nbtBase_getInteger": {
+    "class": "net.minecraft.nbt.NBTTagCompound",
+    "method": "getInteger"
+  },
+  "forge:nbtBase_hasKey": {
+    "class": "net.minecraft.nbt.NBTBase",
+    "method": "hasKey"
+  },
+
+  "forge:entityLivingBase_isEntityAlive": {
+    "class": "net.minecraft.entity.EntityLivingBase",
+    "method": "isEntityAlive"
+  },
+  "forge:entityLivingBase_getEquipmentInSlot": {
+    "class": "net.minecraft.entity.EntityLivingBase",
+    "method": "getEquipmentInSlot"
+  },
+  "forge:entityLivingBase_displayName": {
+    "class": "net.minecraft.entity.EntityLivingBase",
+    "field": "displayName"
+  },
+
+  "forge:ichatComponent_formattedText": {
+    "class": "net.minecraft.util.IChatComponent",
+    "field": "formattedText"
+  },
+
+  "forge:scorePlayerTeam_registeredName": {
+    "class": "net.minecraft.scoreboard.ScorePlayerTeam",
+    "field": "registeredName"
+  },
+  "forge:scorePlayerTeam_membershipCollection": {
+    "class": "net.minecraft.scoreboard.ScorePlayerTeam",
+    "field": "membershipCollection"
+  },
+  "forge:team_func_96562_d": {
+    "class": "net.minecraft.scoreboard.Team",
+    "method": "func_96562_d"
+  },
+
+  "forge:netHandler_addToSendQueue": {
+    "class": "net.minecraft.client.network.NetHandlerPlayClient",
+    "method": "addToSendQueue"
+  },
+
+  "forge:S12PacketEntityVelocity_entityID": {
+    "class": "net.minecraft.network.play.server.S12PacketEntityVelocity",
+    "field": "entityID"
+  },
+  "forge:S12PacketEntityVelocity_getMotionX": {
+    "class": "net.minecraft.network.play.server.S12PacketEntityVelocity",
+    "method": "getMotionX"
+  },
+  "forge:S12PacketEntityVelocity_getMotionY": {
+    "class": "net.minecraft.network.play.server.S12PacketEntityVelocity",
+    "method": "getMotionY"
+  },
+  "forge:S12PacketEntityVelocity_getMotionZ": {
+    "class": "net.minecraft.network.play.server.S12PacketEntityVelocity",
+    "method": "getMotionZ"
+  },
+
+  "forge:velocity_motionX": {
+    "class": "net.minecraft.network.play.server.S12PacketEntityVelocity",
+    "field": "motionX"
+  },
+  "forge:velocity_motionY": {
+    "class": "net.minecraft.network.play.server.S12PacketEntityVelocity",
+    "field": "motionY"
+  },
+  "forge:velocity_motionZ": {
+    "class": "net.minecraft.network.play.server.S12PacketEntityVelocity",
+    "field": "motionZ"
+  },
+
+  "forge:netHandlerPlayClient_networkManager": {
+    "class": "net.minecraft.client.network.NetHandlerPlayClient",
+    "field": "field_147302_e"
+  },
+
+  "forge:bb_minX": {
+    "class": "net.minecraft.util.AxisAlignedBB",
+    "field": "minX"
+  },
+  "forge:bb_minY": {
+    "class": "net.minecraft.util.AxisAlignedBB",
+    "field": "minY"
+  },
+  "forge:bb_minZ": {
+    "class": "net.minecraft.util.AxisAlignedBB",
+    "field": "minZ"
+  },
+  "forge:bb_maxX": {
+    "class": "net.minecraft.util.AxisAlignedBB",
+    "field": "maxX"
+  },
+  "forge:bb_maxY": {
+    "class": "net.minecraft.util.AxisAlignedBB",
+    "field": "maxY"
+  },
+  "forge:bb_maxZ": {
+    "class": "net.minecraft.util.AxisAlignedBB",
+    "field": "maxZ"
   }
 }

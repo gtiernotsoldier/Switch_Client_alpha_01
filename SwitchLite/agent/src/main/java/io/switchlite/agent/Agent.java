@@ -25,6 +25,7 @@ public class Agent {
     private static volatile boolean running = true;
     private static Thread keyPollThread = null;
     private static File logFile = null;
+    private static PrintWriter logStream = null;
 
     // ═══════════════════════════════════════════
     //  Logging — dual output: stdout + file
@@ -33,6 +34,9 @@ public class Agent {
     private static void initLogFile() {
         String tempDir = System.getProperty("java.io.tmpdir");
         logFile = new File(tempDir, "switchlite-agent.log");
+        try {
+            logStream = new PrintWriter(new FileWriter(logFile, true), true);
+        } catch (Exception ignored) {}
     }
 
     static void log(String msg) {
@@ -156,10 +160,16 @@ public class Agent {
         } catch (Exception e) {
             log("[Agent] AgentBridge.initModules() failed: " + e.getClass().getSimpleName() + ": " + e.getMessage());
             Throwable cause = e.getCause();
-            if (cause != null) {
+            while (cause != null) {
                 log("[Agent]   Caused by: " + cause.getClass().getSimpleName() + ": " + cause.getMessage());
+                for (StackTraceElement ste : cause.getStackTrace()) {
+                    if (ste.getClassName().startsWith("io.switchlite")) {
+                        log("[Agent]     at " + ste.toString());
+                    }
+                }
+                cause = cause.getCause();
             }
-            // Don't print full stack trace — it may recurse. Continue boot.
+            // Don't abort — continue boot
         }
 
         // Initialize Forge adapter (pure reflection — no ForgeGradle needed at compile time).
@@ -390,9 +400,17 @@ public class Agent {
     /**
      * Queue a render task on the MC main thread via addScheduledTask.
      * This is the ONLY thread that holds the OpenGL context.
+     * Delegates to ForgeBootstrap.render() for proper GL state management.
      */
     private static void dispatchRender() {
         try {
+            // If ForgeBootstrap is available, delegate rendering to it
+            if (forgeBootstrapAvailable && forgeBootstrapRender != null) {
+                forgeBootstrapRender.invoke(null);
+                return;
+            }
+
+            // Fallback: use addScheduledTask + drawOverlay (limited, no GL state management)
             Class<?> mcClass = Class.forName("net.minecraft.client.Minecraft");
             if (mcFactory == null) {
                 for (String name : MC_GET_MC) {
@@ -538,9 +556,10 @@ public class Agent {
     //  Right Shift Key Polling (LWJGL2 Keyboard)
     // ═══════════════════════════════════════════
 
-    // Cached reflection for ForgeBootstrap.tick()/onKey() calls
+    // Cached reflection for ForgeBootstrap.tick()/onKey()/render() calls
     private static java.lang.reflect.Method forgeBootstrapTick = null;
     private static java.lang.reflect.Method forgeBootstrapOnKey = null;
+    private static java.lang.reflect.Method forgeBootstrapRender = null;
     private static java.lang.reflect.Method forgeBootstrapOnDisconnect = null;
     private static boolean forgeBootstrapAvailable = false;
     private static java.lang.reflect.Method mcFactory = null;
@@ -554,9 +573,10 @@ public class Agent {
             Class<?> fbClass = Class.forName("io.switchlite.adapter.forge.v1_8_9.ForgeBootstrap");
             forgeBootstrapTick = fbClass.getMethod("tick");
             forgeBootstrapOnKey = fbClass.getMethod("onKey", int.class, boolean.class);
+            forgeBootstrapRender = fbClass.getMethod("render");
             forgeBootstrapOnDisconnect = fbClass.getMethod("onDisconnect");
             forgeBootstrapAvailable = true;
-            log("[Agent] ForgeBootstrap methods cached (pure reflection mode)");
+            log("[Agent] ForgeBootstrap methods cached including render() (pure reflection mode)");
         } catch (Exception e) {
             log("[Agent] ForgeBootstrap not available: " + e.getMessage());
         }

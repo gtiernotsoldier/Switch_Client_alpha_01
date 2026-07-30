@@ -32,7 +32,8 @@ public class Transformer implements ClassFileTransformer {
 
     /**
      * Whether the Display.update() hook was successfully installed.
-     * Agent.java checks this to decide whether to use the addScheduledTask fallback.
+     * Agent.java checks this to determine if the rendering pipeline is functional.
+     * If false, Agent will log a fatal error and exit — no fallback.
      */
     public static boolean isInstalled() {
         return installed;
@@ -94,7 +95,7 @@ public class Transformer implements ClassFileTransformer {
             Agent.log("[Transformer] Self-attach failed: " + e.getClass().getSimpleName() + ": " + e.getMessage());
         }
 
-        Agent.log("[Transformer] Could not install Display.update() hook — will use addScheduledTask fallback");
+        Agent.log("[Transformer] FATAL: Could not install Display.update() hook — no fallback available");
         return false;
     }
 

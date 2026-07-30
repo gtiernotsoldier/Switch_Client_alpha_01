@@ -12,6 +12,8 @@ import io.switchlite.adapter.common.module.render.HUD
 import io.switchlite.adapter.common.module.render.NoFOV
 import io.switchlite.adapter.common.module.render.NoHurtCam
 import io.switchlite.adapter.common.module.world.FastPlace
+import io.switchlite.adapter.common.render.OverlayRenderer
+import io.switchlite.adapter.common.render.RenderContext
 import io.switchlite.core.logging.CoreLogger
 import io.switchlite.agent.MappingContext
 
@@ -25,7 +27,7 @@ import io.switchlite.agent.MappingContext
  * 1. init() — register modules, wire EventBridge, inject packet interceptor
  * 2. tick() — called at 20Hz by Agent.java — extracts player state, dispatches to EventBridge
  * 3. onKey(lwjglCode, pressed) — called by Agent.java key poll thread
- * 4. render() — called by Agent.java via mc.addScheduledTask() on MC render thread
+ * 4. render() — called by Javassist hook or Agent.java fallback — delegates to OverlayRenderer
  */
 object ForgeBootstrap {
 
@@ -39,55 +41,11 @@ object ForgeBootstrap {
     private val blocksClass by lazy { Class.forName("net.minecraft.init.Blocks") }
     private val blocksAir by lazy { try { blocksClass.getField("AIR").get(null) } catch (_: Exception) { null } }
 
-    // Cached field/method refs for render
+    // Cached field refs for tick
     private val keybindingPressedField by lazy { MappingContext.getField("forge:keybinding_pressed") }
 
-    // GL11 reflection cache — includes 2D projection setup for proper HUD rendering
-    private object ReflectGL11 {
-        private val gl11 by lazy { Class.forName("org.lwjgl.opengl.GL11") }
-
-        // Constants
-        val GL_BLEND by lazy { gl11.getField("GL_BLEND").getInt(null) }
-        val GL_DEPTH_TEST by lazy { gl11.getField("GL_DEPTH_TEST").getInt(null) }
-        val GL_SRC_ALPHA by lazy { gl11.getField("GL_SRC_ALPHA").getInt(null) }
-        val GL_ONE_MINUS_SRC_ALPHA by lazy { gl11.getField("GL_ONE_MINUS_SRC_ALPHA").getInt(null) }
-        val GL_TEXTURE_2D by lazy { gl11.getField("GL_TEXTURE_2D").getInt(null) }
-        val GL_QUADS by lazy { gl11.getField("GL_QUADS").getInt(null) }
-        val GL_ALL_ATTRIB_BITS by lazy { gl11.getField("GL_ALL_ATTRIB_BITS").getInt(null) }
-        val GL_PROJECTION by lazy { gl11.getField("GL_PROJECTION").getInt(null) }
-        val GL_MODELVIEW by lazy { gl11.getField("GL_MODELVIEW").getInt(null) }
-        val GL_LIGHTING by lazy { try { gl11.getField("GL_LIGHTING").getInt(null) } catch (_: Exception) { 0x0B50 } }
-
-        // State management
-        val glPushAttrib by lazy { gl11.getMethod("glPushAttrib", Int::class.javaPrimitiveType) }
-        val glPopAttrib by lazy { gl11.getMethod("glPopAttrib") }
-        val glMatrixMode by lazy { gl11.getMethod("glMatrixMode", Int::class.javaPrimitiveType) }
-        val glPushMatrix by lazy { gl11.getMethod("glPushMatrix") }
-        val glPopMatrix by lazy { gl11.getMethod("glPopMatrix") }
-        val glLoadIdentity by lazy { gl11.getMethod("glLoadIdentity") }
-        val glOrtho by lazy {
-            gl11.getMethod("glOrtho",
-                Double::class.javaPrimitiveType, Double::class.javaPrimitiveType,
-                Double::class.javaPrimitiveType, Double::class.javaPrimitiveType,
-                Double::class.javaPrimitiveType, Double::class.javaPrimitiveType)
-        }
-
-        // Drawing
-        val glEnable by lazy { gl11.getMethod("glEnable", Int::class.javaPrimitiveType) }
-        val glDisable by lazy { gl11.getMethod("glDisable", Int::class.javaPrimitiveType) }
-        val glDepthMask by lazy { gl11.getMethod("glDepthMask", Boolean::class.java) }
-        val glBlendFunc by lazy {
-            gl11.getMethod("glBlendFunc", Int::class.javaPrimitiveType, Int::class.javaPrimitiveType)
-        }
-        val glColor4f by lazy {
-            gl11.getMethod("glColor4f", Float::class.java, Float::class.java, Float::class.java, Float::class.java)
-        }
-        val glBegin by lazy { gl11.getMethod("glBegin", Int::class.javaPrimitiveType) }
-        val glVertex2f by lazy {
-            gl11.getMethod("glVertex2f", Float::class.java, Float::class.java)
-        }
-        val glEnd by lazy { gl11.getMethod("glEnd") }
-    }
+    // Version-specific render bridges (lazy, created once)
+    private val glBridge by lazy { ForgeGL11Bridge() }
 
     fun init() {
         if (initialized) return
@@ -199,15 +157,17 @@ object ForgeBootstrap {
     }
 
     /**
-     * Called by Agent.java via dispatchRender() on MC's main/render thread.
-     * Draws HUD text, ClickGUI panel, and notifications.
-     * Includes proper GL state save/restore and 2D orthographic projection.
+     * Called by Javassist hook (or Agent.java fallback) on MC's render thread.
+     * Constructs a RenderContext and delegates to OverlayRenderer.
+     *
+     * This method does NOT contain any GL calls or rendering logic —
+     * all drawing is in OverlayRenderer, which is shared across versions.
      */
     fun render() {
         try {
             val mc = MappingContext.invokeMethod(null, "forge:mc_getMinecraft") ?: return
             val player = MappingContext.getFieldValue(mc, "forge:mc_thePlayer") ?: return
-            val fontRenderer = MappingContext.getFieldValue(mc, "forge:mc_fontRendererObj") ?: return
+            val fontRendererObj = MappingContext.getFieldValue(mc, "forge:mc_fontRendererObj") ?: return
 
             val displayWidth = MappingContext.getFieldValue(mc, "forge:mc_displayWidth") as? Int ?: 854
             val displayHeight = MappingContext.getFieldValue(mc, "forge:mc_displayHeight") as? Int ?: 480
@@ -218,159 +178,15 @@ object ForgeBootstrap {
             val scaledWidth = displayWidth / scale
             val scaledHeight = displayHeight / scale
 
-            val fontHeight = MappingContext.getFieldValue(fontRenderer, "forge:fontRenderer_FONT_HEIGHT") as? Int ?: 9
-            val drawStringMethod = MappingContext.getMethod("forge:fontRenderer_drawStringWithShadow")
-            val getStringWidthMethod = MappingContext.getMethod("forge:fontRenderer_getStringWidth")
-
-            val g = ReflectGL11
-
-            // ══════════════════════════════════════
-            //  GL State: Save
-            // ══════════════════════════════════════
-            g.glPushAttrib.invoke(null, g.GL_ALL_ATTRIB_BITS)
-            g.glMatrixMode.invoke(null, g.GL_PROJECTION)
-            g.glPushMatrix.invoke(null)
-            g.glMatrixMode.invoke(null, g.GL_MODELVIEW)
-            g.glPushMatrix.invoke(null)
-
-            // ══════════════════════════════════════
-            //  Setup 2D ortho (origin top-left, y-down)
-            // ══════════════════════════════════════
-            g.glMatrixMode.invoke(null, g.GL_PROJECTION)
-            g.glLoadIdentity.invoke(null)
-            g.glOrtho.invoke(null, 0.0, scaledWidth.toDouble(), scaledHeight.toDouble(), 0.0, -1.0, 1.0)
-            g.glMatrixMode.invoke(null, g.GL_MODELVIEW)
-            g.glLoadIdentity.invoke(null)
-
-            // Disable 3D
-            g.glDisable.invoke(null, g.GL_DEPTH_TEST)
-            g.glDisable.invoke(null, g.GL_LIGHTING)
-            g.glEnable.invoke(null, g.GL_BLEND)
-            g.glBlendFunc.invoke(null, g.GL_SRC_ALPHA, g.GL_ONE_MINUS_SRC_ALPHA)
-
-            // ══════════════════════════════════════
-            //  Draw HUD
-            // ══════════════════════════════════════
-            val hudText = EventBridge.hudTextLine
-            if (hudText.isNotEmpty()) {
-                try {
-                    drawStringMethod.invoke(fontRenderer, hudText, 4, 4, 0xFFFFFF)
-                } catch (_: Exception) {}
-
-                if (EventBridge.isGuiOpen) {
-                    try {
-                        drawStringMethod.invoke(fontRenderer, "\u00A7a[GUI Open] \u00A77RShift to close", 4, 4 + fontHeight + 2, 0x00FF00)
-                    } catch (_: Exception) {}
-                }
-            }
-
-            // Draw ClickGUI panel
-            if (EventBridge.isGuiOpen) {
-                drawClickGUI(fontRenderer, fontHeight, drawStringMethod, scaledWidth, scaledHeight)
-            }
-
-            // Draw notifications
-            val notifications = EventBridge.drainNotifications()
-            if (notifications.isNotEmpty()) {
-                var notifY = scaledHeight - notifications.size * (fontHeight + 4) - 4
-                for (notif in notifications) {
-                    val color = when (notif.type) {
-                        EventBridge.NotificationType.SUCCESS -> 0x55FF55
-                        EventBridge.NotificationType.ERROR -> 0xFF5555
-                        EventBridge.NotificationType.INFO -> 0xFFFF55
-                    }
-                    val text = notif.text
-                    val textWidth = try { getStringWidthMethod.invoke(fontRenderer, text) as? Int ?: text.length * 6 } catch (_: Exception) { text.length * 6 }
-                    try {
-                        drawStringMethod.invoke(fontRenderer, text, scaledWidth - textWidth - 6, notifY, color)
-                    } catch (_: Exception) {}
-                    notifY += fontHeight + 4
-                }
-            }
-
-            // ══════════════════════════════════════
-            //  GL State: Restore
-            // ══════════════════════════════════════
-            g.glMatrixMode.invoke(null, g.GL_PROJECTION)
-            g.glPopMatrix.invoke(null)
-            g.glMatrixMode.invoke(null, g.GL_MODELVIEW)
-            g.glPopMatrix.invoke(null)
-            g.glPopAttrib.invoke(null)
-
-        } catch (_: Exception) {}
-    }
-
-    private fun drawClickGUI(fontRenderer: Any, fontHeight: Int, drawString: java.lang.invoke.MethodHandle, scaledWidth: Int, scaledHeight: Int) {
-        val categories = io.switchlite.adapter.common.module.Category.values()
-        val panelX = 40
-        var panelY = 30
-        val lineHeight = fontHeight + 3
-        val padding = 6
-
-        var totalHeight = padding * 2
-        for (cat in categories) {
-            totalHeight += lineHeight + 2
-            val modules = ModuleRegistry.getByCategory(cat)
-            totalHeight += modules.size * lineHeight
-            totalHeight += 4
-        }
-        totalHeight += 20
-
-        val panelWidth = 220
-        drawRect(panelX - padding, panelY - padding, panelX + panelWidth, panelY + totalHeight, 0x80000000.toInt())
-
-        for (cat in categories) {
-            try {
-                drawString.invoke(fontRenderer, "\u00A76${cat.name}", panelX, panelY, 0xFFFF55)
-            } catch (_: Exception) {}
-            panelY += lineHeight
-
-            val modules = ModuleRegistry.getByCategory(cat)
-            for (module in modules) {
-                if (module.hidden) continue
-                val stateColor = if (module.enabled) 0x55FF55 else 0xAAAAAA
-                val stateText = if (module.enabled) "[ON] " else "[OFF]"
-                try {
-                    drawString.invoke(fontRenderer, "$stateText${module.name}", panelX + 8, panelY, stateColor)
-                } catch (_: Exception) {}
-                panelY += lineHeight
-            }
-            panelY += 4
-        }
-
-        panelY += 8
-        try {
-            drawString.invoke(fontRenderer, "\u00A77Click modules to toggle | ESC to close", panelX, panelY, 0xAAAAAA)
-        } catch (_: Exception) {}
-    }
-
-    private fun drawRect(x1: Int, y1: Int, x2: Int, y2: Int, color: Int) {
-        try {
-            val g = ReflectGL11
-            g.glEnable.invoke(null, g.GL_BLEND)
-            g.glDisable.invoke(null, g.GL_DEPTH_TEST)
-            g.glDepthMask.invoke(null, false)
-            g.glBlendFunc.invoke(null, g.GL_SRC_ALPHA, g.GL_ONE_MINUS_SRC_ALPHA)
-            g.glPushMatrix.invoke(null)
-            g.glColor4f.invoke(
-                null,
-                ((color shr 16) and 0xFF) / 255f,
-                ((color shr 8) and 0xFF) / 255f,
-                (color and 0xFF) / 255f,
-                ((color shr 24) and 0xFF) / 255f
+            val ctx = RenderContext(
+                scaledWidth = scaledWidth,
+                scaledHeight = scaledHeight,
+                fontRenderer = ForgeFontRendererBridge(fontRendererObj),
+                gl = glBridge
             )
-            g.glDisable.invoke(null, g.GL_TEXTURE_2D)
-            g.glBegin.invoke(null, g.GL_QUADS)
-            g.glVertex2f.invoke(null, x1.toFloat(), y2.toFloat())
-            g.glVertex2f.invoke(null, x2.toFloat(), y2.toFloat())
-            g.glVertex2f.invoke(null, x2.toFloat(), y1.toFloat())
-            g.glVertex2f.invoke(null, x1.toFloat(), y1.toFloat())
-            g.glEnd.invoke(null)
-            g.glEnable.invoke(null, g.GL_TEXTURE_2D)
-            g.glPopMatrix.invoke(null)
-            g.glDepthMask.invoke(null, true)
-            g.glEnable.invoke(null, g.GL_DEPTH_TEST)
-            g.glDisable.invoke(null, g.GL_BLEND)
+
+            OverlayRenderer.render(ctx)
+
         } catch (_: Exception) {}
     }
 

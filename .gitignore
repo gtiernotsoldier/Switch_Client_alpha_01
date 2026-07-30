@@ -18,6 +18,10 @@ __pycache__/
 target/
 .gradle/
 
+# Gradle build output
+build/
+*/build/
+
 # Logs and temp files
 *.log
 *.tmp

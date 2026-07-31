@@ -106,6 +106,8 @@ public class RenderBridge {
      */
     private static ClassLoader resolveGameClassLoader() {
         // Strategy 1: Thread context ClassLoader
+        // The MC render thread (where Display.update() runs) typically has the
+        // LaunchClassLoader as its context CL. This is the most reliable path.
         try {
             ClassLoader contextCL = Thread.currentThread().getContextClassLoader();
             if (contextCL != null) {
@@ -120,6 +122,10 @@ public class RenderBridge {
         } catch (Exception ignored) {}
 
         // Strategy 2: Agent.class.getClassLoader() (the game CL)
+        // NOTE: After appendToBootstrapClassLoaderSearch(), Agent.class is on the
+        // bootstrap CL, so getClassLoader() returns null. This strategy only works
+        // BEFORE the bootstrap CL add. But RenderBridge is always called AFTER the
+        // add, so this strategy is effectively dead. Kept for safety.
         try {
             ClassLoader agentCL = Agent.class.getClassLoader();
             if (agentCL != null) {
@@ -132,10 +138,28 @@ public class RenderBridge {
             }
         } catch (Exception ignored) {}
 
-        // Strategy 3: Forge LaunchClassLoader (Forge 1.8.x)
-        // NOTE: Must use an explicit classloader to find LaunchClassLoader because
-        // RenderBridge is on the bootstrap CL — Class.forName() without a classloader
-        // uses the caller's CL (bootstrap), which cannot see LaunchClassLoader.
+        // Strategy 3: Forge LaunchClassLoader — find it via Launch.classLoader field
+        // This is the most reliable strategy for Forge 1.8.9 after the bootstrap CL add.
+        // We use the context CL to find the Launch class, then get its classLoader field.
+        try {
+            ClassLoader searchCL = Thread.currentThread().getContextClassLoader();
+            if (searchCL == null) searchCL = ClassLoader.getSystemClassLoader();
+            Class<?> launchClass = Class.forName("net.minecraft.launchwrapper.Launch", true, searchCL);
+            java.lang.reflect.Field clField = launchClass.getField("classLoader");
+            Object launchCL = clField.get(null);
+            if (launchCL instanceof ClassLoader) {
+                try {
+                    Class.forName("io.switchlite.adapter.forge.v1_8_9.ForgeBootstrap", false, (ClassLoader) launchCL);
+                    return (ClassLoader) launchCL;
+                } catch (ClassNotFoundException e) {
+                    // LaunchClassLoader doesn't have ForgeBootstrap
+                }
+            }
+        } catch (Exception ignored) {
+            // Not Forge or Launch not available
+        }
+
+        // Strategy 4: Walk parent chain of context CL to find LaunchClassLoader
         try {
             ClassLoader contextCL = Thread.currentThread().getContextClassLoader();
             if (contextCL != null) {

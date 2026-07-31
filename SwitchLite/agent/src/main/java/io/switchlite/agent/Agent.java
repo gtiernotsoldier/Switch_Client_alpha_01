@@ -68,6 +68,9 @@ public class Agent {
     public static void agentmain(String agentArgs, Instrumentation inst) {
         initLogFile();
         log("[SwitchLite Agent] Attached to running JVM (args=" + agentArgs + ")");
+        log("[Agent] agentmain ClassLoader: " + Agent.class.getClassLoader().getClass().getName());
+        log("[Agent] agentmain Thread: " + Thread.currentThread().getName());
+        log("[Agent] agentmain Context CL: " + Thread.currentThread().getContextClassLoader().getClass().getName());
         instrumentation = inst;
 
         // Self-attach callback: Transformer asked us to retransform Display
@@ -79,6 +82,11 @@ public class Agent {
         // JNI attach callback: payload.dll triggered agentmain via Windows Attach pipe
         // This means Agent.bootstrap() already ran (inst=null), but Transformer failed.
         // Now we have a real Instrumentation — install the hook.
+        //
+        // IMPORTANT: When agentmain() is called by the JPLIS agent, it loads this
+        // Agent class using the system CL (via appendToSystemClassLoaderSearch).
+        // The system CL cannot see LWJGL classes. Transformer.install() now uses
+        // findDisplayClass() which tries multiple ClassLoaders to find Display.
         if ("jni-attach".equals(agentArgs)) {
             log("[Agent] JNI attach callback — installing Transformer hook with Instrumentation");
             if (Transformer.isInstalled()) {
@@ -88,6 +96,7 @@ public class Agent {
             boolean hookInstalled = Transformer.install(inst);
             if (!hookInstalled) {
                 log("[Agent] FATAL: Transformer.install() failed even with Instrumentation from jni-attach");
+                log("[Agent] The rendering pipeline is broken — HUD overlay will not appear");
             } else {
                 log("[Agent] Transformer hook installed via jni-attach — rendering pipeline active");
             }

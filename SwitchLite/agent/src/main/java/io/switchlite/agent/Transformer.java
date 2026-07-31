@@ -38,6 +38,14 @@ public class Transformer implements ClassFileTransformer {
     private static volatile boolean installed = false;
 
     /**
+     * Cached game ClassLoader — found once, reused for all Class.forName() calls.
+     * When agentmain() is called by the JPLIS agent, it loads this Agent class
+     * using the system CL (via appendToSystemClassLoaderSearch). The system CL
+     * cannot see LWJGL classes. We need to find the game CL to load Display.
+     */
+    private static volatile ClassLoader cachedGameCL = null;
+
+    /**
      * Whether the Display.update() hook was successfully installed.
      * Agent.java checks this to determine if the rendering pipeline is functional.
      * If false, Agent will log a fatal error and exit — no fallback.
@@ -61,7 +69,12 @@ public class Transformer implements ClassFileTransformer {
         // Strategy 1: Use provided Instrumentation
         if (inst != null) {
             try {
-                Class<?> displayClass = Class.forName("org.lwjgl.opengl.Display");
+                // CRITICAL: Class.forName() uses the caller's ClassLoader.
+                // When called from agentmain() via JPLIS, the caller (Transformer)
+                // is on the system CL, which cannot see LWJGL classes.
+                // We must use the game CL explicitly to find Display.
+                Class<?> displayClass = findDisplayClass();
+                Agent.log("[Transformer] Display class found via: " + displayClass.getClassLoader());
                 if (inst.isModifiableClass(displayClass)) {
                     appendAgentToBootstrapCL(inst);
                     inst.addTransformer(new Transformer(), true);
@@ -125,7 +138,8 @@ public class Transformer implements ClassFileTransformer {
         try {
             appendAgentToBootstrapCL(inst);
             inst.addTransformer(new Transformer(), true);
-            Class<?> displayClass = Class.forName("org.lwjgl.opengl.Display");
+            Class<?> displayClass = findDisplayClass();
+            Agent.log("[Transformer] handleRetransform: Display class found via: " + displayClass.getClassLoader());
             inst.retransformClasses(displayClass);
 
             // Same false-positive fix as install() — check hooked flag
@@ -263,6 +277,106 @@ public class Transformer implements ClassFileTransformer {
     // ═══════════════════════════════════════════
     //  Instrumentation acquisition — this is Javassist's job, not Agent's
     // ═══════════════════════════════════════════
+
+    // ═══════════════════════════════════════════
+    //  Game ClassLoader resolution — bridge the JPLIS → game CL gap
+    // ═══════════════════════════════════════════
+
+    /**
+     * Find org.lwjgl.opengl.Display class using the game ClassLoader.
+     *
+     * When agentmain() is called by the JPLIS agent, the Agent and Transformer
+     * classes are loaded by the system CL (because JPLIS calls
+     * appendToSystemClassLoaderSearch before loading the agent class).
+     * The system CL cannot see LWJGL classes (they're on the game CL).
+     *
+     * This method tries multiple strategies to find the game CL and load
+     * the Display class through it. The result is cached for subsequent calls.
+     *
+     * @return the Display class, loaded by the game CL
+     * @throws ClassNotFoundException if Display cannot be found in any CL
+     */
+    private static Class<?> findDisplayClass() throws ClassNotFoundException {
+        // Try cached game CL first (fast path)
+        if (cachedGameCL != null) {
+            try {
+                return Class.forName("org.lwjgl.opengl.Display", true, cachedGameCL);
+            } catch (ClassNotFoundException e) {
+                Agent.log("[Transformer] Cached game CL failed to find Display, re-resolving...");
+                cachedGameCL = null;
+            }
+        }
+
+        // Strategy 1: Caller's ClassLoader (works when Transformer is on game CL)
+        try {
+            Class<?> cls = Class.forName("org.lwjgl.opengl.Display");
+            cachedGameCL = cls.getClassLoader();
+            Agent.log("[Transformer] Display found via caller CL: " +
+                (cachedGameCL != null ? cachedGameCL.getClass().getName() : "bootstrap"));
+            return cls;
+        } catch (ClassNotFoundException e) {
+            Agent.log("[Transformer] Caller CL cannot find Display — likely system CL from JPLIS agentmain");
+        }
+
+        // Strategy 2: Thread context ClassLoader
+        ClassLoader contextCL = Thread.currentThread().getContextClassLoader();
+        if (contextCL != null) {
+            try {
+                Class<?> cls = Class.forName("org.lwjgl.opengl.Display", true, contextCL);
+                cachedGameCL = contextCL;
+                Agent.log("[Transformer] Display found via context CL: " + contextCL.getClass().getName());
+                return cls;
+            } catch (ClassNotFoundException e) {
+                Agent.log("[Transformer] Context CL (" + contextCL.getClass().getName() + ") cannot find Display");
+            }
+        }
+
+        // Strategy 3: Forge LaunchClassLoader — find it via Launch.classLoader field
+        // This is the most reliable strategy for Forge 1.8.9
+        try {
+            // Use context CL to find the Launch class (it's on the game CL)
+            ClassLoader searchCL = contextCL != null ? contextCL : ClassLoader.getSystemClassLoader();
+            Class<?> launchClass = Class.forName("net.minecraft.launchwrapper.Launch", true, searchCL);
+            java.lang.reflect.Field clField = launchClass.getField("classLoader");
+            Object launchCL = clField.get(null);
+            if (launchCL instanceof ClassLoader) {
+                Class<?> cls = Class.forName("org.lwjgl.opengl.Display", true, (ClassLoader) launchCL);
+                cachedGameCL = (ClassLoader) launchCL;
+                Agent.log("[Transformer] Display found via Forge LaunchClassLoader");
+                return cls;
+            }
+        } catch (ClassNotFoundException e) {
+            Agent.log("[Transformer] Forge LaunchClassLoader strategy: Display not found");
+        } catch (Exception e) {
+            Agent.log("[Transformer] Forge LaunchClassLoader strategy failed: " + e.getClass().getSimpleName() + ": " + e.getMessage());
+        }
+
+        // Strategy 4: Walk parent chain of system CL to find LaunchClassLoader
+        try {
+            ClassLoader cl = ClassLoader.getSystemClassLoader();
+            while (cl != null) {
+                if (cl.getClass().getName().contains("LaunchClassLoader")) {
+                    try {
+                        Class<?> cls = Class.forName("org.lwjgl.opengl.Display", true, cl);
+                        cachedGameCL = cl;
+                        Agent.log("[Transformer] Display found via LaunchClassLoader in system CL chain");
+                        return cls;
+                    } catch (ClassNotFoundException e2) {
+                        // This LaunchClassLoader doesn't have Display
+                    }
+                }
+                cl = cl.getParent();
+            }
+        } catch (Exception e) {
+            Agent.log("[Transformer] System CL chain walk failed: " + e.getMessage());
+        }
+
+        throw new ClassNotFoundException(
+            "org.lwjgl.opengl.Display — not found in any ClassLoader. " +
+            "Caller CL: " + Transformer.class.getClassLoader() + ", " +
+            "Context CL: " + contextCL + ", " +
+            "System CL: " + ClassLoader.getSystemClassLoader());
+    }
 
     private static void appendAgentToBootstrapCL(Instrumentation inst) {
         try {

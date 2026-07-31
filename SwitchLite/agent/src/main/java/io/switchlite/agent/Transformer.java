@@ -66,9 +66,20 @@ public class Transformer implements ClassFileTransformer {
                     appendAgentToBootstrapCL(inst);
                     inst.addTransformer(new Transformer(), true);
                     inst.retransformClasses(displayClass);
-                    Agent.log("[Transformer] Display.update() hooked via Instrumentation.retransformClasses");
-                    installed = true;
-                    return true;
+
+                    // CRITICAL: retransformClasses() does NOT throw if transform() returns null.
+                    // We must check the 'hooked' flag to know if the bytecode was actually modified.
+                    // Previously, installed=true was set unconditionally — a false positive that
+                    // made Agent think the rendering pipeline was active when it was actually dead.
+                    if (hooked) {
+                        Agent.log("[Transformer] Display.update() hooked via Instrumentation.retransformClasses");
+                        installed = true;
+                        return true;
+                    } else {
+                        Agent.log("[Transformer] FATAL: retransformClasses completed but transform() returned null — bytecode was NOT modified");
+                        Agent.log("[Transformer] This usually means Javassist could not find RenderBridge in its ClassPool");
+                        return false;
+                    }
                 }
             } catch (Exception e) {
                 Agent.log("[Transformer] Retransform failed: " + e.getMessage() + " — trying self-attach");
@@ -116,8 +127,14 @@ public class Transformer implements ClassFileTransformer {
             inst.addTransformer(new Transformer(), true);
             Class<?> displayClass = Class.forName("org.lwjgl.opengl.Display");
             inst.retransformClasses(displayClass);
-            Agent.log("[Transformer] Display.update() hooked via self-attach retransform");
-            installed = true;
+
+            // Same false-positive fix as install() — check hooked flag
+            if (hooked) {
+                Agent.log("[Transformer] Display.update() hooked via self-attach retransform");
+                installed = true;
+            } else {
+                Agent.log("[Transformer] handleRetransform: retransformClasses completed but transform() returned null");
+            }
         } catch (Exception e) {
             Agent.log("[Transformer] handleRetransform failed: " + e.getMessage());
         }
@@ -134,6 +151,24 @@ public class Transformer implements ClassFileTransformer {
 
         try {
             ClassPool pool = ClassPool.getDefault();
+
+            // CRITICAL FIX: Javassist's ClassPool does NOT know about classes added via
+            // appendToBootstrapClassLoaderSearch(). When insertBefore() compiles the source
+            // code "io.switchlite.agent.RenderBridge.onFrame()", Javassist needs to resolve
+            // the RenderBridge class. Without this, it throws:
+            //   CannotCompileException: [source error] no such class: io$switchlite.agent.RenderBridge
+            //
+            // We must explicitly add the agent.jar to the ClassPool's classpath so that
+            // Javassist can find RenderBridge during compilation.
+            String agentJarPath = findAgentJar();
+            if (agentJarPath != null) {
+                try {
+                    pool.appendClassPath(agentJarPath);
+                } catch (Exception e) {
+                    Agent.log("[Transformer] Failed to add agent.jar to ClassPool: " + e.getMessage());
+                }
+            }
+
             CtClass ctClass = pool.makeClass(new ByteArrayInputStream(classfileBuffer));
 
             CtMethod updateMethod = ctClass.getDeclaredMethod("update");

@@ -36,7 +36,7 @@ endif()
 # ── Payload DLL (injected into javaw.exe via CreateRemoteThread) ──
 
 if(WIN32)
-    set(PAYLOAD_SOURCES src/payload/payload.cpp src/payload/payload.h)
+    set(PAYLOAD_SOURCES src/payload/payload.cpp src/payload/payload.h src/payload/attach_pipe.cpp src/payload/attach_pipe.h src/payload/payload_log.h)
     add_library(payload SHARED ${PAYLOAD_SOURCES})
 
     find_package(JNI REQUIRED)

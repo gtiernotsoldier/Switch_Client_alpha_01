@@ -76,6 +76,24 @@ public class Agent {
             return;
         }
 
+        // JNI attach callback: payload.dll triggered agentmain via Windows Attach pipe
+        // This means Agent.bootstrap() already ran (inst=null), but Transformer failed.
+        // Now we have a real Instrumentation — install the hook.
+        if ("jni-attach".equals(agentArgs)) {
+            log("[Agent] JNI attach callback — installing Transformer hook with Instrumentation");
+            if (Transformer.isInstalled()) {
+                log("[Agent] Transformer already installed (duplicate attach), skipping");
+                return;
+            }
+            boolean hookInstalled = Transformer.install(inst);
+            if (!hookInstalled) {
+                log("[Agent] FATAL: Transformer.install() failed even with Instrumentation from jni-attach");
+            } else {
+                log("[Agent] Transformer hook installed via jni-attach — rendering pipeline active");
+            }
+            return;
+        }
+
         coreInit(inst, detectConfigPath());
     }
 
@@ -88,6 +106,16 @@ public class Agent {
     /**
      * Bootstrap entry for DLL injection + JNI (no Instrumentation).
      * Called by payload.dll via JNI CallStaticVoidMethod.
+     *
+     * In this mode, coreInit() receives inst=null. Transformer.install(null)
+     * will fail (no Instrumentation available). The payload.dll then uses the
+     * Windows Attach pipe protocol to trigger agentmain() with a proper
+     * Instrumentation, which installs the Transformer hook.
+     *
+     * This two-phase approach is necessary because:
+     *   1. JNI bootstrap has no Instrumentation
+     *   2. Self-attach via VirtualMachine needs tools.jar (JDK only, MC uses JRE)
+     *   3. The Windows Attach pipe protocol is implemented in C++ (no tools.jar)
      */
     public static void bootstrap(String configDir) {
         initLogFile();
@@ -187,14 +215,28 @@ public class Agent {
         }
 
         // 5. Install Transformer hook (Javassist's job, not Agent's)
+        //
+        // When inst != null (premain/agentmain), install directly.
+        // When inst == null (JNI bootstrap), Transformer.install() will fail,
+        // but we DON'T exit — the payload.dll will use the Windows Attach pipe
+        // protocol to trigger agentmain() with a proper Instrumentation.
+        // The Agent continues running (threads, modules, etc.) and the hook
+        // will be installed when agentmain("jni-attach", inst) is called.
         boolean hookInstalled = Transformer.install(inst);
         if (!hookInstalled) {
-            log("[Agent] FATAL: Transformer.install() failed — rendering pipeline is broken. Agent is pure dispatch, no fallback.");
-            log("[Agent] Cannot operate without rendering. Shutting down.");
-            running = false;
-            return;
+            if (inst == null) {
+                log("[Agent] Transformer.install(null) failed — expected in JNI mode.");
+                log("[Agent] Waiting for payload.dll to trigger agentmain via Windows Attach pipe...");
+                log("[Agent] Agent continues running (threads, modules active). Hook will be installed later.");
+            } else {
+                log("[Agent] FATAL: Transformer.install() failed even with Instrumentation — rendering pipeline broken.");
+                log("[Agent] Cannot operate without rendering. Shutting down.");
+                running = false;
+                return;
+            }
+        } else {
+            log("[Agent] Render path: Transformer + RenderBridge → ForgeBootstrap.render() (every frame, stealthy)");
         }
-        log("[Agent] Render path: Transformer + RenderBridge → ForgeBootstrap.render() (every frame, stealthy)");
 
         // 6. Start threads (dispatch only — no rendering)
         startKeyPollThread();

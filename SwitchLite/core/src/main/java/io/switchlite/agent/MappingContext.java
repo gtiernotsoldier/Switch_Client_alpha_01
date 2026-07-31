@@ -21,12 +21,21 @@ import java.util.concurrent.ConcurrentHashMap;
  *   Example JSON:
  *     "forge:entity_posX": {
  *       "class": "net.minecraft.entity.Entity",
- *       "field": "posX",
- *       "aliases": ["entity_posX"]
+ *       "field": "field_70165_t",
+ *       "mcp": "posX",
+ *       "aliases": ["entity_posX", "posX"]
  *     }
  *
  *   Now both MappingContext.getFieldValue(obj, "forge:entity_posX") and
  *   MappingContext.getFieldValue(obj, "entity_posX") resolve to the same entry.
+ *
+ * SRG/MCP naming:
+ *   In Forge 1.8.9, the runtime uses SRG names (field_70165_t, func_70071_h_)
+ *   for fields and methods. MCP names (posX, onUpdate) are only for development.
+ *   The "field"/"method" values in JSON are SRG names (runtime names).
+ *   The "mcp" field stores the human-readable MCP name for documentation.
+ *   If SRG lookup fails, the MCP name is tried as a fallback (handles
+ *   non-obfuscated and Forge-added members).
  */
 public class MappingContext {
     
@@ -150,6 +159,29 @@ public class MappingContext {
                     }
                 }
                 if (found == null) {
+                    // SRG name not found — try MCP fallback (handles non-obfuscated/Forge-added methods)
+                    @SuppressWarnings("unchecked")
+                    Map<String, String> entryMap = (Map<String, String>) mapping;
+                    String mcpName = entryMap.get("mcp");
+                    if (mcpName != null && !mcpName.equals(methodName)) {
+                        System.err.println("[MappingContext] SRG method '" + methodName + "' not found in " + className + ", trying MCP fallback '" + mcpName + "'");
+                        for (Method m : clazz.getDeclaredMethods()) {
+                            if (m.getName().equals(mcpName)) {
+                                found = m;
+                                break;
+                            }
+                        }
+                        if (found == null) {
+                            for (Method m : clazz.getMethods()) {
+                                if (m.getName().equals(mcpName)) {
+                                    found = m;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+                if (found == null) {
                     System.err.println("[MappingContext] Method '" + methodName + "' not found in " + className + " for key: " + k);
                     return null;
                 }
@@ -190,14 +222,31 @@ public class MappingContext {
                     return null;
                 }
                 Class<?> clazz = Class.forName(className);
-                Field field = clazz.getDeclaredField(fieldName);
+                Field field = null;
+                try {
+                    field = clazz.getDeclaredField(fieldName);
+                } catch (NoSuchFieldException e) {
+                    // SRG name not found — try MCP fallback (handles non-obfuscated/Forge-added fields)
+                    @SuppressWarnings("unchecked")
+                    Map<String, String> entryMap = (Map<String, String>) mapping;
+                    String mcpName = entryMap.get("mcp");
+                    if (mcpName != null && !mcpName.equals(fieldName)) {
+                        System.err.println("[MappingContext] SRG field '" + fieldName + "' not found in " + className + ", trying MCP fallback '" + mcpName + "'");
+                        try {
+                            field = clazz.getDeclaredField(mcpName);
+                        } catch (NoSuchFieldException e2) {
+                            System.err.println("[MappingContext] MCP field '" + mcpName + "' also not found in " + className + " for key: " + k);
+                            return null;
+                        }
+                    } else {
+                        System.err.println("[MappingContext] Field '" + fieldName + "' not found in " + className + " for key: " + k);
+                        return null;
+                    }
+                }
                 field.setAccessible(true);
                 return field;
             } catch (ClassNotFoundException e) {
                 System.err.println("[MappingContext] Class not found for key " + k + ": " + e.getMessage());
-                return null;
-            } catch (NoSuchFieldException e) {
-                System.err.println("[MappingContext] Field '" + fieldName + "' not found in " + className + " for key: " + k);
                 return null;
             }
         });

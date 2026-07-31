@@ -66,7 +66,6 @@ object ForgeEventBridge : IEventBridge {
     private val keybindingPressedField by lazy { MappingContext.getField("forge:keybinding_pressed") }
     private val playerRotationYawField by lazy { MappingContext.getField("forge:player_rotationYaw") }
     private val playerRotationPitchField by lazy { MappingContext.getField("forge:player_rotationPitch") }
-    private val playerIsSprintingField by lazy { MappingContext.getField("forge:player_isSprinting") }
     private val playerHurtTimeField by lazy { MappingContext.getField("forge:entity_hurtTime") }
     private val mcLeftClickCounterField by lazy { MappingContext.getField("forge:mc_leftClickCounter") }
     private val mcRightClickDelayField by lazy { MappingContext.getField("forge:mc_rightClickDelayTimer") }
@@ -120,7 +119,7 @@ object ForgeEventBridge : IEventBridge {
 
         EventBridge.registerSprintSetter { sprinting ->
             val player = getPlayer() ?: return@registerSprintSetter
-            playerIsSprintingField?.setBoolean(player, sprinting)
+            MappingContext.invokeMethod(player, "forge:player_setSprinting", sprinting)
         }
 
         EventBridge.registerReleaseUsingItemHandler {
@@ -305,7 +304,7 @@ object ForgeEventBridge : IEventBridge {
         EventBridge.registerScoreboardTeamChecker { name ->
             try {
                 val world = getWorld() ?: return@registerScoreboardTeamChecker null
-                val scoreboard = MappingContext.getFieldValue(world, "forge:world_scoreboard") ?: return@registerScoreboardTeamChecker null
+                val scoreboard = MappingContext.invokeMethod(world, "forge:world_scoreboard") ?: return@registerScoreboardTeamChecker null
                 val teams = MappingContext.getFieldValue(scoreboard, "forge:scoreboard_teams") as? Collection<*> ?: return@registerScoreboardTeamChecker null
                 for (team in teams) {
                     val containsResult = MappingContext.invokeMethod(team, "forge:team_contains", name) as? Boolean
@@ -326,7 +325,7 @@ object ForgeEventBridge : IEventBridge {
                     val entityName = MappingContext.getFieldValue(entity, "forge:entity_name") as? String ?: continue
                     if (entityName == name) {
                         val displayName = MappingContext.getFieldValue(entity, "forge:entityLivingBase_displayName")
-                        return@registerDisplayNameProvider MappingContext.getFieldValue(displayName, "forge:ichatComponent_formattedText") as? String ?: name
+                        return@registerDisplayNameProvider MappingContext.invokeMethod(displayName, "forge:ichatComponent_formattedText") as? String ?: name
                     }
                 }
                 name

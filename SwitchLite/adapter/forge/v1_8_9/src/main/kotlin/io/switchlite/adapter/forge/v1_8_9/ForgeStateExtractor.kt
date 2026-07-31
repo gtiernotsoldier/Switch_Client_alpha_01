@@ -72,7 +72,7 @@ object ForgeStateExtractor : IStateExtractor {
         val rotationYaw = MappingContext.getFieldValue(player, "forge:player_rotationYaw") as? Float ?: 0f
         val rotationPitch = MappingContext.getFieldValue(player, "forge:player_rotationPitch") as? Float ?: 0f
         val onGround = MappingContext.getFieldValue(player, "forge:entity_onGround") as? Boolean ?: false
-        val isSprinting = MappingContext.getFieldValue(player, "forge:player_isSprinting") as? Boolean ?: false
+        val isSprinting = MappingContext.invokeMethod(player, "forge:player_isSprinting") as? Boolean ?: false
         val hurtTime = MappingContext.getFieldValue(player, "forge:entity_hurtTime") as? Int ?: 0
         val maxHurtResistantTime = MappingContext.getFieldValue(player, "forge:entity_maxHurtResistantTime") as? Int ?: 10
         val health = MappingContext.getFieldValue(player, "forge:entity_health") as? Float ?: 0f
@@ -84,15 +84,15 @@ object ForgeStateExtractor : IStateExtractor {
 
         val isAttackKeyDown = isMouseButtonDown(0)
 
-        val isBlocking = MappingContext.getFieldValue(player, "forge:player_isBlocking") as? Boolean ?: false
-        val isSneaking = MappingContext.getFieldValue(player, "forge:player_isSneaking") as? Boolean ?: false
+        val isBlocking = MappingContext.invokeMethod(player, "forge:player_isBlocking") as? Boolean ?: false
+        val isSneaking = MappingContext.invokeMethod(player, "forge:player_isSneaking") as? Boolean ?: false
         val selectedSlot = try {
             val inventory = MappingContext.getFieldValue(player, "forge:mc_thePlayer")
                 ?.let { MappingContext.getFieldValue(it, "forge:inventory_currentItem") } as? Int
             inventory ?: 0
         } catch (_: Exception) { 0 }
 
-        val heldItem = MappingContext.getFieldValue(player, "forge:player_heldItem")
+        val heldItem = MappingContext.invokeMethod(player, "forge:player_heldItem")
         val weaponType = classifyWeapon(
             try { MappingContext.getFieldValue(heldItem, "forge:itemStack_item") } catch (_: Exception) { null }
         )

@@ -65,7 +65,7 @@ object KeepSprint : Module("KeepSprint", Category.COMBAT) {
     }
 
     // ========== Timing ==========
-    private val delayTicks by int("Delay", 0, 1..20, "ticks")
+    private val delayTicks by int("Delay", 1, 1..20, "ticks")
     private val cooldownTicks by int("Cooldown", 1, 1..20, "ticks")
 
     // ========== Internal State ==========

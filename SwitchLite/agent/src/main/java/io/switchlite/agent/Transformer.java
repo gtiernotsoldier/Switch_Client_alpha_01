@@ -158,15 +158,49 @@ public class Transformer implements ClassFileTransformer {
             // the RenderBridge class. Without this, it throws:
             //   CannotCompileException: [source error] no such class: io$switchlite.agent.RenderBridge
             //
-            // We must explicitly add the agent.jar to the ClassPool's classpath so that
-            // Javassist can find RenderBridge during compilation.
+            // Strategy 1: Add LoaderClassPath for the game's classloader.
+            // The Transformer class is loaded by the game's LaunchClassLoader (same CL that
+            // loads RenderBridge). Adding this CL to the pool lets Javassist find all classes
+            // in the agent.jar, including RenderBridge, through the classloader directly.
+            // This is more reliable than appendClassPath(String) because it avoids Windows
+            // path format issues (mixed slashes, 8.3 short names) that can prevent Javassist
+            // from reading the jar.
+            try {
+                ClassLoader gameCL = Transformer.class.getClassLoader();
+                if (gameCL != null) {
+                    pool.appendClassPath(new javassist.LoaderClassPath(gameCL));
+                    Agent.log("[Transformer] Added game ClassLoader to ClassPool: " + gameCL.getClass().getName());
+                }
+            } catch (Exception e) {
+                Agent.log("[Transformer] Failed to add game ClassLoader to ClassPool: " + e.getMessage());
+            }
+
+            // Strategy 2: Also add the agent.jar directly to the pool as a fallback.
+            // Some Javassist versions or configurations may not search LoaderClassPath
+            // for source compilation. Adding the jar directly ensures the pool can find
+            // the class by reading the jar entries.
+            // Use getCanonicalPath() to normalize Windows path (mixed slashes, 8.3 names).
             String agentJarPath = findAgentJar();
             if (agentJarPath != null) {
                 try {
-                    pool.appendClassPath(agentJarPath);
+                    String canonicalPath = new File(agentJarPath).getCanonicalPath();
+                    pool.appendClassPath(canonicalPath);
+                    Agent.log("[Transformer] Added agent.jar to ClassPool: " + canonicalPath);
                 } catch (Exception e) {
                     Agent.log("[Transformer] Failed to add agent.jar to ClassPool: " + e.getMessage());
                 }
+            } else {
+                Agent.log("[Transformer] findAgentJar() returned null — cannot add agent.jar to ClassPool");
+            }
+
+            // Strategy 3: Verify that RenderBridge is actually findable in the pool.
+            // This diagnostic helps us understand if the ClassPool fix is working.
+            try {
+                pool.get("io.switchlite.agent.RenderBridge");
+                Agent.log("[Transformer] RenderBridge found in ClassPool — compilation should succeed");
+            } catch (javassist.NotFoundException e) {
+                Agent.log("[Transformer] WARNING: RenderBridge NOT found in ClassPool — compilation will likely fail");
+                Agent.log("[Transformer] This means neither LoaderClassPath nor jar classpath made RenderBridge available");
             }
 
             CtClass ctClass = pool.makeClass(new ByteArrayInputStream(classfileBuffer));
@@ -186,12 +220,23 @@ public class Transformer implements ClassFileTransformer {
 
             Agent.log("[Transformer] Display.update() bytecode injected — RenderBridge.onFrame() will be called every frame");
             return result;
-        } catch (javassist.NotFoundException e) {
-            Agent.log("[Transformer] Display.update() not found: " + e.getMessage());
-        } catch (javassist.CannotCompileException e) {
-            Agent.log("[Transformer] Compile error: " + e.getMessage());
         } catch (Exception e) {
-            Agent.log("[Transformer] Failed: " + e.getClass().getSimpleName() + ": " + e.getMessage());
+            // NOTE: We use a single catch(Exception) instead of separate catches for
+            // CannotCompileException and NotFoundException because of classloader isolation.
+            // When appendToBootstrapClassLoaderSearch() is called, the Javassist classes
+            // loaded by the bootstrap CL are different from those loaded by the game CL.
+            // The catch(CannotCompileException) clause uses the game CL's version, but the
+            // actual exception thrown is from the bootstrap CL's version — so the catch
+            // doesn't match and falls through to catch(Exception).
+            String errorType = e.getClass().getSimpleName();
+            String errorMsg = e.getMessage();
+            if ("CannotCompileException".equals(errorType)) {
+                Agent.log("[Transformer] Compile error: " + errorMsg);
+            } else if ("NotFoundException".equals(errorType)) {
+                Agent.log("[Transformer] Display.update() not found: " + errorMsg);
+            } else {
+                Agent.log("[Transformer] Failed: " + errorType + ": " + errorMsg);
+            }
         }
         return null;
     }

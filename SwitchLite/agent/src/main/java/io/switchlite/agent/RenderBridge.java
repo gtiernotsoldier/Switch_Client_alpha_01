@@ -65,11 +65,32 @@ public class RenderBridge {
             forgeBootstrapRender = fbClass.getMethod("render");
             bridgeReady = true;
 
-            Agent.log("[RenderBridge] Bridge established — ForgeBootstrap.render() will be called every frame");
+            log("[RenderBridge] Bridge established — ForgeBootstrap.render() will be called every frame");
         } catch (ClassNotFoundException e) {
             // ForgeBootstrap not loaded yet — will retry next frame
         } catch (Exception e) {
-            Agent.log("[RenderBridge] Bridge init failed: " + e.getClass().getSimpleName() + ": " + e.getMessage());
+            log("[RenderBridge] Bridge init failed: " + e.getClass().getSimpleName() + ": " + e.getMessage());
         }
+    }
+
+    /**
+     * Local logging — does NOT use Agent.log() because RenderBridge is on the
+     * bootstrap CL while Agent.log()'s logStream lives on the game CL's Agent.class.
+     * Using Agent.log() from here would silently skip file logging (logStream == null
+     * on the bootstrap CL's Agent.class). This method writes to stdout and the
+     * shared payload log file directly.
+     */
+    private static void log(String msg) {
+        System.out.println(msg);
+        // Also try to write to the shared payload log file
+        try {
+            String tempDir = System.getProperty("java.io.tmpdir");
+            if (tempDir != null) {
+                java.io.File logFile = new java.io.File(tempDir, "switchlite-agent.log");
+                java.io.PrintWriter pw = new java.io.PrintWriter(new java.io.FileWriter(logFile, true), true);
+                pw.println("[" + new java.text.SimpleDateFormat("HH:mm:ss.SSS").format(new java.util.Date()) + "] " + msg);
+                pw.close();
+            }
+        } catch (Exception ignored) {}
     }
 }

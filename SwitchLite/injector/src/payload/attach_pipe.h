@@ -1,15 +1,21 @@
-// attach_pipe.h — Windows Attach API via named pipe (no tools.jar needed)
+// attach_pipe.h — Windows Attach API via JVM_EnqueueOperation (no tools.jar needed)
 //
-// Implements the same protocol as com.sun.tools.attach.VirtualMachine
-// on Windows, but entirely in C++. This allows payload.dll to trigger
-// agentmain(String, Instrumentation) without needing tools.jar on the
-// classpath (Minecraft runs on JRE, not JDK).
+// Implements the JDK 8 Windows attach mechanism by calling JVM_EnqueueOperation,
+// which is exported from jvm.dll. On Windows, the AttachListener thread is always
+// running at JVM startup — it blocks on a Win32 semaphore, waiting for operations
+// to be enqueued. JVM_EnqueueOperation adds the operation and releases the semaphore.
+//
+// Since our DLL is already inside the target process, we can call this function
+// directly — no CreateRemoteThread injection or tools.jar needed (Minecraft runs
+// on JRE, not JDK).
 //
 // Protocol (JDK 8 Windows):
-//   1. Signal the JVM to start AttachListener: create %TEMP%\.attach_pid<PID>
-//   2. Connect to named pipe: \\.\pipe\java_pid<PID>
-//   3. Send load command: "load\0instrument\0true\0<jar_path>=<args>"
-//   4. Read response
+//   1. Get JVM_EnqueueOperation from jvm.dll (already loaded in process)
+//   2. Create a named pipe server for the response
+//   3. Call JVM_EnqueueOperation("load", "instrument", "true", "<jar>=<args>", "<pipename>")
+//   4. AttachListener dequeues the operation, loads the agent, calls agentmain()
+//   5. AttachListener writes the result to our named pipe
+//   6. We read the result
 #pragma once
 
 #ifdef _WIN32

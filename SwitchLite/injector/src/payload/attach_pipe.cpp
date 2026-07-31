@@ -1,262 +1,242 @@
-// attach_pipe.cpp — Windows Attach API via named pipe (no tools.jar needed)
+// attach_pipe.cpp — Windows Attach API via JVM_EnqueueOperation (no tools.jar needed)
 //
-// This implements the JDK 8 Windows attach protocol entirely in C++.
-// The protocol is:
-//   1. Create a signal file %TEMP%\.attach_pid<PID> to trigger AttachListener
-//   2. Wait for the AttachListener to create the named pipe
-//   3. Connect to \\.\pipe\java_pid<PID>
-//   4. Send the "load" command with the agent path
-//   5. Read the response
+// CORRECT Windows attach protocol (JDK 8):
 //
-// This is the same protocol that tools.jar's VirtualMachine.attach() uses,
-// but we don't need tools.jar at all. This is critical because Minecraft
-// runs on JRE, not JDK — tools.jar doesn't exist on JRE.
+// On Windows, the AttachListener thread is ALWAYS started at JVM startup
+// (unlike Linux where it's lazy-initialized via SIGQUIT + .attach_pid file).
+// The AttachListener blocks on a Win32 semaphore (_wakeup), waiting for
+// operations to be enqueued.
+//
+// JDK's WindowsVirtualMachine uses CreateRemoteThread to inject a stub that
+// calls JVM_EnqueueOperation — an exported function from jvm.dll.
+// But since our DLL is already inside the target process, we can call
+// JVM_EnqueueOperation directly — no remote thread injection needed.
+//
+// The previous implementation incorrectly used the Linux attach protocol
+// (signal file + \\.\pipe\java_pid<PID>). That pipe never exists on Windows
+// because Windows AttachListener doesn't create it. The Windows mechanism
+// uses a client-created pipe (\\.\pipe\javatool<random>) for the response,
+// and JVM_EnqueueOperation to enqueue the operation.
+//
+// Protocol flow:
+//   1. Get JVM_EnqueueOperation from jvm.dll (already loaded in process)
+//   2. Create a named pipe server for the response
+//   3. Call JVM_EnqueueOperation("load", "instrument", "true", "<jar>=<args>", "<pipename>")
+//   4. AttachListener wakes up, dequeues the operation, loads the agent
+//   5. AttachListener writes the result to our named pipe
+//   6. We read the result
 
 #ifdef _WIN32
 
 #include "attach_pipe.h"
 #include "payload_log.h"
 #include <windows.h>
+#include <jni.h>
 #include <cstdio>
 #include <cstring>
-#include <string>
 
-// ── Step 1: Signal the JVM to start AttachListener ──
+// ── JVM_EnqueueOperation function pointer ──
 //
-// On Windows, the AttachListener thread checks for a file named
-// .attach_pid<PID> in java.io.tmpdir. If found, it creates the
-// named pipe and starts listening for commands.
-//
-// We also need to send a BREAK event to the JVM to wake up the
-// AttachListener thread (it polls every 200ms in JDK 8, but the
-// signal speeds it up).
+// Exported from jvm.dll. On 32-bit Windows, the stdcall-decorated name
+// is _JVM_EnqueueOperation@20. On 64-bit, it's JVM_EnqueueOperation.
+// We try both names to handle all architectures.
 
-static bool signalAttachListener(int pid) {
-    // Create the signal file in %TEMP%
-    char tempPath[MAX_PATH];
-    GetTempPathA(MAX_PATH, tempPath);
+#ifdef _WIN64
+#define ATTACH_CALL
+#else
+#define ATTACH_CALL __stdcall
+#endif
 
-    char attachFile[MAX_PATH];
-    _snprintf(attachFile, sizeof(attachFile), "%s.attach_pid%d", tempPath, pid);
+typedef jint (ATTACH_CALL *EnqueueOperationFunc)(
+    char* cmd,
+    char* arg0,
+    char* arg1,
+    char* arg2,
+    char* pipename
+);
 
-    // Remove stale file if it exists
-    DeleteFileA(attachFile);
-
-    // Create the signal file
-    HANDLE hFile = CreateFileA(attachFile, GENERIC_WRITE, 0, NULL,
-                               CREATE_NEW, FILE_ATTRIBUTE_NORMAL, NULL);
-    if (hFile == INVALID_HANDLE_VALUE) {
-        payloadLog("[AttachPipe] Failed to create attach signal file: %s (err=%d)",
-                   attachFile, GetLastError());
-        return false;
+static EnqueueOperationFunc getEnqueueFunc() {
+    HMODULE hJvm = GetModuleHandleA("jvm");
+    if (!hJvm) {
+        payloadLog("[AttachPipe] jvm.dll not found in process");
+        return NULL;
     }
-    CloseHandle(hFile);
-    payloadLog("[AttachPipe] Created attach signal file: %s", attachFile);
+    payloadLog("[AttachPipe] jvm.dll found at %p", hJvm);
 
-    // Send a CTRL_BREAK_EVENT to the JVM process to trigger AttachListener
-    // This is what the JDK's WindowsAttachProvider does
-    // (GenerateConsoleCtrlEvent is not reliable for this; we use the file signal)
-    // The AttachListener thread polls every ~200ms in JDK 8
+    // Try undecorated name first (64-bit)
+    EnqueueOperationFunc func = (EnqueueOperationFunc)GetProcAddress(hJvm, "JVM_EnqueueOperation");
+    if (func) {
+        payloadLog("[AttachPipe] Found JVM_EnqueueOperation (undecorated)");
+        return func;
+    }
 
-    return true;
+    // Try stdcall decorated name (32-bit)
+    func = (EnqueueOperationFunc)GetProcAddress(hJvm, "_JVM_EnqueueOperation@20");
+    if (func) {
+        payloadLog("[AttachPipe] Found _JVM_EnqueueOperation@20 (stdcall)");
+        return func;
+    }
+
+    payloadLog("[AttachPipe] JVM_EnqueueOperation not found in jvm.dll");
+    return NULL;
 }
 
-// ── Step 2: Connect to the named pipe ──
+// ── Create named pipe server for response ──
+//
+// The AttachListener writes the result to this pipe after processing
+// the load command. We create the pipe server before calling
+// JVM_EnqueueOperation, so it's ready when the AttachListener tries
+// to connect.
 
-static HANDLE connectToPipe(int pid, int timeoutMs) {
-    char pipeName[128];
-    _snprintf(pipeName, sizeof(pipeName), "\\\\.\\pipe\\java_pid%d", pid);
+static HANDLE createResponsePipe(char* pipeName, int pipeNameSize) {
+    // Generate a unique pipe name using PID + random
+    srand(GetTickCount());
+    _snprintf(pipeName, pipeNameSize, "\\\\.\\pipe\\switchlite_attach_%d_%d",
+              GetCurrentProcessId(), rand());
 
-    payloadLog("[AttachPipe] Trying to connect to pipe: %s", pipeName);
+    HANDLE hPipe = CreateNamedPipeA(
+        pipeName,
+        PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED,
+        PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
+        1,      // max instances
+        4096,   // output buffer size
+        4096,   // input buffer size
+        0,      // default timeout
+        NULL    // default security
+    );
 
-    DWORD startTime = GetTickCount();
-    while (true) {
-        // Try to connect
-        HANDLE hPipe = CreateFileA(pipeName, GENERIC_READ | GENERIC_WRITE,
-                                   0, NULL, OPEN_EXISTING, 0, NULL);
-        if (hPipe != INVALID_HANDLE_VALUE) {
-            payloadLog("[AttachPipe] Connected to pipe: %s", pipeName);
-            return hPipe;
-        }
-
-        // Check if pipe is busy (another client connected)
-        if (GetLastError() == ERROR_PIPE_BUSY) {
-            // Wait for the pipe to become available
-            if (!WaitNamedPipeA(pipeName, 1000)) {
-                payloadLog("[AttachPipe] WaitNamedPipe failed (err=%d)", GetLastError());
-            }
-        }
-
-        // Check timeout
-        DWORD elapsed = GetTickCount() - startTime;
-        if (elapsed > (DWORD)timeoutMs) {
-            payloadLog("[AttachPipe] Timeout waiting for pipe (%d ms)", timeoutMs);
-            return INVALID_HANDLE_VALUE;
-        }
-
-        // Wait a bit before retrying
-        Sleep(100);
+    if (hPipe == INVALID_HANDLE_VALUE) {
+        payloadLog("[AttachPipe] Failed to create response pipe: %s (err=%d)",
+                   pipeName, GetLastError());
+        return INVALID_HANDLE_VALUE;
     }
+
+    payloadLog("[AttachPipe] Created response pipe: %s", pipeName);
+    return hPipe;
 }
 
-// ── Step 3: Send the load command ──
+// ── Wait for AttachListener to connect and read response ──
 //
-// The JDK 8 Windows attach protocol uses a simple binary format:
-//   - First 4 bytes: protocol version (big-endian int)
-//   - Then a series of null-terminated strings:
-//     "load\0instrument\0true\0<jar_path>=<args>\0"
-//
-// The response format is:
-//   - First 4 bytes: protocol version (big-endian int)
-//   - Then: result code (int, big-endian) + message (null-terminated string)
+// The AttachListener processes the operation and writes the result
+// to our named pipe. The result format is:
+//   "<result_code>\n<result_message>"
+// where result_code 0 = success, non-zero = failure.
 
-static bool sendLoadCommand(HANDLE hPipe, const char* agentJarPath, const char* agentArgs) {
-    // Build the command string
-    // Format: "load\0instrument\0true\0<jar_path>=<args>"
-    char argBuf[1024];
-    _snprintf(argBuf, sizeof(argBuf), "%s=%s", agentJarPath, agentArgs);
-
-    // JDK 8 Windows attach protocol: version (4 bytes) + command strings
-    // The version is 1 (big-endian)
-    char versionBytes[4];
-    versionBytes[0] = 0;
-    versionBytes[1] = 0;
-    versionBytes[2] = 0;
-    versionBytes[3] = 1;  // version = 1
-
-    // Calculate total message size
-    // version(4) + "load\0" + "instrument\0" + "true\0" + argBuf + "\0"
-    int totalLen = 4 + 5 + 11 + 5 + (int)strlen(argBuf) + 1;
-    char* buf = new char[totalLen];
-    int pos = 0;
-
-    // Write version
-    memcpy(buf + pos, versionBytes, 4); pos += 4;
-
-    // Write command strings
-    memcpy(buf + pos, "load", 4); pos += 4; buf[pos++] = '\0';
-    memcpy(buf + pos, "instrument", 10); pos += 10; buf[pos++] = '\0';
-    memcpy(buf + pos, "true", 4); pos += 4; buf[pos++] = '\0';
-    memcpy(buf + pos, argBuf, strlen(argBuf)); pos += (int)strlen(argBuf); buf[pos++] = '\0';
-
-    // Write to pipe
-    DWORD written;
-    BOOL ok = WriteFile(hPipe, buf, totalLen, &written, NULL);
-    delete[] buf;
-
-    if (!ok || written != (DWORD)totalLen) {
-        payloadLog("[AttachPipe] WriteFile failed (written=%d, expected=%d, err=%d)",
-                   written, totalLen, GetLastError());
+static bool readAttachResponse(HANDLE hPipe, int timeoutMs) {
+    // Set up overlapped I/O for ConnectNamedPipe with timeout
+    OVERLAPPED ol = {0};
+    ol.hEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
+    if (!ol.hEvent) {
+        payloadLog("[AttachPipe] Failed to create overlapped event (err=%d)", GetLastError());
         return false;
     }
 
-    payloadLog("[AttachPipe] Sent load command: %s (%d bytes)", argBuf, totalLen);
-    return true;
-}
+    // Start ConnectNamedPipe (non-blocking with overlapped I/O)
+    BOOL connected = ConnectNamedPipe(hPipe, &ol);
+    DWORD lastErr = GetLastError();
 
-// ── Step 4: Read the response ──
-
-static bool readResponse(HANDLE hPipe) {
-    // Read response: version(4) + result(4) + message(variable)
-    char respBuf[1024];
-    DWORD totalRead = 0;
-    DWORD toRead = sizeof(respBuf) - 1;
-
-    // Read available data
-    DWORD available = 0;
-    PeekNamedPipe(hPipe, NULL, 0, NULL, &available, NULL);
-
-    if (available == 0) {
-        // Wait a bit for data
-        Sleep(500);
-        PeekNamedPipe(hPipe, NULL, 0, NULL, &available, NULL);
-    }
-
-    if (available == 0) {
-        payloadLog("[AttachPipe] No response data available");
+    if (connected) {
+        // ConnectNamedPipe returned TRUE — client already connected
+        payloadLog("[AttachPipe] Client already connected to response pipe");
+    } else if (lastErr == ERROR_IO_PENDING) {
+        // Waiting for client to connect — wait with timeout
+        DWORD waitResult = WaitForSingleObject(ol.hEvent, timeoutMs);
+        if (waitResult != WAIT_OBJECT_0) {
+            payloadLog("[AttachPipe] Timeout waiting for AttachListener response (%d ms)", timeoutMs);
+            CancelIo(hPipe);
+            CloseHandle(ol.hEvent);
+            return false;
+        }
+        payloadLog("[AttachPipe] AttachListener connected to response pipe");
+    } else if (lastErr == ERROR_PIPE_CONNECTED) {
+        // Client connected between CreateNamedPipe and ConnectNamedPipe
+        payloadLog("[AttachPipe] Client connected (pipe already connected)");
+    } else {
+        payloadLog("[AttachPipe] ConnectNamedPipe failed (err=%d)", lastErr);
+        CloseHandle(ol.hEvent);
         return false;
     }
 
-    DWORD toReadNow = min(available, toRead);
+    CloseHandle(ol.hEvent);
+
+    // Read the response
+    char buf[4096];
     DWORD bytesRead = 0;
-    BOOL ok = ReadFile(hPipe, respBuf, toReadNow, &bytesRead, NULL);
+    BOOL ok = ReadFile(hPipe, buf, sizeof(buf) - 1, &bytesRead, NULL);
 
-    if (!ok || bytesRead < 8) {
+    if (!ok || bytesRead == 0) {
         payloadLog("[AttachPipe] ReadFile failed (read=%d, err=%d)", bytesRead, GetLastError());
         return false;
     }
 
-    // Parse response
-    // Version (first 4 bytes, big-endian)
-    int respVersion = (respBuf[0] << 24) | (respBuf[1] << 16) | (respBuf[2] << 8) | respBuf[3];
-    // Result code (next 4 bytes, big-endian)
-    int result = (respBuf[4] << 24) | (respBuf[5] << 16) | (respBuf[6] << 8) | respBuf[7];
+    buf[bytesRead] = '\0';
 
-    // Message (remaining bytes, null-terminated)
-    char* message = "";
-    if (bytesRead > 8) {
-        respBuf[bytesRead] = '\0';
-        message = respBuf + 8;
+    // Parse the result code (first line, format: "0\nmessage" or "1\nerror")
+    int result = -1;
+    if (sscanf(buf, "%d", &result) == 1) {
+        payloadLog("[AttachPipe] Response: result=%d, message='%s'", result, buf);
+    } else {
+        payloadLog("[AttachPipe] Failed to parse response: '%s'", buf);
     }
 
-    payloadLog("[AttachPipe] Response: version=%d, result=%d, message='%s'", respVersion, result, message);
-
-    return (result == 0);  // 0 = success
-}
-
-// ── Cleanup: Remove the signal file ──
-
-static void cleanupSignalFile(int pid) {
-    char tempPath[MAX_PATH];
-    GetTempPathA(MAX_PATH, tempPath);
-    char attachFile[MAX_PATH];
-    _snprintf(attachFile, sizeof(attachFile), "%s.attach_pid%d", tempPath, pid);
-    DeleteFileA(attachFile);
+    return (result == 0);
 }
 
 // ── Public API ──
 
 bool attachAndLoadAgent(int pid, const char* agentJarPath, const char* agentArgs) {
-    payloadLog("[AttachPipe] === Starting Windows Attach pipe protocol ===");
+    payloadLog("[AttachPipe] === Starting Windows Attach (JVM_EnqueueOperation) ===");
     payloadLog("[AttachPipe] PID=%d, jar=%s, args=%s", pid, agentJarPath, agentArgs);
 
-    // Step 1: Signal the JVM to start AttachListener
-    if (!signalAttachListener(pid)) {
-        payloadLog("[AttachPipe] Failed to signal AttachListener");
+    // Step 1: Get JVM_EnqueueOperation from jvm.dll
+    EnqueueOperationFunc enqueueOp = getEnqueueFunc();
+    if (!enqueueOp) {
+        payloadLog("[AttachPipe] FATAL: Cannot find JVM_EnqueueOperation in jvm.dll");
         return false;
     }
 
-    // Step 2: Connect to the named pipe (wait up to 10 seconds)
-    HANDLE hPipe = connectToPipe(pid, 10000);
+    // Step 2: Create response pipe (before enqueue, so it's ready when AttachListener writes)
+    char pipeName[256];
+    HANDLE hPipe = createResponsePipe(pipeName, sizeof(pipeName));
     if (hPipe == INVALID_HANDLE_VALUE) {
-        payloadLog("[AttachPipe] Failed to connect to named pipe");
-        cleanupSignalFile(pid);
+        payloadLog("[AttachPipe] FATAL: Cannot create response pipe");
         return false;
     }
 
-    // Step 3: Send the load command
-    bool sendOk = sendLoadCommand(hPipe, agentJarPath, agentArgs);
-    if (!sendOk) {
-        payloadLog("[AttachPipe] Failed to send load command");
+    // Step 3: Build the arg2 string: jar_path=args
+    char arg2[1024];
+    _snprintf(arg2, sizeof(arg2), "%s=%s", agentJarPath, agentArgs);
+
+    // Step 4: Call JVM_EnqueueOperation
+    // This enqueues the operation and releases the AttachListener's semaphore.
+    // The AttachListener will wake up, dequeue the operation, and process it.
+    payloadLog("[AttachPipe] Calling JVM_EnqueueOperation: load instrument true %s %s",
+               arg2, pipeName);
+
+    jint result = enqueueOp("load", "instrument", "true", arg2, pipeName);
+
+    if (result != 0) {
+        payloadLog("[AttachPipe] JVM_EnqueueOperation returned error: %d", result);
         CloseHandle(hPipe);
-        cleanupSignalFile(pid);
         return false;
     }
 
-    // Step 4: Read the response
-    bool result = readResponse(hPipe);
+    payloadLog("[AttachPipe] JVM_EnqueueOperation succeeded, waiting for AttachListener response...");
+
+    // Step 5: Read the response from the AttachListener
+    bool success = readAttachResponse(hPipe, 10000);
 
     // Cleanup
+    DisconnectNamedPipe(hPipe);
     CloseHandle(hPipe);
-    cleanupSignalFile(pid);
 
-    if (result) {
-        payloadLog("[AttachPipe] === Agent loaded successfully via Attach pipe ===");
+    if (success) {
+        payloadLog("[AttachPipe] === Agent loaded successfully via JVM_EnqueueOperation ===");
     } else {
-        payloadLog("[AttachPipe] === Agent load FAILED via Attach pipe ===");
+        payloadLog("[AttachPipe] === Agent load FAILED ===");
     }
 
-    return result;
+    return success;
 }
 
 #endif // _WIN32

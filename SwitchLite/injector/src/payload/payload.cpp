@@ -208,29 +208,65 @@ static void signalDone() {
 }
 
 // ── updateConfigPlatform: fix Vanilla→Forge when Launch class detected ──
+//
+// Preserves ALL existing properties — only updates platform and version.
+// Previous version truncated the file to only two properties, losing any
+// other config entries (e.g., switchlite.module.X.enabled=true).
 
 static void updateConfigPlatform(const char* configDir) {
     char cfgPath[MAX_PATH];
     _snprintf(cfgPath, sizeof(cfgPath), "%s\\switchlite-config.properties", configDir);
-    FILE* f = fopen(cfgPath, "r");
+
+    // Read all lines, updating platform and version in-place
+    char lines[64][256];
+    int lineCount = 0;
     char version[64] = "1.8.9";
+    bool foundPlatform = false;
+    bool foundVersion = false;
+
+    FILE* f = fopen(cfgPath, "r");
     if (f) {
         char line[256];
-        while (fgets(line, sizeof(line), f)) {
+        while (fgets(line, sizeof(line), f) && lineCount < 64) {
             if (strncmp(line, "switchlite.version=", 19) == 0) {
                 strncpy(version, line + 19, sizeof(version) - 1);
                 char* nl = strchr(version, '\n'); if (nl) *nl = '\0';
                 char* cr = strchr(version, '\r'); if (cr) *cr = '\0';
+                foundVersion = true;
             }
+            if (strncmp(line, "switchlite.platform=", 20) == 0) {
+                foundPlatform = true;
+            }
+            strncpy(lines[lineCount], line, sizeof(lines[lineCount]) - 1);
+            lines[lineCount][sizeof(lines[lineCount]) - 1] = '\0';
+            lineCount++;
         }
         fclose(f);
     }
+
+    // Write back all lines, updating/adding platform and version
     f = fopen(cfgPath, "w");
     if (f) {
-        fprintf(f, "switchlite.platform=Forge\n");
-        fprintf(f, "switchlite.version=%s\n", version);
+        // Write platform first if not already in file
+        if (!foundPlatform) {
+            fprintf(f, "switchlite.platform=Forge\n");
+        }
+        // Write all original lines, replacing platform/version as needed
+        for (int i = 0; i < lineCount; i++) {
+            if (strncmp(lines[i], "switchlite.platform=", 20) == 0) {
+                fprintf(f, "switchlite.platform=Forge\n");
+            } else if (strncmp(lines[i], "switchlite.version=", 19) == 0) {
+                fprintf(f, "switchlite.version=%s\n", version);
+            } else {
+                fputs(lines[i], f);
+            }
+        }
+        // Add version if not already in file
+        if (!foundVersion) {
+            fprintf(f, "switchlite.version=%s\n", version);
+        }
         fclose(f);
-        payloadLog("[SwitchLite] Config updated: platform=Forge, version=%s", version);
+        payloadLog("[SwitchLite] Config updated: platform=Forge, version=%s (%d lines preserved)", version, lineCount);
     }
 }
 
@@ -289,27 +325,30 @@ DWORD WINAPI ThreadProc(LPVOID lpParam) {
         return 1;
     }
 
-    // ── Step 2: Use Windows Attach pipe protocol to get Instrumentation ──
+    // ── Step 2: Use JVM_EnqueueOperation to get Instrumentation ──
     //
     // Agent.bootstrap() initializes everything (config, mappings, modules, threads)
     // BUT it receives inst=null via JNI, so Transformer.install(null) fails.
     //
-    // The Windows Attach pipe protocol triggers agentmain() which receives
-    // a proper Instrumentation from the JVM. This is the same mechanism
-    // that tools.jar's VirtualMachine.attach() uses, but we don't need
-    // tools.jar (Minecraft runs on JRE, not JDK).
+    // On Windows, the AttachListener thread is ALWAYS running at JVM startup
+    // (unlike Linux where it's lazy-initialized via SIGQUIT). We call
+    // JVM_EnqueueOperation — an exported function from jvm.dll — to enqueue
+    // a "load" command. The AttachListener dequeues it, loads the agent,
+    // and calls agentmain("jni-attach", inst) with a real Instrumentation.
     //
-    // The agentArgs="jni-attach" tells agentmain that this is a follow-up
-    // call from the payload DLL, not a standalone attachment.
+    // This is the same mechanism that JDK's WindowsVirtualMachine uses, but
+    // since we're already inside the process, we can call JVM_EnqueueOperation
+    // directly — no CreateRemoteThread injection needed, no tools.jar needed
+    // (Minecraft runs on JRE, not JDK).
 
-    payloadLog("[SwitchLite] Using Windows Attach pipe to obtain Instrumentation...");
+    payloadLog("[SwitchLite] Using JVM_EnqueueOperation to obtain Instrumentation...");
     int pid = GetCurrentProcessId();
     bool attachOk = attachAndLoadAgent(pid, jarPath, "jni-attach");
 
     if (attachOk) {
-        payloadLog("[SwitchLite] Attach pipe succeeded — agentmain called with Instrumentation");
+        payloadLog("[SwitchLite] JVM_EnqueueOperation succeeded — agentmain called with Instrumentation");
     } else {
-        payloadLog("[SwitchLite] WARNING: Attach pipe failed — rendering pipeline may not work");
+        payloadLog("[SwitchLite] WARNING: JVM_EnqueueOperation failed — rendering pipeline may not work");
         payloadLog("[SwitchLite] Agent is running but Transformer hook is NOT installed");
         payloadLog("[SwitchLite] HUD overlay will not appear until hook is installed");
     }

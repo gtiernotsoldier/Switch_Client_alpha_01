@@ -31,6 +31,7 @@
 #include "attach_pipe.h"
 #include "payload_log.h"
 #include <windows.h>
+#include <jni.h>
 #include <cstdio>
 #include <cstring>
 

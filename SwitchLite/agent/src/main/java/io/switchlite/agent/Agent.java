@@ -147,6 +147,10 @@ public class Agent {
                     props.load(fis);
                     platform = props.getProperty("switchlite.platform", "Unknown");
                     version = props.getProperty("switchlite.version", "Unknown");
+                    // Fix: payload.dll writes version as "=1.8.9" (with leading '=')
+                    if (version.startsWith("=")) {
+                        version = version.substring(1);
+                    }
                     log("[Agent] Config loaded successfully");
                 } catch (IOException e) {
                     log("[Agent] Failed to read config: " + e.getMessage());
@@ -190,6 +194,17 @@ public class Agent {
                 log("[Agent] ForgeBootstrap not in classpath — HUD via Display.update() hook");
             } catch (Exception e) {
                 log("[Agent] ForgeBootstrap init failed: " + e.getClass().getSimpleName() + ": " + e.getMessage());
+                // Unwrap InvocationTargetException — the real cause is buried inside
+                Throwable cause = e.getCause();
+                while (cause != null) {
+                    log("[Agent]   Caused by: " + cause.getClass().getSimpleName() + ": " + cause.getMessage());
+                    for (StackTraceElement ste : cause.getStackTrace()) {
+                        if (ste.getClassName().startsWith("io.switchlite")) {
+                            log("[Agent]     at " + ste.toString());
+                        }
+                    }
+                    cause = cause.getCause();
+                }
             }
         }
 

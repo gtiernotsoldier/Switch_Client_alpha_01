@@ -75,71 +75,77 @@ object ForgeBootstrap {
      * Extracts player state, dispatches to module layer.
      */
     fun tick() {
+        // START phase — extract player state, dispatch to modules
         try {
-            val mc = MappingContext.invokeMethod(null, "forge:mc_getMinecraft") ?: return
-            val player = MappingContext.getFieldValue(mc, "forge:mc_thePlayer") ?: return
+            val mc = MappingContext.invokeMethod(null, "forge:mc_getMinecraft")
+            if (mc != null) {
+                val player = MappingContext.getFieldValue(mc, "forge:mc_thePlayer")
 
-            // Mouse delta
-            try {
-                EventBridge.mouseDeltaX = (mouseGetDX.invoke(null) as Int).toFloat()
-                EventBridge.mouseDeltaY = (mouseGetDY.invoke(null) as Int).toFloat()
-            } catch (_: Exception) {}
-            try {
-                val gs = MappingContext.getFieldValue(mc, "forge:mc_gameSettings")
-                EventBridge.mouseSensitivity = MappingContext.getFieldValue(gs, "forge:gs_mouseSensitivity") as? Float ?: 1.0f
-            } catch (_: Exception) {}
+                // Mouse delta
+                try {
+                    EventBridge.mouseDeltaX = (mouseGetDX.invoke(null) as Int).toFloat()
+                    EventBridge.mouseDeltaY = (mouseGetDY.invoke(null) as Int).toFloat()
+                } catch (_: Exception) {}
+                try {
+                    val gs = MappingContext.getFieldValue(mc, "forge:mc_gameSettings")
+                    EventBridge.mouseSensitivity = MappingContext.getFieldValue(gs, "forge:gs_mouseSensitivity") as? Float ?: 1.0f
+                } catch (_: Exception) {}
 
-            // Physical mouse buttons
-            try {
-                EventBridge.isLeftMousePhysicallyDown = mouseIsButtonDown.invoke(null, 0) as Boolean
-                EventBridge.isRightMousePhysicallyDown = mouseIsButtonDown.invoke(null, 1) as Boolean
-            } catch (_: Exception) {}
+                // Physical mouse buttons
+                try {
+                    EventBridge.isLeftMousePhysicallyDown = mouseIsButtonDown.invoke(null, 0) as Boolean
+                    EventBridge.isRightMousePhysicallyDown = mouseIsButtonDown.invoke(null, 1) as Boolean
+                } catch (_: Exception) {}
 
-            // Crosshair / fluid / food
-            try {
-                val objMouseOver = MappingContext.getFieldValue(mc, "forge:mc_objectMouseOver")
-                val typeOfHit = MappingContext.getFieldValue(objMouseOver, "forge:movingObjectPosition_typeOfHit")
-                val motClass = Class.forName("net.minecraft.util.MovingObjectPosition\$MovingObjectType")
-                val blockType = motClass.enumConstants.firstOrNull { it.toString() == "BLOCK" }
-                EventBridge.isLookingAtBlock = typeOfHit === blockType
-            } catch (_: Exception) {}
+                // Crosshair / fluid / food
+                try {
+                    val objMouseOver = MappingContext.getFieldValue(mc, "forge:mc_objectMouseOver")
+                    val typeOfHit = MappingContext.getFieldValue(objMouseOver, "forge:movingObjectPosition_typeOfHit")
+                    val motClass = Class.forName("net.minecraft.util.MovingObjectPosition\$MovingObjectType")
+                    val blockType = motClass.enumConstants.firstOrNull { it.toString() == "BLOCK" }
+                    EventBridge.isLookingAtBlock = typeOfHit === blockType
+                } catch (_: Exception) {}
 
-            try {
-                val inWater = MappingContext.invokeMethod(player, "forge:entity_isInWater") as? Boolean ?: false
-                val inLava = MappingContext.invokeMethod(player, "forge:entity_isInLava") as? Boolean ?: false
-                val inWeb = MappingContext.invokeMethod(player, "forge:entity_isInWeb") as? Boolean ?: false
-                EventBridge.isInFluid = inWater || inLava || inWeb
-            } catch (_: Exception) {}
+                if (player != null) {
+                    try {
+                        val inWater = MappingContext.invokeMethod(player, "forge:entity_isInWater") as? Boolean ?: false
+                        val inLava = MappingContext.invokeMethod(player, "forge:entity_isInLava") as? Boolean ?: false
+                        val inWeb = MappingContext.invokeMethod(player, "forge:entity_isInWeb") as? Boolean ?: false
+                        EventBridge.isInFluid = inWater || inLava || inWeb
+                    } catch (_: Exception) {}
 
-            try {
-                val foodStats = MappingContext.getFieldValue(player, "forge:player_foodStats")
-                if (foodStats != null) {
-                    EventBridge.foodLevel = MappingContext.getFieldValue(foodStats, "forge:foodStats_foodLevel") as? Int ?: 20
+                    try {
+                        val foodStats = MappingContext.getFieldValue(player, "forge:player_foodStats")
+                        if (foodStats != null) {
+                            EventBridge.foodLevel = MappingContext.getFieldValue(foodStats, "forge:foodStats_foodLevel") as? Int ?: 20
+                        }
+                    } catch (_: Exception) {}
+
+                    // WASD key states
+                    try {
+                        val gs = MappingContext.getFieldValue(mc, "forge:mc_gameSettings")
+                        if (gs != null) {
+                            val readPressed: (String) -> Boolean = { key ->
+                                val kb = MappingContext.getFieldValue(gs, key)
+                                if (kb == null) false else keybindingPressedField?.getBoolean(kb) ?: false
+                            }
+                            EventBridge.isKeyForwardDown = readPressed("forge:gs_keyBindForward")
+                            EventBridge.isKeyBackDown = readPressed("forge:gs_keyBindBack")
+                            EventBridge.isKeyLeftDown = readPressed("forge:gs_keyBindLeft")
+                            EventBridge.isKeyRightDown = readPressed("forge:gs_keyBindRight")
+                        }
+                    } catch (_: Exception) {}
+
+                    // PreTick — START phase logic
+                    val playerState = ForgeStateExtractor.extractPlayerState()
+                    val targetId = ForgeStateExtractor.getCurrentTargetId()
+                    val target = if (targetId != null) ForgeStateExtractor.extractTargetState(targetId) else null
+                    EventBridge.onStartTick(playerState, target)
                 }
-            } catch (_: Exception) {}
-
-            // WASD key states
-            try {
-                val gs = MappingContext.getFieldValue(mc, "forge:mc_gameSettings") ?: return
-                val readPressed: (String) -> Boolean = { key ->
-                    val kb = MappingContext.getFieldValue(gs, key)
-                    if (kb == null) false else keybindingPressedField?.getBoolean(kb) ?: false
-                }
-                EventBridge.isKeyForwardDown = readPressed("forge:gs_keyBindForward")
-                EventBridge.isKeyBackDown = readPressed("forge:gs_keyBindBack")
-                EventBridge.isKeyLeftDown = readPressed("forge:gs_keyBindLeft")
-                EventBridge.isKeyRightDown = readPressed("forge:gs_keyBindRight")
-            } catch (_: Exception) {}
-
-            // PreTick — START phase logic
-            val playerState = ForgeStateExtractor.extractPlayerState()
-            val targetId = ForgeStateExtractor.getCurrentTargetId()
-            val target = if (targetId != null) ForgeStateExtractor.extractTargetState(targetId) else null
-            EventBridge.onStartTick(playerState, target)
-
+            }
         } catch (_: Exception) {}
 
-        // END phase — packet interceptor retry + ForgeEventBridge.onTick
+        // END phase — always executed, even if START phase failed
         try {
             ForgePacketInterceptor.ensureInjected()
             ForgeEventBridge.onTick()
@@ -156,6 +162,9 @@ object ForgeBootstrap {
         }
     }
 
+    /** Whether render() has logged its first diagnostic (avoid spamming every frame). */
+    private var renderDiagLogged = false
+
     /**
      * Called by Javassist hook (or Agent.java fallback) on MC's render thread.
      * Constructs a RenderContext and delegates to OverlayRenderer.
@@ -165,9 +174,21 @@ object ForgeBootstrap {
      */
     fun render() {
         try {
-            val mc = MappingContext.invokeMethod(null, "forge:mc_getMinecraft") ?: return
-            val player = MappingContext.getFieldValue(mc, "forge:mc_thePlayer") ?: return
-            val fontRendererObj = MappingContext.getFieldValue(mc, "forge:mc_fontRendererObj") ?: return
+            val mc = MappingContext.invokeMethod(null, "forge:mc_getMinecraft")
+            if (mc == null) {
+                if (!renderDiagLogged) { CoreLogger.error("[ForgeBootstrap.render] mc_getMinecraft returned null"); renderDiagLogged = true }
+                return
+            }
+            val player = MappingContext.getFieldValue(mc, "forge:mc_thePlayer")
+            if (player == null) {
+                if (!renderDiagLogged) { CoreLogger.error("[ForgeBootstrap.render] mc_thePlayer returned null"); renderDiagLogged = true }
+                return
+            }
+            val fontRendererObj = MappingContext.getFieldValue(mc, "forge:mc_fontRendererObj")
+            if (fontRendererObj == null) {
+                if (!renderDiagLogged) { CoreLogger.error("[ForgeBootstrap.render] mc_fontRendererObj returned null"); renderDiagLogged = true }
+                return
+            }
 
             val displayWidth = MappingContext.getFieldValue(mc, "forge:mc_displayWidth") as? Int ?: 854
             val displayHeight = MappingContext.getFieldValue(mc, "forge:mc_displayHeight") as? Int ?: 480
@@ -187,7 +208,18 @@ object ForgeBootstrap {
 
             OverlayRenderer.render(ctx)
 
-        } catch (_: Exception) {}
+            // First successful render — clear diagnostic flag
+            if (renderDiagLogged) {
+                CoreLogger.info("[ForgeBootstrap.render] Render pipeline recovered successfully")
+                renderDiagLogged = false
+            }
+
+        } catch (e: Exception) {
+            if (!renderDiagLogged) {
+                CoreLogger.error("[ForgeBootstrap.render] FAILED: ${e.javaClass.simpleName}: ${e.message}")
+                renderDiagLogged = true
+            }
+        }
     }
 
     fun onDisconnect() {

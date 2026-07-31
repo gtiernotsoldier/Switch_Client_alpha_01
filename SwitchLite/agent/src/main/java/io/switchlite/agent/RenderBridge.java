@@ -47,16 +47,33 @@ public class RenderBridge {
 
     /**
      * Initialize the bridge to ForgeBootstrap.render().
-     * Uses the thread context classloader to find ForgeBootstrap
-     * (which is on the game classloader, not the bootstrap CL).
+     *
+     * ClassLoader resolution strategy (in order of priority):
+     *   1. Thread context ClassLoader (works if MC/LWJGL thread has the game CL set)
+     *   2. Agent.class.getClassLoader() (the game CL — agent.jar is on the game CL)
+     *   3. Forge LaunchClassLoader (Forge 1.8.x — the CL that loads MC classes)
+     *
+     * RenderBridge is on the bootstrap CL (via appendToBootstrapClassLoaderSearch),
+     * so it cannot see ForgeBootstrap directly. We must find the game CL explicitly.
      *
      * ForgeBootstrap is a Kotlin object, so we need INSTANCE to call methods.
      */
     private static void initBridge() {
-        try {
-            ClassLoader gameCL = Thread.currentThread().getContextClassLoader();
-            if (gameCL == null) return;
+        ClassLoader gameCL = resolveGameClassLoader();
+        if (gameCL == null) {
+            initAttemptCount++;
+            // Throttled logging — every 500 frames, plus a FATAL after 5000 attempts
+            if (initAttemptCount == 5000) {
+                log("[RenderBridge] FATAL: No game ClassLoader found after 5000 attempts — render pipeline permanently broken");
+                log("[RenderBridge] This usually means the agent was loaded on the wrong ClassLoader");
+                log("[RenderBridge] Check that agent.jar is on the game ClassLoader, not the bootstrap CL");
+            } else if (initAttemptCount % 500 == 0) {
+                log("[RenderBridge] No game ClassLoader found after " + initAttemptCount + " attempts");
+            }
+            return;
+        }
 
+        try {
             Class<?> fbClass = Class.forName(
                 "io.switchlite.adapter.forge.v1_8_9.ForgeBootstrap", true, gameCL);
 
@@ -68,9 +85,81 @@ public class RenderBridge {
             log("[RenderBridge] Bridge established — ForgeBootstrap.render() will be called every frame");
         } catch (ClassNotFoundException e) {
             // ForgeBootstrap not loaded yet — will retry next frame
+            if (initAttemptCount++ % 500 == 0) {
+                log("[RenderBridge] ForgeBootstrap not found yet (attempt " + initAttemptCount + ")");
+            }
         } catch (Exception e) {
             log("[RenderBridge] Bridge init failed: " + e.getClass().getSimpleName() + ": " + e.getMessage());
         }
+    }
+
+    private static int initAttemptCount = 0;
+
+    /**
+     * Resolve the game ClassLoader using multiple strategies.
+     *
+     * Strategy 1: Thread context ClassLoader (works if MC/LWJGL thread has the game CL set)
+     * Strategy 2: Agent.class.getClassLoader() (the game CL — agent.jar is on the game CL)
+     * Strategy 3: Forge LaunchClassLoader (Forge 1.8.x — the CL that loads MC classes)
+     *
+     * @return the game ClassLoader, or null if not found
+     */
+    private static ClassLoader resolveGameClassLoader() {
+        // Strategy 1: Thread context ClassLoader
+        try {
+            ClassLoader contextCL = Thread.currentThread().getContextClassLoader();
+            if (contextCL != null) {
+                // Verify it can see ForgeBootstrap
+                try {
+                    Class.forName("io.switchlite.adapter.forge.v1_8_9.ForgeBootstrap", false, contextCL);
+                    return contextCL;
+                } catch (ClassNotFoundException e) {
+                    // Context CL doesn't have ForgeBootstrap — try next strategy
+                }
+            }
+        } catch (Exception ignored) {}
+
+        // Strategy 2: Agent.class.getClassLoader() (the game CL)
+        try {
+            ClassLoader agentCL = Agent.class.getClassLoader();
+            if (agentCL != null) {
+                try {
+                    Class.forName("io.switchlite.adapter.forge.v1_8_9.ForgeBootstrap", false, agentCL);
+                    return agentCL;
+                } catch (ClassNotFoundException e) {
+                    // Agent CL doesn't have ForgeBootstrap — try next strategy
+                }
+            }
+        } catch (Exception ignored) {}
+
+        // Strategy 3: Forge LaunchClassLoader (Forge 1.8.x)
+        // NOTE: Must use an explicit classloader to find LaunchClassLoader because
+        // RenderBridge is on the bootstrap CL — Class.forName() without a classloader
+        // uses the caller's CL (bootstrap), which cannot see LaunchClassLoader.
+        try {
+            ClassLoader contextCL = Thread.currentThread().getContextClassLoader();
+            if (contextCL != null) {
+                Class<?> launchCLClass = Class.forName(
+                    "net.minecraft.launchwrapper.LaunchClassLoader", false, contextCL);
+                // Walk the parent chain of the context CL to find LaunchClassLoader
+                ClassLoader cl = contextCL;
+                while (cl != null) {
+                    if (launchCLClass.isInstance(cl)) {
+                        try {
+                            Class.forName("io.switchlite.adapter.forge.v1_8_9.ForgeBootstrap", false, cl);
+                            return cl;
+                        } catch (ClassNotFoundException e) {
+                            // This LaunchClassLoader doesn't have ForgeBootstrap
+                        }
+                    }
+                    cl = cl.getParent();
+                }
+            }
+        } catch (ClassNotFoundException ignored) {
+            // Not Forge — LaunchClassLoader not available
+        }
+
+        return null;
     }
 
     /**

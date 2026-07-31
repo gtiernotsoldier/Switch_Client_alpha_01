@@ -1,6 +1,7 @@
 package io.switchlite.adapter.forge.v1_8_9
 
 import io.switchlite.adapter.common.render.GL11Bridge
+import io.switchlite.core.logging.CoreLogger
 
 /**
  * Forge 1.8.9 (LWJGL2) implementation of [GL11Bridge].
@@ -8,6 +9,10 @@ import io.switchlite.adapter.common.render.GL11Bridge
  * Uses reflection to call LWJGL2's GL11 class because the agent's ClassLoader
  * cannot directly import LWJGL — it lives in Minecraft's ClassLoader.
  * All Method objects are lazily cached on first access.
+ *
+ * Every method call is wrapped in try-catch so that a single reflection failure
+ * does not crash the render pipeline or corrupt MC's GL state stack.
+ * If a method fails, it is logged once and silently skipped.
  */
 class ForgeGL11Bridge : GL11Bridge {
 
@@ -64,65 +69,78 @@ class ForgeGL11Bridge : GL11Bridge {
         gl11Class.getMethod("glEnd")
     }
 
+    /** Track which methods have already logged errors to avoid spam. */
+    private val loggedErrors = mutableSetOf<String>()
+
+    private fun safeInvoke(methodName: String, method: java.lang.reflect.Method?, vararg args: Any?) {
+        try {
+            method?.invoke(null, *args)
+        } catch (e: Exception) {
+            if (loggedErrors.add(methodName)) {
+                CoreLogger.error("[ForgeGL11Bridge] $methodName failed: ${e.javaClass.simpleName}: ${e.message}")
+            }
+        }
+    }
+
     // ── GL11Bridge implementation ──
 
     override fun glPushAttrib(mask: Int) {
-        glPushAttribMethod.invoke(null, mask)
+        safeInvoke("glPushAttrib", glPushAttribMethod, mask)
     }
 
     override fun glPopAttrib() {
-        glPopAttribMethod.invoke(null)
+        safeInvoke("glPopAttrib", glPopAttribMethod)
     }
 
     override fun glMatrixMode(mode: Int) {
-        glMatrixModeMethod.invoke(null, mode)
+        safeInvoke("glMatrixMode", glMatrixModeMethod, mode)
     }
 
     override fun glPushMatrix() {
-        glPushMatrixMethod.invoke(null)
+        safeInvoke("glPushMatrix", glPushMatrixMethod)
     }
 
     override fun glPopMatrix() {
-        glPopMatrixMethod.invoke(null)
+        safeInvoke("glPopMatrix", glPopMatrixMethod)
     }
 
     override fun glLoadIdentity() {
-        glLoadIdentityMethod.invoke(null)
+        safeInvoke("glLoadIdentity", glLoadIdentityMethod)
     }
 
     override fun glOrtho(left: Double, right: Double, bottom: Double, top: Double, near: Double, far: Double) {
-        glOrthoMethod.invoke(null, left, right, bottom, top, near, far)
+        safeInvoke("glOrtho", glOrthoMethod, left, right, bottom, top, near, far)
     }
 
     override fun glEnable(cap: Int) {
-        glEnableMethod.invoke(null, cap)
+        safeInvoke("glEnable", glEnableMethod, cap)
     }
 
     override fun glDisable(cap: Int) {
-        glDisableMethod.invoke(null, cap)
+        safeInvoke("glDisable", glDisableMethod, cap)
     }
 
     override fun glDepthMask(flag: Boolean) {
-        glDepthMaskMethod.invoke(null, flag)
+        safeInvoke("glDepthMask", glDepthMaskMethod, flag)
     }
 
     override fun glBlendFunc(sfactor: Int, dfactor: Int) {
-        glBlendFuncMethod.invoke(null, sfactor, dfactor)
+        safeInvoke("glBlendFunc", glBlendFuncMethod, sfactor, dfactor)
     }
 
     override fun glColor4f(red: Float, green: Float, blue: Float, alpha: Float) {
-        glColor4fMethod.invoke(null, red, green, blue, alpha)
+        safeInvoke("glColor4f", glColor4fMethod, red, green, blue, alpha)
     }
 
     override fun glBegin(mode: Int) {
-        glBeginMethod.invoke(null, mode)
+        safeInvoke("glBegin", glBeginMethod, mode)
     }
 
     override fun glVertex2f(x: Float, y: Float) {
-        glVertex2fMethod.invoke(null, x, y)
+        safeInvoke("glVertex2f", glVertex2fMethod, x, y)
     }
 
     override fun glEnd() {
-        glEndMethod.invoke(null)
+        safeInvoke("glEnd", glEndMethod)
     }
 }

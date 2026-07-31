@@ -471,9 +471,15 @@ object ForgeEventBridge : IEventBridge {
         } catch (_: Exception) {}
 
         // Apply pending motion override
+        // Guard: only clear pendingMotion if the player is available to apply it.
+        // If the player is null (e.g., just disconnected), preserve pendingMotion
+        // for the next tick so the velocity modification is not silently lost.
         pendingMotion?.let { motion ->
-            applyMotion(motion)
-            pendingMotion = null
+            val player = getPlayer()
+            if (player != null) {
+                applyMotion(motion)
+                pendingMotion = null
+            }
         }
 
         val player = ForgeStateExtractor.extractPlayerState()

@@ -75,11 +75,32 @@ object AgentBridge {
 
     /**
      * Register all modules via Class.forName + INSTANCE field reflection.
+     *
+     * IMPORTANT: This method is a FALLBACK registration path for platforms
+     * that do NOT have a dedicated Bootstrap (e.g., Fabric). For Forge,
+     * ForgeBootstrap.init() is the authoritative registration point — it uses
+     * direct Kotlin object references which are more reliable than reflection.
+     *
+     * To avoid double-registration, this method checks if modules are already
+     * registered before attempting to register them. If ModuleRegistry already
+     * has entries, this method skips module registration entirely and only
+     * performs safety integration and default module enabling.
+     *
      * ZERO compile-time references to module classes — each one's clinit
      * is isolated in its own try-catch.
      */
     @JvmStatic
     fun initModules(): String {
+        // If modules are already registered (e.g., by ForgeBootstrap.init()),
+        // skip registration — only do safety integration and default enables.
+        if (ModuleRegistry.size() > 0) {
+            log("[AgentBridge] ${ModuleRegistry.size()} modules already registered — skipping duplicate registration")
+            try { ModuleRegistry.initSafetyIntegration() } catch (_: Exception) {}
+            try { if (ModuleRegistry.isRegistered("ClickGUI")) ModuleRegistry.enable("ClickGUI") } catch (_: Exception) {}
+            try { if (ModuleRegistry.isRegistered("HUD")) ModuleRegistry.enable("HUD") } catch (_: Exception) {}
+            return "${ModuleRegistry.size()} already registered (delegated to platform bootstrap)"
+        }
+
         var ok = 0
         var failed = 0
         val failedNames = mutableListOf<String>()

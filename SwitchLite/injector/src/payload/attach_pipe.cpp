@@ -15,13 +15,11 @@
 #ifdef _WIN32
 
 #include "attach_pipe.h"
+#include "payload_log.h"
 #include <windows.h>
 #include <cstdio>
 #include <cstring>
 #include <string>
-
-// External logger from payload.cpp
-extern void payloadLog(const char* fmt, ...);
 
 // ── Step 1: Signal the JVM to start AttachListener ──
 //

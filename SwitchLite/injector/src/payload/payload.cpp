@@ -20,7 +20,7 @@ static char g_doneEventName[64] = {0};
 
 static FILE* g_logFile = NULL;
 
-static void payloadLog(const char* fmt, ...) {
+void payloadLog(const char* fmt, ...) {
     // OutputDebugString (for DebugView)
     char buf[1024];
     va_list args;

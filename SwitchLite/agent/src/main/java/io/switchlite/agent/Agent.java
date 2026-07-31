@@ -172,7 +172,32 @@ public class Agent {
         MappingContext.initialize();
         log("[Agent] MappingContext initialized");
 
-        // 3. Initialize adapter layer (AgentBridge — registers modules)
+        // 3. Initialize platform adapter FIRST (registers modules + platform handlers)
+        //    This must come BEFORE AgentBridge.initModules() so that:
+        //    a) Platform handlers (ForgeEventBridge) are registered before modules are enabled
+        //    b) AgentBridge detects existing modules and skips duplicate registration
+        if ("Forge".equals(platform)) {
+            try {
+                Class<?> bootstrapClass = Class.forName("io.switchlite.adapter.forge.v1_8_9.ForgeBootstrap");
+                Object fbInstance = bootstrapClass.getField("INSTANCE").get(null);
+                Method initMethod = bootstrapClass.getMethod("init");
+                initMethod.invoke(fbInstance);
+                log("[Agent] ForgeBootstrap.init() complete (pure reflection mode)");
+
+                // Cache method refs for tick/onKey dispatch
+                cacheForgeBootstrapMethods(bootstrapClass, fbInstance);
+            } catch (ClassNotFoundException e) {
+                log("[Agent] ForgeBootstrap not in classpath — HUD via Display.update() hook");
+            } catch (Exception e) {
+                log("[Agent] ForgeBootstrap init failed: " + e.getClass().getSimpleName() + ": " + e.getMessage());
+            }
+        }
+
+        // 4. Initialize adapter layer (AgentBridge — safety integration + default enables)
+        //    If ForgeBootstrap already registered modules, AgentBridge will skip
+        //    registration and only perform safety integration and default enables.
+        //    For platforms without a dedicated Bootstrap (e.g., Fabric), AgentBridge
+        //    is the primary module registration point.
         try {
             Class<?> bridgeClass = Class.forName("io.switchlite.adapter.common.AgentBridge");
             Method initMethod = bridgeClass.getMethod("initModules");
@@ -193,24 +218,6 @@ public class Agent {
                     }
                 }
                 cause = cause.getCause();
-            }
-        }
-
-        // 4. Initialize Forge adapter (pure reflection — no ForgeGradle needed)
-        if ("Forge".equals(platform)) {
-            try {
-                Class<?> bootstrapClass = Class.forName("io.switchlite.adapter.forge.v1_8_9.ForgeBootstrap");
-                Object fbInstance = bootstrapClass.getField("INSTANCE").get(null);
-                Method initMethod = bootstrapClass.getMethod("init");
-                initMethod.invoke(fbInstance);
-                log("[Agent] ForgeBootstrap.init() complete (pure reflection mode)");
-
-                // Cache method refs for tick/onKey dispatch
-                cacheForgeBootstrapMethods(bootstrapClass, fbInstance);
-            } catch (ClassNotFoundException e) {
-                log("[Agent] ForgeBootstrap not in classpath — HUD via Display.update() hook");
-            } catch (Exception e) {
-                log("[Agent] ForgeBootstrap init failed: " + e.getClass().getSimpleName() + ": " + e.getMessage());
             }
         }
 
@@ -329,7 +336,12 @@ public class Agent {
                     } catch (Exception e) {
                         // Silently ignore polling errors (e.g., before Display is created)
                     }
-                    Thread.sleep(50); // 20 Hz poll rate
+                    try {
+                        Thread.sleep(50); // 20 Hz poll rate
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        break;
+                    }
                 }
             } catch (ClassNotFoundException e) {
                 log("[KeyPoll] LWJGL Keyboard class not found! MC not fully loaded yet.");

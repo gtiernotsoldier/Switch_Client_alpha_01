@@ -854,13 +854,6 @@
     "method": "func_71083_bS",
     "mcp": "isBlocking"
   },
-  "forge:player_isMovingForward": {
-    "class": "net.minecraft.entity.player.EntityPlayerSP",
-    "method": "isMovingForward",
-    "aliases": [
-      "player_isMovingForward"
-    ]
-  },
   "forge:player_isSneaking": {
     "class": "net.minecraft.entity.player.EntityPlayer",
     "aliases": [
@@ -926,7 +919,7 @@
   },
   "forge:player_setSneaking": {
     "class": "net.minecraft.entity.Entity",
-    "method": "setSneaking",
+    "method": "func_70095_a",
     "aliases": [
       "player_setSneaking"
     ],

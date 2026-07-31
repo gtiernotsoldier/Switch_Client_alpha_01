@@ -172,8 +172,8 @@ static void updateConfigPlatform(const char* configDir) {
     if (f) {
         char line[256];
         while (fgets(line, sizeof(line), f)) {
-            if (strncmp(line, "switchlite.version=", 18) == 0) {
-                strncpy(version, line + 18, sizeof(version) - 1);
+            if (strncmp(line, "switchlite.version=", 19) == 0) {
+                strncpy(version, line + 19, sizeof(version) - 1);
                 char* nl = strchr(version, '\n');
                 if (nl) *nl = '\0';
                 char* cr = strchr(version, '\r');

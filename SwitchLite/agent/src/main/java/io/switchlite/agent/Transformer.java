@@ -24,6 +24,13 @@ import javassist.CtMethod;
  * Stealth advantage: Bytecode injection into the method body is invisible to
  * task-queue scanning and thread-based detection. Anti-cheat that checks
  * addScheduledTask, reflection, or thread lists won't find it.
+ *
+ * Instrumentation acquisition strategies (in order of priority):
+ *   1. Direct inst from premain/agentmain (always works if available)
+ *   2. Self-attach via VirtualMachine (needs tools.jar, JDK only — FAILS on JRE)
+ *   3. Windows Attach pipe protocol from payload.dll (JNI mode, no tools.jar needed)
+ *      — payload.dll triggers agentmain("jni-attach", inst) which calls install(inst)
+ *      — This is the primary path for DLL injection mode
  */
 public class Transformer implements ClassFileTransformer {
 

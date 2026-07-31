@@ -1,9 +1,11 @@
 // payload.cpp — DLL injected into javaw.exe via CreateRemoteThread
 // Uses JNI to add agent.jar to classpath and call Agent.bootstrap()
+// Then uses Windows Attach pipe protocol to trigger agentmain with Instrumentation
 #include <windows.h>
 #include <jni.h>
 #include <cstdio>
 #include <cstring>
+#include "attach_pipe.h"
 
 HMODULE g_hModule = NULL;
 jobject g_gameClassLoader = NULL;
@@ -285,6 +287,31 @@ DWORD WINAPI ThreadProc(LPVOID lpParam) {
         vm->DetachCurrentThread();
         signalDone();
         return 1;
+    }
+
+    // ── Step 2: Use Windows Attach pipe protocol to get Instrumentation ──
+    //
+    // Agent.bootstrap() initializes everything (config, mappings, modules, threads)
+    // BUT it receives inst=null via JNI, so Transformer.install(null) fails.
+    //
+    // The Windows Attach pipe protocol triggers agentmain() which receives
+    // a proper Instrumentation from the JVM. This is the same mechanism
+    // that tools.jar's VirtualMachine.attach() uses, but we don't need
+    // tools.jar (Minecraft runs on JRE, not JDK).
+    //
+    // The agentArgs="jni-attach" tells agentmain that this is a follow-up
+    // call from the payload DLL, not a standalone attachment.
+
+    payloadLog("[SwitchLite] Using Windows Attach pipe to obtain Instrumentation...");
+    int pid = GetCurrentProcessId();
+    bool attachOk = attachAndLoadAgent(pid, jarPath, "jni-attach");
+
+    if (attachOk) {
+        payloadLog("[SwitchLite] Attach pipe succeeded — agentmain called with Instrumentation");
+    } else {
+        payloadLog("[SwitchLite] WARNING: Attach pipe failed — rendering pipeline may not work");
+        payloadLog("[SwitchLite] Agent is running but Transformer hook is NOT installed");
+        payloadLog("[SwitchLite] HUD overlay will not appear until hook is installed");
     }
 
     payloadLog("[SwitchLite] ========== Payload completed successfully ==========");

@@ -223,22 +223,37 @@ public class Transformer implements ClassFileTransformer {
             // Before: Display processes events + swaps buffers
             // After:  RenderBridge.onFrame() -> Display processes events + swaps buffers
             //
-            // CRITICAL: We use Class.forName() + reflection with STRING CONCATENATION.
-            // Previously, the literal "io.switchlite.agent.RenderBridge" in the source
-            // string was parsed by Javassist's compiler at COMPILE time, which tried
-            // to resolve it via ClassPool and failed with CannotCompileException
-            // (Javassist interprets dots as inner-class separators → io$switchlite...).
+            // CRITICAL #1 — prevent Javassist constant folding:
+            // Javassist 3.29.2's compiler performs compile-time constant folding on
+            // `"io.switchlite.agent." + "RenderBridge"`, producing the literal
+            // "io.switchlite.agent.RenderBridge". It then treats the string argument of
+            // Class.forName(String) as a class reference and tries to resolve it at
+            // COMPILE time via ClassPool → CannotCompileException:
+            //   "no such class: io$switchlite.agent.RenderBridge"
+            // (confirmed in real test logs — the simple concatenation does NOT prevent this).
             //
-            // Splitting the string into "io.switchlite.agent." + "RenderBridge" prevents
-            // Javassist from recognizing it as a class name literal — the concatenation
-            // is only evaluated at RUNTIME by the JVM, where Class.forName(String) is
-            // just a method call with a string argument (no class resolution needed).
+            // Fix: wrap the right operand in `new String("RenderBridge")`. A constructor
+            // call is not a compile-time constant, so the expression can never be folded.
+            // Class.forName() then receives a runtime string — no compile-time class
+            // resolution, no CannotCompileException.
+            //
+            // CRITICAL #2 — load RenderBridge via context ClassLoader:
+            // The previous `Class.forName(..., true, null)` used the bootstrap CL, which
+            // only works if appendToBootstrapClassLoaderSearch succeeded. That chain is
+            // fragile (depends on findAgentJar + %TEMP% jar + append timing).
+            //
+            // The MC render thread's context ClassLoader is the Forge LaunchClassLoader,
+            // and payload.dll already addURL'd agent.jar into it (that's how Agent,
+            // ForgeBootstrap and all 34 modules are loaded). So loading RenderBridge via
+            // Thread.currentThread().getContextClassLoader() is guaranteed to work —
+            // no bootstrap CL dependency at all.
             //
             // Performance: Class.forName() on an already-loaded class is ~1μs, getMethod()
             // is ~1μs (JVM caches reflection), invoke() fast path is ~0.1μs. Total ~2μs/frame
             // at 60fps = 120μs/s — negligible vs. 16ms render time per frame.
             updateMethod.insertBefore(
-                "try { Class.forName(\"io.switchlite.agent.\" + \"RenderBridge\", true, null).getMethod(\"onFrame\").invoke(null); } catch (Throwable t) {}"
+                "try { Class.forName(\"io.switchlite.agent.\" + new String(\"RenderBridge\"), true, " +
+                "Thread.currentThread().getContextClassLoader()).getMethod(\"onFrame\").invoke(null); } catch (Throwable t) {}"
             );
 
             byte[] result = ctClass.toBytecode();

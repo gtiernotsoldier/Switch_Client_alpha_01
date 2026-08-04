@@ -48,7 +48,22 @@ jobs:
             echo "ERROR: MappingContext.class not found in fat jar. Core mapping broken."
             exit 1
           fi
-          echo "agent.jar validation passed. All modules present."
+          # Render pipeline bridge classes — REQUIRED for the Display.update() hook.
+          # Transformer injects a call to RenderBridge; RenderBridge delegates to
+          # ForgeBootstrap.render(). If RenderBridge is missing, the hook compiles but
+          # fails at runtime with ClassNotFoundException (silently swallowed).
+          if ! jar tf "$JAR" | grep -q "io/switchlite/agent/RenderBridge"; then
+            echo "ERROR: RenderBridge.class not found in fat jar. Render bridge missing!"
+            exit 1
+          fi
+          # Javassist is referenced by Transformer.class at load time. If it's missing
+          # from the fat jar, the JVM fails with NoClassDefFoundError: javassist/ClassPath
+          # the moment Transformer is first touched (real failure seen in production logs).
+          if ! jar tf "$JAR" | grep -q "javassist/ClassPool"; then
+            echo "ERROR: javassist/ClassPool not found in fat jar. Javassist dependency missing!"
+            exit 1
+          fi
+          echo "agent.jar validation passed. All modules + render bridge present."
       - name: Run tests
         run: cd SwitchLite && gradle :core:test :adapter:common:test --no-daemon
       - name: Compile summary

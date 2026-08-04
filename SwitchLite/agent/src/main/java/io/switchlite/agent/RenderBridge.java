@@ -96,22 +96,23 @@ public class RenderBridge {
     private static int initAttemptCount = 0;
 
     /**
-     * Resolve the game ClassLoader using multiple strategies.
+     * Resolve the game ClassLoader — simplified to 2 strategies (was 4).
      *
-     * Strategy 1: Thread context ClassLoader (works if MC/LWJGL thread has the game CL set)
-     * Strategy 2: Agent.class.getClassLoader() (the game CL — agent.jar is on the game CL)
-     * Strategy 3: Forge LaunchClassLoader (Forge 1.8.x — the CL that loads MC classes)
+     * Strategy 1: Thread context ClassLoader (works on MC render thread — the CL
+     *             is LaunchClassLoader because Forge sets it on the main thread)
+     * Strategy 2: Forge LaunchClassLoader — found via Launch.classLoader static field
+     *
+     * Removed strategies (dead code):
+     * - Old S2: Agent.class.getClassLoader() — always null after appendToBootstrapClassLoaderSearch
+     * - Old S4: Parent chain walk — redundant with S2 (Launch.classLoader IS the LaunchClassLoader)
      *
      * @return the game ClassLoader, or null if not found
      */
     private static ClassLoader resolveGameClassLoader() {
         // Strategy 1: Thread context ClassLoader
-        // The MC render thread (where Display.update() runs) typically has the
-        // LaunchClassLoader as its context CL. This is the most reliable path.
         try {
             ClassLoader contextCL = Thread.currentThread().getContextClassLoader();
             if (contextCL != null) {
-                // Verify it can see ForgeBootstrap
                 try {
                     Class.forName("io.switchlite.adapter.forge.v1_8_9.ForgeBootstrap", false, contextCL);
                     return contextCL;
@@ -121,26 +122,8 @@ public class RenderBridge {
             }
         } catch (Exception ignored) {}
 
-        // Strategy 2: Agent.class.getClassLoader() (the game CL)
-        // NOTE: After appendToBootstrapClassLoaderSearch(), Agent.class is on the
-        // bootstrap CL, so getClassLoader() returns null. This strategy only works
-        // BEFORE the bootstrap CL add. But RenderBridge is always called AFTER the
-        // add, so this strategy is effectively dead. Kept for safety.
-        try {
-            ClassLoader agentCL = Agent.class.getClassLoader();
-            if (agentCL != null) {
-                try {
-                    Class.forName("io.switchlite.adapter.forge.v1_8_9.ForgeBootstrap", false, agentCL);
-                    return agentCL;
-                } catch (ClassNotFoundException e) {
-                    // Agent CL doesn't have ForgeBootstrap — try next strategy
-                }
-            }
-        } catch (Exception ignored) {}
-
-        // Strategy 3: Forge LaunchClassLoader — find it via Launch.classLoader field
+        // Strategy 2: Forge LaunchClassLoader via Launch.classLoader field
         // This is the most reliable strategy for Forge 1.8.9 after the bootstrap CL add.
-        // We use the context CL to find the Launch class, then get its classLoader field.
         try {
             ClassLoader searchCL = Thread.currentThread().getContextClassLoader();
             if (searchCL == null) searchCL = ClassLoader.getSystemClassLoader();
@@ -157,30 +140,6 @@ public class RenderBridge {
             }
         } catch (Exception ignored) {
             // Not Forge or Launch not available
-        }
-
-        // Strategy 4: Walk parent chain of context CL to find LaunchClassLoader
-        try {
-            ClassLoader contextCL = Thread.currentThread().getContextClassLoader();
-            if (contextCL != null) {
-                Class<?> launchCLClass = Class.forName(
-                    "net.minecraft.launchwrapper.LaunchClassLoader", false, contextCL);
-                // Walk the parent chain of the context CL to find LaunchClassLoader
-                ClassLoader cl = contextCL;
-                while (cl != null) {
-                    if (launchCLClass.isInstance(cl)) {
-                        try {
-                            Class.forName("io.switchlite.adapter.forge.v1_8_9.ForgeBootstrap", false, cl);
-                            return cl;
-                        } catch (ClassNotFoundException e) {
-                            // This LaunchClassLoader doesn't have ForgeBootstrap
-                        }
-                    }
-                    cl = cl.getParent();
-                }
-            }
-        } catch (ClassNotFoundException ignored) {
-            // Not Forge — LaunchClassLoader not available
         }
 
         return null;

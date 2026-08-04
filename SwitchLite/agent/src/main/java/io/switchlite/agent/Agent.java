@@ -7,6 +7,11 @@ import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Properties;
 
+// Direct imports — cut reflection bridges (#4, #5)
+// agent.jar already bundles adapter:forge:v1_8_9 and adapter:common
+import io.switchlite.adapter.forge.v1_8_9.ForgeBootstrap;
+import io.switchlite.adapter.common.AgentBridge;
+
 /**
  * Sandwich Architecture - Java Agent Entry Point
  * Layer 2: Orchestration only — loading mappings, initializing modules, dispatching.
@@ -186,24 +191,16 @@ public class Agent {
         log("[Agent] MappingContext initialized");
 
         // 3. Initialize platform adapter FIRST (registers modules + platform handlers)
-        //    This must come BEFORE AgentBridge.initModules() so that:
-        //    a) Platform handlers (ForgeEventBridge) are registered before modules are enabled
-        //    b) AgentBridge detects existing modules and skips duplicate registration
+        //    Direct call — cut reflection bridge #4. agent.jar bundles ForgeBootstrap,
+        //    so we can import it directly. Exceptions no longer wrapped in
+        //    InvocationTargetException — stack traces point to the real cause.
         if ("Forge".equals(platform)) {
             try {
-                Class<?> bootstrapClass = Class.forName("io.switchlite.adapter.forge.v1_8_9.ForgeBootstrap");
-                Object fbInstance = bootstrapClass.getField("INSTANCE").get(null);
-                Method initMethod = bootstrapClass.getMethod("init");
-                initMethod.invoke(fbInstance);
-                log("[Agent] ForgeBootstrap.init() complete (pure reflection mode)");
-
-                // Cache method refs for tick/onKey dispatch
-                cacheForgeBootstrapMethods(bootstrapClass, fbInstance);
-            } catch (ClassNotFoundException e) {
-                log("[Agent] ForgeBootstrap not in classpath — HUD via Display.update() hook");
-            } catch (Exception e) {
+                ForgeBootstrap.INSTANCE.init();
+                log("[Agent] ForgeBootstrap.init() complete");
+                forgeBootstrapAvailable = true;
+            } catch (Throwable e) {
                 log("[Agent] ForgeBootstrap init failed: " + e.getClass().getSimpleName() + ": " + e.getMessage());
-                // Unwrap InvocationTargetException — the real cause is buried inside
                 Throwable cause = e.getCause();
                 while (cause != null) {
                     log("[Agent]   Caused by: " + cause.getClass().getSimpleName() + ": " + cause.getMessage());
@@ -217,87 +214,87 @@ public class Agent {
             }
         }
 
-        // 4. Initialize adapter layer (AgentBridge — safety integration + default enables)
-        //    If ForgeBootstrap already registered modules, AgentBridge will skip
-        //    registration and only perform safety integration and default enables.
-        //    For platforms without a dedicated Bootstrap (e.g., Fabric), AgentBridge
-        //    is the primary module registration point.
-        try {
-            Class<?> bridgeClass = Class.forName("io.switchlite.adapter.common.AgentBridge");
-            Method initMethod = bridgeClass.getMethod("initModules");
-            String result = (String) initMethod.invoke(null);
-            log(result);
-        } catch (ClassNotFoundException e) {
-            log("[Agent] AgentBridge class not found — adapter:common not in agent.jar!");
-        } catch (NoSuchMethodException e) {
-            log("[Agent] AgentBridge.initModules() method not found");
-        } catch (Exception e) {
-            log("[Agent] AgentBridge.initModules() failed: " + e.getClass().getSimpleName() + ": " + e.getMessage());
-            Throwable cause = e.getCause();
-            while (cause != null) {
-                log("[Agent]   Caused by: " + cause.getClass().getSimpleName() + ": " + cause.getMessage());
-                for (StackTraceElement ste : cause.getStackTrace()) {
-                    if (ste.getClassName().startsWith("io.switchlite")) {
-                        log("[Agent]     at " + ste.toString());
+        // 4. Initialize adapter layer (AgentBridge — only for non-Forge platforms)
+        //    Cut reflection bridge #5. Forge path: ForgeBootstrap already registered
+        //    all 34 modules in step 3 — no need to call AgentBridge. Non-Forge paths
+        //    (Fabric, future platforms) use AgentBridge as primary registration.
+        if (!"Forge".equals(platform)) {
+            try {
+                String result = AgentBridge.initModules();
+                log(result);
+            } catch (Throwable e) {
+                log("[Agent] AgentBridge.initModules() failed: " + e.getClass().getSimpleName() + ": " + e.getMessage());
+                Throwable cause = e.getCause();
+                while (cause != null) {
+                    log("[Agent]   Caused by: " + cause.getClass().getSimpleName() + ": " + cause.getMessage());
+                    for (StackTraceElement ste : cause.getStackTrace()) {
+                        if (ste.getClassName().startsWith("io.switchlite")) {
+                            log("[Agent]     at " + ste.toString());
+                        }
                     }
+                    cause = cause.getCause();
+                }
+            }
+        } else {
+            log("[Agent] Forge platform — ForgeBootstrap already registered modules, skipping AgentBridge");
+        }
+
+        // 5-6. Install Transformer hook + start threads
+        //      Wrapped in try-catch(Throwable) — P0 diagnostic fix.
+        //      Previously, any exception here was silently swallowed by javaw.exe's
+        //      missing stderr, leaving us blind. Now we log the full stack trace
+        //      to switchlite-agent.log so the user can see exactly what failed.
+        try {
+            // 5. Install Transformer hook (Javassist's job, not Agent's)
+            //
+            // When inst != null (premain/agentmain), install directly.
+            // When inst == null (JNI bootstrap), Transformer.install() will fail,
+            // but we DON'T exit — the payload.dll will use the Windows Attach pipe
+            // protocol to trigger agentmain() with a proper Instrumentation.
+            boolean hookInstalled = Transformer.install(inst);
+            if (!hookInstalled) {
+                if (inst == null) {
+                    log("[Agent] Transformer.install(null) failed — expected in JNI mode.");
+                    log("[Agent] Waiting for payload.dll to trigger agentmain via Windows Attach pipe...");
+                    log("[Agent] Agent continues running (threads, modules active). Hook will be installed later.");
+                } else {
+                    log("[Agent] FATAL: Transformer.install() failed even with Instrumentation — rendering pipeline broken.");
+                }
+            } else {
+                log("[Agent] Render path: Transformer + RenderBridge → ForgeBootstrap.render() (every frame, stealthy)");
+            }
+
+            // 6. Start threads (dispatch only — no rendering)
+            startKeyPollThread();
+            startTickThread();
+
+            log("[SwitchLite Agent] Ready — tick + key listener active");
+        } catch (Throwable t) {
+            log("[Agent] ============================================================");
+            log("[Agent] FATAL: coreInit step 5-6 crashed: " + t.getClass().getName() + ": " + t.getMessage());
+            log("[Agent] Stack trace:");
+            for (StackTraceElement ste : t.getStackTrace()) {
+                log("[Agent]   at " + ste.toString());
+            }
+            Throwable cause = t.getCause();
+            while (cause != null) {
+                log("[Agent]   Caused by: " + cause.getClass().getName() + ": " + cause.getMessage());
+                for (StackTraceElement ste : cause.getStackTrace()) {
+                    log("[Agent]     at " + ste.toString());
                 }
                 cause = cause.getCause();
             }
+            log("[Agent] ============================================================");
+            // Don't rethrow — let the agent continue running so jni-attach can still
+            // attempt Transformer.install() later. The error is logged for diagnosis.
         }
-
-        // 5. Install Transformer hook (Javassist's job, not Agent's)
-        //
-        // When inst != null (premain/agentmain), install directly.
-        // When inst == null (JNI bootstrap), Transformer.install() will fail,
-        // but we DON'T exit — the payload.dll will use the Windows Attach pipe
-        // protocol to trigger agentmain() with a proper Instrumentation.
-        // The Agent continues running (threads, modules, etc.) and the hook
-        // will be installed when agentmain("jni-attach", inst) is called.
-        boolean hookInstalled = Transformer.install(inst);
-        if (!hookInstalled) {
-            if (inst == null) {
-                log("[Agent] Transformer.install(null) failed — expected in JNI mode.");
-                log("[Agent] Waiting for payload.dll to trigger agentmain via Windows Attach pipe...");
-                log("[Agent] Agent continues running (threads, modules active). Hook will be installed later.");
-            } else {
-                log("[Agent] FATAL: Transformer.install() failed even with Instrumentation — rendering pipeline broken.");
-                log("[Agent] Cannot operate without rendering. Shutting down.");
-                running = false;
-                return;
-            }
-        } else {
-            log("[Agent] Render path: Transformer + RenderBridge → ForgeBootstrap.render() (every frame, stealthy)");
-        }
-
-        // 6. Start threads (dispatch only — no rendering)
-        startKeyPollThread();
-        startTickThread();
-
-        log("[SwitchLite Agent] Ready — tick + key listener active");
     }
 
     // ═══════════════════════════════════════════
-    //  ForgeBootstrap method cache (dispatch only)
+    //  ForgeBootstrap availability flag (no Method cache — direct calls)
     // ═══════════════════════════════════════════
 
-    private static Object forgeBootstrapInstance = null;
-    private static Method forgeBootstrapTick = null;
-    private static Method forgeBootstrapOnKey = null;
-    private static Method forgeBootstrapOnDisconnect = null;
     private static boolean forgeBootstrapAvailable = false;
-
-    private static void cacheForgeBootstrapMethods(Class<?> fbClass, Object fbInstance) {
-        try {
-            forgeBootstrapInstance = fbInstance;
-            forgeBootstrapTick = fbClass.getMethod("tick");
-            forgeBootstrapOnKey = fbClass.getMethod("onKey", int.class, boolean.class);
-            forgeBootstrapOnDisconnect = fbClass.getMethod("onDisconnect");
-            forgeBootstrapAvailable = true;
-            log("[Agent] ForgeBootstrap methods cached (tick, onKey, onDisconnect)");
-        } catch (Exception e) {
-            log("[Agent] ForgeBootstrap method cache failed: " + e.getMessage());
-        }
-    }
 
     // ═══════════════════════════════════════════
     //  Tick Thread — dispatch only, no rendering
@@ -306,23 +303,15 @@ public class Agent {
     private static Thread tickThread = null;
 
     /**
-     * Runs at 20Hz. Dispatches tick events to ForgeBootstrap.tick().
-     *
-     * This thread is PURE DISPATCH — it does NOT:
-     * - Read HUD text or GUI state
-     * - Write System.setProperty for rendering
-     * - Call render() or dispatchRenderFallback()
-     * - Send action bar messages
-     *
-     * All rendering is handled by the Javassist-injected RenderBridge → ForgeBootstrap.render() pipeline.
+     * Runs at 20Hz. Dispatches tick events to ForgeBootstrap.tick() — direct call.
      */
     private static void startTickThread() {
         tickThread = new Thread(() -> {
             log("[TickThread] Started (20Hz tick dispatch)");
             while (running) {
                 try {
-                    if (forgeBootstrapAvailable && forgeBootstrapTick != null && forgeBootstrapInstance != null) {
-                        forgeBootstrapTick.invoke(forgeBootstrapInstance);
+                    if (forgeBootstrapAvailable) {
+                        ForgeBootstrap.INSTANCE.tick();
                     }
                 } catch (Exception ignored) {}
                 try {
@@ -353,8 +342,8 @@ public class Agent {
                         if (nextResult) {
                             int lwjglCode = (Integer) getEventKey.invoke(null);
                             boolean pressed = (Boolean) getEventKeyState.invoke(null);
-                            if (lwjglCode != 0 && forgeBootstrapAvailable && forgeBootstrapOnKey != null && forgeBootstrapInstance != null) {
-                                forgeBootstrapOnKey.invoke(forgeBootstrapInstance, lwjglCode, pressed);
+                            if (lwjglCode != 0 && forgeBootstrapAvailable) {
+                                ForgeBootstrap.INSTANCE.onKey(lwjglCode, pressed);
                             }
                         }
                     } catch (Exception e) {

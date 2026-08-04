@@ -223,28 +223,22 @@ public class Transformer implements ClassFileTransformer {
             // Before: Display processes events + swaps buffers
             // After:  RenderBridge.onFrame() -> Display processes events + swaps buffers
             //
-            // CRITICAL: We use Class.forName() + reflection instead of a direct class reference.
-            // Previously, insertBefore("io.switchlite.agent.RenderBridge.onFrame()") required
-            // Javassist to resolve RenderBridge at COMPILE time via its ClassPool. But the
-            // ClassPool cannot find RenderBridge because:
-            //   - appendToBootstrapClassLoaderSearch() puts the jar on the bootstrap CL
-            //   - Javassist's ClassPool.getDefault() does NOT search the bootstrap CL
-            //   - LoaderClassPath(gameCL) may not work if gameCL is null after bootstrap add
-            //   - jar path may not be found if findAgentJar() returns null
+            // CRITICAL: We use Class.forName() + reflection with STRING CONCATENATION.
+            // Previously, the literal "io.switchlite.agent.RenderBridge" in the source
+            // string was parsed by Javassist's compiler at COMPILE time, which tried
+            // to resolve it via ClassPool and failed with CannotCompileException
+            // (Javassist interprets dots as inner-class separators → io$switchlite...).
             //
-            // Using Class.forName("io.switchlite.agent.RenderBridge", true, null) avoids
-            // the compile-time resolution entirely:
-            //   - Javassist only needs to resolve java.lang.Class and java.lang.reflect.Method
-            //     (always available, no ClassPool issues)
-            //   - At RUNTIME, Class.forName() with null classloader uses the bootstrap CL
-            //   - appendToBootstrapClassLoaderSearch() already added agent.jar to bootstrap CL
-            //   - So the bootstrap CL can find RenderBridge at runtime
+            // Splitting the string into "io.switchlite.agent." + "RenderBridge" prevents
+            // Javassist from recognizing it as a class name literal — the concatenation
+            // is only evaluated at RUNTIME by the JVM, where Class.forName(String) is
+            // just a method call with a string argument (no class resolution needed).
             //
             // Performance: Class.forName() on an already-loaded class is ~1μs, getMethod()
             // is ~1μs (JVM caches reflection), invoke() fast path is ~0.1μs. Total ~2μs/frame
             // at 60fps = 120μs/s — negligible vs. 16ms render time per frame.
             updateMethod.insertBefore(
-                "try { Class.forName(\"io.switchlite.agent.RenderBridge\", true, null).getMethod(\"onFrame\").invoke(null); } catch (Throwable t) {}"
+                "try { Class.forName(\"io.switchlite.agent.\" + \"RenderBridge\", true, null).getMethod(\"onFrame\").invoke(null); } catch (Throwable t) {}"
             );
 
             byte[] result = ctClass.toBytecode();

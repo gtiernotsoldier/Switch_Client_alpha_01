@@ -99,7 +99,7 @@ object ForgeBootstrap {
         if (EventBridge.isGuiOpen == mouseUnlocked) return
         mouseUnlocked = EventBridge.isGuiOpen
         val mc = MappingContext.invokeMethod(null, "forge:mc_getMinecraft") ?: return
-        val runnable = Runnable {
+        val callable = java.util.concurrent.Callable<Any?> {
             try {
                 val mouseHelper = MappingContext.getFieldValue(mc, "forge:mc_mouseHelper")
                 if (mouseHelper != null) {
@@ -110,8 +110,10 @@ object ForgeBootstrap {
                     }
                 }
             } catch (_: Exception) {}
+            null
         }
-        MappingContext.invokeMethod(mc, "forge:mc_addScheduledTask", runnable)
+        // func_152343_a takes Callable, not Runnable (verified 1.8.8 SRG)
+        MappingContext.invokeMethod(mc, "forge:mc_addScheduledTask", callable)
     }
 
     /**
@@ -120,7 +122,7 @@ object ForgeBootstrap {
      */
     private fun handleGuiMouseInput() {
         val mc = MappingContext.invokeMethod(null, "forge:mc_getMinecraft") ?: return
-        val runnable = Runnable {
+        val callable = java.util.concurrent.Callable<Any?> {
             try {
                 val displayWidth = MappingContext.getFieldValue(mc, "forge:mc_displayWidth") as? Int ?: 854
                 val displayHeight = MappingContext.getFieldValue(mc, "forge:mc_displayHeight") as? Int ?: 480
@@ -145,8 +147,10 @@ object ForgeBootstrap {
                     12
                 )
             } catch (_: Exception) {}
+            null
         }
-        MappingContext.invokeMethod(mc, "forge:mc_addScheduledTask", runnable)
+        // func_152343_a takes Callable, not Runnable (verified 1.8.8 SRG)
+        MappingContext.invokeMethod(mc, "forge:mc_addScheduledTask", callable)
     }
 
     fun tick() {

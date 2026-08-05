@@ -338,7 +338,8 @@ public class Agent {
             try {
                 Class<?> mcClass = Class.forName("net.minecraft.client.Minecraft");
                 Method getMc = mcClass.getMethod("func_71410_x");
-                Method addTask = mcClass.getMethod("func_152343_a", Runnable.class);
+                // NOTE: func_152343_a takes Callable, NOT Runnable (verified 1.8.8 SRG).
+                Method addTask = mcClass.getMethod("func_152343_a", java.util.concurrent.Callable.class);
 
                 while (running) {
                     try {
@@ -348,7 +349,10 @@ public class Agent {
                             // Keyboard.next() from a background thread races MC's
                             // own per-frame Keyboard.next() loop, which caused
                             // input lag / dropped key events after injection.
-                            addTask.invoke(mc, (Runnable) Agent::pollKeysOnce);
+                            addTask.invoke(mc, (java.util.concurrent.Callable<Object>) () -> {
+                                pollKeysOnce();
+                                return null;
+                            });
                         }
                     } catch (Exception e) {
                         // MC not ready yet — retry next loop

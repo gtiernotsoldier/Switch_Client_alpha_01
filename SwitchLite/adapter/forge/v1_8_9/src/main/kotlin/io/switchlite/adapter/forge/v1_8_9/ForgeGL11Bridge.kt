@@ -51,19 +51,19 @@ class ForgeGL11Bridge : GL11Bridge {
         gl11Class.getMethod("glDisable", Int::class.javaPrimitiveType)
     }
     private val glDepthMaskMethod by lazy {
-        gl11Class.getMethod("glDepthMask", Boolean::class.java)
+        gl11Class.getMethod("glDepthMask", Boolean::class.javaPrimitiveType)
     }
     private val glBlendFuncMethod by lazy {
         gl11Class.getMethod("glBlendFunc", Int::class.javaPrimitiveType, Int::class.javaPrimitiveType)
     }
     private val glColor4fMethod by lazy {
-        gl11Class.getMethod("glColor4f", Float::class.java, Float::class.java, Float::class.java, Float::class.java)
+        gl11Class.getMethod("glColor4f", Float::class.javaPrimitiveType, Float::class.javaPrimitiveType, Float::class.javaPrimitiveType, Float::class.javaPrimitiveType)
     }
     private val glBeginMethod by lazy {
         gl11Class.getMethod("glBegin", Int::class.javaPrimitiveType)
     }
     private val glVertex2fMethod by lazy {
-        gl11Class.getMethod("glVertex2f", Float::class.java, Float::class.java)
+        gl11Class.getMethod("glVertex2f", Float::class.javaPrimitiveType, Float::class.javaPrimitiveType)
     }
     private val glEndMethod by lazy {
         gl11Class.getMethod("glEnd")

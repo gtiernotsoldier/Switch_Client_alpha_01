@@ -291,9 +291,17 @@ public class MappingContext {
         try {
             MethodHandle handle = getMethod(key);
             if (handle == null) return null;
+            if (obj == null) {
+                // Static method (e.g. Minecraft.getMinecraft) — no receiver.
+                // bindTo(null) on a zero-arg static MethodHandle throws
+                // IllegalStateException "no leading reference parameter",
+                // which made mc_getMinecraft return null on every call
+                // (silent render failure — confirmed 2026-08-05).
+                return handle.invokeWithArguments(args);
+            }
             return handle.bindTo(obj).invokeWithArguments(args);
         } catch (Throwable e) {
-            System.err.println("[MappingContext] Failed to invoke method for key: " + key);
+            System.err.println("[MappingContext] Failed to invoke method for key: " + key + ": " + e);
             return null;
         }
     }

@@ -11,6 +11,18 @@ object CoreLogger {
 
     var minLevel: Level = Level.INFO
 
+    /**
+     * File sink — mirrors every log line to %TEMP%\switchlite-agent.log so
+     * render/module diagnostics are visible even when MC's stdout is swallowed
+     * (javaw.exe). Same file as Agent.log; both append, interleaving is fine.
+     */
+    private val fileSink: java.io.PrintWriter? by lazy {
+        try {
+            val tmp = System.getProperty("java.io.tmpdir") ?: return@lazy null
+            java.io.PrintWriter(java.io.FileWriter(java.io.File(tmp, "switchlite-agent.log"), true), true)
+        } catch (_: Exception) { null }
+    }
+
     fun debug(msg: String) = log(Level.DEBUG, msg)
     fun info(msg: String) = log(Level.INFO, msg)
     fun warn(msg: String) = log(Level.WARN, msg)
@@ -24,6 +36,11 @@ object CoreLogger {
             Level.WARN -> "[WARN]"
             Level.ERROR -> "[ERROR]"
         }
-        println("$tag [SwitchLite] $msg")
+        val line = "$tag [SwitchLite] $msg"
+        println(line)
+        try {
+            fileSink?.println("[" + java.text.SimpleDateFormat("HH:mm:ss.SSS").format(java.util.Date()) + "] " + line)
+            fileSink?.flush()
+        } catch (_: Exception) {}
     }
 }

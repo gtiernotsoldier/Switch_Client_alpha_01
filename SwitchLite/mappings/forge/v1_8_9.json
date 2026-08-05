@@ -397,7 +397,7 @@
   },
   "forge:fontRenderer_drawStringWithShadow": {
     "class": "net.minecraft.client.gui.FontRenderer",
-    "method": "func_78261_a",
+    "method": "func_175063_a",
     "aliases": [
       "fontRenderer_drawStringWithShadow",
       "drawStringWithShadow"
@@ -712,7 +712,7 @@
   },
   "forge:mc_thePlayer": {
     "class": "net.minecraft.client.Minecraft",
-    "field": "field_70475_c",
+    "field": "field_71439_g",
     "aliases": [
       "mc_thePlayer",
       "thePlayer"

@@ -42,7 +42,7 @@ class ForgeFontRendererBridge(private val fontRendererObj: Any) : FontRendererBr
                 }
                 return 0
             }
-            handle.bindTo(fontRendererObj).invokeWithArguments(text, x, y, color) as? Int ?: 0
+            handle.bindTo(fontRendererObj).invokeWithArguments(text, x.toFloat(), y.toFloat(), color) as? Int ?: 0
         } catch (e: Exception) {
             if (!drawStringErrorLogged) {
                 CoreLogger.error("[ForgeFontRendererBridge] drawStringWithShadow failed: ${e.javaClass.simpleName}: ${e.message}")

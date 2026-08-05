@@ -216,8 +216,8 @@
     "mcp": "posZ"
   },
   "forge:entity_health": {
-    "class": "net.minecraft.entity.Entity",
-    "field": "field_149336_a",
+    "class": "net.minecraft.entity.EntityLivingBase",
+    "field": "field_70725_aQ",
     "aliases": [
       "entity_health",
       "health"
@@ -334,7 +334,7 @@
   },
   "forge:entity_player_moveForward": {
     "class": "net.minecraft.entity.player.EntityPlayerSP",
-    "field": "field_70701_bs",
+    "field": "field_70702_br",
     "aliases": [
       "entity_player_moveForward",
       "moveForward"
@@ -343,7 +343,7 @@
   },
   "forge:entity_player_moveStrafing": {
     "class": "net.minecraft.entity.player.EntityPlayerSP",
-    "field": "field_70702_br",
+    "field": "field_70701_bs",
     "aliases": [
       "entity_player_moveStrafing",
       "moveStrafing"
@@ -640,7 +640,7 @@
   },
   "forge:mc_fontRendererObj": {
     "class": "net.minecraft.client.Minecraft",
-    "field": "field_146289_q",
+    "field": "field_71466_p",
     "aliases": [
       "mc_fontRendererObj",
       "fontRendererObj"
@@ -676,7 +676,7 @@
   },
   "forge:mc_netHandler": {
     "class": "net.minecraft.client.Minecraft",
-    "field": "field_71453_p",
+    "field": "field_71449_j",
     "aliases": [
       "mc_netHandler",
       "netHandler"
@@ -981,7 +981,7 @@
   },
   "forge:velocity_motionX": {
     "class": "net.minecraft.network.play.server.S12PacketEntityVelocity",
-    "field": "field_70159_w",
+    "field": "field_149415_b",
     "aliases": [
       "velocity_motionX",
       "motionX"
@@ -990,7 +990,7 @@
   },
   "forge:velocity_motionY": {
     "class": "net.minecraft.network.play.server.S12PacketEntityVelocity",
-    "field": "field_70181_x",
+    "field": "field_149416_c",
     "aliases": [
       "velocity_motionY",
       "motionY"
@@ -999,7 +999,7 @@
   },
   "forge:velocity_motionZ": {
     "class": "net.minecraft.network.play.server.S12PacketEntityVelocity",
-    "field": "field_70179_y",
+    "field": "field_149414_d",
     "aliases": [
       "velocity_motionZ",
       "motionZ"

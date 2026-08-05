@@ -76,9 +76,6 @@ object ForgeBootstrap {
      */
     private var mouseUnlocked = false
 
-    private val mouseSetGrabbed by lazy {
-        try { mouseClass.getMethod("setGrabbed", Boolean::class.javaPrimitiveType) } catch (_: Exception) { null }
-    }
     private val mouseGetX by lazy {
         try { mouseClass.getMethod("getX") } catch (_: Exception) { null }
     }
@@ -87,50 +84,69 @@ object ForgeBootstrap {
     }
 
     /**
-     * Release / restore the LWJGL mouse grab according to the ClickGUI state.
-     * Vanilla MC keeps the mouse grabbed for camera look; while the GUI is
-     * open we must release it so the cursor can hit-test and drag the panel.
+     * Release / restore the mouse according to the ClickGUI state.
+     *
+     * CRITICAL: All LWJGL Mouse operations must run on the MC render thread
+     * (our tick() runs on the Agent background thread). We therefore post a
+     * runnable via Minecraft.addScheduledTask, and we use the vanilla
+     * MouseHelper.ungrabMouseCursor()/grabMouseCursor() instead of raw
+     * Mouse.setGrabbed(): MouseHelper also flips Minecraft's own
+     * mouseGrabbed state, which is what actually stops camera look and shows
+     * the cursor. Raw setGrabbed() from a background thread left the cursor
+     * invisible and the crosshair moving.
      */
     private fun handleGuiMouseGrab() {
-        if (EventBridge.isGuiOpen) {
-            if (!mouseUnlocked) {
-                try { mouseSetGrabbed?.invoke(null, false) } catch (_: Exception) {}
-                mouseUnlocked = true
-            }
-        } else if (mouseUnlocked) {
-            try { mouseSetGrabbed?.invoke(null, true) } catch (_: Exception) {}
-            mouseUnlocked = false
+        if (EventBridge.isGuiOpen == mouseUnlocked) return
+        mouseUnlocked = EventBridge.isGuiOpen
+        val mc = MappingContext.invokeMethod(null, "forge:mc_getMinecraft") ?: return
+        val runnable = Runnable {
+            try {
+                val mouseHelper = MappingContext.getFieldValue(mc, "forge:mc_mouseHelper")
+                if (mouseHelper != null) {
+                    if (mouseUnlocked) {
+                        MappingContext.invokeMethod(mouseHelper, "forge:mouseHelper_ungrabMouseCursor")
+                    } else {
+                        MappingContext.invokeMethod(mouseHelper, "forge:mouseHelper_grabMouseCursor")
+                    }
+                }
+            } catch (_: Exception) {}
         }
+        MappingContext.invokeMethod(mc, "forge:mc_addScheduledTask", runnable)
     }
 
     /**
      * Read the LWJGL mouse into EventBridge (scaled GUI coordinates) and
-     * forward clicks to ClickGUI for panel drag / module toggle.
+     * forward clicks to ClickGUI. Also posted to the render thread.
      */
     private fun handleGuiMouseInput() {
         val mc = MappingContext.invokeMethod(null, "forge:mc_getMinecraft") ?: return
-        val displayWidth = MappingContext.getFieldValue(mc, "forge:mc_displayWidth") as? Int ?: 854
-        val displayHeight = MappingContext.getFieldValue(mc, "forge:mc_displayHeight") as? Int ?: 480
-        val guiScaleSetting = MappingContext.getFieldValue(mc, "forge:mc_gameSettings")?.let {
-            MappingContext.getFieldValue(it, "forge:gs_guiScale") as? Int ?: 0
-        } ?: 0
-        val scale = computeGuiScale(displayWidth, displayHeight, guiScaleSetting)
+        val runnable = Runnable {
+            try {
+                val displayWidth = MappingContext.getFieldValue(mc, "forge:mc_displayWidth") as? Int ?: 854
+                val displayHeight = MappingContext.getFieldValue(mc, "forge:mc_displayHeight") as? Int ?: 480
+                val guiScaleSetting = MappingContext.getFieldValue(mc, "forge:mc_gameSettings")?.let {
+                    MappingContext.getFieldValue(it, "forge:gs_guiScale") as? Int ?: 0
+                } ?: 0
+                val scale = computeGuiScale(displayWidth, displayHeight, guiScaleSetting)
 
-        val rawX = (mouseGetX?.invoke(null) as? Int) ?: 0
-        val rawY = (mouseGetY?.invoke(null) as? Int) ?: 0
-        EventBridge.guiMouseX = rawX / scale
-        EventBridge.guiMouseY = (displayHeight - rawY) / scale
-        EventBridge.guiLeftMouseDown = (mouseIsButtonDown.invoke(null, 0) as? Boolean) ?: false
+                val rawX = (mouseGetX?.invoke(null) as? Int) ?: 0
+                val rawY = (mouseGetY?.invoke(null) as? Int) ?: 0
+                EventBridge.guiMouseX = rawX / scale
+                EventBridge.guiMouseY = (displayHeight - rawY) / scale
+                EventBridge.guiLeftMouseDown = (mouseIsButtonDown.invoke(null, 0) as? Boolean) ?: false
 
-        // Vanilla 1.8 fontHeight = 9 -> panel line height = 12
-        ClickGUI.handleMouseInput(
-            EventBridge.guiMouseX,
-            EventBridge.guiMouseY,
-            EventBridge.guiLeftMouseDown,
-            displayWidth / scale,
-            displayHeight / scale,
-            12
-        )
+                // Vanilla 1.8 fontHeight = 9 -> panel line height = 12
+                ClickGUI.handleMouseInput(
+                    EventBridge.guiMouseX,
+                    EventBridge.guiMouseY,
+                    EventBridge.guiLeftMouseDown,
+                    displayWidth / scale,
+                    displayHeight / scale,
+                    12
+                )
+            } catch (_: Exception) {}
+        }
+        MappingContext.invokeMethod(mc, "forge:mc_addScheduledTask", runnable)
     }
 
     fun tick() {

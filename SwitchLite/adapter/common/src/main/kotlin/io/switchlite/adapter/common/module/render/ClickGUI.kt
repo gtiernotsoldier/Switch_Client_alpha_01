@@ -8,38 +8,43 @@ import io.switchlite.adapter.common.module.ModuleRegistry
 
 /**
  * ClickGUI module.
- * Toggle with Right Shift, close with ESC.
- * Handles key binding and open/close state — rendering is done by the adapter layer.
  *
- * When opened, sets EventBridge.isGuiOpen = true so the adapter render hook
- * draws the GUI overlay. When closed, restores it to false.
- * Also pushes notifications to EventBridge when modules are toggled via the GUI
- * (the adapter render hook draws these in the bottom-right corner).
+ * Toggle with Right Shift, close with ESC.
+ * Each module category gets its OWN draggable panel (Combat, Movement,
+ * Player, Render, World...), like mainstream clients. The overlay renders
+ * the panels; this module owns geometry, layout, hit-testing and dragging.
+ *
+ * Panel positions live in [panelPositions] and are draggable by their title
+ * bars. Module rows are click-to-toggle; hit-testing uses the exact same
+ * [layout] rects that OverlayRenderer draws.
  */
 object ClickGUI : Module("ClickGUI", Category.RENDER) {
 
     init {
-        // ClickGUI itself is always hidden from HUD — no point showing it
         hidden = true
         showRedIndicator = false
     }
 
+    /** Panel width for every category panel. */
+    const val PANEL_WIDTH = 190
+
     private var isOpen = false
 
-    // ── Panel geometry (draggable) ──
-    @Volatile var panelX: Int = 40
-        private set
-    @Volatile var panelY: Int = 30
-        private set
-    private const val PANEL_WIDTH = 190
-    private const val CATEGORY_GAP = 4
+    // ── Per-category panel geometry ──
+    data class PanelPos(var x: Int, var y: Int)
 
-    private var dragging = false
-    private var dragOffsetX = 0
-    private var dragOffsetY = 0
-    private var wasLeftDown = false
+    private val panelPositions = mutableMapOf<Category, PanelPos>()
 
-    /** A tappable module row inside the panel. */
+    /** Panel position for a category (cascade-arranged on first open). */
+    fun panelPos(cat: Category): PanelPos = panelPositions.getOrPut(cat) {
+        val idx = cat.ordinal
+        PanelPos(20 + idx * 30, 20 + idx * 24)
+    }
+
+    /** Height of the draggable title bar. */
+    fun titleBarHeight(lineHeight: Int): Int = lineHeight + 2
+
+    /** A tappable module row inside a category panel. */
     data class ModuleRow(
         val x: Int,
         val y: Int,
@@ -48,46 +53,43 @@ object ClickGUI : Module("ClickGUI", Category.RENDER) {
         val module: Module
     )
 
-    /** Height of the draggable title bar. */
-    fun titleBarHeight(lineHeight: Int): Int = lineHeight + 2
-
     /**
-     * Category-grouped layout: list of (category, module rows).
-     * Rows are computed in the same coordinate space the overlay renders in,
-     * so hit-testing and rendering always agree.
+     * Module rows for ONE category panel.
+     * y increments per row — fixes the earlier overlap bug.
      */
-    fun layout(scaledWidth: Int, scaledHeight: Int, lineHeight: Int): List<Pair<Category, List<ModuleRow>>> {
-        val result = mutableListOf<Pair<Category, List<ModuleRow>>>()
-        var y = panelY + titleBarHeight(lineHeight)
-        for (cat in Category.values()) {
-            val modules = ModuleRegistry.getByCategory(cat).filter { !it.hidden }
-            if (modules.isEmpty()) continue
-            val rows = modules.map { m ->
-                ModuleRow(panelX + 8, y, PANEL_WIDTH - 16, lineHeight, m)
-            }
-            result.add(cat to rows)
-            y += lineHeight + 2 + rows.size * lineHeight + CATEGORY_GAP
+    fun layout(cat: Category, lineHeight: Int): List<ModuleRow> {
+        val pos = panelPos(cat)
+        val modules = ModuleRegistry.getByCategory(cat).filter { !it.hidden }
+        val startY = pos.y + titleBarHeight(lineHeight)
+        return modules.mapIndexed { i, m ->
+            ModuleRow(pos.x + 8, startY + i * lineHeight, PANEL_WIDTH - 16, lineHeight, m)
         }
-        return result
     }
 
-    /** Total panel height (title bar + categories + footer). */
-    fun panelHeight(lineHeight: Int): Int {
-        var h = titleBarHeight(lineHeight)
-        for (cat in Category.values()) {
-            val modules = ModuleRegistry.getByCategory(cat).filter { !it.hidden }
-            if (modules.isEmpty()) continue
-            h += lineHeight + 2 + modules.size * lineHeight + CATEGORY_GAP
-        }
-        return h + 8 + 16
+    /** Total height of one category panel (title + rows + footer pad). */
+    fun panelHeight(cat: Category, lineHeight: Int): Int {
+        val n = ModuleRegistry.getByCategory(cat).filter { !it.hidden }.size
+        return titleBarHeight(lineHeight) + n * lineHeight + 12
     }
+
+    /** All non-empty category panels with their rows (render + hit-test). */
+    fun categoriesWithRows(lineHeight: Int): List<Pair<Category, List<ModuleRow>>> {
+        return Category.values()
+            .filter { cat -> ModuleRegistry.getByCategory(cat).any { !it.hidden } }
+            .map { cat -> cat to layout(cat, lineHeight) }
+    }
+
+    // ── Drag state ──
+    private var dragging = false
+    private var dragCat: Category? = null
+    private var dragOffsetX = 0
+    private var dragOffsetY = 0
+    private var wasLeftDown = false
 
     /**
-     * Handle mouse input while the GUI is open.
-     * - Click on the title bar: start dragging the panel.
-     * - Move while dragging: reposition the panel.
+     * Handle mouse input while the GUI is open (scaled GUI coords, y down).
+     * - Click on a panel title bar: drag that panel.
      * - Click on a module row: toggle the module.
-     * Coordinates are scaled GUI pixels (left-top origin, y down).
      */
     fun handleMouseInput(
         x: Int,
@@ -100,6 +102,7 @@ object ClickGUI : Module("ClickGUI", Category.RENDER) {
         if (!isOpen) {
             wasLeftDown = false
             dragging = false
+            dragCat = null
             return
         }
         val clicked = leftDown && !wasLeftDown
@@ -108,40 +111,39 @@ object ClickGUI : Module("ClickGUI", Category.RENDER) {
 
         if (leftDown) {
             if (clicked) {
-                val barBottom = panelY + titleBarHeight(lineHeight)
-                if (y >= panelY && y < barBottom) {
-                    // Drag start
-                    dragging = true
-                    dragOffsetX = x - panelX
-                    dragOffsetY = y - panelY
-                } else {
-                    // Module row hit-test
-                    for ((_, rows) in layout(scaledWidth, scaledHeight, lineHeight)) {
-                        for (row in rows) {
-                            if (x >= row.x && x < row.x + row.width && y >= row.y && y < row.y + row.height) {
-                                row.module.toggle()
-                                notifyModuleToggled(row.module.name, row.module.enabled)
-                                return
-                            }
+                // Title-bar hit across all panels first (drag wins over rows)
+                for ((cat, _) in categoriesWithRows(lineHeight)) {
+                    val pos = panelPos(cat)
+                    val barBottom = pos.y + titleBarHeight(lineHeight)
+                    if (y >= pos.y && y < barBottom && x >= pos.x - 6 && x < pos.x + PANEL_WIDTH + 6) {
+                        dragging = true
+                        dragCat = cat
+                        dragOffsetX = x - pos.x
+                        dragOffsetY = y - pos.y
+                        return
+                    }
+                }
+                // Module row hit across all panels
+                for ((_, rows) in categoriesWithRows(lineHeight)) {
+                    for (row in rows) {
+                        if (x >= row.x && x < row.x + row.width && y >= row.y && y < row.y + row.height) {
+                            row.module.toggle()
+                            notifyModuleToggled(row.module.name, row.module.enabled)
+                            return
                         }
                     }
                 }
-            } else if (dragging) {
-                panelX = (x - dragOffsetX).coerceIn(0, (scaledWidth - PANEL_WIDTH - 10).coerceAtLeast(0))
-                panelY = (y - dragOffsetY).coerceIn(0, (scaledHeight - 40).coerceAtLeast(0))
+            } else if (dragging && dragCat != null) {
+                val pos = panelPos(dragCat!!)
+                pos.x = (x - dragOffsetX).coerceIn(0, (scaledWidth - PANEL_WIDTH - 10).coerceAtLeast(0))
+                pos.y = (y - dragOffsetY).coerceIn(0, (scaledHeight - 40).coerceAtLeast(0))
             }
         }
         if (released) {
             dragging = false
+            dragCat = null
         }
     }
-
-    /** Whether the mouse is hovering the panel area (title + body). */
-    fun isHoveringPanel(x: Int, y: Int, lineHeight: Int): Boolean {
-        val h = panelHeight(lineHeight)
-        return x in panelX - 6..panelX + PANEL_WIDTH + 6 && y in panelY - 6..panelY + h
-    }
-
 
     private val keyListener: (Int, Boolean) -> Unit = label@{ keyCode, pressed ->
         if (!pressed) return@label

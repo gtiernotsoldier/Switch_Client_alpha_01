@@ -125,21 +125,17 @@ object OverlayRenderer {
         val lineHeight = font.fontHeight + 3
         val padding = 6
         val clickGui = io.switchlite.adapter.common.module.render.ClickGUI
-        val panelWidth = 190
-        val px = clickGui.panelX
-        val py = clickGui.panelY
 
-        val totalHeight = clickGui.panelHeight(lineHeight)
-        drawRect(ctx, px - padding, py - padding, px + panelWidth, py + totalHeight, 0x80000000.toInt())
+        // One draggable panel per category
+        for ((cat, rows) in clickGui.categoriesWithRows(lineHeight)) {
+            val pos = clickGui.panelPos(cat)
+            val panelHeight = clickGui.panelHeight(cat, lineHeight)
+            drawRect(ctx, pos.x - padding, pos.y - padding, pos.x + clickGui.PANEL_WIDTH, pos.y + panelHeight, 0x80000000.toInt())
 
-        // Title bar (draggable)
-        font.drawStringWithShadow("\u00A76SwitchLite \u00A77\u00A7o[drag]", px, py, 0xFFFF55)
-        var y = py + clickGui.titleBarHeight(lineHeight)
+            // Title bar (draggable)
+            font.drawStringWithShadow("\u00A76${cat.name} \u00A77\u00A7o[drag]", pos.x, pos.y, 0xFFFF55)
 
-        // Category groups + module rows (shared layout with ClickGUI hit-testing)
-        for ((cat, rows) in clickGui.layout(ctx.scaledWidth, ctx.scaledHeight, lineHeight)) {
-            font.drawStringWithShadow("\u00A76${cat.name}", px, y, 0xFFFF55)
-            y += lineHeight + 2
+            // Module rows (shared rects with ClickGUI hit-testing)
             for (row in rows) {
                 // Hover highlight
                 val mx = EventBridge.guiMouseX
@@ -150,14 +146,10 @@ object OverlayRenderer {
                 val stateColor = if (row.module.enabled) 0x55FF55 else 0xAAAAAA
                 val stateText = if (row.module.enabled) "[ON] " else "[OFF]"
                 font.drawStringWithShadow("$stateText${row.module.name}", row.x, row.y, stateColor)
-                y += row.height
             }
-            y += 4
         }
-
-        y += 8
-        font.drawStringWithShadow("\u00A77Click modules to toggle | ESC to close", px, y, 0xAAAAAA)
     }
+
 
 
     // ── Filled rectangle ──

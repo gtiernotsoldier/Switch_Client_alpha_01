@@ -1059,5 +1059,32 @@
     ],
     "mcp": "getWorldTime",
     "method": "func_72820_D"
+  },
+  "forge:mc_mouseHelper": {
+    "class": "net.minecraft.client.Minecraft",
+    "field": "field_71417_B",
+    "aliases": [
+      "mc_mouseHelper",
+      "mouseHelper"
+    ],
+    "mcp": "mouseHelper"
+  },
+  "forge:mouseHelper_ungrabMouseCursor": {
+    "class": "net.minecraft.util.MouseHelper",
+    "method": "func_74373_b",
+    "aliases": [
+      "mouseHelper_ungrabMouseCursor",
+      "ungrabMouseCursor"
+    ],
+    "mcp": "ungrabMouseCursor"
+  },
+  "forge:mouseHelper_grabMouseCursor": {
+    "class": "net.minecraft.util.MouseHelper",
+    "method": "func_74372_a",
+    "aliases": [
+      "mouseHelper_grabMouseCursor",
+      "grabMouseCursor"
+    ],
+    "mcp": "grabMouseCursor"
   }
 }

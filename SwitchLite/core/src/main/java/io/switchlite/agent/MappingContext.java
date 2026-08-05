@@ -294,6 +294,7 @@ public class MappingContext {
      * @return The field value
      */
     public static Object getFieldValue(Object obj, String key) {
+        if (obj == null) return null; // null receiver: nothing to read (e.g. main-menu mouseOver)
         try {
             Field field = getField(key);
             if (field == null) return null;

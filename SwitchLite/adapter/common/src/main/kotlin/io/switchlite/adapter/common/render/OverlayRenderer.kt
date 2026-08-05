@@ -49,6 +49,16 @@ object OverlayRenderer {
             g.glEnable(GLConstants.GL_BLEND)
             g.glBlendFunc(GLConstants.GL_SRC_ALPHA, GLConstants.GL_ONE_MINUS_SRC_ALPHA)
 
+            // Explicit GL preconditions for the vanilla FontRenderer.
+            // MC's FontRenderer assumes TEXTURE_2D enabled + BLEND active;
+            // calling it with leftover scene-render state (TEXTURE_2D off)
+            // can bind a blank texture and corrupt later GUI rendering
+            // ('checkerboard' panels on Create World / language screens).
+            g.glEnable(GLConstants.GL_TEXTURE_2D)
+            g.glEnable(GLConstants.GL_BLEND)
+            g.glBlendFunc(GLConstants.GL_SRC_ALPHA, GLConstants.GL_ONE_MINUS_SRC_ALPHA)
+            g.glDisable(GLConstants.GL_DEPTH_TEST)
+
             // ══════════════════════════════════════
             //  Draw HUD
             // ══════════════════════════════════════

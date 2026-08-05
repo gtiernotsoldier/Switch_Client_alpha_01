@@ -192,10 +192,13 @@ object ForgeBootstrap {
 
             val displayWidth = MappingContext.getFieldValue(mc, "forge:mc_displayWidth") as? Int ?: 854
             val displayHeight = MappingContext.getFieldValue(mc, "forge:mc_displayHeight") as? Int ?: 480
-            val guiScale = MappingContext.getFieldValue(mc, "forge:mc_gameSettings")?.let {
+            val guiScaleSetting = MappingContext.getFieldValue(mc, "forge:mc_gameSettings")?.let {
                 MappingContext.getFieldValue(it, "forge:gs_guiScale") as? Int ?: 0
             } ?: 0
-            val scale = if (guiScale == 0) 1 else guiScale
+            // MC 1.8.9 ScaledResolution algorithm. guiScale==0 means AUTO —
+            // previously treated as 1, which made the HUD text smaller than
+            // the vanilla HUD (larger logical canvas than the real one).
+            val scale = computeGuiScale(displayWidth, displayHeight, guiScaleSetting)
             val scaledWidth = displayWidth / scale
             val scaledHeight = displayHeight / scale
 
@@ -220,6 +223,23 @@ object ForgeBootstrap {
                 renderDiagLogged = true
             }
         }
+    }
+
+    /**
+     * MC 1.8.9 ScaledResolution scaling algorithm (mirrors vanilla logic).
+     * guiScale == 0 means auto: the factor grows while the scaled size stays
+     * >= 320x240 at the next factor step. Integer division like vanilla.
+     */
+    private fun computeGuiScale(displayWidth: Int, displayHeight: Int, guiScaleSetting: Int): Int {
+        var setting = if (guiScaleSetting == 0) 1000 else guiScaleSetting
+        var factor = 1
+        while (factor < setting
+            && displayWidth / (factor + 1) >= 320
+            && displayHeight / (factor + 1) >= 240
+        ) {
+            factor++
+        }
+        return factor.coerceAtLeast(1)
     }
 
     fun onDisconnect() {

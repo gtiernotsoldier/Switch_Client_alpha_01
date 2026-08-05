@@ -784,7 +784,7 @@
   },
   "forge:netHandlerPlayClient_networkManager": {
     "class": "net.minecraft.client.network.NetHandlerPlayClient",
-    "field": "field_146371_g",
+    "field": "field_147300_g",
     "aliases": [
       "netHandlerPlayClient_networkManager",
       "networkManager"

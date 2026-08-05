@@ -123,7 +123,7 @@ object ForgeBootstrap {
         EventBridge.guiLeftMouseDown = (mouseIsButtonDown.invoke(null, 0) as? Boolean) ?: false
 
         // Vanilla 1.8 fontHeight = 9 -> panel line height = 12
-        ClickGUI.INSTANCE.handleMouseInput(
+        ClickGUI.handleMouseInput(
             EventBridge.guiMouseX,
             EventBridge.guiMouseY,
             EventBridge.guiLeftMouseDown,

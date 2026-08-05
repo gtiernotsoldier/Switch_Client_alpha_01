@@ -268,8 +268,16 @@ public class Transformer implements ClassFileTransformer {
             // is ~1μs (JVM caches reflection), invoke() fast path is ~0.1μs. Total ~2μs/frame
             // at 60fps = 120μs/s — negligible vs. 16ms render time per frame.
             updateMethod.insertBefore(
+                // getMethod/invoke are VARARGS in the Java source but their bytecode
+                // signatures are getMethod(String, Class[]) / invoke(Object, Object[]).
+                // Javassist's Javac does NOT auto-expand varargs — calling
+                // getMethod("onFrame") fails with "getMethod(java.lang.String) not
+                // found in java.lang.Class" (confirmed in real log 2026-08-05).
+                // Explicit empty arrays match the real signatures and compile fine.
                 "try { Class.forName(\"io.switchlite.agent.\" + new String(\"RenderBridge\"), true, " +
-                "Thread.currentThread().getContextClassLoader()).getMethod(\"onFrame\").invoke(null); } catch (Throwable t) {}"
+                "Thread.currentThread().getContextClassLoader())" +
+                ".getMethod(\"onFrame\", new java.lang.Class[0])" +
+                ".invoke(null, new java.lang.Object[0]); } catch (Throwable t) {}"
             );
 
             byte[] result = ctClass.toBytecode();

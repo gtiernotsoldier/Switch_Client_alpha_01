@@ -179,11 +179,11 @@ object ForgeBootstrap {
                 if (!renderDiagLogged) { CoreLogger.error("[ForgeBootstrap.render] mc_getMinecraft returned null"); renderDiagLogged = true }
                 return
             }
-            val player = MappingContext.getFieldValue(mc, "forge:mc_thePlayer")
-            if (player == null) {
-                if (!renderDiagLogged) { CoreLogger.error("[ForgeBootstrap.render] mc_thePlayer returned null"); renderDiagLogged = true }
-                return
-            }
+            // NOTE: mc_thePlayer is NOT required for HUD rendering — the overlay
+            // only needs mc + fontRendererObj. On the main menu thePlayer is
+            // legitimately null (normal MC state), so early-returning here is
+            // what made the main menu show nothing. Removed the gate: the HUD
+            // (module list / "SwitchLite") must render in menus too.
             val fontRendererObj = MappingContext.getFieldValue(mc, "forge:mc_fontRendererObj")
             if (fontRendererObj == null) {
                 if (!renderDiagLogged) { CoreLogger.error("[ForgeBootstrap.render] mc_fontRendererObj returned null"); renderDiagLogged = true }

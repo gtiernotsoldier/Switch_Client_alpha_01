@@ -38,6 +38,31 @@ import java.util.concurrent.ConcurrentHashMap;
  *   non-obfuscated and Forge-added members).
  */
 public class MappingContext {
+
+    /**
+     * Log a MappingContext error to %TEMP%\switchlite-agent.log.
+     *
+     * System.err is a black hole under javaw.exe (no console attached), so
+     * mapping-resolution failures were previously completely invisible in the
+     * diagnostic logs. This mirrors the CoreLogger file sink so that a failed
+     * semantic key (e.g. a wrong SRG field name) actually surfaces in
+     * switchlite-agent.log instead of vanishing silently.
+     */
+    private static void logErr(String msg) {
+        try {
+            String tmp = System.getProperty("java.io.tmpdir");
+            if (tmp != null) {
+                java.io.File f = new java.io.File(tmp, "switchlite-agent.log");
+                java.io.PrintWriter pw = new java.io.PrintWriter(new java.io.FileWriter(f, true), true);
+                pw.println("[" + new java.text.SimpleDateFormat("HH:mm:ss.SSS").format(new java.util.Date())
+                        + "] [ERROR] [MappingContext] " + msg);
+                pw.close();
+            }
+        } catch (Exception ignored) {
+            // logging must never crash the client
+        }
+        System.err.println("[MappingContext] " + msg);
+    }
     
     private static Map<String, Object> MAPPINGS = new ConcurrentHashMap<>();
     private static Map<String, String> ALIASES = new ConcurrentHashMap<>();
@@ -100,7 +125,7 @@ public class MappingContext {
         return CLASS_CACHE.computeIfAbsent(resolvedKey, k -> {
             Object mapping = MAPPINGS.get(k);
             if (mapping == null) {
-                System.err.println("[MappingContext] No mapping found for key: " + key + " (resolved: " + k + ")");
+                logErr("No mapping found for key: " + key + " (resolved: " + k + ")");
                 return null;
             }
             try {
@@ -108,12 +133,12 @@ public class MappingContext {
                 Map<String, String> entry = (Map<String, String>) mapping;
                 String className = entry.get("class");
                 if (className == null) {
-                    System.err.println("[MappingContext] Missing 'class' in mapping for key: " + k);
+                    logErr("Missing 'class' in mapping for key: " + k);
                     return null;
                 }
                 return Class.forName(className);
             } catch (ClassNotFoundException e) {
-                System.err.println("[MappingContext] Class not found for key " + k + ": " + e.getMessage());
+                logErr("Class not found for key " + k + ": " + e.getMessage());
                 return null;
             }
         });
@@ -129,7 +154,7 @@ public class MappingContext {
         return METHOD_CACHE.computeIfAbsent(resolvedKey, k -> {
             Object mapping = MAPPINGS.get(k);
             if (mapping == null) {
-                System.err.println("[MappingContext] No method mapping found for key: " + key + " (resolved: " + k + ")");
+                logErr("No method mapping found for key: " + key + " (resolved: " + k + ")");
                 return null;
             }
             try {
@@ -138,7 +163,7 @@ public class MappingContext {
                 String className = entry.get("class");
                 String methodName = entry.get("method");
                 if (className == null || methodName == null) {
-                    System.err.println("[MappingContext] Missing 'class' or 'method' in mapping for key: " + k);
+                    logErr("Missing 'class' or 'method' in mapping for key: " + k);
                     return null;
                 }
                 Class<?> clazz = Class.forName(className);
@@ -164,7 +189,7 @@ public class MappingContext {
                     Map<String, String> entryMap = (Map<String, String>) mapping;
                     String mcpName = entryMap.get("mcp");
                     if (mcpName != null && !mcpName.equals(methodName)) {
-                        System.err.println("[MappingContext] SRG method '" + methodName + "' not found in " + className + ", trying MCP fallback '" + mcpName + "'");
+                        logErr("SRG method '" + methodName + "' not found in " + className + ", trying MCP fallback '" + mcpName + "'");
                         for (Method m : clazz.getDeclaredMethods()) {
                             if (m.getName().equals(mcpName)) {
                                 found = m;
@@ -182,16 +207,16 @@ public class MappingContext {
                     }
                 }
                 if (found == null) {
-                    System.err.println("[MappingContext] Method '" + methodName + "' not found in " + className + " for key: " + k);
+                    logErr("Method '" + methodName + "' not found in " + className + " for key: " + k);
                     return null;
                 }
                 found.setAccessible(true);
                 return MethodHandles.lookup().unreflect(found);
             } catch (ClassNotFoundException e) {
-                System.err.println("[MappingContext] Class not found for key " + k + ": " + e.getMessage());
+                logErr("Class not found for key " + k + ": " + e.getMessage());
                 return null;
             } catch (IllegalAccessException e) {
-                System.err.println("[MappingContext] Cannot access method for key " + k + ": " + e.getMessage());
+                logErr("Cannot access method for key " + k + ": " + e.getMessage());
                 return null;
             }
         });
@@ -207,7 +232,7 @@ public class MappingContext {
         return FIELD_CACHE.computeIfAbsent(resolvedKey, k -> {
             Object mapping = MAPPINGS.get(k);
             if (mapping == null) {
-                System.err.println("[MappingContext] No field mapping found for key: " + key + " (resolved: " + k + ")");
+                logErr("No field mapping found for key: " + key + " (resolved: " + k + ")");
                 return null;
             }
             String className = null;
@@ -218,7 +243,7 @@ public class MappingContext {
                 className = entry.get("class");
                 fieldName = entry.get("field");
                 if (className == null || fieldName == null) {
-                    System.err.println("[MappingContext] Missing 'class' or 'field' in mapping for key: " + k);
+                    logErr("Missing 'class' or 'field' in mapping for key: " + k);
                     return null;
                 }
                 Class<?> clazz = Class.forName(className);
@@ -231,22 +256,22 @@ public class MappingContext {
                     Map<String, String> entryMap = (Map<String, String>) mapping;
                     String mcpName = entryMap.get("mcp");
                     if (mcpName != null && !mcpName.equals(fieldName)) {
-                        System.err.println("[MappingContext] SRG field '" + fieldName + "' not found in " + className + ", trying MCP fallback '" + mcpName + "'");
+                        logErr("SRG field '" + fieldName + "' not found in " + className + ", trying MCP fallback '" + mcpName + "'");
                         try {
                             field = clazz.getDeclaredField(mcpName);
                         } catch (NoSuchFieldException e2) {
-                            System.err.println("[MappingContext] MCP field '" + mcpName + "' also not found in " + className + " for key: " + k);
+                            logErr("MCP field '" + mcpName + "' also not found in " + className + " for key: " + k);
                             return null;
                         }
                     } else {
-                        System.err.println("[MappingContext] Field '" + fieldName + "' not found in " + className + " for key: " + k);
+                        logErr("Field '" + fieldName + "' not found in " + className + " for key: " + k);
                         return null;
                     }
                 }
                 field.setAccessible(true);
                 return field;
             } catch (ClassNotFoundException e) {
-                System.err.println("[MappingContext] Class not found for key " + k + ": " + e.getMessage());
+                logErr("Class not found for key " + k + ": " + e.getMessage());
                 return null;
             }
         });
@@ -275,7 +300,7 @@ public class MappingContext {
             field.setAccessible(true);
             return field.get(obj);
         } catch (Exception e) {
-            System.err.println("[MappingContext] Failed to get field value for key: " + key);
+            logErr("Failed to get field value for key: " + key);
             return null;
         }
     }
@@ -301,7 +326,7 @@ public class MappingContext {
             }
             return handle.bindTo(obj).invokeWithArguments(args);
         } catch (Throwable e) {
-            System.err.println("[MappingContext] Failed to invoke method for key: " + key + ": " + e);
+            logErr("Failed to invoke method for key: " + key + ": " + e);
             return null;
         }
     }

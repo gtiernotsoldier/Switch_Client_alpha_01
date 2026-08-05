@@ -149,8 +149,8 @@ public class Transformer implements ClassFileTransformer {
             } else {
                 Agent.log("[Transformer] handleRetransform: retransformClasses completed but transform() returned null");
             }
-        } catch (Exception e) {
-            Agent.log("[Transformer] handleRetransform failed: " + e.getMessage());
+        } catch (Throwable e) {
+            Agent.log("[Transformer] handleRetransform failed: " + e.getClass().getName() + ": " + e.getMessage());
         }
     }
 
@@ -184,6 +184,10 @@ public class Transformer implements ClassFileTransformer {
             // Diagnostic: log which ClassLoader loaded Transformer
             ClassLoader transformerCL = Transformer.class.getClassLoader();
             Agent.log("[Transformer] Transformer classloader: " + (transformerCL != null ? transformerCL.getClass().getName() : "bootstrap (null)"));
+
+            // Diagnostic: confirm javassist is visible and from which CL.
+            // If this throws, the next catch(Throwable) will print the chain.
+            Agent.log("[Transformer] javassist.ClassPool loaded by: " + javassist.ClassPool.class.getClassLoader());
 
             try {
                 if (transformerCL != null) {
@@ -262,14 +266,11 @@ public class Transformer implements ClassFileTransformer {
 
             Agent.log("[Transformer] Display.update() bytecode injected — RenderBridge.onFrame() will be called every frame");
             return result;
-        } catch (Exception e) {
-            // NOTE: We use a single catch(Exception) instead of separate catches for
-            // CannotCompileException and NotFoundException because of classloader isolation.
-            // When appendToBootstrapClassLoaderSearch() is called, the Javassist classes
-            // loaded by the bootstrap CL are different from those loaded by the game CL.
-            // The catch(CannotCompileException) clause uses the game CL's version, but the
-            // actual exception thrown is from the bootstrap CL's version — so the catch
-            // doesn't match and falls through to catch(Exception).
+        } catch (Throwable e) {
+            // NOTE: catch(Throwable) — must catch Errors too. NoClassDefFoundError
+            // (javassist missing from some classloader view) is an Error, NOT an
+            // Exception, so a catch(Exception) silently drops it and transform()
+            // returns null with zero diagnostics (confirmed in real logs).
             String errorType = e.getClass().getSimpleName();
             String errorMsg = e.getMessage();
             if ("CannotCompileException".equals(errorType)) {
@@ -278,6 +279,14 @@ public class Transformer implements ClassFileTransformer {
                 Agent.log("[Transformer] Display.update() not found: " + errorMsg);
             } else {
                 Agent.log("[Transformer] Failed: " + errorType + ": " + errorMsg);
+                // Print the root cause chain — helps find javassist linkage issues
+                Throwable cause = e;
+                int depth = 0;
+                while (cause != null && depth < 5) {
+                    Agent.log("[Transformer]   Caused by: " + cause.getClass().getName() + ": " + cause.getMessage());
+                    cause = cause.getCause();
+                    depth++;
+                }
             }
         }
         return null;

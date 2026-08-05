@@ -247,21 +247,26 @@ public class Agent {
         try {
             // 5. Install Transformer hook (Javassist's job, not Agent's)
             //
-            // When inst != null (premain/agentmain), install directly.
-            // When inst == null (JNI bootstrap), Transformer.install() will fail,
-            // but we DON'T exit — the payload.dll will use the Windows Attach pipe
-            // protocol to trigger agentmain() with a proper Instrumentation.
-            boolean hookInstalled = Transformer.install(inst);
-            if (!hookInstalled) {
-                if (inst == null) {
-                    log("[Agent] Transformer.install(null) failed — expected in JNI mode.");
-                    log("[Agent] Waiting for payload.dll to trigger agentmain via Windows Attach pipe...");
-                    log("[Agent] Agent continues running (threads, modules active). Hook will be installed later.");
-                } else {
+            // CRITICAL FIX: when inst == null (JNI bootstrap), do NOT touch the
+            // Transformer class AT ALL. Loading Transformer from the game
+            // ClassLoader (LaunchClassLoader) triggers JVM class verification,
+            // which resolves the javassist.* references in transform() — and
+            // LaunchClassLoader cannot see javassist in the fat jar, throwing
+            // NoClassDefFoundError: javassist/ClassPath (confirmed in real logs).
+            //
+            // The hook is installed later by payload.dll via
+            // agentmain("jni-attach", inst) — that callback runs on the
+            // AppClassLoader (agent.jar on system CL via JPLIS), where javassist
+            // IS visible. So in JNI mode we defer and let jni-attach do it.
+            if (inst != null) {
+                boolean hookInstalled = Transformer.install(inst);
+                if (!hookInstalled) {
                     log("[Agent] FATAL: Transformer.install() failed even with Instrumentation — rendering pipeline broken.");
+                } else {
+                    log("[Agent] Render path: Transformer + RenderBridge → ForgeBootstrap.render() (every frame, stealthy)");
                 }
             } else {
-                log("[Agent] Render path: Transformer + RenderBridge → ForgeBootstrap.render() (every frame, stealthy)");
+                log("[Agent] JNI mode — Transformer hook deferred to agentmain(jni-attach). Not loading Transformer from game CL (avoids javassist linkage error).");
             }
 
             // 6. Start threads (dispatch only — no rendering)

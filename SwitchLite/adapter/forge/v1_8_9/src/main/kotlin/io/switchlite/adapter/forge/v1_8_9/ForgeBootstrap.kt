@@ -74,7 +74,75 @@ object ForgeBootstrap {
      * Called by Agent.java at 20Hz on a background thread.
      * Extracts player state, dispatches to module layer.
      */
+    private var mouseUnlocked = false
+
+    private val mouseSetGrabbed by lazy {
+        try { mouseClass.getMethod("setGrabbed", Boolean::class.javaPrimitiveType) } catch (_: Exception) { null }
+    }
+    private val mouseGetX by lazy {
+        try { mouseClass.getMethod("getX") } catch (_: Exception) { null }
+    }
+    private val mouseGetY by lazy {
+        try { mouseClass.getMethod("getY") } catch (_: Exception) { null }
+    }
+
+    /**
+     * Release / restore the LWJGL mouse grab according to the ClickGUI state.
+     * Vanilla MC keeps the mouse grabbed for camera look; while the GUI is
+     * open we must release it so the cursor can hit-test and drag the panel.
+     */
+    private fun handleGuiMouseGrab() {
+        if (EventBridge.isGuiOpen) {
+            if (!mouseUnlocked) {
+                try { mouseSetGrabbed?.invoke(null, false) } catch (_: Exception) {}
+                mouseUnlocked = true
+            }
+        } else if (mouseUnlocked) {
+            try { mouseSetGrabbed?.invoke(null, true) } catch (_: Exception) {}
+            mouseUnlocked = false
+        }
+    }
+
+    /**
+     * Read the LWJGL mouse into EventBridge (scaled GUI coordinates) and
+     * forward clicks to ClickGUI for panel drag / module toggle.
+     */
+    private fun handleGuiMouseInput() {
+        val mc = MappingContext.invokeMethod(null, "forge:mc_getMinecraft") ?: return
+        val displayWidth = MappingContext.getFieldValue(mc, "forge:mc_displayWidth") as? Int ?: 854
+        val displayHeight = MappingContext.getFieldValue(mc, "forge:mc_displayHeight") as? Int ?: 480
+        val guiScaleSetting = MappingContext.getFieldValue(mc, "forge:mc_gameSettings")?.let {
+            MappingContext.getFieldValue(it, "forge:gs_guiScale") as? Int ?: 0
+        } ?: 0
+        val scale = computeGuiScale(displayWidth, displayHeight, guiScaleSetting)
+
+        val rawX = (mouseGetX?.invoke(null) as? Int) ?: 0
+        val rawY = (mouseGetY?.invoke(null) as? Int) ?: 0
+        EventBridge.guiMouseX = rawX / scale
+        EventBridge.guiMouseY = (displayHeight - rawY) / scale
+        EventBridge.guiLeftMouseDown = (mouseIsButtonDown.invoke(null, 0) as? Boolean) ?: false
+
+        // Vanilla 1.8 fontHeight = 9 -> panel line height = 12
+        ClickGUI.INSTANCE.handleMouseInput(
+            EventBridge.guiMouseX,
+            EventBridge.guiMouseY,
+            EventBridge.guiLeftMouseDown,
+            displayWidth / scale,
+            displayHeight / scale,
+            12
+        )
+    }
+
     fun tick() {
+        // Mouse grab control must run every tick (restores grab when GUI closes)
+        try { handleGuiMouseGrab() } catch (_: Exception) {}
+
+        if (EventBridge.isGuiOpen) {
+            // ClickGUI open: pause all module logic, only feed the mouse
+            try { handleGuiMouseInput() } catch (_: Exception) {}
+            return
+        }
+
         // START phase — extract player state, dispatch to modules
         try {
             val mc = MappingContext.invokeMethod(null, "forge:mc_getMinecraft")

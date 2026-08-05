@@ -275,6 +275,13 @@ object EventBridge {
     // ========== HUD Text (HUD — Render) ==========
     @Volatile var hudTextLine: String = ""
 
+    // ========== GUI Mouse State (populated by platform tick when GUI open) ==========
+    // Scaled GUI coordinates (left-top origin, y down) — same space as the ClickGUI panel.
+    @Volatile var guiMouseX: Int = 0
+    @Volatile var guiMouseY: Int = 0
+    /** Physical left mouse button state (for ClickGUI click detection). */
+    @Volatile var guiLeftMouseDown: Boolean = false
+
     // ========== GUI State (ClickGUI — Render) ==========
 
     /**

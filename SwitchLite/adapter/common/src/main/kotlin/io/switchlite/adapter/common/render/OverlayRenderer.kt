@@ -62,13 +62,26 @@ object OverlayRenderer {
             // ══════════════════════════════════════
             //  Draw HUD
             // ══════════════════════════════════════
-            val hudText = EventBridge.hudTextLine
-            if (hudText.isNotEmpty()) {
-                font.drawStringWithShadow(hudText, 4, 4, 0xFFFFFF)
-
-                if (EventBridge.isGuiOpen) {
-                    font.drawStringWithShadow("\u00A7a[GUI Open] \u00A77RShift to close", 4, 4 + font.fontHeight + 2, 0x00FF00)
+            val hudEntries = io.switchlite.adapter.common.module.render.HUD.hudEntries
+            var hudY = 4
+            if (hudEntries.isNotEmpty()) {
+                // Multi-line HUD — one module per row (no endless single line)
+                font.drawStringWithShadow("SwitchLite", 4, hudY, 0xFFFFFF)
+                hudY += font.fontHeight + 2
+                for (entry in hudEntries) {
+                    val color = if (entry.isRed) 0xFF5555 else 0xFFFFFF
+                    font.drawStringWithShadow(entry.name, 8, hudY, color)
+                    hudY += font.fontHeight + 2
                 }
+            } else {
+                val hudText = EventBridge.hudTextLine
+                if (hudText.isNotEmpty()) {
+                    font.drawStringWithShadow(hudText, 4, hudY, 0xFFFFFF)
+                    hudY += font.fontHeight + 2
+                }
+            }
+            if (EventBridge.isGuiOpen) {
+                font.drawStringWithShadow("\u00A7a[GUI Open] \u00A77RShift to close", 4, hudY + 2, 0x00FF00)
             }
 
             // Draw ClickGUI panel
@@ -109,42 +122,43 @@ object OverlayRenderer {
 
     private fun drawClickGUI(ctx: RenderContext) {
         val font = ctx.fontRenderer
-        val categories = Category.values()
-        val panelX = 40
-        var panelY = 30
         val lineHeight = font.fontHeight + 3
         val padding = 6
+        val clickGui = io.switchlite.adapter.common.module.render.ClickGUI
+        val panelWidth = 190
+        val px = clickGui.panelX
+        val py = clickGui.panelY
 
-        var totalHeight = padding * 2
-        for (cat in categories) {
-            totalHeight += lineHeight + 2
-            val modules = ModuleRegistry.getByCategory(cat)
-            totalHeight += modules.size * lineHeight
-            totalHeight += 4
-        }
-        totalHeight += 20
+        val totalHeight = clickGui.panelHeight(lineHeight)
+        drawRect(ctx, px - padding, py - padding, px + panelWidth, py + totalHeight, 0x80000000.toInt())
 
-        val panelWidth = 220
-        drawRect(ctx, panelX - padding, panelY - padding, panelX + panelWidth, panelY + totalHeight, 0x80000000.toInt())
+        // Title bar (draggable)
+        font.drawStringWithShadow("\u00A76SwitchLite \u00A77\u00A7o[drag]", px, py, 0xFFFF55)
+        var y = py + clickGui.titleBarHeight(lineHeight)
 
-        for (cat in categories) {
-            font.drawStringWithShadow("\u00A76${cat.name}", panelX, panelY, 0xFFFF55)
-            panelY += lineHeight
-
-            val modules = ModuleRegistry.getByCategory(cat)
-            for (module in modules) {
-                if (module.hidden) continue
-                val stateColor = if (module.enabled) 0x55FF55 else 0xAAAAAA
-                val stateText = if (module.enabled) "[ON] " else "[OFF]"
-                font.drawStringWithShadow("$stateText${module.name}", panelX + 8, panelY, stateColor)
-                panelY += lineHeight
+        // Category groups + module rows (shared layout with ClickGUI hit-testing)
+        for ((cat, rows) in clickGui.layout(ctx.scaledWidth, ctx.scaledHeight, lineHeight)) {
+            font.drawStringWithShadow("\u00A76${cat.name}", px, y, 0xFFFF55)
+            y += lineHeight + 2
+            for (row in rows) {
+                // Hover highlight
+                val mx = EventBridge.guiMouseX
+                val my = EventBridge.guiMouseY
+                if (mx >= row.x && mx < row.x + row.width && my >= row.y && my < row.y + row.height) {
+                    drawRect(ctx, row.x - 4, row.y - 1, row.x + row.width + 4, row.y + row.height + 1, 0x30FFFFFF)
+                }
+                val stateColor = if (row.module.enabled) 0x55FF55 else 0xAAAAAA
+                val stateText = if (row.module.enabled) "[ON] " else "[OFF]"
+                font.drawStringWithShadow("$stateText${row.module.name}", row.x, row.y, stateColor)
+                y += row.height
             }
-            panelY += 4
+            y += 4
         }
 
-        panelY += 8
-        font.drawStringWithShadow("\u00A77Click modules to toggle | ESC to close", panelX, panelY, 0xAAAAAA)
+        y += 8
+        font.drawStringWithShadow("\u00A77Click modules to toggle | ESC to close", px, y, 0xAAAAAA)
     }
+
 
     // ── Filled rectangle ──
 

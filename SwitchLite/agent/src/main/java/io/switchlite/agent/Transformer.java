@@ -76,7 +76,18 @@ public class Transformer implements ClassFileTransformer {
                 Class<?> displayClass = findDisplayClass();
                 Agent.log("[Transformer] Display class found via: " + displayClass.getClassLoader());
                 if (inst.isModifiableClass(displayClass)) {
-                    appendAgentToBootstrapCL(inst);
+                    // CRITICAL FIX: do NOT append agent.jar to the bootstrap ClassLoader.
+                    // Real log evidence (2026-08-05): appendAgentToBootstrapCL() caused
+                    // javassist to be loaded by the bootstrap CL while Transformer was
+                    // loaded by AppClassLoader (JPLIS agentmain). Two ClassLoaders each
+                    // define javassist.ClassPath → LinkageError: loader constraint
+                    // violation when Transformer calls ClassPool.appendClassPath(...).
+                    //
+                    // agent.jar is ALREADY on the system CL (JPLIS appends it to load
+                    // this agent), so AppClassLoader can see javassist + RenderBridge.
+                    // The injected bytecode loads RenderBridge via the render thread's
+                    // context CL (LaunchClassLoader, which has agent.jar via payload.dll
+                    // addURL) — no bootstrap CL involvement needed anywhere.
                     inst.addTransformer(new Transformer(), true);
                     inst.retransformClasses(displayClass);
 
@@ -136,7 +147,8 @@ public class Transformer implements ClassFileTransformer {
      */
     public static void handleRetransform(Instrumentation inst) {
         try {
-            appendAgentToBootstrapCL(inst);
+            // See install(): agent.jar is already on the system CL — do NOT append
+            // to bootstrap CL (causes javassist dual-classloader LinkageError).
             inst.addTransformer(new Transformer(), true);
             Class<?> displayClass = findDisplayClass();
             Agent.log("[Transformer] handleRetransform: Display class found via: " + displayClass.getClassLoader());

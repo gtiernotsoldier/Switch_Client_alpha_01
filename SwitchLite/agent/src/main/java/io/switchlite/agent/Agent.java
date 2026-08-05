@@ -334,35 +334,34 @@ public class Agent {
 
     private static void startKeyPollThread() {
         keyPollThread = new Thread(() -> {
-            log("[KeyPoll] Thread started, polling LWJGL2 Keyboard");
+            log("[KeyPoll] Thread started, dispatching LWJGL keyboard polling to the render thread");
             try {
-                Class<?> keyboardClass = Class.forName("org.lwjgl.input.Keyboard");
-                Method getEventKey = keyboardClass.getMethod("getEventKey");
-                Method getEventKeyState = keyboardClass.getMethod("getEventKeyState");
-                Method isNext = keyboardClass.getMethod("next");
+                Class<?> mcClass = Class.forName("net.minecraft.client.Minecraft");
+                Method getMc = mcClass.getMethod("func_71410_x");
+                Method addTask = mcClass.getMethod("func_152343_a", Runnable.class);
 
                 while (running) {
                     try {
-                        boolean nextResult = (Boolean) isNext.invoke(null);
-                        if (nextResult) {
-                            int lwjglCode = (Integer) getEventKey.invoke(null);
-                            boolean pressed = (Boolean) getEventKeyState.invoke(null);
-                            if (lwjglCode != 0 && forgeBootstrapAvailable) {
-                                ForgeBootstrap.INSTANCE.onKey(lwjglCode, pressed);
-                            }
+                        Object mc = getMc.invoke(null);
+                        if (mc != null) {
+                            // CRITICAL: poll ON the MC render thread. Consuming
+                            // Keyboard.next() from a background thread races MC's
+                            // own per-frame Keyboard.next() loop, which caused
+                            // input lag / dropped key events after injection.
+                            addTask.invoke(mc, (Runnable) Agent::pollKeysOnce);
                         }
                     } catch (Exception e) {
-                        // Silently ignore polling errors (e.g., before Display is created)
+                        // MC not ready yet — retry next loop
                     }
                     try {
-                        Thread.sleep(50); // 20 Hz poll rate
+                        Thread.sleep(50); // 20 Hz dispatch
                     } catch (InterruptedException e) {
                         Thread.currentThread().interrupt();
                         break;
                     }
                 }
             } catch (ClassNotFoundException e) {
-                log("[KeyPoll] LWJGL Keyboard class not found! MC not fully loaded yet.");
+                log("[KeyPoll] LWJGL/MC classes not found! MC not fully loaded yet.");
                 retryKeyPoll();
             } catch (Exception e) {
                 log("[KeyPoll] Fatal error: " + e.getMessage());
@@ -370,6 +369,31 @@ public class Agent {
         }, "SwitchLite-KeyPoll");
         keyPollThread.setDaemon(true);
         keyPollThread.start();
+    }
+
+    /**
+     * Consume LWJGL keyboard events and dispatch them.
+     * MUST run on the MC render thread — posted via Minecraft.addScheduledTask
+     * by {@link #startKeyPollThread()}. Running it on a background thread
+     * races MC's own Keyboard.next() consumption and introduces input lag.
+     */
+    private static void pollKeysOnce() {
+        try {
+            Class<?> keyboardClass = Class.forName("org.lwjgl.input.Keyboard");
+            Method isNext = keyboardClass.getMethod("next");
+            Method getEventKey = keyboardClass.getMethod("getEventKey");
+            Method getEventKeyState = keyboardClass.getMethod("getEventKeyState");
+
+            while ((Boolean) isNext.invoke(null)) {
+                int lwjglCode = (Integer) getEventKey.invoke(null);
+                boolean pressed = (Boolean) getEventKeyState.invoke(null);
+                if (lwjglCode != 0 && forgeBootstrapAvailable) {
+                    ForgeBootstrap.INSTANCE.onKey(lwjglCode, pressed);
+                }
+            }
+        } catch (Exception e) {
+            // Ignore — Keyboard not created yet or disposed
+        }
     }
 
     private static void retryKeyPoll() {

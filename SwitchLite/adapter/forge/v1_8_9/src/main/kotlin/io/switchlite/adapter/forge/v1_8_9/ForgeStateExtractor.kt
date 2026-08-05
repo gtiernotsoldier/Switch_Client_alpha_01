@@ -60,6 +60,18 @@ object ForgeStateExtractor : IStateExtractor {
         mouseIsButtonDown.invoke(null, button) as Boolean
     } catch (_: Exception) { false }
 
+    /**
+     * Resolve the display name of an entity.
+     * 1.8.8/1.8.9: Entity.getDisplayName() (func_145748_c_) returns an
+     * IChatComponent; the plain string is getFormattedText() (func_150254_d).
+     */
+    private fun entityDisplayName(entity: Any): String? {
+        return try {
+            val comp = MappingContext.invokeMethod(entity, "forge:entity_name")
+            MappingContext.invokeMethod(comp, "forge:ichatComponent_formattedText") as? String
+        } catch (_: Exception) { null }
+    }
+
     override fun extractPlayerState(): PlayerState {
         val player = getPlayer() ?: return PlayerState.EMPTY
 
@@ -75,7 +87,7 @@ object ForgeStateExtractor : IStateExtractor {
         val isSprinting = MappingContext.invokeMethod(player, "forge:player_isSprinting") as? Boolean ?: false
         val hurtTime = MappingContext.getFieldValue(player, "forge:entity_hurtTime") as? Int ?: 0
         val maxHurtResistantTime = MappingContext.getFieldValue(player, "forge:entity_maxHurtResistantTime") as? Int ?: 10
-        val health = MappingContext.getFieldValue(player, "forge:entity_health") as? Float ?: 0f
+        val health = MappingContext.invokeMethod(player, "forge:entity_health") as? Float ?: 0f
 
         val moveForward = MappingContext.getFieldValue(player, "forge:entity_player_moveForward") as? Float ?: 0f
         val moveStrafe = MappingContext.getFieldValue(player, "forge:entity_player_moveStrafing") as? Float ?: 0f
@@ -104,10 +116,10 @@ object ForgeStateExtractor : IStateExtractor {
         } catch (_: Exception) { false }
 
         val world = getWorld()
-        val ticks = MappingContext.getFieldValue(world, "forge:world_worldTime") as? Long ?: 0L
+        val ticks = MappingContext.invokeMethod(world, "forge:world_worldTime") as? Long ?: 0L
 
         return PlayerState(
-            name = MappingContext.getFieldValue(player, "forge:entity_name") as? String ?: "",
+            name = entityDisplayName(player) ?: "",
             position = Vec3(posX, posY, posZ),
             rotation = Vec2(rotationYaw, rotationPitch),
             motionX = motionX,
@@ -143,7 +155,7 @@ object ForgeStateExtractor : IStateExtractor {
         val motionX = MappingContext.getFieldValue(entity, "forge:entity_motionX") as? Double ?: 0.0
         val motionY = MappingContext.getFieldValue(entity, "forge:entity_motionY") as? Double ?: 0.0
         val motionZ = MappingContext.getFieldValue(entity, "forge:entity_motionZ") as? Double ?: 0.0
-        val health = MappingContext.getFieldValue(entity, "forge:entity_health") as? Float ?: 0f
+        val health = MappingContext.invokeMethod(entity, "forge:entity_health") as? Float ?: 0f
         val hurtTime = MappingContext.getFieldValue(entity, "forge:entity_hurtTime") as? Int ?: 0
 
         val bb = MappingContext.getFieldValue(entity, "forge:entity_boundingBox")
@@ -184,11 +196,7 @@ object ForgeStateExtractor : IStateExtractor {
             isMovingTowardsPlayer = false
         }
 
-        val entityName = try {
-            if (entityLivingBaseClass.isInstance(entity)) {
-                MappingContext.getFieldValue(entity, "forge:entity_name") as? String ?: ""
-            } else ""
-        } catch (_: Exception) { "" }
+        val entityName = entityDisplayName(entity) ?: ""
 
         return TargetState(
             entityId = entityId,
@@ -213,7 +221,7 @@ object ForgeStateExtractor : IStateExtractor {
         val targetId = getCurrentTargetId()
         val target = if (targetId != null) extractTargetState(targetId) else null
         val distance = target?.distance ?: 0f
-        val currentTick = getWorld()?.let { MappingContext.getFieldValue(it, "forge:world_worldTime") as? Long } ?: 0L
+        val currentTick = getWorld()?.let { MappingContext.invokeMethod(it, "forge:world_worldTime") as? Long } ?: 0L
 
         if (targetId != null) {
             if (lastTrackedTargetId != targetId) {
@@ -268,7 +276,7 @@ object ForgeStateExtractor : IStateExtractor {
         val playerX = MappingContext.getFieldValue(player, "forge:entity_posX") as? Double ?: 0.0
         val playerY = MappingContext.getFieldValue(player, "forge:entity_posY") as? Double ?: 0.0
         val playerZ = MappingContext.getFieldValue(player, "forge:entity_posZ") as? Double ?: 0.0
-        val eyeHeight = MappingContext.getFieldValue(player, "forge:player_eyeHeight") as? Double ?: 0.62
+        val eyeHeight = MappingContext.invokeMethod(player, "forge:player_eyeHeight") as? Double ?: 0.62
 
         val eyeVec = vec3Constructor.newInstance(playerX, playerY + eyeHeight, playerZ)
         val targetVec = vec3Constructor.newInstance(entityPos, entityPosY + 0.9, entityPosZ)
@@ -321,7 +329,7 @@ object ForgeStateExtractor : IStateExtractor {
         if (!entityLivingBaseClass.isInstance(entity)) return false
         val isDead = try { MappingContext.getFieldValue(entity, "forge:entity_isDead") } catch (_: Exception) { true }
         if (isDead == true) return false
-        val health = MappingContext.getFieldValue(entity, "forge:entity_health") as? Float ?: 0f
+        val health = MappingContext.invokeMethod(entity, "forge:entity_health") as? Float ?: 0f
         if (health <= 0f) return false
         return true
     }

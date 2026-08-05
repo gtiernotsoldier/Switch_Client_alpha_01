@@ -146,6 +146,9 @@ object ForgePacketInterceptor : ChannelDuplexHandler() {
     }
 
     private fun getNetworkManager(netHandler: Any): Any? {
+        if (netHandler.javaClass.name == "net.minecraft.network.NetworkManager") {
+            return netHandler
+        }
         return try {
             MappingContext.getFieldValue(netHandler, "forge:netHandlerPlayClient_networkManager")
         } catch (_: Exception) {

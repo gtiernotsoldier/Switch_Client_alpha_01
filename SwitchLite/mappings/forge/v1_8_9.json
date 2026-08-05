@@ -37,7 +37,7 @@
   },
   "forge:bb_maxX": {
     "class": "net.minecraft.util.AxisAlignedBB",
-    "field": "field_149755_E",
+    "field": "field_72336_d",
     "aliases": [
       "bb_maxX",
       "maxX"
@@ -46,7 +46,7 @@
   },
   "forge:bb_maxY": {
     "class": "net.minecraft.util.AxisAlignedBB",
-    "field": "field_149756_F",
+    "field": "field_72337_e",
     "aliases": [
       "bb_maxY",
       "maxY"
@@ -55,7 +55,7 @@
   },
   "forge:bb_maxZ": {
     "class": "net.minecraft.util.AxisAlignedBB",
-    "field": "field_149757_G",
+    "field": "field_72334_f",
     "aliases": [
       "bb_maxZ",
       "maxZ"
@@ -64,7 +64,7 @@
   },
   "forge:bb_minX": {
     "class": "net.minecraft.util.AxisAlignedBB",
-    "field": "field_149759_B",
+    "field": "field_72340_a",
     "aliases": [
       "bb_minX",
       "minX"
@@ -73,7 +73,7 @@
   },
   "forge:bb_minY": {
     "class": "net.minecraft.util.AxisAlignedBB",
-    "field": "field_149760_C",
+    "field": "field_72338_b",
     "aliases": [
       "bb_minY",
       "minY"
@@ -82,7 +82,7 @@
   },
   "forge:bb_minZ": {
     "class": "net.minecraft.util.AxisAlignedBB",
-    "field": "field_149754_D",
+    "field": "field_72339_c",
     "aliases": [
       "bb_minZ",
       "minZ"
@@ -90,13 +90,13 @@
     "mcp": "minZ"
   },
   "forge:entityLivingBase_displayName": {
-    "class": "net.minecraft.entity.EntityLivingBase",
-    "field": "field_75795_b",
+    "class": "net.minecraft.entity.Entity",
     "aliases": [
       "entityLivingBase_displayName",
       "displayName"
     ],
-    "mcp": "displayName"
+    "mcp": "getDisplayName",
+    "method": "func_145748_c_"
   },
   "forge:entityLivingBase_getEquipmentInSlot": {
     "class": "net.minecraft.entity.EntityLivingBase",
@@ -217,12 +217,12 @@
   },
   "forge:entity_health": {
     "class": "net.minecraft.entity.EntityLivingBase",
-    "field": "field_70725_aQ",
     "aliases": [
       "entity_health",
       "health"
     ],
-    "mcp": "health"
+    "mcp": "getHealth",
+    "method": "func_110143_aJ"
   },
   "forge:entity_hurtTime": {
     "class": "net.minecraft.entity.EntityLivingBase",
@@ -244,7 +244,7 @@
   },
   "forge:entity_isInLava": {
     "class": "net.minecraft.entity.Entity",
-    "method": "func_70026_G",
+    "method": "func_180799_ab",
     "aliases": [
       "entity_isInLava",
       "isInLava"
@@ -316,12 +316,12 @@
   },
   "forge:entity_name": {
     "class": "net.minecraft.entity.Entity",
-    "field": "field_111173_c",
     "aliases": [
       "entity_name",
       "name"
     ],
-    "mcp": "name"
+    "mcp": "getDisplayName",
+    "method": "func_145748_c_"
   },
   "forge:entity_onGround": {
     "class": "net.minecraft.entity.Entity",
@@ -333,8 +333,8 @@
     "mcp": "onGround"
   },
   "forge:entity_player_moveForward": {
-    "class": "net.minecraft.entity.player.EntityPlayerSP",
-    "field": "field_70702_br",
+    "class": "net.minecraft.entity.EntityLivingBase",
+    "field": "field_70701_bs",
     "aliases": [
       "entity_player_moveForward",
       "moveForward"
@@ -342,8 +342,8 @@
     "mcp": "moveForward"
   },
   "forge:entity_player_moveStrafing": {
-    "class": "net.minecraft.entity.player.EntityPlayerSP",
-    "field": "field_70701_bs",
+    "class": "net.minecraft.entity.EntityLivingBase",
+    "field": "field_70702_br",
     "aliases": [
       "entity_player_moveStrafing",
       "moveStrafing"
@@ -415,7 +415,7 @@
   },
   "forge:foodStats_foodLevel": {
     "class": "net.minecraft.util.FoodStats",
-    "field": "field_149334_b",
+    "field": "field_75127_a",
     "aliases": [
       "foodStats_foodLevel",
       "foodLevel"
@@ -514,12 +514,12 @@
   },
   "forge:iblockstate_block": {
     "class": "net.minecraft.block.state.IBlockState",
-    "field": "field_150939_a",
     "aliases": [
       "iblockstate_block",
       "block"
     ],
-    "mcp": "block"
+    "mcp": "getBlock",
+    "method": "func_177230_c"
   },
   "forge:ichatComponent_formattedText": {
     "class": "net.minecraft.util.IChatComponent",
@@ -528,7 +528,7 @@
       "formattedText"
     ],
     "method": "func_150254_d",
-    "mcp": "formattedText"
+    "mcp": "getFormattedText"
   },
   "forge:inventory_currentItem": {
     "class": "net.minecraft.entity.player.InventoryPlayer",
@@ -582,7 +582,7 @@
       "itemStack_tagCompound",
       "tagCompound"
     ],
-    "mcp": "tagCompound"
+    "mcp": "stackTagCompound"
   },
   "forge:item_getDigSpeed": {
     "class": "net.minecraft.item.Item",
@@ -591,7 +591,7 @@
       "item_getDigSpeed",
       "getDigSpeed"
     ],
-    "mcp": "getDigSpeed"
+    "mcp": "getStrVsBlock"
   },
   "forge:keybinding_pressed": {
     "class": "net.minecraft.client.settings.KeyBinding",
@@ -676,12 +676,12 @@
   },
   "forge:mc_netHandler": {
     "class": "net.minecraft.client.Minecraft",
-    "field": "field_71449_j",
+    "field": "field_71453_ak",
     "aliases": [
       "mc_netHandler",
       "netHandler"
     ],
-    "mcp": "netHandler"
+    "mcp": "myNetworkManager"
   },
   "forge:mc_objectMouseOver": {
     "class": "net.minecraft.client.Minecraft",
@@ -774,7 +774,7 @@
     "mcp": "getInteger"
   },
   "forge:nbtBase_hasKey": {
-    "class": "net.minecraft.nbt.NBTBase",
+    "class": "net.minecraft.nbt.NBTTagCompound",
     "method": "func_150297_b",
     "aliases": [
       "nbtBase_hasKey",
@@ -784,12 +784,12 @@
   },
   "forge:netHandlerPlayClient_networkManager": {
     "class": "net.minecraft.client.network.NetHandlerPlayClient",
-    "field": "field_147300_g",
+    "field": "field_147302_e",
     "aliases": [
       "netHandlerPlayClient_networkManager",
       "networkManager"
     ],
-    "mcp": "networkManager"
+    "mcp": "netManager"
   },
   "forge:netHandler_addToSendQueue": {
     "class": "net.minecraft.client.network.NetHandlerPlayClient",
@@ -810,13 +810,13 @@
     "mcp": "isHittingBlock"
   },
   "forge:player_eyeHeight": {
-    "class": "net.minecraft.entity.player.EntityPlayer",
-    "field": "field_71095_bQ",
+    "class": "net.minecraft.entity.Entity",
     "aliases": [
       "player_eyeHeight",
       "eyeHeight"
     ],
-    "mcp": "eyeHeight"
+    "mcp": "getEyeHeight",
+    "method": "func_70047_e"
   },
   "forge:player_foodStats": {
     "class": "net.minecraft.entity.player.EntityPlayer",
@@ -833,12 +833,12 @@
       "player_heldItem",
       "heldItem"
     ],
-    "method": "func_71058_bx",
-    "mcp": "heldItem"
+    "method": "func_70694_bm",
+    "mcp": "getHeldItem"
   },
   "forge:player_inventory": {
     "class": "net.minecraft.entity.player.EntityPlayer",
-    "field": "field_145900_a",
+    "field": "field_71071_by",
     "aliases": [
       "player_inventory",
       "inventory"
@@ -851,11 +851,11 @@
       "player_isBlocking",
       "isBlocking"
     ],
-    "method": "func_71083_bS",
+    "method": "func_70632_aY",
     "mcp": "isBlocking"
   },
   "forge:player_isSneaking": {
-    "class": "net.minecraft.entity.player.EntityPlayer",
+    "class": "net.minecraft.entity.Entity",
     "aliases": [
       "player_isSneaking",
       "isSneaking"
@@ -864,12 +864,12 @@
     "mcp": "isSneaking"
   },
   "forge:player_isSprinting": {
-    "class": "net.minecraft.entity.player.EntityPlayer",
+    "class": "net.minecraft.entity.Entity",
     "aliases": [
       "player_isSprinting",
       "isSprinting"
     ],
-    "method": "func_70031_b",
+    "method": "func_70051_ag",
     "mcp": "isSprinting"
   },
   "forge:player_jump": {
@@ -882,7 +882,7 @@
     "mcp": "jump"
   },
   "forge:player_jumpTicks": {
-    "class": "net.minecraft.entity.player.EntityPlayer",
+    "class": "net.minecraft.entity.EntityLivingBase",
     "field": "field_70773_bE",
     "aliases": [
       "player_jumpTicks",
@@ -891,7 +891,7 @@
     "mcp": "jumpTicks"
   },
   "forge:player_rotationPitch": {
-    "class": "net.minecraft.entity.player.EntityPlayer",
+    "class": "net.minecraft.entity.Entity",
     "field": "field_70125_A",
     "aliases": [
       "player_rotationPitch",
@@ -900,7 +900,7 @@
     "mcp": "rotationPitch"
   },
   "forge:player_rotationYaw": {
-    "class": "net.minecraft.entity.player.EntityPlayer",
+    "class": "net.minecraft.entity.Entity",
     "field": "field_70177_z",
     "aliases": [
       "player_rotationYaw",
@@ -927,7 +927,7 @@
   },
   "forge:player_setSprinting": {
     "class": "net.minecraft.entity.Entity",
-    "method": "func_70095_a",
+    "method": "func_70031_b",
     "aliases": [
       "player_setSprinting"
     ],
@@ -944,16 +944,16 @@
   },
   "forge:scorePlayerTeam_membershipCollection": {
     "class": "net.minecraft.scoreboard.ScorePlayerTeam",
-    "field": "field_96671_f",
+    "field": "field_96676_c",
     "aliases": [
       "scorePlayerTeam_membershipCollection",
       "membershipCollection"
     ],
-    "mcp": "membershipCollection"
+    "mcp": "membershipSet"
   },
   "forge:scorePlayerTeam_registeredName": {
     "class": "net.minecraft.scoreboard.ScorePlayerTeam",
-    "field": "field_96677_a",
+    "field": "field_96675_b",
     "aliases": [
       "scorePlayerTeam_registeredName",
       "registeredName"
@@ -1008,7 +1008,7 @@
   },
   "forge:world_getBlockState": {
     "class": "net.minecraft.world.World",
-    "method": "func_176194_O",
+    "method": "func_180495_p",
     "aliases": [
       "world_getBlockState",
       "getBlockState"
@@ -1049,15 +1049,15 @@
       "scoreboard"
     ],
     "method": "func_96441_U",
-    "mcp": "scoreboard"
+    "mcp": "getScoreboard"
   },
   "forge:world_worldTime": {
     "class": "net.minecraft.world.World",
-    "field": "field_76094_f",
     "aliases": [
       "world_worldTime",
       "worldTime"
     ],
-    "mcp": "worldTime"
+    "mcp": "getWorldTime",
+    "method": "func_72820_D"
   }
 }

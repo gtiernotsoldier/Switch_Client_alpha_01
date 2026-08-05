@@ -113,6 +113,16 @@ object ForgeEventBridge : IEventBridge {
     }
 
     // ========== Registration ==========
+    /**
+     * 1.8.8/1.8.9 display name of an entity (getDisplayName -> getFormattedText).
+     */
+    private fun entityDisplayName(entity: Any): String? {
+        return try {
+            val comp = MappingContext.invokeMethod(entity, "forge:entity_name")
+            MappingContext.invokeMethod(comp, "forge:ichatComponent_formattedText") as? String
+        } catch (_: Exception) { null }
+    }
+
     override fun registerListeners() {
         EventBridge.registerRotationSetter { rotation -> setPlayerRotation(rotation) }
         EventBridge.registerMotionApplier { motion -> applyMotion(motion) }
@@ -226,7 +236,7 @@ object ForgeEventBridge : IEventBridge {
             val blockPos = try { MappingContext.getFieldValue(objMouseOver, "forge:movingObjectPosition_blockPos") } catch (_: Exception) { null }
             val world = getWorld() ?: return@registerGetBestSlotHandler -1
             val blockState = try { MappingContext.invokeMethod(world, "forge:world_getBlockState", blockPos) } catch (_: Exception) { null }
-            val block = try { MappingContext.getFieldValue(blockState, "forge:iblockstate_block") } catch (_: Exception) { null }
+            val block = try { MappingContext.invokeMethod(blockState, "forge:iblockstate_block") } catch (_: Exception) { null }
 
             val inventory = try { MappingContext.getFieldValue(player, "forge:player_inventory") } catch (_: Exception) { null }
             for (i in 0..8) {
@@ -258,7 +268,7 @@ object ForgeEventBridge : IEventBridge {
                 val blockPos = blockPosClass.getConstructor(Double::class.java, Double::class.java, Double::class.java)
                     .newInstance(posX, posY - 1.0, posZ)
                 val bs = MappingContext.invokeMethod(world, "forge:world_getBlockState", blockPos)
-                val b = MappingContext.getFieldValue(bs, "forge:iblockstate_block")
+                val b = MappingContext.invokeMethod(bs, "forge:iblockstate_block")
                 b !== blocksAir
             } catch (_: Exception) { false }
         }
@@ -307,8 +317,8 @@ object ForgeEventBridge : IEventBridge {
                 val scoreboard = MappingContext.invokeMethod(world, "forge:world_scoreboard") ?: return@registerScoreboardTeamChecker null
                 val teams = MappingContext.getFieldValue(scoreboard, "forge:scoreboard_teams") as? Collection<*> ?: return@registerScoreboardTeamChecker null
                 for (team in teams) {
-                    val containsResult = MappingContext.invokeMethod(team, "forge:team_contains", name) as? Boolean
-                    if (containsResult == true) {
+                    val members = MappingContext.getFieldValue(team, "forge:scorePlayerTeam_membershipCollection") as? Collection<*>
+                    if (members != null && members.contains(name)) {
                         return@registerScoreboardTeamChecker MappingContext.getFieldValue(team, "forge:scorePlayerTeam_registeredName") as? String
                     }
                 }
@@ -322,9 +332,9 @@ object ForgeEventBridge : IEventBridge {
                 val loadedList = MappingContext.getFieldValue(world, "forge:world_loadedEntityList") as? List<*> ?: return@registerDisplayNameProvider name
                 for (entity in loadedList) {
                     if (!entityLivingBaseClass.isInstance(entity)) continue
-                    val entityName = MappingContext.getFieldValue(entity, "forge:entity_name") as? String ?: continue
+                    val entityName = entityDisplayName(entity) ?: continue
                     if (entityName == name) {
-                        val displayName = MappingContext.getFieldValue(entity, "forge:entityLivingBase_displayName")
+                        val displayName = MappingContext.invokeMethod(entity, "forge:entityLivingBase_displayName")
                         return@registerDisplayNameProvider MappingContext.invokeMethod(displayName, "forge:ichatComponent_formattedText") as? String ?: name
                     }
                 }
@@ -338,7 +348,7 @@ object ForgeEventBridge : IEventBridge {
                 val loadedList = MappingContext.getFieldValue(world, "forge:world_loadedEntityList") as? List<*> ?: return@registerArmorColorChecker -1
                 for (entity in loadedList) {
                     if (!entityLivingBaseClass.isInstance(entity)) continue
-                    val entityName = MappingContext.getFieldValue(entity, "forge:entity_name") as? String ?: continue
+                    val entityName = entityDisplayName(entity) ?: continue
                     if (entityName != name) continue
                     for (i in 1..4) {
                         val stack = try { MappingContext.invokeMethod(entity, "forge:entityLivingBase_getEquipmentInSlot", i) } catch (_: Exception) { null }
@@ -363,7 +373,7 @@ object ForgeEventBridge : IEventBridge {
                 val loadedList = MappingContext.getFieldValue(world, "forge:world_loadedEntityList") as? List<*> ?: return@registerEntityTicksProvider 0
                 for (entity in loadedList) {
                     if (!entityLivingBaseClass.isInstance(entity)) continue
-                    val entityName = MappingContext.getFieldValue(entity, "forge:entity_name") as? String ?: continue
+                    val entityName = entityDisplayName(entity) ?: continue
                     if (entityName == name) {
                         return@registerEntityTicksProvider MappingContext.getFieldValue(entity, "forge:entity_ticksExisted") as? Int ?: 0
                     }
@@ -378,7 +388,7 @@ object ForgeEventBridge : IEventBridge {
                 val loadedList = MappingContext.getFieldValue(world, "forge:world_loadedEntityList") as? List<*> ?: return@registerEntityOnGroundChecker false
                 for (entity in loadedList) {
                     if (!entityLivingBaseClass.isInstance(entity)) continue
-                    val entityName = MappingContext.getFieldValue(entity, "forge:entity_name") as? String ?: continue
+                    val entityName = entityDisplayName(entity) ?: continue
                     if (entityName == name) {
                         return@registerEntityOnGroundChecker MappingContext.getFieldValue(entity, "forge:entity_onGround") as? Boolean ?: false
                     }

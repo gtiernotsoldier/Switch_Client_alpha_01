@@ -116,7 +116,8 @@ object ForgeEventBridge : IEventBridge {
     /**
      * 1.8.8/1.8.9 display name of an entity (getDisplayName -> getFormattedText).
      */
-    private fun entityDisplayName(entity: Any): String? {
+    private fun entityDisplayName(entity: Any?): String? {
+        if (entity == null) return null
         return try {
             val comp = MappingContext.invokeMethod(entity, "forge:entity_name")
             MappingContext.invokeMethod(comp, "forge:ichatComponent_formattedText") as? String

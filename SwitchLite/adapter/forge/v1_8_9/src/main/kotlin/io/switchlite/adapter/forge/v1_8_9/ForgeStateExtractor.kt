@@ -65,7 +65,8 @@ object ForgeStateExtractor : IStateExtractor {
      * 1.8.8/1.8.9: Entity.getDisplayName() (func_145748_c_) returns an
      * IChatComponent; the plain string is getFormattedText() (func_150254_d).
      */
-    private fun entityDisplayName(entity: Any): String? {
+    private fun entityDisplayName(entity: Any?): String? {
+        if (entity == null) return null
         return try {
             val comp = MappingContext.invokeMethod(entity, "forge:entity_name")
             MappingContext.invokeMethod(comp, "forge:ichatComponent_formattedText") as? String

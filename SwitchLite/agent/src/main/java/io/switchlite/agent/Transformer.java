@@ -316,34 +316,21 @@ public class Transformer implements ClassFileTransformer {
             }
         }
 
-        // Strategy 1: Caller's ClassLoader (works when Transformer is on game CL)
-        try {
-            Class<?> cls = Class.forName("org.lwjgl.opengl.Display");
-            cachedGameCL = cls.getClassLoader();
-            Agent.log("[Transformer] Display found via caller CL: " +
-                (cachedGameCL != null ? cachedGameCL.getClass().getName() : "bootstrap"));
-            return cls;
-        } catch (ClassNotFoundException e) {
-            Agent.log("[Transformer] Caller CL cannot find Display — likely system CL from JPLIS agentmain");
-        }
-
-        // Strategy 2: Thread context ClassLoader
         ClassLoader contextCL = Thread.currentThread().getContextClassLoader();
-        if (contextCL != null) {
-            try {
-                Class<?> cls = Class.forName("org.lwjgl.opengl.Display", true, contextCL);
-                cachedGameCL = contextCL;
-                Agent.log("[Transformer] Display found via context CL: " + contextCL.getClass().getName());
-                return cls;
-            } catch (ClassNotFoundException e) {
-                Agent.log("[Transformer] Context CL (" + contextCL.getClass().getName() + ") cannot find Display");
-            }
-        }
 
-        // Strategy 3: Forge LaunchClassLoader — find it via Launch.classLoader field
-        // This is the most reliable strategy for Forge 1.8.9
+        // Strategy 1 (PRIORITY): Forge LaunchClassLoader — the ONLY ClassLoader that
+        // loads the Display class the game ACTUALLY uses at runtime.
+        //
+        // CRITICAL BUG FIX: the old code tried "caller ClassLoader" first. In the
+        // jni-attach path the caller is the JPLIS AppClassLoader, and because the
+        // PCL2 launcher puts lwjgl.jar on the SYSTEM classpath, Class.forName() from
+        // AppClassLoader succeeds — but it returns a "zombie" Display class loaded by
+        // AppClassLoader, NOT the one the game renders with (LaunchClassLoader).
+        // Hooking the zombie class succeeds silently yet never renders anything.
+        // (Confirmed in real logs: "Display found via caller CL: sun.misc.Launcher$AppClassLoader")
+        //
+        // LaunchClassLoader is found via the static field Launch.classLoader.
         try {
-            // Use context CL to find the Launch class (it's on the game CL)
             ClassLoader searchCL = contextCL != null ? contextCL : ClassLoader.getSystemClassLoader();
             Class<?> launchClass = Class.forName("net.minecraft.launchwrapper.Launch", true, searchCL);
             java.lang.reflect.Field clField = launchClass.getField("classLoader");
@@ -355,12 +342,24 @@ public class Transformer implements ClassFileTransformer {
                 return cls;
             }
         } catch (ClassNotFoundException e) {
-            Agent.log("[Transformer] Forge LaunchClassLoader strategy: Display not found");
+            Agent.log("[Transformer] LaunchClassLoader strategy: Display not found");
         } catch (Exception e) {
-            Agent.log("[Transformer] Forge LaunchClassLoader strategy failed: " + e.getClass().getSimpleName() + ": " + e.getMessage());
+            Agent.log("[Transformer] LaunchClassLoader strategy failed: " + e.getClass().getSimpleName() + ": " + e.getMessage());
         }
 
-        // Strategy 4: Walk parent chain of system CL to find LaunchClassLoader
+        // Strategy 2: Thread context ClassLoader (render thread context CL)
+        if (contextCL != null) {
+            try {
+                Class<?> cls = Class.forName("org.lwjgl.opengl.Display", true, contextCL);
+                cachedGameCL = contextCL;
+                Agent.log("[Transformer] Display found via context CL: " + contextCL.getClass().getName());
+                return cls;
+            } catch (ClassNotFoundException e) {
+                Agent.log("[Transformer] Context CL (" + contextCL.getClass().getName() + ") cannot find Display");
+            }
+        }
+
+        // Strategy 3: Walk system CL parent chain looking for a LaunchClassLoader
         try {
             ClassLoader cl = ClassLoader.getSystemClassLoader();
             while (cl != null) {
@@ -378,6 +377,23 @@ public class Transformer implements ClassFileTransformer {
             }
         } catch (Exception e) {
             Agent.log("[Transformer] System CL chain walk failed: " + e.getMessage());
+        }
+
+        // Strategy 4 (LAST RESORT): Caller's ClassLoader — ONLY accept if the found
+        // Display is loaded by a LaunchClassLoader. A Display loaded by AppClassLoader
+        // is a zombie class (lwjgl on system classpath) that the game never calls.
+        try {
+            Class<?> cls = Class.forName("org.lwjgl.opengl.Display");
+            ClassLoader cl = cls.getClassLoader();
+            if (cl != null && cl.getClass().getName().contains("LaunchClassLoader")) {
+                cachedGameCL = cl;
+                Agent.log("[Transformer] Display found via caller CL: " + cl.getClass().getName());
+                return cls;
+            }
+            Agent.log("[Transformer] Caller CL found Display but it is a zombie class (CL=" +
+                (cl != null ? cl.getClass().getName() : "bootstrap") + ") — rejected");
+        } catch (ClassNotFoundException e) {
+            Agent.log("[Transformer] Caller CL cannot find Display");
         }
 
         throw new ClassNotFoundException(

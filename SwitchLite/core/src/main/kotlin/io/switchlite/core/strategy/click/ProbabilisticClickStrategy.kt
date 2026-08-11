@@ -94,8 +94,8 @@ class ProbabilisticClickStrategy : ClickStrategy<ClickConfig, ClickStrategy.Stat
 
     /**
      * Adjust CPS based on target distance for LEGIT mode.
-     * - Distance > 6 blocks: reduce CPS by 2-5.
-     * - Distance < 3 blocks: increase CPS by 3-5.
+     * - Distance > 2.5 blocks: reduce CPS by 2-5.
+     * - Distance < 1.5 blocks: increase CPS by 3-5.
      * - Otherwise: no change.
      */
     private fun adjustCpsByDistance(baseCps: Int, lo: Int, hi: Int, distance: Float): Int {

@@ -100,11 +100,11 @@ class ProbabilisticClickStrategy : ClickStrategy<ClickConfig, ClickStrategy.Stat
      */
     private fun adjustCpsByDistance(baseCps: Int, lo: Int, hi: Int, distance: Float): Int {
         val adjusted = when {
-            distance > 6.0f -> {
+            distance > 2.5f -> {
                 val reduction = NoiseProvider.nextUniform(2f, 5f).toInt()
                 baseCps - reduction
             }
-            distance < 3.0f -> {
+            distance < 1.5f -> {
                 val boost = NoiseProvider.nextUniform(3f, 5f).toInt()
                 baseCps + boost
             }

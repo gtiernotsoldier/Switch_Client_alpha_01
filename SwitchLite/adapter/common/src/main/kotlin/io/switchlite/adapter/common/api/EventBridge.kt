@@ -91,6 +91,22 @@ object EventBridge {
 
     fun getCurrentTick(): Int = tickCounter
 
+    // ========== GUI open (ClickGUI as real MC GuiScreen) ==========
+    // The platform adapter registers a handler that opens/closes the ClickGUI
+    // as a real MC GuiScreen (mc.displayGuiScreen). MC then owns the mouse
+    // grab / cursor / keyboard — we only draw the UI.
+    private var guiOpenHandler: ((Boolean) -> Unit)? = null
+
+    /** Platform adapter registers this to open/close the ClickGUI GuiScreen. */
+    fun registerGuiOpenHandler(handler: (Boolean) -> Unit) {
+        guiOpenHandler = handler
+    }
+
+    /** Called by ClickGUI when the user toggles it open/closed. */
+    fun setGuiOpen(open: Boolean) {
+        guiOpenHandler?.invoke(open)
+    }
+
     // ========== Rotation ==========
     private var rotationSetter: ((Vec2) -> Unit)? = null
 

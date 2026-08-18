@@ -418,15 +418,13 @@ object ClickGUI : Module("ClickGUI", Category.RENDER) {
         when (keyCode) {
             KeyCode.RIGHT_SHIFT -> {
                 isOpen = !isOpen
-                EventBridge.isGuiOpen = isOpen
+                // Delegate to the platform: opens/closes the ClickGUI as a real
+                // MC GuiScreen, so MC owns the mouse grab / cursor / keyboard.
+                EventBridge.setGuiOpen(isOpen)
                 if (isOpen) wasLeftDown = false
             }
-            KeyCode.ESC -> {
-                if (isOpen) {
-                    isOpen = false
-                    EventBridge.isGuiOpen = false
-                }
-            }
+            // ESC is handled by MC's GuiScreen (closes itself via
+            // displayGuiScreen(null)) — nothing to do here.
         }
     }
 
@@ -448,12 +446,24 @@ object ClickGUI : Module("ClickGUI", Category.RENDER) {
     override fun onDisable() {
         EventBridge.unregisterKeyListener(keyListener)
         isOpen = false
-        EventBridge.isGuiOpen = false
+        EventBridge.setGuiOpen(false)
         expandedModules.clear()
         sliderDrag = null
     }
 
     fun isOpen(): Boolean = isOpen
+
+    /**
+     * Called by the adapter when MC closes the GuiScreen itself (e.g. ESC,
+     * which MC handles internally by displayGuiScreen(null)). Resets the open
+     * state WITHOUT re-invoking the guiOpenHandler (avoids a loop).
+     */
+    fun markClosed() {
+        isOpen = false
+        EventBridge.isGuiOpen = false
+        expandedModules.clear()
+        sliderDrag = null
+    }
 }
 
 /**

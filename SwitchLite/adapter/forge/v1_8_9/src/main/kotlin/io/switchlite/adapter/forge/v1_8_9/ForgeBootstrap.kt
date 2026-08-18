@@ -67,6 +67,23 @@ object ForgeBootstrap {
         ModuleRegistry.enable("ClickGUI")
         ModuleRegistry.enable("HUD")
 
+        // ClickGUI opens as a real MC GuiScreen: MC owns the mouse grab /
+        // cursor / keyboard (open -> cursor shows + crosshair frozen; close ->
+        // back to gameplay). We only draw the UI via OverlayRenderer.
+        EventBridge.registerGuiOpenHandler { open ->
+            try {
+                val mc = MappingContext.invokeMethod(null, "forge:mc_getMinecraft") ?: return@registerGuiOpenHandler
+                if (open) {
+                    val guiScreenClass = Class.forName("net.minecraft.client.gui.GuiScreen")
+                    val screen = guiScreenClass.getConstructor().newInstance()
+                    MappingContext.invokeMethod(mc, "forge:mc_displayGuiScreen", screen)
+                } else {
+                    MappingContext.invokeMethod(mc, "forge:mc_displayGuiScreen", null)
+                }
+                EventBridge.isGuiOpen = open
+            } catch (_: Exception) {}
+        }
+
         CoreLogger.info("[ForgeBootstrap] Initialized (reflection mode) — ${ModuleRegistry.size()} modules registered")
     }
 
@@ -74,8 +91,6 @@ object ForgeBootstrap {
      * Called by Agent.java at 20Hz on a background thread.
      * Extracts player state, dispatches to module layer.
      */
-    private var mouseUnlocked = false
-
     private val mouseGetX by lazy {
         try { mouseClass.getMethod("getX") } catch (_: Exception) { null }
     }
@@ -84,43 +99,13 @@ object ForgeBootstrap {
     }
 
     /**
-     * Keep the mouse in the correct grab state for the ClickGUI.
-     *
-     * MUST run on the MC render thread — render() is invoked by the Javassist
-     * hook (Display.update) on the render thread every frame, so this is safe
-     * to call directly from there. We use the vanilla
-     * MouseHelper.ungrabMouseCursor()/grabMouseCursor() instead of raw
-     * Mouse.setGrabbed(): MouseHelper also flips Minecraft's own
-     * mouseGrabbed state, which is what actually stops camera look and shows
-     * the cursor. Raw setGrabbed() left the cursor invisible and the
-     * crosshair moving.
-     *
-     * IMPORTANT: Our ClickGUI is NOT a real MC GuiScreen (it only flips
-     * EventBridge.isGuiOpen). MC therefore still thinks it is in-game while
-     * the GUI is open and re-grabs the cursor every frame in runTick. To win
-     * that fight we re-ungrab EVERY frame while the GUI is open. When it
-     * closes we grab once to hand control back to normal gameplay.
-     */
-    private fun applyGuiMouseGrab(mc: Any) {
-        try {
-            val mouseHelper = MappingContext.getFieldValue(mc, "forge:mc_mouseHelper")
-            if (mouseHelper == null) return
-            if (EventBridge.isGuiOpen) {
-                // Re-assert every frame: MC re-grabs each runTick because it
-                // doesn't know about our overlay GUI.
-                MappingContext.invokeMethod(mouseHelper, "forge:mouseHelper_ungrabMouseCursor")
-                mouseUnlocked = true
-            } else if (mouseUnlocked) {
-                // GUI just closed — hand the mouse back to MC (grab once).
-                MappingContext.invokeMethod(mouseHelper, "forge:mouseHelper_grabMouseCursor")
-                mouseUnlocked = false
-            }
-        } catch (_: Exception) {}
-    }
-
-    /**
      * Read the LWJGL mouse into EventBridge (scaled GUI coordinates) and
      * forward clicks to ClickGUI. Runs on the MC render thread (from render()).
+     *
+     * NOTE: MC now owns the mouse grab/cursor via the real GuiScreen (see
+     * registerGuiOpenHandler). This function only READS the mouse to feed
+     * ClickGUI interactions (panel drag, module click) — it does not touch
+     * grab state, so it cannot fight MC.
      */
     private fun applyGuiMouseInput(mc: Any) {
         try {
@@ -272,14 +257,19 @@ object ForgeBootstrap {
             }
 
             // ── UI interaction (render thread — this is its home) ──
-            // render() is called by the Javassist hook on the MC render thread
-            // every frame. Mouse grab + GUI mouse input are UI concerns and must
-            // run here, NOT on the Agent background tick thread (LWJGL Mouse is
-            // owned by the render thread; touching it from the background raced
-            // MC and caused the cursor/crosshair glitches).
-            try { applyGuiMouseGrab(mc) } catch (_: Exception) {}
+            // Mouse grab/cursor is owned by MC's GuiScreen now (see
+            // registerGuiOpenHandler). We only READ the mouse to feed ClickGUI
+            // interactions (panel drag, module click).
             if (EventBridge.isGuiOpen) {
-                try { applyGuiMouseInput(mc) } catch (_: Exception) {}
+                // Detect ESC-close: MC closes our GuiScreen itself via
+                // displayGuiScreen(null); currentScreen becomes null. Reset our
+                // state so the ClickGUI overlay stops rendering.
+                val currentScreen = MappingContext.getFieldValue(mc, "forge:mc_currentScreen")
+                if (currentScreen == null) {
+                    ClickGUI.markClosed()
+                } else {
+                    try { applyGuiMouseInput(mc) } catch (_: Exception) {}
+                }
             }
             // NOTE: mc_thePlayer is NOT required for HUD rendering — the overlay
             // only needs mc + fontRendererObj. On the main menu thePlayer is

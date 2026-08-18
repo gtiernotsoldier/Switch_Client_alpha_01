@@ -1,0 +1,146 @@
+package io.switchlite.adapter.common.ui
+
+import io.switchlite.adapter.common.render.FontRendererBridge
+import io.switchlite.adapter.common.render.GL11Bridge
+import io.switchlite.adapter.common.render.GLConstants
+import io.switchlite.adapter.common.render.RenderContext
+
+/**
+ * Immediate-mode drawing helpers used by OverlayRenderer.
+ *
+ * All methods follow the same GL contract: they set blend/depth state,
+ * draw, then restore TEXTURE_2D and depth mask. The full state is
+ * additionally saved/restored by the caller's glPushAttrib.
+ */
+object RenderUtils {
+
+    /** Number of arc segments per 90° corner. */
+    private const val CORNER_SEGMENTS = 6
+
+    // ═══════════════════ Filled rectangle ═══════════════════
+
+    fun rect(ctx: RenderContext, x: Float, y: Float, w: Float, h: Float, color: Int) {
+        val g = ctx.gl
+        prepareColor(g, color)
+        g.glBegin(GLConstants.GL_QUADS)
+        g.glVertex2f(x, y + h)
+        g.glVertex2f(x + w, y + h)
+        g.glVertex2f(x + w, y)
+        g.glVertex2f(x, y)
+        g.glEnd()
+        restoreColor(g)
+    }
+
+    // ═══════════════════ Rounded rectangle ═══════════════════
+
+    /**
+     * Rounded rectangle: 5 QUADS (center + 4 edge strips) + 4 corner fans
+     * (GL_TRIANGLE_FAN, 90° each). Falls back to a plain rect when the
+     * radius is negligible or exceeds half the smaller dimension.
+     */
+    fun roundedRect(ctx: RenderContext, x: Float, y: Float, w: Float, h: Float, r: Float, color: Int) {
+        val g = ctx.gl
+        val rr = r.coerceIn(0f, kotlin.math.min(w, h) / 2f)
+        if (rr <= 0.5f) {
+            rect(ctx, x, y, w, h, color)
+            return
+        }
+        prepareColor(g, color)
+
+        // Center + four edge strips.
+        g.glBegin(GLConstants.GL_QUADS)
+        // center
+        g.glVertex2f(x + rr, y + rr)
+        g.glVertex2f(x + w - rr, y + rr)
+        g.glVertex2f(x + w - rr, y + h - rr)
+        g.glVertex2f(x + rr, y + h - rr)
+        // top strip
+        g.glVertex2f(x + rr, y)
+        g.glVertex2f(x + w - rr, y)
+        g.glVertex2f(x + w - rr, y + rr)
+        g.glVertex2f(x + rr, y + rr)
+        // bottom strip
+        g.glVertex2f(x + rr, y + h - rr)
+        g.glVertex2f(x + w - rr, y + h - rr)
+        g.glVertex2f(x + w - rr, y + h)
+        g.glVertex2f(x + rr, y + h)
+        // left strip
+        g.glVertex2f(x, y + rr)
+        g.glVertex2f(x + rr, y + rr)
+        g.glVertex2f(x + rr, y + h - rr)
+        g.glVertex2f(x, y + h - rr)
+        // right strip
+        g.glVertex2f(x + w - rr, y + rr)
+        g.glVertex2f(x + w, y + rr)
+        g.glVertex2f(x + w, y + h - rr)
+        g.glVertex2f(x + w - rr, y + h - rr)
+        g.glEnd()
+
+        // Four 90° corner fans.
+        cornerFan(g, x + rr, y + rr, rr, 180.0, 270.0)        // top-left
+        cornerFan(g, x + w - rr, y + rr, rr, 270.0, 360.0)    // top-right
+        cornerFan(g, x + w - rr, y + h - rr, rr, 0.0, 90.0)   // bottom-right
+        cornerFan(g, x + rr, y + h - rr, rr, 90.0, 180.0)     // bottom-left
+
+        restoreColor(g)
+    }
+
+    private fun cornerFan(g: GL11Bridge, cx: Float, cy: Float, r: Float, startDeg: Double, endDeg: Double) {
+        g.glBegin(GLConstants.GL_TRIANGLE_FAN)
+        g.glVertex2f(cx, cy)
+        for (i in 0..CORNER_SEGMENTS) {
+            val theta = Math.toRadians(startDeg + (endDeg - startDeg) * i / CORNER_SEGMENTS)
+            val vx = cx + (kotlin.math.cos(theta) * r).toFloat()
+            val vy = cy + (kotlin.math.sin(theta) * r).toFloat()
+            g.glVertex2f(vx, vy)
+        }
+        g.glEnd()
+    }
+
+    // ═══════════════════ Rainbow text ═══════════════════
+
+    /**
+     * Draw text with a per-character rainbow color (Fade/Random Rainbow).
+     * Avoids extending FontRendererBridge — one draw call per character,
+     * x advances by each character's measured width.
+     *
+     * @return final x position (for chaining)
+     */
+    fun rainbowText(
+        ctx: RenderContext,
+        font: FontRendererBridge,
+        text: String,
+        x: Float,
+        y: Float,
+        phase: Int
+    ): Float {
+        var cx = x
+        for (ch in text) {
+            val s = ch.toString()
+            font.drawStringWithShadow(s, cx.toInt(), y.toInt(), Theme.rainbow(phase))
+            cx += kotlin.math.max(font.getStringWidth(s), 1)
+        }
+        return cx
+    }
+
+    // ═══════════════════ GL helpers ═══════════════════
+
+    private fun prepareColor(g: GL11Bridge, color: Int) {
+        g.glEnable(GLConstants.GL_BLEND)
+        g.glBlendFunc(GLConstants.GL_SRC_ALPHA, GLConstants.GL_ONE_MINUS_SRC_ALPHA)
+        g.glDisable(GLConstants.GL_DEPTH_TEST)
+        g.glDepthMask(false)
+        g.glColor4f(
+            ((color shr 16) and 0xFF) / 255f,
+            ((color shr 8) and 0xFF) / 255f,
+            (color and 0xFF) / 255f,
+            ((color shr 24) and 0xFF) / 255f
+        )
+        g.glDisable(GLConstants.GL_TEXTURE_2D)
+    }
+
+    private fun restoreColor(g: GL11Bridge) {
+        g.glEnable(GLConstants.GL_TEXTURE_2D)
+        g.glDepthMask(true)
+    }
+}

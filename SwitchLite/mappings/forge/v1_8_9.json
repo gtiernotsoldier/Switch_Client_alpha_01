@@ -1,0 +1,1108 @@
+{
+  "forge:S12PacketEntityVelocity_entityID": {
+    "class": "net.minecraft.network.play.server.S12PacketEntityVelocity",
+    "field": "field_149417_a",
+    "aliases": [
+      "S12PacketEntityVelocity_entityID",
+      "entityID"
+    ],
+    "mcp": "entityID"
+  },
+  "forge:S12PacketEntityVelocity_getMotionX": {
+    "class": "net.minecraft.network.play.server.S12PacketEntityVelocity",
+    "method": "func_149411_d",
+    "aliases": [
+      "S12PacketEntityVelocity_getMotionX",
+      "getMotionX"
+    ],
+    "mcp": "getMotionX"
+  },
+  "forge:S12PacketEntityVelocity_getMotionY": {
+    "class": "net.minecraft.network.play.server.S12PacketEntityVelocity",
+    "method": "func_149410_e",
+    "aliases": [
+      "S12PacketEntityVelocity_getMotionY",
+      "getMotionY"
+    ],
+    "mcp": "getMotionY"
+  },
+  "forge:S12PacketEntityVelocity_getMotionZ": {
+    "class": "net.minecraft.network.play.server.S12PacketEntityVelocity",
+    "method": "func_149409_f",
+    "aliases": [
+      "S12PacketEntityVelocity_getMotionZ",
+      "getMotionZ"
+    ],
+    "mcp": "getMotionZ"
+  },
+  "forge:bb_maxX": {
+    "class": "net.minecraft.util.AxisAlignedBB",
+    "field": "field_72336_d",
+    "aliases": [
+      "bb_maxX",
+      "maxX"
+    ],
+    "mcp": "maxX"
+  },
+  "forge:bb_maxY": {
+    "class": "net.minecraft.util.AxisAlignedBB",
+    "field": "field_72337_e",
+    "aliases": [
+      "bb_maxY",
+      "maxY"
+    ],
+    "mcp": "maxY"
+  },
+  "forge:bb_maxZ": {
+    "class": "net.minecraft.util.AxisAlignedBB",
+    "field": "field_72334_f",
+    "aliases": [
+      "bb_maxZ",
+      "maxZ"
+    ],
+    "mcp": "maxZ"
+  },
+  "forge:bb_minX": {
+    "class": "net.minecraft.util.AxisAlignedBB",
+    "field": "field_72340_a",
+    "aliases": [
+      "bb_minX",
+      "minX"
+    ],
+    "mcp": "minX"
+  },
+  "forge:bb_minY": {
+    "class": "net.minecraft.util.AxisAlignedBB",
+    "field": "field_72338_b",
+    "aliases": [
+      "bb_minY",
+      "minY"
+    ],
+    "mcp": "minY"
+  },
+  "forge:bb_minZ": {
+    "class": "net.minecraft.util.AxisAlignedBB",
+    "field": "field_72339_c",
+    "aliases": [
+      "bb_minZ",
+      "minZ"
+    ],
+    "mcp": "minZ"
+  },
+  "forge:entityLivingBase_displayName": {
+    "class": "net.minecraft.entity.Entity",
+    "aliases": [
+      "entityLivingBase_displayName",
+      "displayName"
+    ],
+    "mcp": "getDisplayName",
+    "method": "func_145748_c_"
+  },
+  "forge:entityLivingBase_getEquipmentInSlot": {
+    "class": "net.minecraft.entity.EntityLivingBase",
+    "method": "func_71124_b",
+    "aliases": [
+      "entityLivingBase_getEquipmentInSlot",
+      "getEquipmentInSlot"
+    ],
+    "mcp": "getEquipmentInSlot"
+  },
+  "forge:entityLivingBase_isEntityAlive": {
+    "class": "net.minecraft.entity.EntityLivingBase",
+    "method": "func_70089_S",
+    "aliases": [
+      "entityLivingBase_isEntityAlive",
+      "isEntityAlive"
+    ],
+    "mcp": "isEntityAlive"
+  },
+  "forge:entityRenderer_fovModifierHand": {
+    "class": "net.minecraft.client.renderer.EntityRenderer",
+    "field": "field_78507_R",
+    "aliases": [
+      "entityRenderer_fovModifierHand",
+      "fovModifierHand"
+    ],
+    "mcp": "fovModifierHand"
+  },
+  "forge:entity_boundingBox": {
+    "class": "net.minecraft.entity.Entity",
+    "field": "field_70121_D",
+    "aliases": [
+      "entity_boundingBox",
+      "boundingBox"
+    ],
+    "mcp": "boundingBox"
+  },
+  "forge:entity_entityId": {
+    "class": "net.minecraft.entity.Entity",
+    "field": "field_145783_c",
+    "aliases": [
+      "entity_entityId",
+      "entityId"
+    ],
+    "mcp": "entityId"
+  },
+  "forge:entity_getDistanceToEntity": {
+    "class": "net.minecraft.entity.Entity",
+    "method": "func_70032_d",
+    "aliases": [
+      "entity_getDistanceToEntity",
+      "getDistanceToEntity"
+    ],
+    "mcp": "getDistanceToEntity"
+  },
+  "forge:entity_getEntityId": {
+    "class": "net.minecraft.entity.Entity",
+    "method": "func_145782_y",
+    "aliases": [
+      "entity_getEntityId",
+      "getEntityId"
+    ],
+    "mcp": "getEntityId"
+  },
+  "forge:entity_getMotionX": {
+    "class": "net.minecraft.entity.Entity",
+    "field": "field_70159_w",
+    "aliases": [
+      "entity_getMotionX",
+      "motionX"
+    ],
+    "mcp": "motionX"
+  },
+  "forge:entity_getMotionY": {
+    "class": "net.minecraft.entity.Entity",
+    "field": "field_70181_x",
+    "aliases": [
+      "entity_getMotionY",
+      "motionY"
+    ],
+    "mcp": "motionY"
+  },
+  "forge:entity_getMotionZ": {
+    "class": "net.minecraft.entity.Entity",
+    "field": "field_70179_y",
+    "aliases": [
+      "entity_getMotionZ",
+      "motionZ"
+    ],
+    "mcp": "motionZ"
+  },
+  "forge:entity_getPosX": {
+    "class": "net.minecraft.entity.Entity",
+    "field": "field_70165_t",
+    "aliases": [
+      "entity_getPosX",
+      "posX"
+    ],
+    "mcp": "posX"
+  },
+  "forge:entity_getPosY": {
+    "class": "net.minecraft.entity.Entity",
+    "field": "field_70163_u",
+    "aliases": [
+      "entity_getPosY",
+      "posY"
+    ],
+    "mcp": "posY"
+  },
+  "forge:entity_getPosZ": {
+    "class": "net.minecraft.entity.Entity",
+    "field": "field_70161_v",
+    "aliases": [
+      "entity_getPosZ",
+      "posZ"
+    ],
+    "mcp": "posZ"
+  },
+  "forge:entity_health": {
+    "class": "net.minecraft.entity.EntityLivingBase",
+    "aliases": [
+      "entity_health",
+      "health"
+    ],
+    "mcp": "getHealth",
+    "method": "func_110143_aJ"
+  },
+  "forge:entity_hurtTime": {
+    "class": "net.minecraft.entity.EntityLivingBase",
+    "field": "field_70737_aN",
+    "aliases": [
+      "entity_hurtTime",
+      "hurtTime"
+    ],
+    "mcp": "hurtTime"
+  },
+  "forge:entity_isDead": {
+    "class": "net.minecraft.entity.Entity",
+    "aliases": [
+      "entity_isDead",
+      "isDead"
+    ],
+    "field": "field_70128_L",
+    "mcp": "isDead"
+  },
+  "forge:entity_isInLava": {
+    "class": "net.minecraft.entity.Entity",
+    "method": "func_180799_ab",
+    "aliases": [
+      "entity_isInLava",
+      "isInLava"
+    ],
+    "mcp": "isInLava"
+  },
+  "forge:entity_isInWater": {
+    "class": "net.minecraft.entity.Entity",
+    "method": "func_70090_H",
+    "aliases": [
+      "entity_isInWater",
+      "isInWater"
+    ],
+    "mcp": "isInWater"
+  },
+  "forge:entity_isInWeb": {
+    "class": "net.minecraft.entity.Entity",
+    "aliases": [
+      "entity_isInWeb",
+      "isInWeb"
+    ],
+    "field": "field_70134_J",
+    "mcp": "isInWeb"
+  },
+  "forge:entity_isOnGround": {
+    "class": "net.minecraft.entity.Entity",
+    "field": "field_70122_E",
+    "aliases": [
+      "entity_isOnGround",
+      "onGround"
+    ],
+    "mcp": "onGround"
+  },
+  "forge:entity_maxHurtResistantTime": {
+    "class": "net.minecraft.entity.EntityLivingBase",
+    "field": "field_70771_an",
+    "aliases": [
+      "entity_maxHurtResistantTime",
+      "maxHurtResistantTime"
+    ],
+    "mcp": "maxHurtResistantTime"
+  },
+  "forge:entity_motionX": {
+    "class": "net.minecraft.entity.Entity",
+    "field": "field_70159_w",
+    "aliases": [
+      "entity_motionX",
+      "motionX"
+    ],
+    "mcp": "motionX"
+  },
+  "forge:entity_motionY": {
+    "class": "net.minecraft.entity.Entity",
+    "field": "field_70181_x",
+    "aliases": [
+      "entity_motionY",
+      "motionY"
+    ],
+    "mcp": "motionY"
+  },
+  "forge:entity_motionZ": {
+    "class": "net.minecraft.entity.Entity",
+    "field": "field_70179_y",
+    "aliases": [
+      "entity_motionZ",
+      "motionZ"
+    ],
+    "mcp": "motionZ"
+  },
+  "forge:entity_name": {
+    "class": "net.minecraft.entity.Entity",
+    "aliases": [
+      "entity_name",
+      "name"
+    ],
+    "mcp": "getDisplayName",
+    "method": "func_145748_c_"
+  },
+  "forge:entity_onGround": {
+    "class": "net.minecraft.entity.Entity",
+    "field": "field_70122_E",
+    "aliases": [
+      "entity_onGround",
+      "onGround"
+    ],
+    "mcp": "onGround"
+  },
+  "forge:entity_player_moveForward": {
+    "class": "net.minecraft.entity.EntityLivingBase",
+    "field": "field_70701_bs",
+    "aliases": [
+      "entity_player_moveForward",
+      "moveForward"
+    ],
+    "mcp": "moveForward"
+  },
+  "forge:entity_player_moveStrafing": {
+    "class": "net.minecraft.entity.EntityLivingBase",
+    "field": "field_70702_br",
+    "aliases": [
+      "entity_player_moveStrafing",
+      "moveStrafing"
+    ],
+    "mcp": "moveStrafing"
+  },
+  "forge:entity_posX": {
+    "class": "net.minecraft.entity.Entity",
+    "field": "field_70165_t",
+    "aliases": [
+      "entity_posX",
+      "posX"
+    ],
+    "mcp": "posX"
+  },
+  "forge:entity_posY": {
+    "class": "net.minecraft.entity.Entity",
+    "field": "field_70163_u",
+    "aliases": [
+      "entity_posY",
+      "posY"
+    ],
+    "mcp": "posY"
+  },
+  "forge:entity_posZ": {
+    "class": "net.minecraft.entity.Entity",
+    "field": "field_70161_v",
+    "aliases": [
+      "entity_posZ",
+      "posZ"
+    ],
+    "mcp": "posZ"
+  },
+  "forge:entity_ticksExisted": {
+    "class": "net.minecraft.entity.Entity",
+    "field": "field_70173_aa",
+    "aliases": [
+      "entity_ticksExisted",
+      "ticksExisted"
+    ],
+    "mcp": "ticksExisted"
+  },
+  "forge:fontRenderer_FONT_HEIGHT": {
+    "class": "net.minecraft.client.gui.FontRenderer",
+    "field": "field_78288_b",
+    "aliases": [
+      "fontRenderer_FONT_HEIGHT",
+      "FONT_HEIGHT"
+    ],
+    "mcp": "FONT_HEIGHT"
+  },
+  "forge:fontRenderer_drawStringWithShadow": {
+    "class": "net.minecraft.client.gui.FontRenderer",
+    "method": "func_175063_a",
+    "aliases": [
+      "fontRenderer_drawStringWithShadow",
+      "drawStringWithShadow"
+    ],
+    "mcp": "drawStringWithShadow"
+  },
+  "forge:fontRenderer_getStringWidth": {
+    "class": "net.minecraft.client.gui.FontRenderer",
+    "method": "func_78256_a",
+    "aliases": [
+      "fontRenderer_getStringWidth",
+      "getStringWidth"
+    ],
+    "mcp": "getStringWidth"
+  },
+  "forge:foodStats_foodLevel": {
+    "class": "net.minecraft.util.FoodStats",
+    "field": "field_75127_a",
+    "aliases": [
+      "foodStats_foodLevel",
+      "foodLevel"
+    ],
+    "mcp": "foodLevel"
+  },
+  "forge:gs_gammaSetting": {
+    "class": "net.minecraft.client.settings.GameSettings",
+    "field": "field_74333_Y",
+    "aliases": [
+      "gs_gammaSetting",
+      "gammaSetting"
+    ],
+    "mcp": "gammaSetting"
+  },
+  "forge:gs_guiScale": {
+    "class": "net.minecraft.client.settings.GameSettings",
+    "field": "field_74335_Z",
+    "aliases": [
+      "gs_guiScale",
+      "guiScale"
+    ],
+    "mcp": "guiScale"
+  },
+  "forge:gs_keyBindAttack": {
+    "class": "net.minecraft.client.settings.GameSettings",
+    "field": "field_74312_F",
+    "aliases": [
+      "gs_keyBindAttack",
+      "keyBindAttack"
+    ],
+    "mcp": "keyBindAttack"
+  },
+  "forge:gs_keyBindBack": {
+    "class": "net.minecraft.client.settings.GameSettings",
+    "field": "field_74368_y",
+    "aliases": [
+      "gs_keyBindBack",
+      "keyBindBack"
+    ],
+    "mcp": "keyBindBack"
+  },
+  "forge:gs_keyBindForward": {
+    "class": "net.minecraft.client.settings.GameSettings",
+    "field": "field_74351_w",
+    "aliases": [
+      "gs_keyBindForward",
+      "keyBindForward"
+    ],
+    "mcp": "keyBindForward"
+  },
+  "forge:gs_keyBindLeft": {
+    "class": "net.minecraft.client.settings.GameSettings",
+    "field": "field_74370_x",
+    "aliases": [
+      "gs_keyBindLeft",
+      "keyBindLeft"
+    ],
+    "mcp": "keyBindLeft"
+  },
+  "forge:gs_keyBindRight": {
+    "class": "net.minecraft.client.settings.GameSettings",
+    "field": "field_74366_z",
+    "aliases": [
+      "gs_keyBindRight",
+      "keyBindRight"
+    ],
+    "mcp": "keyBindRight"
+  },
+  "forge:gs_keyBindSneak": {
+    "class": "net.minecraft.client.settings.GameSettings",
+    "field": "field_74311_E",
+    "aliases": [
+      "gs_keyBindSneak",
+      "keyBindSneak"
+    ],
+    "mcp": "keyBindSneak"
+  },
+  "forge:gs_keyBindUseItem": {
+    "class": "net.minecraft.client.settings.GameSettings",
+    "field": "field_74313_G",
+    "aliases": [
+      "gs_keyBindUseItem",
+      "keyBindUseItem"
+    ],
+    "mcp": "keyBindUseItem"
+  },
+  "forge:gs_mouseSensitivity": {
+    "class": "net.minecraft.client.settings.GameSettings",
+    "field": "field_74341_c",
+    "aliases": [
+      "gs_mouseSensitivity",
+      "mouseSensitivity"
+    ],
+    "mcp": "mouseSensitivity"
+  },
+  "forge:iblockstate_block": {
+    "class": "net.minecraft.block.state.IBlockState",
+    "aliases": [
+      "iblockstate_block",
+      "block"
+    ],
+    "mcp": "getBlock",
+    "method": "func_177230_c"
+  },
+  "forge:ichatComponent_formattedText": {
+    "class": "net.minecraft.util.IChatComponent",
+    "aliases": [
+      "ichatComponent_formattedText",
+      "formattedText"
+    ],
+    "method": "func_150254_d",
+    "mcp": "getFormattedText"
+  },
+  "forge:inventory_currentItem": {
+    "class": "net.minecraft.entity.player.InventoryPlayer",
+    "field": "field_70461_c",
+    "aliases": [
+      "inventory_currentItem",
+      "currentItem"
+    ],
+    "mcp": "currentItem"
+  },
+  "forge:inventory_getHeldItem": {
+    "class": "net.minecraft.entity.player.InventoryPlayer",
+    "method": "func_70448_g",
+    "aliases": [
+      "inventory_getHeldItem",
+      "getCurrentItem"
+    ],
+    "mcp": "getCurrentItem"
+  },
+  "forge:inventory_getStackInSlot": {
+    "class": "net.minecraft.entity.player.InventoryPlayer",
+    "method": "func_70301_a",
+    "aliases": [
+      "inventory_getStackInSlot",
+      "getStackInSlot"
+    ],
+    "mcp": "getStackInSlot"
+  },
+  "forge:itemStack_hasTagCompound": {
+    "class": "net.minecraft.item.ItemStack",
+    "method": "func_77942_o",
+    "aliases": [
+      "itemStack_hasTagCompound",
+      "hasTagCompound"
+    ],
+    "mcp": "hasTagCompound"
+  },
+  "forge:itemStack_item": {
+    "class": "net.minecraft.item.ItemStack",
+    "field": "field_151002_e",
+    "aliases": [
+      "itemStack_item",
+      "item"
+    ],
+    "mcp": "item"
+  },
+  "forge:itemStack_tagCompound": {
+    "class": "net.minecraft.item.ItemStack",
+    "field": "field_77990_d",
+    "aliases": [
+      "itemStack_tagCompound",
+      "tagCompound"
+    ],
+    "mcp": "stackTagCompound"
+  },
+  "forge:item_getDigSpeed": {
+    "class": "net.minecraft.item.Item",
+    "method": "func_150893_a",
+    "aliases": [
+      "item_getDigSpeed",
+      "getDigSpeed"
+    ],
+    "mcp": "getStrVsBlock"
+  },
+  "forge:keybinding_pressed": {
+    "class": "net.minecraft.client.settings.KeyBinding",
+    "field": "field_74513_e",
+    "aliases": [
+      "keybinding_pressed",
+      "pressed"
+    ],
+    "mcp": "pressed"
+  },
+  "forge:mc_addScheduledTask": {
+    "class": "net.minecraft.client.Minecraft",
+    "method": "func_152343_a",
+    "aliases": [
+      "mc_addScheduledTask",
+      "addScheduledTask"
+    ],
+    "mcp": "addScheduledTask"
+  },
+  "forge:mc_displayHeight": {
+    "class": "net.minecraft.client.Minecraft",
+    "field": "field_71440_d",
+    "aliases": [
+      "mc_displayHeight",
+      "displayHeight"
+    ],
+    "mcp": "displayHeight"
+  },
+  "forge:mc_displayWidth": {
+    "class": "net.minecraft.client.Minecraft",
+    "field": "field_71443_c",
+    "aliases": [
+      "mc_displayWidth",
+      "displayWidth"
+    ],
+    "mcp": "displayWidth"
+  },
+  "forge:mc_entityRenderer": {
+    "class": "net.minecraft.client.Minecraft",
+    "field": "field_71460_t",
+    "aliases": [
+      "mc_entityRenderer",
+      "entityRenderer"
+    ],
+    "mcp": "entityRenderer"
+  },
+  "forge:mc_fontRendererObj": {
+    "class": "net.minecraft.client.Minecraft",
+    "field": "field_71466_p",
+    "aliases": [
+      "mc_fontRendererObj",
+      "fontRendererObj"
+    ],
+    "mcp": "fontRendererObj"
+  },
+  "forge:mc_gameSettings": {
+    "class": "net.minecraft.client.Minecraft",
+    "field": "field_71474_y",
+    "aliases": [
+      "mc_gameSettings",
+      "gameSettings"
+    ],
+    "mcp": "gameSettings"
+  },
+  "forge:mc_getMinecraft": {
+    "class": "net.minecraft.client.Minecraft",
+    "method": "func_71410_x",
+    "aliases": [
+      "mc_getMinecraft",
+      "getMinecraft"
+    ],
+    "mcp": "getMinecraft"
+  },
+  "forge:mc_leftClickCounter": {
+    "class": "net.minecraft.client.Minecraft",
+    "field": "field_71429_W",
+    "aliases": [
+      "mc_leftClickCounter",
+      "leftClickCounter"
+    ],
+    "mcp": "leftClickCounter"
+  },
+  "forge:mc_netHandler": {
+    "class": "net.minecraft.client.Minecraft",
+    "field": "field_71453_ak",
+    "aliases": [
+      "mc_netHandler",
+      "netHandler"
+    ],
+    "mcp": "myNetworkManager"
+  },
+  "forge:mc_objectMouseOver": {
+    "class": "net.minecraft.client.Minecraft",
+    "field": "field_71476_x",
+    "aliases": [
+      "mc_objectMouseOver",
+      "objectMouseOver"
+    ],
+    "mcp": "objectMouseOver"
+  },
+  "forge:mc_playerController": {
+    "class": "net.minecraft.client.Minecraft",
+    "field": "field_71442_b",
+    "aliases": [
+      "mc_playerController",
+      "playerController"
+    ],
+    "mcp": "playerController"
+  },
+  "forge:mc_rightClickDelayTimer": {
+    "class": "net.minecraft.client.Minecraft",
+    "field": "field_71467_ac",
+    "aliases": [
+      "mc_rightClickDelayTimer",
+      "rightClickDelayTimer"
+    ],
+    "mcp": "rightClickDelayTimer"
+  },
+  "forge:mc_thePlayer": {
+    "class": "net.minecraft.client.Minecraft",
+    "field": "field_71439_g",
+    "aliases": [
+      "mc_thePlayer",
+      "thePlayer"
+    ],
+    "mcp": "thePlayer"
+  },
+  "forge:mc_theWorld": {
+    "class": "net.minecraft.client.Minecraft",
+    "field": "field_71441_e",
+    "aliases": [
+      "mc_theWorld",
+      "theWorld"
+    ],
+    "mcp": "theWorld"
+  },
+  "forge:movingObjectPosition_blockPos": {
+    "class": "net.minecraft.util.MovingObjectPosition",
+    "field": "field_178783_e",
+    "aliases": [
+      "movingObjectPosition_blockPos",
+      "blockPos"
+    ],
+    "mcp": "blockPos"
+  },
+  "forge:movingObjectPosition_entityHit": {
+    "class": "net.minecraft.util.MovingObjectPosition",
+    "field": "field_72308_g",
+    "aliases": [
+      "movingObjectPosition_entityHit",
+      "entityHit"
+    ],
+    "mcp": "entityHit"
+  },
+  "forge:movingObjectPosition_typeOfHit": {
+    "class": "net.minecraft.util.MovingObjectPosition",
+    "field": "field_72313_a",
+    "aliases": [
+      "movingObjectPosition_typeOfHit",
+      "typeOfHit"
+    ],
+    "mcp": "typeOfHit"
+  },
+  "forge:nbtBase_getCompoundTag": {
+    "class": "net.minecraft.nbt.NBTTagCompound",
+    "method": "func_74775_l",
+    "aliases": [
+      "nbtBase_getCompoundTag",
+      "getCompoundTag"
+    ],
+    "mcp": "getCompoundTag"
+  },
+  "forge:nbtBase_getInteger": {
+    "class": "net.minecraft.nbt.NBTTagCompound",
+    "method": "func_74762_e",
+    "aliases": [
+      "nbtBase_getInteger",
+      "getInteger"
+    ],
+    "mcp": "getInteger"
+  },
+  "forge:nbtBase_hasKey": {
+    "class": "net.minecraft.nbt.NBTTagCompound",
+    "method": "func_150297_b",
+    "aliases": [
+      "nbtBase_hasKey",
+      "hasKey"
+    ],
+    "mcp": "hasKey"
+  },
+  "forge:netHandlerPlayClient_networkManager": {
+    "class": "net.minecraft.client.network.NetHandlerPlayClient",
+    "field": "field_147302_e",
+    "aliases": [
+      "netHandlerPlayClient_networkManager",
+      "networkManager"
+    ],
+    "mcp": "netManager"
+  },
+  "forge:netHandler_addToSendQueue": {
+    "class": "net.minecraft.client.network.NetHandlerPlayClient",
+    "method": "func_147297_a",
+    "aliases": [
+      "netHandler_addToSendQueue",
+      "addToSendQueue"
+    ],
+    "mcp": "addToSendQueue"
+  },
+  "forge:playerController_isHittingBlock": {
+    "class": "net.minecraft.client.multiplayer.PlayerControllerMP",
+    "field": "field_78778_j",
+    "aliases": [
+      "playerController_isHittingBlock",
+      "isHittingBlock"
+    ],
+    "mcp": "isHittingBlock"
+  },
+  "forge:player_eyeHeight": {
+    "class": "net.minecraft.entity.Entity",
+    "aliases": [
+      "player_eyeHeight",
+      "eyeHeight"
+    ],
+    "mcp": "getEyeHeight",
+    "method": "func_70047_e"
+  },
+  "forge:player_foodStats": {
+    "class": "net.minecraft.entity.player.EntityPlayer",
+    "field": "field_71100_bB",
+    "aliases": [
+      "player_foodStats",
+      "foodStats"
+    ],
+    "mcp": "foodStats"
+  },
+  "forge:player_heldItem": {
+    "class": "net.minecraft.entity.player.EntityPlayer",
+    "aliases": [
+      "player_heldItem",
+      "heldItem"
+    ],
+    "method": "func_70694_bm",
+    "mcp": "getHeldItem"
+  },
+  "forge:player_inventory": {
+    "class": "net.minecraft.entity.player.EntityPlayer",
+    "field": "field_71071_by",
+    "aliases": [
+      "player_inventory",
+      "inventory"
+    ],
+    "mcp": "inventory"
+  },
+  "forge:player_isBlocking": {
+    "class": "net.minecraft.entity.player.EntityPlayer",
+    "aliases": [
+      "player_isBlocking",
+      "isBlocking"
+    ],
+    "method": "func_70632_aY",
+    "mcp": "isBlocking"
+  },
+  "forge:player_isSneaking": {
+    "class": "net.minecraft.entity.Entity",
+    "aliases": [
+      "player_isSneaking",
+      "isSneaking"
+    ],
+    "method": "func_70093_af",
+    "mcp": "isSneaking"
+  },
+  "forge:player_isSprinting": {
+    "class": "net.minecraft.entity.Entity",
+    "aliases": [
+      "player_isSprinting",
+      "isSprinting"
+    ],
+    "method": "func_70051_ag",
+    "mcp": "isSprinting"
+  },
+  "forge:player_jump": {
+    "class": "net.minecraft.entity.player.EntityPlayer",
+    "method": "func_70664_aZ",
+    "aliases": [
+      "player_jump",
+      "jump"
+    ],
+    "mcp": "jump"
+  },
+  "forge:player_jumpTicks": {
+    "class": "net.minecraft.entity.EntityLivingBase",
+    "field": "field_70773_bE",
+    "aliases": [
+      "player_jumpTicks",
+      "jumpTicks"
+    ],
+    "mcp": "jumpTicks"
+  },
+  "forge:player_rotationPitch": {
+    "class": "net.minecraft.entity.Entity",
+    "field": "field_70125_A",
+    "aliases": [
+      "player_rotationPitch",
+      "rotationPitch"
+    ],
+    "mcp": "rotationPitch"
+  },
+  "forge:player_rotationYaw": {
+    "class": "net.minecraft.entity.Entity",
+    "field": "field_70177_z",
+    "aliases": [
+      "player_rotationYaw",
+      "rotationYaw"
+    ],
+    "mcp": "rotationYaw"
+  },
+  "forge:player_sendQueue": {
+    "class": "net.minecraft.client.entity.EntityPlayerSP",
+    "field": "field_71174_a",
+    "aliases": [
+      "player_sendQueue",
+      "sendQueue"
+    ],
+    "mcp": "sendQueue"
+  },
+  "forge:player_setSneaking": {
+    "class": "net.minecraft.entity.Entity",
+    "method": "func_70095_a",
+    "aliases": [
+      "player_setSneaking"
+    ],
+    "mcp": "setSneaking"
+  },
+  "forge:player_setSprinting": {
+    "class": "net.minecraft.entity.Entity",
+    "method": "func_70031_b",
+    "aliases": [
+      "player_setSprinting"
+    ],
+    "mcp": "setSprinting"
+  },
+  "forge:player_stopUsingItem": {
+    "class": "net.minecraft.entity.player.EntityPlayer",
+    "method": "func_71034_by",
+    "aliases": [
+      "player_stopUsingItem",
+      "stopUsingItem"
+    ],
+    "mcp": "stopUsingItem"
+  },
+  "forge:scorePlayerTeam_membershipCollection": {
+    "class": "net.minecraft.scoreboard.ScorePlayerTeam",
+    "field": "field_96676_c",
+    "aliases": [
+      "scorePlayerTeam_membershipCollection",
+      "membershipCollection"
+    ],
+    "mcp": "membershipSet"
+  },
+  "forge:scorePlayerTeam_registeredName": {
+    "class": "net.minecraft.scoreboard.ScorePlayerTeam",
+    "field": "field_96675_b",
+    "aliases": [
+      "scorePlayerTeam_registeredName",
+      "registeredName"
+    ],
+    "mcp": "registeredName"
+  },
+  "forge:scoreboard_teams": {
+    "class": "net.minecraft.scoreboard.Scoreboard",
+    "field": "field_96542_e",
+    "aliases": [
+      "scoreboard_teams",
+      "teams"
+    ],
+    "mcp": "teams"
+  },
+  "forge:team_contains": {
+    "class": "net.minecraft.scoreboard.Team",
+    "method": "func_177730_a",
+    "aliases": [
+      "team_contains",
+      "team_func_96562_d",
+      "contains"
+    ],
+    "mcp": "contains"
+  },
+  "forge:velocity_motionX": {
+    "class": "net.minecraft.network.play.server.S12PacketEntityVelocity",
+    "field": "field_149415_b",
+    "aliases": [
+      "velocity_motionX",
+      "motionX"
+    ],
+    "mcp": "motionX"
+  },
+  "forge:velocity_motionY": {
+    "class": "net.minecraft.network.play.server.S12PacketEntityVelocity",
+    "field": "field_149416_c",
+    "aliases": [
+      "velocity_motionY",
+      "motionY"
+    ],
+    "mcp": "motionY"
+  },
+  "forge:velocity_motionZ": {
+    "class": "net.minecraft.network.play.server.S12PacketEntityVelocity",
+    "field": "field_149414_d",
+    "aliases": [
+      "velocity_motionZ",
+      "motionZ"
+    ],
+    "mcp": "motionZ"
+  },
+  "forge:world_getBlockState": {
+    "class": "net.minecraft.world.World",
+    "method": "func_180495_p",
+    "aliases": [
+      "world_getBlockState",
+      "getBlockState"
+    ],
+    "mcp": "getBlockState"
+  },
+  "forge:world_getEntityByID": {
+    "class": "net.minecraft.world.World",
+    "method": "func_73045_a",
+    "aliases": [
+      "world_getEntityByID",
+      "getEntityByID"
+    ],
+    "mcp": "getEntityByID"
+  },
+  "forge:world_loadedEntityList": {
+    "class": "net.minecraft.world.World",
+    "field": "field_72996_f",
+    "aliases": [
+      "world_loadedEntityList",
+      "loadedEntityList"
+    ],
+    "mcp": "loadedEntityList"
+  },
+  "forge:world_rayTraceBlocks": {
+    "class": "net.minecraft.world.World",
+    "method": "func_147447_a",
+    "aliases": [
+      "world_rayTraceBlocks",
+      "rayTraceBlocks"
+    ],
+    "mcp": "rayTraceBlocks"
+  },
+  "forge:world_scoreboard": {
+    "class": "net.minecraft.world.World",
+    "aliases": [
+      "world_scoreboard",
+      "scoreboard"
+    ],
+    "method": "func_96441_U",
+    "mcp": "getScoreboard"
+  },
+  "forge:world_worldTime": {
+    "class": "net.minecraft.world.World",
+    "aliases": [
+      "world_worldTime",
+      "worldTime"
+    ],
+    "mcp": "getWorldTime",
+    "method": "func_72820_D"
+  },
+  "forge:mc_mouseHelper": {
+    "class": "net.minecraft.client.Minecraft",
+    "field": "field_71417_B",
+    "aliases": [
+      "mc_mouseHelper",
+      "mouseHelper"
+    ],
+    "mcp": "mouseHelper"
+  },
+  "forge:mouseHelper_ungrabMouseCursor": {
+    "class": "net.minecraft.util.MouseHelper",
+    "method": "func_74373_b",
+    "aliases": [
+      "mouseHelper_ungrabMouseCursor",
+      "ungrabMouseCursor"
+    ],
+    "mcp": "ungrabMouseCursor"
+  },
+  "forge:mouseHelper_grabMouseCursor": {
+    "class": "net.minecraft.util.MouseHelper",
+    "method": "func_74372_a",
+    "aliases": [
+      "mouseHelper_grabMouseCursor",
+      "grabMouseCursor"
+    ],
+    "mcp": "grabMouseCursor"
+  },
+  "forge:mc_displayGuiScreen": {
+    "class": "net.minecraft.client.Minecraft",
+    "method": "func_147108_a",
+    "aliases": [
+      "mc_displayGuiScreen",
+      "displayGuiScreen"
+    ],
+    "mcp": "displayGuiScreen"
+  },
+  "forge:mc_currentScreen": {
+    "class": "net.minecraft.client.Minecraft",
+    "field": "field_71462_r",
+    "aliases": [
+      "mc_currentScreen",
+      "currentScreen"
+    ],
+    "mcp": "currentScreen"
+  }
+}

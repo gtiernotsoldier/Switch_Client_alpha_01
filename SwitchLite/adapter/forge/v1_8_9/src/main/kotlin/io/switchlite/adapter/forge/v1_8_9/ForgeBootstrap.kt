@@ -84,82 +84,85 @@ object ForgeBootstrap {
     }
 
     /**
-     * Release / restore the mouse according to the ClickGUI state.
+     * Keep the mouse in the correct grab state for the ClickGUI.
      *
-     * CRITICAL: All LWJGL Mouse operations must run on the MC render thread
-     * (our tick() runs on the Agent background thread). We therefore post a
-     * runnable via Minecraft.addScheduledTask, and we use the vanilla
+     * MUST run on the MC render thread — render() is invoked by the Javassist
+     * hook (Display.update) on the render thread every frame, so this is safe
+     * to call directly from there. We use the vanilla
      * MouseHelper.ungrabMouseCursor()/grabMouseCursor() instead of raw
      * Mouse.setGrabbed(): MouseHelper also flips Minecraft's own
      * mouseGrabbed state, which is what actually stops camera look and shows
-     * the cursor. Raw setGrabbed() from a background thread left the cursor
-     * invisible and the crosshair moving.
+     * the cursor. Raw setGrabbed() left the cursor invisible and the
+     * crosshair moving.
+     *
+     * IMPORTANT: Our ClickGUI is NOT a real MC GuiScreen (it only flips
+     * EventBridge.isGuiOpen). MC therefore still thinks it is in-game while
+     * the GUI is open and re-grabs the cursor every frame in runTick. To win
+     * that fight we re-ungrab EVERY frame while the GUI is open. When it
+     * closes we grab once to hand control back to normal gameplay.
      */
-    private fun handleGuiMouseGrab() {
-        if (EventBridge.isGuiOpen == mouseUnlocked) return
-        mouseUnlocked = EventBridge.isGuiOpen
-        val mc = MappingContext.invokeMethod(null, "forge:mc_getMinecraft") ?: return
-        val callable = java.util.concurrent.Callable<Any?> {
-            try {
-                val mouseHelper = MappingContext.getFieldValue(mc, "forge:mc_mouseHelper")
-                if (mouseHelper != null) {
-                    if (mouseUnlocked) {
-                        MappingContext.invokeMethod(mouseHelper, "forge:mouseHelper_ungrabMouseCursor")
-                    } else {
-                        MappingContext.invokeMethod(mouseHelper, "forge:mouseHelper_grabMouseCursor")
-                    }
-                }
-            } catch (_: Exception) {}
-            null
-        }
-        // func_152343_a takes Callable, not Runnable (verified 1.8.8 SRG)
-        MappingContext.invokeMethod(mc, "forge:mc_addScheduledTask", callable)
+    private fun applyGuiMouseGrab(mc: Any) {
+        try {
+            val mouseHelper = MappingContext.getFieldValue(mc, "forge:mc_mouseHelper")
+            if (mouseHelper == null) return
+            if (EventBridge.isGuiOpen) {
+                // Re-assert every frame: MC re-grabs each runTick because it
+                // doesn't know about our overlay GUI.
+                MappingContext.invokeMethod(mouseHelper, "forge:mouseHelper_ungrabMouseCursor")
+                mouseUnlocked = true
+            } else if (mouseUnlocked) {
+                // GUI just closed — hand the mouse back to MC (grab once).
+                MappingContext.invokeMethod(mouseHelper, "forge:mouseHelper_grabMouseCursor")
+                mouseUnlocked = false
+            }
+        } catch (_: Exception) {}
     }
 
     /**
      * Read the LWJGL mouse into EventBridge (scaled GUI coordinates) and
-     * forward clicks to ClickGUI. Also posted to the render thread.
+     * forward clicks to ClickGUI. Runs on the MC render thread (from render()).
      */
-    private fun handleGuiMouseInput() {
-        val mc = MappingContext.invokeMethod(null, "forge:mc_getMinecraft") ?: return
-        val callable = java.util.concurrent.Callable<Any?> {
-            try {
-                val displayWidth = MappingContext.getFieldValue(mc, "forge:mc_displayWidth") as? Int ?: 854
-                val displayHeight = MappingContext.getFieldValue(mc, "forge:mc_displayHeight") as? Int ?: 480
-                val guiScaleSetting = MappingContext.getFieldValue(mc, "forge:mc_gameSettings")?.let {
-                    MappingContext.getFieldValue(it, "forge:gs_guiScale") as? Int ?: 0
-                } ?: 0
-                val scale = computeGuiScale(displayWidth, displayHeight, guiScaleSetting)
+    private fun applyGuiMouseInput(mc: Any) {
+        try {
+            val displayWidth = MappingContext.getFieldValue(mc, "forge:mc_displayWidth") as? Int ?: 854
+            val displayHeight = MappingContext.getFieldValue(mc, "forge:mc_displayHeight") as? Int ?: 480
+            val guiScaleSetting = MappingContext.getFieldValue(mc, "forge:mc_gameSettings")?.let {
+                MappingContext.getFieldValue(it, "forge:gs_guiScale") as? Int ?: 0
+            } ?: 0
+            val scale = computeGuiScale(displayWidth, displayHeight, guiScaleSetting)
 
-                val rawX = (mouseGetX?.invoke(null) as? Int) ?: 0
-                val rawY = (mouseGetY?.invoke(null) as? Int) ?: 0
-                EventBridge.guiMouseX = rawX / scale
-                EventBridge.guiMouseY = (displayHeight - rawY) / scale
-                EventBridge.guiLeftMouseDown = (mouseIsButtonDown.invoke(null, 0) as? Boolean) ?: false
+            val rawX = (mouseGetX?.invoke(null) as? Int) ?: 0
+            val rawY = (mouseGetY?.invoke(null) as? Int) ?: 0
+            EventBridge.guiMouseX = rawX / scale
+            EventBridge.guiMouseY = (displayHeight - rawY) / scale
+            EventBridge.guiLeftMouseDown = (mouseIsButtonDown.invoke(null, 0) as? Boolean) ?: false
 
-                // Vanilla 1.8 fontHeight = 9 -> panel line height = 12
-                ClickGUI.handleMouseInput(
-                    EventBridge.guiMouseX,
-                    EventBridge.guiMouseY,
-                    EventBridge.guiLeftMouseDown,
-                    displayWidth / scale,
-                    displayHeight / scale,
-                    12
-                )
-            } catch (_: Exception) {}
-            null
-        }
-        // func_152343_a takes Callable, not Runnable (verified 1.8.8 SRG)
-        MappingContext.invokeMethod(mc, "forge:mc_addScheduledTask", callable)
+            // Vanilla 1.8 fontHeight = 9 -> panel line height = 12
+            ClickGUI.handleMouseInput(
+                EventBridge.guiMouseX,
+                EventBridge.guiMouseY,
+                EventBridge.guiLeftMouseDown,
+                displayWidth / scale,
+                displayHeight / scale,
+                12
+            )
+        } catch (_: Exception) {}
     }
 
+    /**
+     * Called by Agent.java at 20Hz on a background thread.
+     *
+     * RESPONSIBILITY: game/module logic ONLY. All UI interaction (mouse grab,
+     * GUI mouse input) lives in render() on the MC render thread — it must NOT
+     * be touched from this background thread (LWJGL Mouse / Keyboard state is
+     * owned by the render thread; mutating it from here races MC and caused
+     * the cursor/crosshair glitches).
+     *
+     * Extracts player state, dispatches to the module layer.
+     */
     fun tick() {
-        // Mouse grab control must run every tick (restores grab when GUI closes)
-        try { handleGuiMouseGrab() } catch (_: Exception) {}
-
         if (EventBridge.isGuiOpen) {
-            // ClickGUI open: pause all module logic, only feed the mouse
-            try { handleGuiMouseInput() } catch (_: Exception) {}
+            // ClickGUI open: pause all module logic. UI is driven from render().
             return
         }
 
@@ -267,6 +270,17 @@ object ForgeBootstrap {
                 if (!renderDiagLogged) { CoreLogger.error("[ForgeBootstrap.render] mc_getMinecraft returned null"); renderDiagLogged = true }
                 return
             }
+
+            // ── UI interaction (render thread — this is its home) ──
+            // render() is called by the Javassist hook on the MC render thread
+            // every frame. Mouse grab + GUI mouse input are UI concerns and must
+            // run here, NOT on the Agent background tick thread (LWJGL Mouse is
+            // owned by the render thread; touching it from the background raced
+            // MC and caused the cursor/crosshair glitches).
+            try { applyGuiMouseGrab(mc) } catch (_: Exception) {}
+            if (EventBridge.isGuiOpen) {
+                try { applyGuiMouseInput(mc) } catch (_: Exception) {}
+            }
             // NOTE: mc_thePlayer is NOT required for HUD rendering — the overlay
             // only needs mc + fontRendererObj. On the main menu thePlayer is
             // legitimately null (normal MC state), so early-returning here is
@@ -335,3 +349,4 @@ object ForgeBootstrap {
         CoreLogger.info("[ForgeBootstrap] Disconnected — packet interceptor ejected")
     }
 }
+

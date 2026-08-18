@@ -5,18 +5,25 @@ import io.switchlite.adapter.common.api.KeyCode
 import io.switchlite.adapter.common.module.Category
 import io.switchlite.adapter.common.module.Module
 import io.switchlite.adapter.common.module.ModuleRegistry
+import io.switchlite.adapter.common.option.ConfigManager
+import io.switchlite.adapter.common.option.OptionType
+import io.switchlite.adapter.common.ui.Animation
 
 /**
- * ClickGUI module.
+ * ClickGUI module — Nemui-style.
  *
  * Toggle with Right Shift, close with ESC.
- * Each module category gets its OWN draggable panel (Combat, Movement,
- * Player, Render, World...), like mainstream clients. The overlay renders
- * the panels; this module owns geometry, layout, hit-testing and dragging.
+ * Each category gets its own draggable, collapsible panel. Module rows
+ * can be expanded to reveal their settings (sliders / toggles / mode
+ * cycles). All geometry, hit-testing and interaction live here as pure
+ * data; OverlayRenderer draws exactly what this object lays out.
  *
- * Panel positions live in [panelPositions] and are draggable by their title
- * bars. Module rows are click-to-toggle; hit-testing uses the exact same
- * [layout] rects that OverlayRenderer draws.
+ * Interaction priority (per mouse press):
+ *   1. Panel title bar            → drag panel
+ *   2. Collapse arrow (title bar) → expand / collapse panel
+ *   3. Module row body            → expand / collapse settings
+ *   4. Module toggle dot (right)  → toggle module
+ *   5. Setting item               → slider drag / toggle / mode cycle
  */
 object ClickGUI : Module("ClickGUI", Category.RENDER) {
 
@@ -28,68 +35,228 @@ object ClickGUI : Module("ClickGUI", Category.RENDER) {
     /** Panel width for every category panel. */
     const val PANEL_WIDTH = 190
 
+    /** Hit-test size of the per-row module toggle dot. */
+    const val TOGGLE_DOT_SIZE = 10
+
     private var isOpen = false
 
-    // ── Per-category panel geometry ──
-    data class PanelPos(var x: Int, var y: Int)
+    // ═══════════════ Panel state ═══════════════
 
-    private val panelPositions = mutableMapOf<Category, PanelPos>()
+    data class Panel(
+        var x: Int,
+        var y: Int,
+        var expanded: Boolean = true,
+        val heightAnim: Animation = Animation(0f)
+    )
 
-    /** Panel position for a category (cascade-arranged on first open). */
-    fun panelPos(cat: Category): PanelPos = panelPositions.getOrPut(cat) {
+    private val panels = mutableMapOf<Category, Panel>()
+
+    /** Panel state for a category (cascade-arranged on first open). */
+    fun panel(cat: Category): Panel = panels.getOrPut(cat) {
         val idx = cat.ordinal
-        PanelPos(20 + idx * 30, 20 + idx * 24)
+        Panel(20 + idx * 30, 20 + idx * 24)
     }
 
     /** Height of the draggable title bar. */
     fun titleBarHeight(lineHeight: Int): Int = lineHeight + 2
 
-    /** A tappable module row inside a category panel. */
+    // ═══════════════ Setting items ═══════════════
+
+    sealed class SettingItem {
+        abstract val key: String
+        abstract val name: String
+    }
+
+    data class FloatItem(
+        override val key: String,
+        override val name: String,
+        val value: Float,
+        val min: Float,
+        val max: Float,
+        val unit: String
+    ) : SettingItem()
+
+    data class IntItem(
+        override val key: String,
+        override val name: String,
+        val value: Int,
+        val min: Int,
+        val max: Int,
+        val unit: String
+    ) : SettingItem()
+
+    data class BoolItem(
+        override val key: String,
+        override val name: String,
+        val value: Boolean
+    ) : SettingItem()
+
+    data class ChoiceItem(
+        override val key: String,
+        override val name: String,
+        val value: String,
+        val choices: List<String>
+    ) : SettingItem()
+
+    data class EnumItem(
+        override val key: String,
+        override val name: String,
+        val value: String,
+        val choices: List<String>
+    ) : SettingItem()
+
+    // ═══════════════ Module rows ═══════════════
+
+    /** One module row. When [expanded], its settings are laid out below. */
     data class ModuleRow(
         val x: Int,
         val y: Int,
         val width: Int,
         val height: Int,
-        val module: Module
-    )
+        val module: Module,
+        val expanded: Boolean,
+        val settings: List<SettingItem>
+    ) {
+        val toggleDotX: Int get() = x + width - TOGGLE_DOT_SIZE - 6
+        val toggleDotY: Int get() = y + (height - TOGGLE_DOT_SIZE) / 2
+    }
+
+    /** Modules whose settings are currently expanded (by module name). */
+    private val expandedModules = mutableSetOf<String>()
+
+    fun isModuleExpanded(module: Module): Boolean = module.name in expandedModules
 
     /**
-     * Module rows for ONE category panel.
-     * y increments per row — fixes the earlier overlap bug.
+     * Build the settings list of a module from ConfigManager introspection.
+     * Sliders/toggles/cycles are rebuilt on every layout so values stay live.
      */
-    fun layout(cat: Category, lineHeight: Int): List<ModuleRow> {
-        val pos = panelPos(cat)
-        val modules = ModuleRegistry.getByCategory(cat).filter { !it.hidden }
-        val startY = pos.y + titleBarHeight(lineHeight)
-        return modules.mapIndexed { i, m ->
-            ModuleRow(pos.x + 8, startY + i * lineHeight, PANEL_WIDTH - 16, lineHeight, m)
+    fun settingsOf(module: Module): List<SettingItem> {
+        return ConfigManager.optionsOf(module.name).mapNotNull { desc ->
+            when (desc.type) {
+                OptionType.FLOAT -> {
+                    val def = desc.meta.default as? Float ?: 0f
+                    FloatItem(
+                        key = desc.key,
+                        name = desc.name,
+                        value = ConfigManager.read(desc.key, def),
+                        min = desc.meta.rangeMin,
+                        max = desc.meta.rangeMax,
+                        unit = desc.meta.unit
+                    )
+                }
+                OptionType.INT -> {
+                    val def = desc.meta.default as? Int ?: 0
+                    IntItem(
+                        key = desc.key,
+                        name = desc.name,
+                        value = ConfigManager.read(desc.key, def),
+                        min = desc.meta.intRangeMin,
+                        max = desc.meta.intRangeMax,
+                        unit = desc.meta.unit
+                    )
+                }
+                OptionType.BOOLEAN -> BoolItem(
+                    key = desc.key,
+                    name = desc.name,
+                    value = ConfigManager.read(desc.key, desc.meta.default as? Boolean ?: false)
+                )
+                OptionType.CHOICES -> {
+                    val def = desc.meta.default as? String ?: return@mapNotNull null
+                    ChoiceItem(
+                        key = desc.key,
+                        name = desc.name,
+                        value = ConfigManager.read(desc.key, def),
+                        choices = desc.meta.displayChoices() ?: emptyList()
+                    )
+                }
+                OptionType.ENUM -> {
+                    val def = desc.meta.default as? Enum<*> ?: return@mapNotNull null
+                    val names = def.javaClass.enumConstants?.map { (it as Enum<*>).name } ?: emptyList()
+                    val current = ConfigManager.read<Enum<*>>(desc.key, def)
+                    EnumItem(desc.key, desc.name, current.name, names)
+                }
+                // STRING / TRIGGER_OPTIONS / PROBABILITY: no interactive widget (yet).
+                else -> null
+            }
         }
     }
 
-    /** Total height of one category panel (title + rows + footer pad). */
-    fun panelHeight(cat: Category, lineHeight: Int): Int {
-        val n = ModuleRegistry.getByCategory(cat).filter { !it.hidden }.size
-        return titleBarHeight(lineHeight) + n * lineHeight + 12
+    // ═══════════════ Layout ═══════════════
+
+    /**
+     * Module rows for ONE category panel, including expanded settings rows.
+     * Y positions are absolute and shared with OverlayRenderer for hit-testing.
+     */
+    fun layout(cat: Category, lineHeight: Int): List<ModuleRow> {
+        val pos = panel(cat)
+        val modules = ModuleRegistry.getByCategory(cat).filter { !it.hidden }
+        var y = pos.y + titleBarHeight(lineHeight)
+        return modules.map { m ->
+            val expanded = m.name in expandedModules
+            val settings = if (expanded) settingsOf(m) else emptyList()
+            val row = ModuleRow(pos.x + 8, y, PANEL_WIDTH - 16, lineHeight, m, expanded, settings)
+            y += lineHeight + settings.size * lineHeight
+            row
+        }
     }
 
-    /** All non-empty category panels with their rows (render + hit-test). */
+    /** Full height of one panel (title + rows + expanded settings + footer pad). */
+    fun panelHeight(cat: Category, lineHeight: Int): Int {
+        var h = titleBarHeight(lineHeight)
+        for (row in layout(cat, lineHeight)) {
+            h += row.height + row.settings.size * lineHeight
+        }
+        return h + 12
+    }
+
+    /** All non-empty category panels with their rows. */
     fun categoriesWithRows(lineHeight: Int): List<Pair<Category, List<ModuleRow>>> {
         return Category.values()
             .filter { cat -> ModuleRegistry.getByCategory(cat).any { !it.hidden } }
             .map { cat -> cat to layout(cat, lineHeight) }
     }
 
-    // ── Drag state ──
+    /** Advance panel height animations; call every frame while open. */
+    fun tickAnimations(lineHeight: Int) {
+        for ((cat, _) in categoriesWithRows(lineHeight)) {
+            val p = panel(cat)
+            val target = if (p.expanded) panelHeight(cat, lineHeight) - titleBarHeight(lineHeight).toFloat() else 0f
+            p.heightAnim.setTarget(target, 16f)
+        }
+    }
+
+    /** Content clip bottom (y) for a panel — drives the collapse animation. */
+    fun contentClipBottom(cat: Category, lineHeight: Int): Int {
+        val p = panel(cat)
+        return p.y + titleBarHeight(lineHeight) + p.heightAnim.valueI
+    }
+
+    // ═══════════════ Drag state ═══════════════
+
     private var dragging = false
     private var dragCat: Category? = null
     private var dragOffsetX = 0
     private var dragOffsetY = 0
     private var wasLeftDown = false
 
+    /** Active slider drag (settings panel). */
+    private data class SliderDrag(
+        val key: String,
+        val isInt: Boolean,
+        val min: Float,
+        val max: Float,
+        val trackStart: Float,
+        val trackWidth: Float
+    )
+
+    private var sliderDrag: SliderDrag? = null
+
+    // ═══════════════ Mouse input ═══════════════
+
     /**
      * Handle mouse input while the GUI is open (scaled GUI coords, y down).
-     * - Click on a panel title bar: drag that panel.
-     * - Click on a module row: toggle the module.
+     * Priority: title bar drag → collapse arrow → module row body → toggle dot
+     * → setting item (slider drag / toggle / mode cycle).
      */
     fun handleMouseInput(
         x: Int,
@@ -103,47 +270,148 @@ object ClickGUI : Module("ClickGUI", Category.RENDER) {
             wasLeftDown = false
             dragging = false
             dragCat = null
+            sliderDrag = null
             return
         }
+
         val clicked = leftDown && !wasLeftDown
         val released = !leftDown && wasLeftDown
         wasLeftDown = leftDown
 
-        if (leftDown) {
-            if (clicked) {
-                // Title-bar hit across all panels first (drag wins over rows)
-                for ((cat, _) in categoriesWithRows(lineHeight)) {
-                    val pos = panelPos(cat)
-                    val barBottom = pos.y + titleBarHeight(lineHeight)
-                    if (y >= pos.y && y < barBottom && x >= pos.x - 6 && x < pos.x + PANEL_WIDTH + 6) {
-                        dragging = true
-                        dragCat = cat
-                        dragOffsetX = x - pos.x
-                        dragOffsetY = y - pos.y
+        // Active slider drag — consume until release.
+        val activeSlider = sliderDrag
+        if (activeSlider != null) {
+            if (leftDown) {
+                updateSlider(activeSlider, x)
+            }
+            if (released) {
+                sliderDrag = null
+            }
+            return
+        }
+
+        if (leftDown && clicked) {
+            // ① Panel title bar (drag) + collapse arrow
+            for ((cat, _) in categoriesWithRows(lineHeight)) {
+                val p = panel(cat)
+                val barBottom = p.y + titleBarHeight(lineHeight)
+                val hitX = x >= p.x - 6 && x < p.x + PANEL_WIDTH + 6
+                if (y >= p.y && y < barBottom && hitX) {
+                    // Collapse arrow zone (right edge of the title bar)
+                    if (x >= p.x + PANEL_WIDTH - 14) {
+                        p.expanded = !p.expanded
+                        return
+                    }
+                    dragging = true
+                    dragCat = cat
+                    dragOffsetX = x - p.x
+                    dragOffsetY = y - p.y
+                    return
+                }
+            }
+
+            // ② Module rows (toggle dot first — it sits inside the row area)
+            for ((cat, rows) in categoriesWithRows(lineHeight)) {
+                val clipBottom = contentClipBottom(cat, lineHeight)
+                for (row in rows) {
+                    if (row.y + row.height > clipBottom) continue
+                    if (x >= row.toggleDotX && x < row.toggleDotX + TOGGLE_DOT_SIZE &&
+                        y >= row.toggleDotY && y < row.toggleDotY + TOGGLE_DOT_SIZE
+                    ) {
+                        row.module.toggle()
+                        notifyModuleToggled(row.module.name, row.module.enabled)
+                        return
+                    }
+                    if (x >= row.x && x < row.x + row.width && y >= row.y && y < row.y + row.height) {
+                        toggleModuleExpanded(row.module)
                         return
                     }
                 }
-                // Module row hit across all panels
-                for ((_, rows) in categoriesWithRows(lineHeight)) {
-                    for (row in rows) {
-                        if (x >= row.x && x < row.x + row.width && y >= row.y && y < row.y + row.height) {
-                            row.module.toggle()
-                            notifyModuleToggled(row.module.name, row.module.enabled)
+
+                // ③ Setting items of expanded rows
+                for (row in rows) {
+                    if (!row.expanded) continue
+                    for ((idx, item) in row.settings.withIndex()) {
+                        val iy = row.y + row.height + idx * lineHeight
+                        if (iy + lineHeight > clipBottom) continue
+                        if (x >= row.x && x < row.x + row.width && y >= iy && y < iy + lineHeight) {
+                            handleSettingClick(item, row, x)
                             return
                         }
                     }
                 }
-            } else if (dragging && dragCat != null) {
-                val pos = panelPos(dragCat!!)
-                pos.x = (x - dragOffsetX).coerceIn(0, (scaledWidth - PANEL_WIDTH - 10).coerceAtLeast(0))
-                pos.y = (y - dragOffsetY).coerceIn(0, (scaledHeight - 40).coerceAtLeast(0))
             }
+        } else if (leftDown && dragging && dragCat != null) {
+            val pos = panel(dragCat!!)
+            pos.x = (x - dragOffsetX).coerceIn(0, (scaledWidth - PANEL_WIDTH - 10).coerceAtLeast(0))
+            pos.y = (y - dragOffsetY).coerceIn(0, (scaledHeight - 40).coerceAtLeast(0))
         }
+
         if (released) {
             dragging = false
             dragCat = null
         }
     }
+
+    private fun toggleModuleExpanded(module: Module) {
+        if (!expandedModules.add(module.name)) {
+            expandedModules.remove(module.name)
+        }
+    }
+
+    private fun handleSettingClick(item: SettingItem, row: ModuleRow, x: Int) {
+        when (item) {
+            is BoolItem -> ConfigManager.set(item.key, !item.value)
+            is ChoiceItem -> {
+                val idx = item.choices.indexOf(item.value)
+                val next = item.choices[(idx + 1).coerceAtLeast(0) % item.choices.size.coerceAtLeast(1)]
+                ConfigManager.set(item.key, next)
+            }
+            is EnumItem -> {
+                val idx = item.choices.indexOf(item.value)
+                val next = item.choices[(idx + 1).coerceAtLeast(0) % item.choices.size.coerceAtLeast(1)]
+                setEnumValue(item.key, next)
+            }
+            is FloatItem -> {
+                val (trackStart, trackWidth) = sliderTrack(row)
+                sliderDrag = SliderDrag(item.key, false, item.min, item.max, trackStart, trackWidth)
+                updateSlider(sliderDrag!!, x)
+            }
+            is IntItem -> {
+                val (trackStart, trackWidth) = sliderTrack(row)
+                sliderDrag = SliderDrag(item.key, true, item.min.toFloat(), item.max.toFloat(), trackStart, trackWidth)
+                updateSlider(sliderDrag!!, x)
+            }
+        }
+    }
+
+    /** Set an ENUM option by the name of its constant. */
+    private fun setEnumValue(key: String, name: String) {
+        val meta = ConfigManager.getMeta(key) ?: return
+        val def = meta.default as? Enum<*> ?: return
+        val constant = def.javaClass.enumConstants?.firstOrNull { (it as Enum<*>).name == name } ?: return
+        @Suppress("UNCHECKED_CAST")
+        ConfigManager.set(key, constant as Enum<*>)
+    }
+
+    /** Slider track geometry inside a setting row. Shared with the renderer. */
+    fun sliderTrack(row: ModuleRow): Pair<Float, Float> {
+        val trackStart = row.x + 80f
+        val trackWidth = (row.x + row.width - 26 - trackStart).coerceAtLeast(10f)
+        return trackStart to trackWidth
+    }
+
+    private fun updateSlider(drag: SliderDrag, x: Int) {
+        val ratio = ((x - drag.trackStart) / drag.trackWidth).coerceIn(0f, 1f)
+        val raw = drag.min + ratio * (drag.max - drag.min)
+        if (drag.isInt) {
+            ConfigManager.set(drag.key, raw.toInt())
+        } else {
+            ConfigManager.set(drag.key, raw)
+        }
+    }
+
+    // ═══════════════ Key handling ═══════════════
 
     private val keyListener: (Int, Boolean) -> Unit = label@{ keyCode, pressed ->
         if (!pressed) return@label
@@ -151,6 +419,7 @@ object ClickGUI : Module("ClickGUI", Category.RENDER) {
             KeyCode.RIGHT_SHIFT -> {
                 isOpen = !isOpen
                 EventBridge.isGuiOpen = isOpen
+                if (isOpen) wasLeftDown = false
             }
             KeyCode.ESC -> {
                 if (isOpen) {
@@ -180,6 +449,8 @@ object ClickGUI : Module("ClickGUI", Category.RENDER) {
         EventBridge.unregisterKeyListener(keyListener)
         isOpen = false
         EventBridge.isGuiOpen = false
+        expandedModules.clear()
+        sliderDrag = null
     }
 
     fun isOpen(): Boolean = isOpen

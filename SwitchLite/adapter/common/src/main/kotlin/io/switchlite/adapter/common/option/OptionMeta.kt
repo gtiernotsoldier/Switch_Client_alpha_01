@@ -51,6 +51,11 @@ data class OptionMeta(
         }
     }
 
+    /**
+     * Human-readable list of choices for this option (null if not a choice-like type).
+     */
+    fun displayChoices(): List<String>? = choices?.toList()
+
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
         if (other !is OptionMeta) return false
@@ -63,4 +68,18 @@ data class OptionMeta(
         result = 31 * result + unit.hashCode()
         return result
     }
+}
+
+/**
+ * A single registered option, described for GUI consumption.
+ * Produced by [ConfigManager.optionsOf].
+ */
+data class OptionDescriptor(
+    /** Fully-qualified key: "ModuleName.OptionName" */
+    val key: String,
+    val type: OptionType,
+    val meta: OptionMeta
+) {
+    /** Short option name (without module prefix). */
+    val name: String get() = key.substringAfter('.')
 }

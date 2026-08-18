@@ -154,6 +154,34 @@ object ConfigManager {
 
     fun getMeta(key: String): OptionMeta? = registry[key]
 
+    // ========== GUI enumeration API ==========
+
+    /**
+     * All registered options of one module, in registration order.
+     * Powers the ClickGUI settings panel.
+     */
+    fun optionsOf(moduleName: String): List<OptionDescriptor> {
+        val prefix = "$moduleName."
+        return registry.entries
+            .asSequence()
+            .filter { it.key.startsWith(prefix) }
+            .map { (key, meta) -> OptionDescriptor(key, meta.type, meta) }
+            .toList()
+    }
+
+    /**
+     * Current runtime value of an option (null if not registered).
+     */
+    fun currentValue(key: String): Any? = values[key]
+
+    /**
+     * Safe typed read with default fallback.
+     */
+    @Suppress("UNCHECKED_CAST")
+    fun <T> read(key: String, default: T): T {
+        return (values[key] as? T) ?: default
+    }
+
     // ========== Internal ==========
 
     private fun applyMap(json: Map<String, Any>) {

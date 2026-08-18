@@ -22,7 +22,6 @@ object OverlayRenderer {
 
     fun render(ctx: RenderContext) {
         val g = ctx.gl
-        val font = ctx.fontRenderer
 
         // ══════════════════════════════════════
         //  GL State: Save
@@ -78,7 +77,6 @@ object OverlayRenderer {
     // ══════════════════════════════════════
 
     private fun drawHudCard(ctx: RenderContext) {
-        val font = ctx.fontRenderer
         if (!HUD.enabled) return
 
         val entries = HUD.sortedEntries()
@@ -142,7 +140,6 @@ object OverlayRenderer {
     // ══════════════════════════════════════
 
     private fun drawClickGUI(ctx: RenderContext) {
-        val font = ctx.fontRenderer
         val lineHeight = font.fontHeight + 3
         val clickGui = ClickGUI
 
@@ -216,7 +213,6 @@ object OverlayRenderer {
         y: Int,
         lineHeight: Int
     ) {
-        val font = ctx.fontRenderer
         val indentX = row.x + 10
 
         when (item) {
@@ -281,7 +277,6 @@ object OverlayRenderer {
     // ══════════════════════════════════════
 
     private fun drawToasts(ctx: RenderContext) {
-        val font = ctx.fontRenderer
         val notifications = EventBridge.drainNotifications()
         if (notifications.isEmpty()) return
 

@@ -420,7 +420,7 @@ object ClickGUI : Module("ClickGUI", Category.RENDER) {
                 isOpen = !isOpen
                 // Delegate to the platform: opens/closes the ClickGUI as a real
                 // MC GuiScreen, so MC owns the mouse grab / cursor / keyboard.
-                EventBridge.setGuiOpen(isOpen)
+                EventBridge.notifyGuiOpen(isOpen)
                 if (isOpen) wasLeftDown = false
             }
             // ESC is handled by MC's GuiScreen (closes itself via
@@ -446,7 +446,7 @@ object ClickGUI : Module("ClickGUI", Category.RENDER) {
     override fun onDisable() {
         EventBridge.unregisterKeyListener(keyListener)
         isOpen = false
-        EventBridge.setGuiOpen(false)
+        EventBridge.notifyGuiOpen(false)
         expandedModules.clear()
         sliderDrag = null
     }

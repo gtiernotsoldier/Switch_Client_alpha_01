@@ -103,7 +103,7 @@ object EventBridge {
     }
 
     /** Called by ClickGUI when the user toggles it open/closed. */
-    fun setGuiOpen(open: Boolean) {
+    fun notifyGuiOpen(open: Boolean) {
         guiOpenHandler?.invoke(open)
     }
 

@@ -3,7 +3,7 @@ package io.switchlite.adapter.common.ui
 import java.awt.Color
 
 /**
- * Unified color palette — Nemui-inspired dark theme.
+ * Unified color palette — SwitchLite's own dark theme.
  * All colors are ARGB ints (alpha in the top byte).
  *
  * Pure Kotlin + JDK (java.awt.Color for HSB math) — no Minecraft dependency.
@@ -11,55 +11,49 @@ import java.awt.Color
 object Theme {
 
     // ── Base palette ──
-    //
-    // Aligned with Nemui's Dark theme (me.sleepyfish.nemui ColorUtils):
-    //   backgroundColor  = #131313 @ a160
-    //   fontColor        = #A9A9A9 (gray 169)  — enabled text
-    //   disabled         = fontColor .darker().darker() — nearly black
-    //   full background  = #131313 @ a255
-    //
-    // Nemui's look is deliberately monochrome: gray text on near-black
-    // panels, with a handful of saturated accents reserved for state
-    // indicators (version icon / enabled toggle) and notifications.
+    // SwitchLite's own dark theme — clean, modern, high-contrast.
+    // Panels are deep neutral dark; text is near-white for readability;
+    // a single cool accent (cyan) marks active/positive state; red/gold
+    // reserved for errors/warnings. No muddled gray-on-gray.
 
-    /** Panel background: Nemui backgroundColor (#131313 @ a160). */
-    const val PANEL_BG: Int = 0xA0131313.toInt()
+    /** Panel background: deep near-black, slightly translucent. */
+    const val PANEL_BG: Int = 0xE6141418.toInt()
 
-    /** Fully-opaque panel background (Nemui backgroundColorFull #131313). */
-    const val PANEL_BG_FULL: Int = 0xFF131313.toInt()
+    /** Fully-opaque panel background (for full-screen GUI backdrop). */
+    const val PANEL_BG_FULL: Int = 0xFF101014.toInt()
 
     /** HUD card background: more transparent so the game stays visible. */
-    const val HUD_BG: Int = 0x73000000.toInt()
+    const val HUD_BG: Int = 0x66000000.toInt()
 
-    /** Hover highlight (subtle, Nemui has no colored hover — just dimming). */
+    /** Hover highlight (subtle white overlay). */
     const val HOVER: Int = 0x14FFFFFF
 
-    /** Primary text: Nemui fontColor (#A9A9A9) — enabled / default. */
-    const val TEXT: Int = 0xFFA9A9A9.toInt()
+    /** Primary text: near-white for readability. */
+    const val TEXT: Int = 0xFFF0F0F0.toInt()
 
-    /** Disabled text: Nemui fontColor.darker().darker() (nearly black). */
-    const val TEXT_DIM: Int = 0xFF4A4A4A.toInt()
+    /** Dim / disabled text: muted gray. */
+    const val TEXT_DIM: Int = 0xFF707070.toInt()
 
-    /** Accent green — reserved for enabled state / positive (Nemui lightGreenNormal #50FF50). */
-    const val ACCENT: Int = 0xFF50FF50.toInt()
+    /** Accent cyan — active / enabled / positive (modern, not garish green). */
+    const val ACCENT: Int = 0xFF4FC3F7.toInt()
 
     /** Error red. */
-    const val ERROR: Int = 0xFFFF5555.toInt()
+    const val ERROR: Int = 0xFFFF5252.toInt()
 
     /** Warning gold. */
-    const val WARN: Int = 0xFFFFAA00.toInt()
+    const val WARN: Int = 0xFFFFB300.toInt()
 
-    /** ClickGUI title gold. */
-    const val TITLE: Int = 0xFFFF55
+    /** ClickGUI title accent (same cyan family, slightly brighter). */
+    const val TITLE: Int = 0xFF81D4FA.toInt()
 
     /** Panel border (subtle). */
-    const val BORDER: Int = 0x33FFFFFF
+    const val BORDER: Int = 0x22FFFFFF
 
     /** Slider track (unfilled). */
-    const val TRACK: Int = 0x55FFFFFF
+    const val TRACK: Int = 0x33FFFFFF
 
     /** Slider knob. */
-    const val KNOB: Int = 0xFFFFFFFF.toInt()
+    const val KNOB: Int = 0xFFE0E0E0.toInt()
 
     // ── Rainbow ──
 

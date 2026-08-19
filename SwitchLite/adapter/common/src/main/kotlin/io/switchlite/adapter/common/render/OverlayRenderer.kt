@@ -170,8 +170,8 @@ object OverlayRenderer {
                 CORNER_RADIUS, Theme.PANEL_BG
             )
 
-            // Title bar + collapse arrow (Nemui: category name in gray fontColor,
-            // right-side icon glyph for expand/collapse)
+            // Title bar + collapse arrow (category name in primary text,
+            // right-side arrow glyph for expand/collapse)
             font.drawStringWithShadow(cat.name, p.x, p.y, Theme.TEXT)
             font.drawStringWithShadow(
                 if (p.expanded) "\u00A77\u25BC" else "\u00A77\u25B2",
@@ -192,8 +192,7 @@ object OverlayRenderer {
                     )
                 }
 
-                // Status bar + name — Nemui monochrome state coloring:
-                // enabled = fontColor gray, disabled = fontColor.darker().darker()
+                // Status bar + name — enabled = primary text, disabled = dim
                 val textColor = if (row.module.enabled) Theme.TEXT else Theme.TEXT_DIM
                 RenderUtils.rect(ctx, (row.x - 4).toFloat(), (row.y + 1).toFloat(), 2f, (row.height - 2).toFloat(), textColor)
                 font.drawStringWithShadow(row.module.name, row.x + 2, row.y, textColor)
@@ -216,51 +215,6 @@ object OverlayRenderer {
                 }
             }
         }
-
-        // Nemui-style footer/header cards (drawn on top of the panels).
-        drawVersionCard(ctx)
-        drawAuthorCard(ctx)
-    }
-
-    /**
-     * Nemui-style version card in the bottom-left corner: a small rounded
-     * panel showing the client build + version. Pure rendering, no layout deps.
-     */
-    private fun drawVersionCard(ctx: RenderContext) {
-        val font = ctx.fontRenderer
-        val text = "SwitchLite v0.1.0-alpha"
-        val padX = 8
-        val padY = 4
-        val cardW = font.getStringWidth(text) + padX * 2 + 4
-        val cardH = font.fontHeight + padY * 2
-        val x = ctx.scaledWidth - cardW - 8
-        val y = ctx.scaledHeight - cardH - 8
-
-        RenderUtils.roundedRect(
-            ctx, x.toFloat(), y.toFloat(), cardW.toFloat(), cardH.toFloat(),
-            CORNER_RADIUS, Theme.PANEL_BG
-        )
-        font.drawStringWithShadow(text, x + padX, y + padY, Theme.TEXT_DIM)
-    }
-
-    /**
-     * Nemui-style author/credits card in the top-right corner.
-     */
-    private fun drawAuthorCard(ctx: RenderContext) {
-        val font = ctx.fontRenderer
-        val text = "SwitchLite"
-        val padX = 8
-        val padY = 4
-        val cardW = font.getStringWidth(text) + padX * 2
-        val cardH = font.fontHeight + padY * 2
-        val x = ctx.scaledWidth - cardW - 8
-        val y = 8
-
-        RenderUtils.roundedRect(
-            ctx, x.toFloat(), y.toFloat(), cardW.toFloat(), cardH.toFloat(),
-            CORNER_RADIUS, Theme.PANEL_BG
-        )
-        font.drawStringWithShadow(text, x + padX, y + padY, Theme.TEXT)
     }
 
     private fun drawSettingItem(

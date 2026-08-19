@@ -70,6 +70,32 @@ object ForgeBootstrap {
         // ClickGUI opens as a real MC GuiScreen: MC owns the mouse grab /
         // cursor / keyboard (open -> cursor shows + crosshair frozen; close ->
         // back to gameplay). We only draw the UI via OverlayRenderer.
+        //
+        // We open a BLANK GuiScreen subclass (Javassist-generated), NOT GuiChat:
+        // GuiChat draws the chat box background + input line, which showed
+        // through as a "transparent chat background" behind our UI. The blank
+        // screen draws nothing — MC just ungrabs the mouse and we paint the
+        // full-screen backdrop + panels on top.
+        //
+        // IMPORTANT: generate it HERE (init runs on the agent's bootstrap thread
+        // where javassist is visible). Generating inside the render-thread
+        // handler threw NoClassDefFoundError: javassist/ClassPath.
+        val blankGuiScreen: Any? = try {
+            val gameCL = Thread.currentThread().contextClassLoader
+            val factoryClass = Class.forName(
+                "io.switchlite.agent.ForgeGuiScreenFactory", true,
+                ForgeBootstrap::class.java.classLoader
+            )
+            factoryClass.getMethod("createGuiScreen", ClassLoader::class.java)
+                .invoke(null, gameCL)
+        } catch (e: Throwable) {
+            CoreLogger.error("[ForgeBootstrap] blank GuiScreen generation failed: ${e.javaClass.simpleName}: ${e.message}")
+            null
+        }
+        if (blankGuiScreen == null) {
+            CoreLogger.error("[ForgeBootstrap] No blank GuiScreen available — ClickGUI cannot open")
+        }
+
         EventBridge.registerGuiOpenHandler { open ->
             try {
                 val mc = MappingContext.invokeMethod(null, "forge:mc_getMinecraft")
@@ -79,15 +105,11 @@ object ForgeBootstrap {
                 }
                 if (open) {
                     try {
-                        // GuiScreen is ABSTRACT — can't `new GuiScreen()`. Brute
-                        // force: open a concrete, already-present GuiScreen subclass.
-                        // GuiChat is concrete and requires no args — MC accepts it,
-                        // ungrabs the mouse, shows the cursor, freezes the crosshair,
-                        // and closes on ESC. We cover it with our full-screen UI in
-                        // OverlayRenderer (drawn on top via the Display.update hook).
-                        val guiChatClass = Class.forName("net.minecraft.client.gui.GuiChat")
-                        val screen = guiChatClass.getConstructor().newInstance()
-                        MappingContext.invokeMethod(mc, "forge:mc_displayGuiScreen", screen)
+                        if (blankGuiScreen == null) {
+                            CoreLogger.error("[ForgeBootstrap] blank GuiScreen is null")
+                            return@registerGuiOpenHandler
+                        }
+                        MappingContext.invokeMethod(mc, "forge:mc_displayGuiScreen", blankGuiScreen)
                     } catch (e: Throwable) {
                         CoreLogger.error("[ForgeBootstrap] open GuiScreen FAILED: ${e.javaClass.simpleName}: ${e.message}")
                         return@registerGuiOpenHandler

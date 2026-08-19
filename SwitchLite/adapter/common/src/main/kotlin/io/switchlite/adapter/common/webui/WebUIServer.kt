@@ -55,6 +55,9 @@ object WebUIServer {
     /** Advertised access URLs (loopback + primary LAN IP). */
     val accessUrls: List<String> get() = LanHelper.lanUrls(PORT)
 
+    /** Primary LAN IPv4 to advertise, or "127.0.0.1" if none is up. */
+    val lanIp: String get() = LanHelper.lanAddress()?.hostAddress ?: "127.0.0.1"
+
     /** The per-install access token (hidden once authorized from remote). */
     val accessToken: String get() = ConfigStore.accessToken
 

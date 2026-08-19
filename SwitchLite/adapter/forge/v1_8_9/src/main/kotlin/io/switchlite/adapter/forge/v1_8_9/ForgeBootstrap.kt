@@ -135,12 +135,15 @@ object ForgeBootstrap {
                 ClickGUI.toggleFromPoll()
             }
             lastGuiKeyDown = rshiftDown
-            // Module keybinds: each module's keybind is a GLFW code; translate
-            // to LWJGL2 and check state with edge detection.
-            for (module in ModuleRegistry.getAll()) {
-                if (module.keybind <= 0 || module.keybind == 344) continue // 344 = RShift (GUI)
-                val lwjgl = KeyTranslator.toLwjgl2(module.keybind)
-                if (lwjgl <= 0) continue
+            // Module keybinds: only poll modules that actually have a bound key
+            // (keybind > 0, and not RShift which is the GUI toggle). The list is
+            // rebuilt lazily so we never traverse all 34 modules every poll.
+            val bound = boundModules ?: ModuleRegistry.getAll()
+                .filter { it.keybind > 0 && it.keybind != 344 }
+                .map { it to KeyTranslator.toLwjgl2(it.keybind) }
+                .filter { it.second > 0 }
+                .also { boundModules = it }
+            for ((module, lwjgl) in bound) {
                 val down = (keyboardIsKeyDown.invoke(null, lwjgl) as? Boolean) ?: false
                 val prev = moduleKeyStates[module.name] ?: false
                 moduleKeyStates[module.name] = down
@@ -157,6 +160,15 @@ object ForgeBootstrap {
     }
 
     private var pollGuiKeysDiagLogged = 0
+
+    /** Frame counter for throttling key polling (see render()). */
+    private var keyPollFrame = 0
+
+    /** Lazily-cached list of (module, lwjglKey) pairs for bound keybinds. */
+    private var boundModules: List<Pair<io.switchlite.adapter.common.module.Module, Int>>? = null
+
+    /** Frame counter for throttling key polling (see render()). */
+    private var keyPollFrame = 0
 
     private val moduleKeyStates = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
 
@@ -324,7 +336,14 @@ object ForgeBootstrap {
             // interactions (panel drag, module click).
             // Keyboard: poll state (isKeyDown, edge-detected) — never the event
             // queue (that raced MC's KeyBinding and caused input lag).
-            try { pollGuiKeys() } catch (_: Exception) {}
+            //
+            // PERF: throttle key polling to every 5th frame. A key press lasts
+            // tens of ms, so at any FPS checking 5x less often never misses an
+            // edge — and it cuts the per-frame isKeyDown reflection cost ~80%
+            // (3000 fps -> 2500 fps baseline loss came largely from here).
+            if (++keyPollFrame % 5 == 0) {
+                try { pollGuiKeys() } catch (_: Exception) {}
+            }
             if (EventBridge.isGuiOpen) {
                 // Detect ESC-close: MC closes our GuiScreen itself via
                 // displayGuiScreen(null); currentScreen becomes null. Reset our

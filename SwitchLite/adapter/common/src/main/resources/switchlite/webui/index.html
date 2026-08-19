@@ -113,6 +113,13 @@
         .setting-arrow { color: rgba(255,255,255,0.2); font-size: 14px; margin-left: 4px; transition: transform 0.3s; display: inline-block; }
         .setting-item.expanded .setting-arrow { transform: rotate(180deg); }
         .setting-right { display: flex; align-items: center; gap: 10px; }
+        .keybind-chip {
+            font-size: 10px; color: rgba(255,122,0,0.85); background: rgba(255,122,0,0.08);
+            padding: 2px 10px; border-radius: 30px; border: 1px solid rgba(255,122,0,0.15);
+            cursor: pointer; white-space: nowrap; transition: 0.2s; font-family:'SF Mono',monospace;
+        }
+        .keybind-chip:hover { background: rgba(255,122,0,0.18); }
+        .keybind-chip.capturing { background: rgba(255,0,85,0.18); border-color: rgba(255,0,85,0.4); color:#fff; animation: pulse-glow 1s infinite; }
         /* ===== 胶囊开关 (暖色) ===== */
         .toggle-switch {
             width: 38px; height: 20px; background: rgba(255,255,255,0.08); border-radius: 40px;
@@ -301,6 +308,7 @@
                         <span class="setting-arrow">⌄</span>
                     </div>
                     <div class="setting-right">
+                        <span class="keybind-chip" data-kb="${m.name}" title="点击设置触发键">⏵ ${m.keyName||'未绑定'}</span>
                         <div class="toggle-switch ${enabled?'on':''}" data-mod="${m.name}"><span class="pulse-ring"></span></div>
                     </div>
                 </div>
@@ -337,7 +345,18 @@
         }
 
         // ── 交互 ──
+        let capturingKey = null;
+
         document.addEventListener('click', async e => {
+            // 按键绑定 chip
+            const kb = e.target.closest('.keybind-chip[data-kb]');
+            if(kb){
+                capturingKey = kb.dataset.kb;
+                document.querySelectorAll('.keybind-chip').forEach(c=>c.classList.remove('capturing'));
+                kb.classList.add('capturing');
+                kb.textContent = '⏵ 按任意键… (Esc清除)';
+                return;
+            }
             // 模块开关 (header capsule)
             const modSw = e.target.closest('.setting-header .toggle-switch[data-mod]');
             if(modSw){
@@ -392,6 +411,31 @@
             }
         });
 
+        // 滑块：点击 + 拖拽
+        document.addEventListener('mousedown', e => {
+            const srow = e.target.closest('.slider-track[data-key]');
+            if(!srow) return;
+            e.preventDefault();
+            const drag = (ev) => {
+                const rect = srow.getBoundingClientRect();
+                const x = Math.max(0, Math.min(1, (ev.clientX-rect.left)/rect.width));
+                const min=+srow.dataset.min, max=+srow.dataset.max, isDec=srow.dataset.dec==='1';
+                const raw = min + x*(max-min);
+                const v = isDec ? Math.round(raw*10)/10 : Math.round(raw);
+                const fill = srow.querySelector('.slider-fill');
+                if(fill) fill.style.width=(x*100)+'%';
+                const val = srow.querySelector('.slider-value');
+                if(val) val.textContent=v+(srow.dataset.unit||'');
+                // live update (debounced naturally by input rate)
+                api('/api/options', {method:'POST', body:JSON.stringify({key:srow.dataset.key, value:v})});
+            };
+            drag(e);
+            const move = ev => drag(ev);
+            const up = () => { document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up); refresh(); };
+            document.addEventListener('mousemove', move);
+            document.addEventListener('mouseup', up);
+        });
+        // 滑块点击（触摸/无拖拽时的兜底）
         document.addEventListener('click', async e => {
             const srow = e.target.closest('.slider-track[data-key]');
             if(srow){
@@ -412,6 +456,31 @@
 
         refresh();
         setInterval(refresh, 3000);
+
+        // 按键绑定捕获
+        document.addEventListener('keydown', async e => {
+            if(!capturingKey) return;
+            e.preventDefault();
+            const name = capturingKey;
+            let code = -1;
+            if(e.key === 'Escape'){ code = -1; }
+            else if(e.key === 'Shift') code = 340;
+            else if(e.key === 'Control') code = 341;
+            else if(e.key === 'Alt') code = 342;
+            else if(e.key === ' ') code = 32;
+            else if(e.key === 'Enter') code = 257;
+            else if(e.key === 'Tab') code = 258;
+            else if(/^[a-zA-Z]$/.test(e.key)) code = e.key.toUpperCase().charCodeAt(0);
+            else if(/^[0-9]$/.test(e.key)) code = e.key.charCodeAt(0);
+            else if(/^F([1-9]|1[0-2])$/.test(e.key)) code = 290 + (parseInt(e.key.slice(1),10) - 1);
+            else return; // ignore other keys while capturing
+            capturingKey = null;
+            try {
+                const r = await api('/api/modules/'+encodeURIComponent(name)+'/keybind', {method:'POST', body:JSON.stringify({key:code})});
+                const chip = document.querySelector(`.keybind-chip[data-kb="${name}"]`);
+                if(chip){ chip.classList.remove('capturing'); chip.textContent = '⏵ ' + (r.keyName||(code<=0?'未绑定':'键'+code)); }
+            } catch(err){}
+        });
 
         // 地址 + 快捷按钮
         try {

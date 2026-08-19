@@ -193,6 +193,17 @@ object WebUIServer {
                         mapOf("name" to name, "enabled" to (mod?.enabled ?: false))
                     ))
                 }
+                path.endsWith("/keybind") && name.isNotBlank() -> {
+                    if (exchange.requestMethod != "POST") return methodNotAllowed(exchange)
+                    val body = String(exchange.requestBody.readBytes(), StandardCharsets.UTF_8)
+                    @Suppress("UNCHECKED_CAST")
+                    val req = mapper.readValue(body, Map::class.java) as Map<String, Any?>
+                    val code = (req["key"] as? Number)?.toInt() ?: -1
+                    synchronized(lock) { ModuleRegistry.get(name)?.keybind = code }
+                    try { ConfigStore.save() } catch (_: Exception) {}
+                    respondJson(exchange, 200, mapper.writeValueAsString(
+                        mapOf("ok" to true, "name" to name, "key" to code, "keyName" to keyName(code))))
+                }
                 exchange.requestMethod == "GET" -> {
                     val list = synchronized(lock) {
                         ModuleRegistry.getAll().filter { !it.hidden }.map { moduleJson(it) }
@@ -306,8 +317,30 @@ object WebUIServer {
             "category" to module.category.name,
             "enabled" to module.enabled,
             "keybind" to module.keybind,
+            "keyName" to keyName(module.keybind),
             "options" to options
         )
+    }
+
+    /** GLFW key code → human name for the WebUI keybind display. */
+    fun keyName(code: Int): String {
+        if (code <= 0) return "未绑定"
+        return when (code) {
+            io.switchlite.adapter.common.api.KeyCode.LEFT_SHIFT -> "左Shift"
+            io.switchlite.adapter.common.api.KeyCode.RIGHT_SHIFT -> "右Shift"
+            io.switchlite.adapter.common.api.KeyCode.LEFT_CONTROL -> "左Ctrl"
+            io.switchlite.adapter.common.api.KeyCode.RIGHT_CONTROL -> "右Ctrl"
+            io.switchlite.adapter.common.api.KeyCode.LEFT_ALT -> "左Alt"
+            io.switchlite.adapter.common.api.KeyCode.RIGHT_ALT -> "右Alt"
+            io.switchlite.adapter.common.api.KeyCode.SPACE -> "空格"
+            io.switchlite.adapter.common.api.KeyCode.ENTER -> "回车"
+            io.switchlite.adapter.common.api.KeyCode.TAB -> "Tab"
+            io.switchlite.adapter.common.api.KeyCode.ESC -> "Esc"
+            in 48..57 -> "键${(code - 48)}"
+            in 65..90 -> "键${((code - 65) + 'A'.code).toChar()}"
+            in 290..301 -> "F${(code - 290 + 1)}"
+            else -> "键$code"
+        }
     }
 
     private fun optionJson(desc: OptionDescriptor): Map<String, Any?> {

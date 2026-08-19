@@ -54,6 +54,32 @@ object ForgeBootstrap {
     private val mouseGetX by lazy { try { mouseClass.getMethod("getX") } catch (_: Exception) { null } }
     private val mouseGetY by lazy { try { mouseClass.getMethod("getY") } catch (_: Exception) { null } }
 
+    // ── Keyboard state polling for module keybinds (state, edge-detected) ──
+    // Polls Keyboard.isKeyDown() (NOT Keyboard.next(), which races MC) on the
+    // render thread so modules bound to a key toggle once per press. Throttled
+    // to a fraction of frames to keep the reflection cost negligible.
+    private val keyboardClass by lazy { Class.forName("org.lwjgl.input.Keyboard") }
+    private val keyboardIsKeyDown by lazy { keyboardClass.getMethod("isKeyDown", Int::class.javaPrimitiveType) }
+
+    private var keybindFrame = 0
+    private val moduleKeyStates = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
+
+    private fun pollModuleKeybinds() {
+        try {
+            for (module in ModuleRegistry.getAll()) {
+                if (module.keybind <= 0) continue
+                val lwjgl = KeyTranslator.toLwjgl2(module.keybind)
+                if (lwjgl <= 0) continue
+                val down = (keyboardIsKeyDown.invoke(null, lwjgl) as? Boolean) ?: false
+                val prev = moduleKeyStates[module.name] ?: false
+                moduleKeyStates[module.name] = down
+                if (down && !prev) {
+                    module.tryKeybindToggle(module.keybind)
+                }
+            }
+        } catch (_: Exception) {}
+    }
+
     fun init() {
         if (initialized) return
         initialized = true
@@ -182,6 +208,11 @@ object ForgeBootstrap {
         try {
             val mc = MappingContext.invokeMethod(null, "forge:mc_getMinecraft")
             if (mc == null) return
+
+            // Module keybinds — poll keyboard state on the render thread, throttled.
+            if (++keybindFrame % 4 == 0) {
+                try { pollModuleKeybinds() } catch (_: Exception) {}
+            }
 
             // Feed LWJGL mouse into EventBridge so the HUD card can be dragged.
             try {

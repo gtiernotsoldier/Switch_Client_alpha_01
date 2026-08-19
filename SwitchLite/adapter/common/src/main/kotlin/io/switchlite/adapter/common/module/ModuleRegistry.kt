@@ -2,6 +2,7 @@ package io.switchlite.adapter.common.module
 
 import io.switchlite.core.logging.CoreLogger
 import io.switchlite.core.safety.SafetyWrapper
+import io.switchlite.adapter.common.option.ModuleOptions
 
 /**
  * Central module registry.
@@ -27,6 +28,9 @@ object ModuleRegistry {
             CoreLogger.warn("[ModuleRegistry] Duplicate module name: ${module.name}, overwriting")
         }
         modules[module.name] = module
+        // Force-register every option delegate so the WebUI shows the full
+        // config list even for options not yet touched by a running module.
+        ModuleOptions.forceRegisterAll(module)
         CoreLogger.debug("[ModuleRegistry] Registered: ${module.name} (${module.category})")
     }
 

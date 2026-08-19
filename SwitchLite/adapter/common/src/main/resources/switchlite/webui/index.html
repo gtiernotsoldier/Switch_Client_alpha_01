@@ -93,8 +93,8 @@
         .tab-panel { display: none; }
         .tab-panel.active { display: block; }
 
-        /* ===== 设置网格 (多列自适应) ===== */
-        .setting-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 14px; }
+        /* ===== 设置列表 (单列，垂直) ===== */
+        .setting-grid { display: flex; flex-direction: column; gap: 10px; max-width: 760px; }
         /* ===== 核心设置项 (可展开) ===== */
         .setting-item {
             background: rgba(255,255,255,0.03); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
@@ -273,9 +273,11 @@
                 return `<span class="sub-dropdown" data-key="${key}" data-choices="${(o.choices||[]).join(',')}">${label ?? ''}</span>`;
             }
             if(t === 'FLOAT' || t === 'INT' || t === 'PROBABILITY'){
-                const min = typeof o.min==='number'?o.min:0;
-                const max = typeof o.max==='number'?o.max:100;
-                const v = typeof val==='number'?val:0;
+                let min = typeof o.min==='number'?o.min:0;
+                let max = typeof o.max==='number'?o.max:100;
+                // 最小值不可能超过最大值 — clamp/swap defensively.
+                if(min > max){ const tmp=min; min=max; max=tmp; }
+                const v = Math.min(max, Math.max(min, typeof val==='number'?val:0));
                 const pct = max>min?Math.round((v-min)/(max-min)*100):0;
                 const unit = o.unit||'';
                 const isDec = t==='FLOAT';
@@ -381,9 +383,9 @@
                 if(next){ await api('/api/options', {method:'POST', body:JSON.stringify({key:d.dataset.key, value:next.trim()})}); refresh(); }
                 return;
             }
-            // 展开/折叠（点卡片头部）
+            // 展开/折叠（点卡片头部，仅鼠标左键）
             const header = e.target.closest('.setting-header[data-name]');
-            if(header && !e.target.closest('.toggle-switch')){
+            if(header && e.button === 0 && !e.target.closest('.toggle-switch') && !e.target.closest('.keybind-chip') && !e.target.closest('.sub-dropdown')){
                 const card = header.closest('.setting-item');
                 card.classList.toggle('expanded');
                 return;
@@ -419,7 +421,8 @@
             const drag = (ev) => {
                 const rect = srow.getBoundingClientRect();
                 const x = Math.max(0, Math.min(1, (ev.clientX-rect.left)/rect.width));
-                const min=+srow.dataset.min, max=+srow.dataset.max, isDec=srow.dataset.dec==='1';
+                let min=+srow.dataset.min, max=+srow.dataset.max, isDec=srow.dataset.dec==='1';
+                if(min>max){ const tmp=min; min=max; max=tmp; }
                 const raw = min + x*(max-min);
                 const v = isDec ? Math.round(raw*10)/10 : Math.round(raw);
                 const fill = srow.querySelector('.slider-fill');
@@ -441,7 +444,8 @@
             if(srow){
                 const rect = srow.getBoundingClientRect();
                 const x = Math.max(0, Math.min(1, (e.clientX-rect.left)/rect.width));
-                const min=+srow.dataset.min, max=+srow.dataset.max, isDec=srow.dataset.dec==='1';
+                let min=+srow.dataset.min, max=+srow.dataset.max, isDec=srow.dataset.dec==='1';
+                if(min>max){ const tmp=min; min=max; max=tmp; }
                 const raw = min + x*(max-min);
                 const v = isDec ? Math.round(raw*10)/10 : Math.round(raw);
                 await api('/api/options', {method:'POST', body:JSON.stringify({key:srow.dataset.key, value:v})});

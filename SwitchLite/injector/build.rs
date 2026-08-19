@@ -149,5 +149,5 @@ fn finish_embed(
     match embed_resource::compile(rc_path.to_str().unwrap(), embed_resource::NONE) {
         Ok(_) => println!("cargo:warning=embedded agent.jar + payload.dll resources"),
         Err(e) => println!("cargo:warning=embed-resource failed: {}", e),
-    }
+    };
 }

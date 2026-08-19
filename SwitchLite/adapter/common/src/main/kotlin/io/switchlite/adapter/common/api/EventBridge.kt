@@ -91,23 +91,6 @@ object EventBridge {
 
     fun getCurrentTick(): Int = tickCounter
 
-    // ========== GUI open (ClickGUI as real MC GuiScreen) ==========
-    // The platform adapter registers a handler that opens/closes the ClickGUI
-    // as a real MC GuiScreen (mc.displayGuiScreen). MC then owns the mouse
-    // grab / cursor / keyboard — we only draw the UI.
-    @Volatile
-    private var guiOpenHandler: ((Boolean) -> Unit)? = null
-
-    /** Platform adapter registers this to open/close the ClickGUI GuiScreen. */
-    fun registerGuiOpenHandler(handler: (Boolean) -> Unit) {
-        guiOpenHandler = handler
-    }
-
-    /** Called by ClickGUI when the user toggles it open/closed. */
-    fun notifyGuiOpen(open: Boolean) {
-        guiOpenHandler?.invoke(open)
-    }
-
     // ========== Rotation ==========
     private var rotationSetter: ((Vec2) -> Unit)? = null
 
@@ -292,70 +275,6 @@ object EventBridge {
     // ========== HUD Text (HUD — Render) ==========
     @Volatile var hudTextLine: String = ""
 
-    // ========== GUI Mouse State (populated by platform tick when GUI open) ==========
-    // Scaled GUI coordinates (left-top origin, y down) — same space as the ClickGUI panel.
-    @Volatile var guiMouseX: Int = 0
-    @Volatile var guiMouseY: Int = 0
-    /** Physical left mouse button state (for ClickGUI click detection). */
-    @Volatile var guiLeftMouseDown: Boolean = false
-
-    // ========== GUI State (ClickGUI — Render) ==========
-
-    /**
-     * Whether the ClickGUI is currently open.
-     * Set by ClickGUI module, read by adapter render hook to draw the GUI overlay.
-     * When true, the adapter should cancel vanilla input handling (mouse/keyboard).
-     */
-    @get:JvmName("getIsGuiOpen")
-    @Volatile var isGuiOpen: Boolean = false
-
-    /**
-     * Global toggle for red indicator on HUD.
-     * When true, enabled modules with showRedIndicator=true are shown in red.
-     * When false, all modules use default color.
-     * This can be toggled from the ClickGUI settings panel.
-     */
-    @Volatile var isRedIndicatorEnabled: Boolean = true
-
-    // ========== GUI Notifications (Render — right-corner toast) ==========
-
-    /**
-     * Queue of notification messages to display in the bottom-right corner.
-     * Each entry is a pair of (message text, color hint).
-     * The adapter render hook consumes and draws these, auto-expiring after ~2s.
-     */
-    data class Notification(
-        val text: String,
-        val type: NotificationType = NotificationType.INFO
-    )
-
-    enum class NotificationType {
-        SUCCESS,  // green — module enabled / injection success
-        ERROR,    // red — module disabled / injection failure
-        INFO      // gold — general info
-    }
-
-    private val notificationQueue = mutableListOf<Notification>()
-
-    fun pushNotification(text: String, type: NotificationType = NotificationType.INFO) {
-        synchronized(notificationQueue) {
-            // Cap at 5 to prevent overflow
-            if (notificationQueue.size >= 5) {
-                notificationQueue.removeAt(0)
-            }
-            notificationQueue.add(Notification(text, type))
-        }
-    }
-
-    /** Drain all pending notifications (called by adapter render hook each frame). */
-    fun drainNotifications(): List<Notification> {
-        return synchronized(notificationQueue) {
-            val copy = notificationQueue.toList()
-            notificationQueue.clear()
-            copy
-        }
-    }
-
     // ========== Reach (Reach — 1.8 exclusive) ==========
     private var reachSetter: ((Float) -> Unit)? = null
 
@@ -512,9 +431,6 @@ object EventBridge {
         entityTicksProvider = null
         entityOnGroundChecker = null
         hudTextLine = ""
-        isGuiOpen = false
-        isRedIndicatorEnabled = true
-        synchronized(notificationQueue) { notificationQueue.clear() }
         keyListeners.clear()
         tickCounter = 0
         mouseDeltaX = 0f

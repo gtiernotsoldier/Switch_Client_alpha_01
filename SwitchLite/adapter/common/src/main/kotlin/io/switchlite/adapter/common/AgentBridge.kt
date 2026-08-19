@@ -48,9 +48,7 @@ object AgentBridge {
         "ParallaxStrike" to "player",
         "Teams" to "player",
         // Render
-        "ClickGUI" to "render",
         "Fullbright" to "render",
-        "HUD" to "render",
         "NoFOV" to "render",
         "NoHurtCam" to "render",
         // World
@@ -96,8 +94,6 @@ object AgentBridge {
         if (ModuleRegistry.size() > 0) {
             log("[AgentBridge] ${ModuleRegistry.size()} modules already registered — skipping duplicate registration")
             try { ModuleRegistry.initSafetyIntegration() } catch (_: Exception) {}
-            try { if (ModuleRegistry.isRegistered("ClickGUI")) ModuleRegistry.enable("ClickGUI") } catch (_: Exception) {}
-            try { if (ModuleRegistry.isRegistered("HUD")) ModuleRegistry.enable("HUD") } catch (_: Exception) {}
             return "${ModuleRegistry.size()} already registered (delegated to platform bootstrap)"
         }
 
@@ -130,8 +126,6 @@ object AgentBridge {
         }
 
         try { ModuleRegistry.initSafetyIntegration() } catch (_: Exception) {}
-        try { if (ModuleRegistry.isRegistered("ClickGUI")) ModuleRegistry.enable("ClickGUI") } catch (_: Exception) {}
-        try { if (ModuleRegistry.isRegistered("HUD")) ModuleRegistry.enable("HUD") } catch (_: Exception) {}
 
         val msg = "$ok registered, $failed failed" +
             if (failedNames.isNotEmpty()) " (${failedNames.joinToString()})" else ""

@@ -6,14 +6,10 @@ import io.switchlite.adapter.common.module.ModuleRegistry
 import io.switchlite.adapter.common.module.combat.*
 import io.switchlite.adapter.common.module.movement.*
 import io.switchlite.adapter.common.module.player.*
-import io.switchlite.adapter.common.module.render.ClickGUI
 import io.switchlite.adapter.common.module.render.Fullbright
-import io.switchlite.adapter.common.module.render.HUD
 import io.switchlite.adapter.common.module.render.NoFOV
 import io.switchlite.adapter.common.module.render.NoHurtCam
 import io.switchlite.adapter.common.module.world.FastPlace
-import io.switchlite.adapter.common.render.OverlayRenderer
-import io.switchlite.adapter.common.render.RenderContext
 import io.switchlite.core.logging.CoreLogger
 import io.switchlite.agent.MappingContext
 
@@ -27,7 +23,12 @@ import io.switchlite.agent.MappingContext
  * 1. init() — register modules, wire EventBridge, inject packet interceptor
  * 2. tick() — called at 20Hz by Agent.java — extracts player state, dispatches to EventBridge
  * 3. onKey(lwjglCode, pressed) — called by Agent.java key poll thread
- * 4. render() — called by Javassist hook or Agent.java fallback — delegates to OverlayRenderer
+ * 4. render() — called by Javassist hook or Agent.java fallback.
+ *
+ * NOTE: The in-game ClickGUI / HUD overlay was removed in favor of a WebUI
+ * panel (cross-version, community-maintainable). render() is kept as a no-op
+ * only so the RenderBridge injection hook (which reflects `render()`) stays
+ * valid — it draws nothing.
  */
 object ForgeBootstrap {
 
@@ -44,9 +45,6 @@ object ForgeBootstrap {
     // Cached field refs for tick
     private val keybindingPressedField by lazy { MappingContext.getField("forge:keybinding_pressed") }
 
-    // Version-specific render bridges (lazy, created once)
-    private val glBridge by lazy { ForgeGL11Bridge() }
-
     fun init() {
         if (initialized) return
         initialized = true
@@ -60,176 +58,20 @@ object ForgeBootstrap {
             SprintReset, STap, SuperKnockback, TriggerBot, Velocity, WTap,
             NoJumpDelay, NoKeyboardFix, NoMouseFix, Sprint, Strafe, StrafeFix,
             AntiBot, AutoTool, BridgeAssist, Eagle, ParallaxStrike, Teams,
-            ClickGUI, Fullbright, HUD, NoFOV, NoHurtCam,
+            Fullbright, NoFOV, NoHurtCam,
             FastPlace
         )
         ModuleRegistry.initSafetyIntegration()
-        ModuleRegistry.enable("ClickGUI")
-        ModuleRegistry.enable("HUD")
-
-        // ClickGUI opens as a real MC GuiScreen: MC owns the mouse grab /
-        // cursor / keyboard. We open the concrete GuiChat — verified to keep
-        // isGuiOpen in sync and render the panels reliably. Its own semi-
-        // transparent chat background lets the world show through (transparent
-        // backdrop — no full-screen dark rect in OverlayRenderer).
-        EventBridge.registerGuiOpenHandler { open ->
-            try {
-                val mc = MappingContext.invokeMethod(null, "forge:mc_getMinecraft")
-                if (mc == null) {
-                    CoreLogger.error("[ForgeBootstrap] guiOpenHandler: mc is null")
-                    return@registerGuiOpenHandler
-                }
-                if (open) {
-                    try {
-                        val guiChatClass = Class.forName("net.minecraft.client.gui.GuiChat")
-                        // Hide the chat box entirely (drawScreen -> no-op) so the
-                        // GUI opens over a clean world view — no chat background,
-                        // no input field. Mouse/keyboard/ESC still owned by MC.
-                        // Transformer lives in the agent jar (same runtime CL as this
-                        // class) but is NOT a compile dependency of the forge adapter,
-                        // so we reach it reflectively — mirrors how MappingContext /
-                        // RenderBridge are already accessed across that boundary.
-                        try {
-                            val transformer = Class.forName("io.switchlite.agent.Transformer")
-                            transformer.getMethod("hideChatScreen", Class::class.java)
-                                .invoke(null, guiChatClass)
-                        } catch (_: Throwable) {}
-                        val screen = guiChatClass.getConstructor().newInstance()
-                        MappingContext.invokeMethod(mc, "forge:mc_displayGuiScreen", screen)
-                    } catch (e: Throwable) {
-                        CoreLogger.error("[ForgeBootstrap] open GuiScreen FAILED: ${e.javaClass.simpleName}: ${e.message}")
-                        return@registerGuiOpenHandler
-                    }
-                } else {
-                    MappingContext.invokeMethod(mc, "forge:mc_displayGuiScreen", null)
-                }
-                EventBridge.isGuiOpen = open
-            } catch (e: Throwable) {
-                CoreLogger.error("[ForgeBootstrap] guiOpenHandler FAILED: ${e.javaClass.simpleName}: ${e.message}")
-            }
-        }
 
         CoreLogger.info("[ForgeBootstrap] Initialized (reflection mode) — ${ModuleRegistry.size()} modules registered")
     }
 
     /**
      * Called by Agent.java at 20Hz on a background thread.
-     * Extracts player state, dispatches to module layer.
-     */
-    private val mouseGetX by lazy {
-        try { mouseClass.getMethod("getX") } catch (_: Exception) { null }
-    }
-    private val mouseGetY by lazy {
-        try { mouseClass.getMethod("getY") } catch (_: Exception) { null }
-    }
-
-    // ── Keyboard state polling (does NOT consume MC's key event queue) ──
-    private val keyboardClass by lazy { Class.forName("org.lwjgl.input.Keyboard") }
-    private val keyboardIsKeyDown by lazy { keyboardClass.getMethod("isKeyDown", Int::class.javaPrimitiveType) }
-    private var lastGuiKeyDown = false
-
-    /**
-     * Poll keyboard STATE (isKeyDown — never Keyboard.next()) for our own
-     * keybinds: RIGHT_SHIFT toggles the ClickGUI, and each module's keybind
-     * toggles the module. Edge-detected so a press fires once. Runs on the
-     * render thread (from render()). This is the ONLY place we touch keys —
-     * we must NOT drain the LWJGL event queue (that raced MC's KeyBinding
-     * input and caused the "press many times" lag).
-     */
-    private fun pollGuiKeys() {
-        try {
-            val rshiftDown = (keyboardIsKeyDown.invoke(null, 54) as? Boolean) ?: false
-            if (rshiftDown && !lastGuiKeyDown) {
-                ClickGUI.toggleFromPoll()
-            }
-            lastGuiKeyDown = rshiftDown
-            // Module keybinds: only poll modules that actually have a bound key
-            // (keybind > 0, and not RShift which is the GUI toggle). The list is
-            // rebuilt lazily so we never traverse all 34 modules every poll.
-            val bound = boundModules ?: ModuleRegistry.getAll()
-                .filter { it.keybind > 0 && it.keybind != 344 }
-                .map { it to KeyTranslator.toLwjgl2(it.keybind) }
-                .filter { it.second > 0 }
-                .also { boundModules = it }
-            for ((module, lwjgl) in bound) {
-                val down = (keyboardIsKeyDown.invoke(null, lwjgl) as? Boolean) ?: false
-                val prev = moduleKeyStates[module.name] ?: false
-                moduleKeyStates[module.name] = down
-                if (down && !prev) {
-                    module.tryKeybindToggle(module.keybind)
-                }
-            }
-        } catch (e: Exception) {
-            if (pollGuiKeysDiagLogged < 3) {
-                CoreLogger.error("[ForgeBootstrap] pollGuiKeys FAILED: ${e.javaClass.simpleName}: ${e.message}")
-                pollGuiKeysDiagLogged++
-            }
-        }
-    }
-
-    private var pollGuiKeysDiagLogged = 0
-
-    /** Frame counter for throttling key polling (see render()). */
-    private var keyPollFrame = 0
-
-    /** Lazily-cached list of (module, lwjglKey) pairs for bound keybinds. */
-    private var boundModules: List<Pair<io.switchlite.adapter.common.module.Module, Int>>? = null
-
-    private val moduleKeyStates = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
-
-    /**
-     * Read the LWJGL mouse into EventBridge (scaled GUI coordinates) and
-     * forward clicks to ClickGUI. Runs on the MC render thread (from render()).
-     *
-     * NOTE: MC now owns the mouse grab/cursor via the real GuiScreen (see
-     * registerGuiOpenHandler). This function only READS the mouse to feed
-     * ClickGUI interactions (panel drag, module click) — it does not touch
-     * grab state, so it cannot fight MC.
-     */
-    private fun applyGuiMouseInput(mc: Any) {
-        try {
-            val displayWidth = MappingContext.getFieldValue(mc, "forge:mc_displayWidth") as? Int ?: 854
-            val displayHeight = MappingContext.getFieldValue(mc, "forge:mc_displayHeight") as? Int ?: 480
-            val guiScaleSetting = MappingContext.getFieldValue(mc, "forge:mc_gameSettings")?.let {
-                MappingContext.getFieldValue(it, "forge:gs_guiScale") as? Int ?: 0
-            } ?: 0
-            val scale = computeGuiScale(displayWidth, displayHeight, guiScaleSetting)
-
-            val rawX = (mouseGetX?.invoke(null) as? Int) ?: 0
-            val rawY = (mouseGetY?.invoke(null) as? Int) ?: 0
-            EventBridge.guiMouseX = rawX / scale
-            EventBridge.guiMouseY = (displayHeight - rawY) / scale
-            EventBridge.guiLeftMouseDown = (mouseIsButtonDown.invoke(null, 0) as? Boolean) ?: false
-
-            // Aurora row height — must match OverlayRenderer's lineHeight
-            ClickGUI.handleMouseInput(
-                EventBridge.guiMouseX,
-                EventBridge.guiMouseY,
-                EventBridge.guiLeftMouseDown,
-                displayWidth / scale,
-                displayHeight / scale,
-                ClickGUI.ROW_HEIGHT
-            )
-        } catch (_: Exception) {}
-    }
-
-    /**
-     * Called by Agent.java at 20Hz on a background thread.
-     *
-     * RESPONSIBILITY: game/module logic ONLY. All UI interaction (mouse grab,
-     * GUI mouse input) lives in render() on the MC render thread — it must NOT
-     * be touched from this background thread (LWJGL Mouse / Keyboard state is
-     * owned by the render thread; mutating it from here races MC and caused
-     * the cursor/crosshair glitches).
      *
      * Extracts player state, dispatches to the module layer.
      */
     fun tick() {
-        if (EventBridge.isGuiOpen) {
-            // ClickGUI open: pause all module logic. UI is driven from render().
-            return
-        }
-
         // START phase — extract player state, dispatch to modules
         try {
             val mc = MappingContext.invokeMethod(null, "forge:mc_getMinecraft")
@@ -317,116 +159,14 @@ object ForgeBootstrap {
         }
     }
 
-    /** Whether render() has logged its first diagnostic (avoid spamming every frame). */
-    private var renderDiagLogged = false
-
     /**
-     * Called by Javassist hook (or Agent.java fallback) on MC's render thread.
-     * Constructs a RenderContext and delegates to OverlayRenderer.
-     *
-     * This method does NOT contain any GL calls or rendering logic —
-     * all drawing is in OverlayRenderer, which is shared across versions.
+     * No-op render hook. Called every frame by the Javassist Display.update()
+     * hook via RenderBridge. The in-game GUI was removed in favor of a WebUI
+     * panel, so nothing is drawn here. Kept so RenderBridge's reflection
+     * (`getMethod("render")`) continues to resolve.
      */
     fun render() {
-        try {
-            val mc = MappingContext.invokeMethod(null, "forge:mc_getMinecraft")
-            if (mc == null) {
-                if (!renderDiagLogged) { CoreLogger.error("[ForgeBootstrap.render] mc_getMinecraft returned null"); renderDiagLogged = true }
-                return
-            }
-
-            // ── UI interaction (render thread — this is its home) ──
-            // Mouse grab/cursor is owned by MC's GuiScreen now (see
-            // registerGuiOpenHandler). We only READ the mouse to feed ClickGUI
-            // interactions (panel drag, module click).
-            // Keyboard: poll state (isKeyDown, edge-detected) — never the event
-            // queue (that raced MC's KeyBinding and caused input lag).
-            //
-            // PERF: throttle key polling to every 5th frame. A key press lasts
-            // tens of ms, so at any FPS checking 5x less often never misses an
-            // edge — and it cuts the per-frame isKeyDown reflection cost ~80%
-            // (3000 fps -> 2500 fps baseline loss came largely from here).
-            if (++keyPollFrame % 5 == 0) {
-                try { pollGuiKeys() } catch (_: Exception) {}
-            }
-            if (EventBridge.isGuiOpen) {
-                // Detect ESC-close: MC closes our GuiScreen itself via
-                // displayGuiScreen(null); currentScreen becomes null. Only treat
-                // a *confirmed* null (read succeeded) as closed — a failed read
-                // must NOT flip isGuiOpen off (that hid the panels before).
-                val currentScreen: Any? = try {
-                    MappingContext.getFieldValue(mc, "forge:mc_currentScreen")
-                } catch (_: Exception) {
-                    // read failed — don't assume closed
-                    Unit
-                }
-                if (currentScreen == null) {
-                    ClickGUI.markClosed()
-                } else {
-                    try { applyGuiMouseInput(mc) } catch (_: Exception) {}
-                }
-            }
-            // NOTE: mc_thePlayer is NOT required for HUD rendering — the overlay
-            // only needs mc + fontRendererObj. On the main menu thePlayer is
-            // legitimately null (normal MC state), so early-returning here is
-            // what made the main menu show nothing. Removed the gate: the HUD
-            // (module list / "SwitchLite") must render in menus too.
-            val fontRendererObj = MappingContext.getFieldValue(mc, "forge:mc_fontRendererObj")
-            if (fontRendererObj == null) {
-                if (!renderDiagLogged) { CoreLogger.error("[ForgeBootstrap.render] mc_fontRendererObj returned null"); renderDiagLogged = true }
-                return
-            }
-
-            val displayWidth = MappingContext.getFieldValue(mc, "forge:mc_displayWidth") as? Int ?: 854
-            val displayHeight = MappingContext.getFieldValue(mc, "forge:mc_displayHeight") as? Int ?: 480
-            val guiScaleSetting = MappingContext.getFieldValue(mc, "forge:mc_gameSettings")?.let {
-                MappingContext.getFieldValue(it, "forge:gs_guiScale") as? Int ?: 0
-            } ?: 0
-            // MC 1.8.9 ScaledResolution algorithm. guiScale==0 means AUTO —
-            // previously treated as 1, which made the HUD text smaller than
-            // the vanilla HUD (larger logical canvas than the real one).
-            val scale = computeGuiScale(displayWidth, displayHeight, guiScaleSetting)
-            val scaledWidth = displayWidth / scale
-            val scaledHeight = displayHeight / scale
-
-            val ctx = RenderContext(
-                scaledWidth = scaledWidth,
-                scaledHeight = scaledHeight,
-                fontRenderer = ForgeFontRendererBridge(fontRendererObj),
-                gl = glBridge
-            )
-
-            OverlayRenderer.render(ctx)
-
-            // First successful render — clear diagnostic flag
-            if (renderDiagLogged) {
-                CoreLogger.info("[ForgeBootstrap.render] Render pipeline recovered successfully")
-                renderDiagLogged = false
-            }
-
-        } catch (e: Exception) {
-            if (!renderDiagLogged) {
-                CoreLogger.error("[ForgeBootstrap.render] FAILED: ${e.javaClass.simpleName}: ${e.message}")
-                renderDiagLogged = true
-            }
-        }
-    }
-
-    /**
-     * MC 1.8.9 ScaledResolution scaling algorithm (mirrors vanilla logic).
-     * guiScale == 0 means auto: the factor grows while the scaled size stays
-     * >= 320x240 at the next factor step. Integer division like vanilla.
-     */
-    private fun computeGuiScale(displayWidth: Int, displayHeight: Int, guiScaleSetting: Int): Int {
-        var setting = if (guiScaleSetting == 0) 1000 else guiScaleSetting
-        var factor = 1
-        while (factor < setting
-            && displayWidth / (factor + 1) >= 320
-            && displayHeight / (factor + 1) >= 240
-        ) {
-            factor++
-        }
-        return factor.coerceAtLeast(1)
+        // In-game GUI removed — WebUI panel handles all configuration UI.
     }
 
     fun onDisconnect() {
@@ -434,4 +174,3 @@ object ForgeBootstrap {
         CoreLogger.info("[ForgeBootstrap] Disconnected — packet interceptor ejected")
     }
 }
-

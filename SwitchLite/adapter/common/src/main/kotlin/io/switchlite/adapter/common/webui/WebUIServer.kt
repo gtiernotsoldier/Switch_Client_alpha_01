@@ -80,6 +80,15 @@ object WebUIServer {
                 LanHelper.lanAddress()?.let {
                     CoreLogger.info("[WebUI]  LAN:   http://${it.hostAddress}:$PORT")
                 }
+                // Mirror the address + token to the payload log so the Rust
+                // injector can surface it in the user's cmd window.
+                try {
+                    val temp = System.getProperty("java.io.tmpdir") ?: ""
+                    val pw = java.io.PrintWriter(
+                        java.io.FileWriter(java.io.File(temp, "switchlite-payload.log"), true), true)
+                    pw.println("[WebUI] Panel: ${accessUrls[0]}  LAN: ${LanHelper.lanAddress()?.hostAddress ?: "127.0.0.1"}:$PORT  Token: $token")
+                    pw.close()
+                } catch (_: Exception) {}
             } catch (e: Exception) {
                 CoreLogger.error("[WebUI] Failed to start on $HOST:$PORT: ${e.javaClass.simpleName}: ${e.message}")
                 server = null

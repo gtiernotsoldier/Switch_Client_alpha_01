@@ -276,12 +276,29 @@ pub fn inject_java_agent(
         std::thread::sleep(std::time::Duration::from_secs(3));
     }
 
-    // 11. Cleanup
+    // 11. Surface the WebUI panel address to the user's console, if the agent
+    //     has already started it (mirrored into the payload log by WebUIServer).
+    {
+        let webui_log = format!(
+            "{}\\switchlite-payload.log",
+            std::env::var("TEMP").unwrap_or_default()
+        );
+        if let Ok(log) = std::fs::read_to_string(webui_log) {
+            for line in log.lines() {
+                if line.contains("[WebUI] Panel") {
+                    println!("{}", line);
+                }
+            }
+        }
+    }
+
+    // 12. Cleanup
     unsafe {
         VirtualFreeEx(h_process, p_remote_mem, 0, MEM_RELEASE);
         CloseHandle(h_process);
     }
 
     println!("[+] Java Agent injected successfully via DLL");
+    println!("[+] WebUI panel: open the address above in a browser");
     true
 }

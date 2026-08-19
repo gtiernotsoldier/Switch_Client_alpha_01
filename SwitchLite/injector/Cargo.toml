@@ -9,24 +9,10 @@ name = "switchlite-injector"
 path = "src/main.rs"
 
 [dependencies]
-# windows-sys with ALL features: it's a thin sys crate, compile cost is
-# acceptable, and it guarantees no "unresolved import" from a missing feature
-# gate (e.g. CreateRemoteThread/CreateEventA live in Threading but need
-# additional feature flags in some versions).
-windows-sys = { version = "0.59", features = [
-    "Win32_Foundation",
-    "Win32_System_Threading",
-    "Win32_System_Diagnostics_Debug",
-    "Win32_System_Diagnostics_ToolHelp",
-    "Win32_System_Memory",
-    "Win32_System_LibraryLoader",
-    "Win32_System_ProcessStatus",
-    "Win32_System_SystemServices",
-    "Win32_System_Synchronization",
-    "Win32_UI_WindowsAndMessaging",
-    "Win32_Storage_FileSystem",
-    "Win32_Security",
-] }
+# windows-sys: use the "Win32" aggregate feature — pulls in every Win32_*
+# module (Threading/Memory/Security/...) so no function is gated out and no
+# per-feature version conflicts can occur.
+windows-sys = { version = "0.59", features = ["Win32"] }
 
 [profile.release]
 opt-level = 2

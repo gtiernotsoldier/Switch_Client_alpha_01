@@ -82,10 +82,15 @@ object ForgeBootstrap {
                     try {
                         // GuiScreen is ABSTRACT — cannot `new GuiScreen()`. Use the
                         // Javassist-generated concrete subclass (in the game CL).
+                        //
+                        // Load the factory with OUR ClassLoader (agent jar is on it),
+                        // NOT the render-thread context CL (LaunchClassLoader can't see
+                        // io.switchlite.agent.* — that threw NoClassDefFoundError, which
+                        // is an Error and escaped every catch(Exception)).
                         val gameCL = Thread.currentThread().contextClassLoader
                         val factoryClass = Class.forName(
                             "io.switchlite.agent.ForgeGuiScreenFactory", true,
-                            gameCL ?: javaClass.classLoader
+                            ForgeBootstrap::class.java.classLoader
                         )
                         val screen = factoryClass.getMethod("createGuiScreen", ClassLoader::class.java)
                             .invoke(null, gameCL)
@@ -95,7 +100,7 @@ object ForgeBootstrap {
                         }
                         val invoked = MappingContext.invokeMethod(mc, "forge:mc_displayGuiScreen", screen)
                         CoreLogger.info("[ForgeBootstrap] ClickGUI screen opened (invoked=$invoked)")
-                    } catch (e: Exception) {
+                    } catch (e: Throwable) {
                         CoreLogger.error("[ForgeBootstrap] open GuiScreen FAILED: ${e.javaClass.simpleName}: ${e.message}")
                         return@registerGuiOpenHandler
                     }
@@ -103,7 +108,7 @@ object ForgeBootstrap {
                     MappingContext.invokeMethod(mc, "forge:mc_displayGuiScreen", null)
                 }
                 EventBridge.isGuiOpen = open
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
                 CoreLogger.error("[ForgeBootstrap] guiOpenHandler FAILED: ${e.javaClass.simpleName}: ${e.message}")
             }
         }

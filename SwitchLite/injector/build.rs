@@ -1,6 +1,7 @@
 // build.rs — build-time steps for the Rust injector:
-//   1. Build the C++ payload.dll (cmake + JDK jni.h) — the in-process JNI
-//      attach DLL that Rust injects via CreateRemoteThread.
+//   1. Compile the C++ payload.dll (payload.cpp + attach_pipe.cpp) via the cc
+//      crate — it discovers MSVC/GCC automatically (cmake was unreliable in
+//      CI: silent exit 1 with no output). Needs jni.h for payload.cpp.
 //   2. Generate a .rc that embeds agent.jar (RCDATA 101) + payload.dll
 //      (RCDATA 102) into the exe, then embed it with embed-resource.
 //
@@ -15,71 +16,53 @@ fn main() {
     let resources_dir = manifest.join("resources");
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
 
-    // ── 1. Build payload.dll (C++) via cmake ──
+    // ── 1. Compile payload.dll (C++) via the cc crate ──
     // Needs jni.h: find it via JAVA_HOME, or the JDK on PATH (CI sets up JDK 8).
     let jni_include = find_jni_include();
 
-    let payload_build_dir = out_dir.join("payload-build");
-    let _ = std::fs::create_dir_all(&payload_build_dir);
+    let mut payload_built = None;
+    if !jni_include.is_empty() {
+        let mut build = cc::Build::new();
+        build
+            .cargo_metadata(false) // we link manually, not into the Rust crate
+            .cpp(true)
+            .shared_flag(true)
+            .flag_if_supported("/EHsc")
+            .include(&jni_include)
+            .file(manifest.join("src/payload/payload.cpp"))
+            .file(manifest.join("src/payload/attach_pipe.cpp"));
 
-    let cmake = env::var("CMAKE").unwrap_or_else(|_| "cmake".to_string());
-    let cmake_configure = Command::new(&cmake)
-        .arg("-S")
-        .arg(manifest.join("src/payload"))
-        .arg("-B")
-        .arg(&payload_build_dir)
-        .arg(format!("-DJNI_INCLUDE_DIR={}", jni_include))
-        .arg("-DCMAKE_BUILD_TYPE=Release")
-        .output();
-    match cmake_configure {
-        Ok(out) if out.status.success() => {}
-        Ok(out) => {
-            println!("cargo:warning=cmake configure payload FAILED (exit {:?})", out.status.code());
-            println!("cargo:warning=--- cmake configure stdout ---");
-            println!("cargo:warning={}", String::from_utf8_lossy(&out.stdout));
-            println!("cargo:warning=--- cmake configure stderr ---");
-            println!("cargo:warning={}", String::from_utf8_lossy(&out.stderr));
-            return finish_embed(&manifest, &resources_dir, &out_dir, None);
+        // Link psapi (payload uses psapi functions)
+        if env::consts::OS == "windows" {
+            build.flag_if_supported("/DPSAPI_VERSION=2");
         }
-        Err(e) => {
-            println!("cargo:warning=cmake configure payload spawn failed: {}", e);
-            return finish_embed(&manifest, &resources_dir, &out_dir, None);
-        }
-    }
 
-    let cmake_build = Command::new(&cmake)
-        .arg("--build")
-        .arg(&payload_build_dir)
-        .arg("--config")
-        .arg("Release")
-        .output();
-    match cmake_build {
-        Ok(out) if out.status.success() => {}
-        Ok(out) => {
-            println!("cargo:warning=cmake build payload FAILED (exit {:?})", out.status.code());
-            println!("cargo:warning=--- cmake build stdout ---");
-            println!("cargo:warning={}", String::from_utf8_lossy(&out.stdout));
-            println!("cargo:warning=--- cmake build stderr ---");
-            println!("cargo:warning={}", String::from_utf8_lossy(&out.stderr));
-            return finish_embed(&manifest, &resources_dir, &out_dir, None);
+        let compile_result = build.try_compile("switchlite_payload");
+        match compile_result {
+            Ok(()) => {
+                // cc::Build writes the artifact into OUT_DIR; find it.
+                let candidate = out_dir.join("libswitchlite_payload.dll");
+                let candidate2 = out_dir.join("switchlite_payload.dll");
+                if candidate.exists() {
+                    payload_built = Some(candidate);
+                } else if candidate2.exists() {
+                    payload_built = Some(candidate2);
+                } else {
+                    println!(
+                        "cargo:warning=payload compiled but dll not found in {} (expected libswitchlite_payload.dll)",
+                        out_dir.display()
+                    );
+                }
+            }
+            Err(e) => {
+                println!("cargo:warning=cc compile payload FAILED: {}", e);
+            }
         }
-        Err(e) => {
-            println!("cargo:warning=cmake build payload spawn failed: {}", e);
-            return finish_embed(&manifest, &resources_dir, &out_dir, None);
-        }
-    }
-
-    // Locate built payload.dll
-    let payload_dll = payload_build_dir
-        .join("Release")
-        .join("payload.dll");
-    let payload_dll = if payload_dll.exists() {
-        payload_dll
     } else {
-        payload_build_dir.join("payload.dll")
-    };
+        println!("cargo:warning=jni.h not found (JAVA_HOME missing) — payload.dll not built");
+    }
 
-    finish_embed(&manifest, &resources_dir, &out_dir, Some(&payload_dll));
+    finish_embed(&manifest, &resources_dir, &out_dir, payload_built.as_ref());
 }
 
 /// Locate the JNI include dir (containing jni.h).
@@ -92,7 +75,11 @@ fn find_jni_include() -> String {
         }
     }
     // 2. java on PATH → resolve include dir
-    if let Ok(out) = Command::new("java").arg("-XshowSettings:properties").arg("-version").output() {
+    if let Ok(out) = Command::new("java")
+        .arg("-XshowSettings:properties")
+        .arg("-version")
+        .output()
+    {
         let text = String::from_utf8_lossy(&out.stderr);
         if let Some(line) = text.lines().find(|l| l.contains("java.home")) {
             if let Some(val) = line.split('=').nth(1) {

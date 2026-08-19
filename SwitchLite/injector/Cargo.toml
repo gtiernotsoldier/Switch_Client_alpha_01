@@ -17,6 +17,9 @@ path = "src/main.rs"
 # embed-resource: at build time, embeds agent.jar + payload.dll as RCDATA
 # resources (IDs 101/102) into the exe — resource.rs extracts them at runtime.
 embed-resource = "2"
+# cc: compiles the C++ payload.dll (payload.cpp + attach_pipe.cpp) — handles
+# MSVC/GCC discovery automatically (more reliable than shelling out to cmake).
+cc = "1"
 
 [profile.release]
 opt-level = 2

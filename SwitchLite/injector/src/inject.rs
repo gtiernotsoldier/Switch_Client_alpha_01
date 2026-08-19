@@ -10,10 +10,10 @@ use std::ffi::CString;
 use std::ptr;
 
 use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, WAIT_OBJECT_0, WAIT_TIMEOUT};
+use windows_sys::Win32::System::Diagnostics::Debug::WriteProcessMemory;
 use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleA, GetProcAddress};
 use windows_sys::Win32::System::Memory::{
-    VirtualAllocEx, VirtualFreeEx, WriteProcessMemory, MEM_COMMIT, MEM_RELEASE, MEM_RESERVE,
-    PAGE_READWRITE,
+    VirtualAllocEx, VirtualFreeEx, MEM_COMMIT, MEM_RELEASE, MEM_RESERVE, PAGE_READWRITE,
 };
 use windows_sys::Win32::System::Threading::{
     CreateEventA, CreateRemoteThread, OpenProcess, WaitForSingleObject, LPTHREAD_START_ROUTINE,
@@ -65,7 +65,7 @@ pub fn inject_java_agent(
         | PROCESS_VM_WRITE
         | PROCESS_VM_READ;
     let h_process = unsafe { OpenProcess(desired, 0, proc.pid) };
-    if h_process == 0 {
+    if h_process.is_null() {
         eprintln!(
             "[Inject] Cannot open process (error: {})",
             unsafe { GetLastError() }
@@ -118,8 +118,11 @@ pub fn inject_java_agent(
     }
 
     // 6. Find LoadLibraryA in target
-    let h_kernel32 = unsafe { GetModuleHandleA("kernel32.dll\0".as_ptr() as *const i8) };
-    let p_load_library = unsafe { GetProcAddress(h_kernel32, "LoadLibraryA\0".as_ptr() as *const i8) };
+    // GetModuleHandleA/GetProcAddress return Option/pointer forms — normalize.
+    let h_kernel32 = unsafe { GetModuleHandleA(b"kernel32.dll\0".as_ptr() as *const u8) }
+        .unwrap_or(ptr::null_mut());
+    let p_load_library = unsafe { GetProcAddress(h_kernel32, b"LoadLibraryA\0".as_ptr() as *const u8) }
+        .unwrap_or(ptr::null_mut());
     if p_load_library.is_null() {
         eprintln!("[Inject] GetProcAddress(LoadLibraryA) failed");
         unsafe {
@@ -143,7 +146,7 @@ pub fn inject_java_agent(
             ptr::null_mut(),
         )
     };
-    if h_thread == 0 {
+    if h_thread.is_null() {
         eprintln!(
             "[Inject] CreateRemoteThread failed (error: {})",
             unsafe { GetLastError() }
@@ -158,7 +161,8 @@ pub fn inject_java_agent(
     // 8. Named event for payload completion (PID-scoped to avoid collisions)
     let event_name = format!("SwitchLitePayloadDone_{}", proc.pid);
     let event_cstr = CString::new(event_name.clone()).unwrap_or_default();
-    let h_done_event = unsafe { CreateEventA(ptr::null(), 1, 0, event_cstr.as_ptr()) };
+    let h_done_event = unsafe { CreateEventA(ptr::null(), 1, 0, event_cstr.as_ptr()) }
+        .unwrap_or(ptr::null_mut());
     if h_done_event.is_null() {
         eprintln!("[Inject] Failed to create done event");
     } else {

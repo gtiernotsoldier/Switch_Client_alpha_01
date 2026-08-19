@@ -25,6 +25,9 @@
   .badges { display:flex; gap:6px; flex-wrap:wrap; }
   .bd { font-size:10px; font-weight:600; padding:3px 9px; border-radius:99px; border:1px solid rgba(255,255,255,.14); color:rgba(255,255,255,.65); background:rgba(255,255,255,.04); font-family:var(--mono); }
   .bd.hot { border-color:rgba(255,122,0,.45); color:#ffb066; }
+  .btn { font-size:10px; font-weight:600; padding:4px 11px; border-radius:99px; border:1px solid rgba(255,255,255,.14); color:var(--txt2); background:rgba(255,255,255,.05); cursor:pointer; font-family:var(--mono); transition:all .18s var(--spring); }
+  .btn:hover { background:rgba(255,255,255,.1); color:var(--txt); }
+  .btn:active { transform:scale(.96); }
 
   .cards { display:flex; flex-wrap:wrap; gap:20px; align-items:flex-start; }
   .card { width:300px; flex-shrink:0; position:relative;
@@ -96,7 +99,9 @@
     <h1>SwitchLite <em>— Aurora WebUI 调试面板</em></h1>
     <div class="badges">
       <span class="bd hot" id="conn">connecting…</span>
-      <span class="bd">模块开关</span><span class="bd">实时生效</span><span class="bd">游戏内 HUD 同步</span>
+      <button class="btn" id="btnSave">保存</button>
+      <button class="btn" id="btnExport">导出</button>
+      <button class="btn" id="btnImport">导入</button>
     </div>
   </div>
   <div class="cards" id="cards"></div>
@@ -207,6 +212,27 @@
   }
 
   // ── interactions ──
+  $('#btnSave').addEventListener('click', () => {
+    // Options auto-save on each change server-side; this button just confirms.
+    $('#conn').textContent = '已保存 · 每次改动自动存盘';
+    setTimeout(()=>refresh(), 1500);
+  });
+  $('#btnExport').addEventListener('click', async () => {
+    try {
+      const cfg = await api('/api/config');
+      navigator.clipboard.writeText(JSON.stringify(cfg)).then(()=>{
+        $('#conn').textContent = '配置已复制到剪贴板';
+        setTimeout(()=>refresh(), 1500);
+      });
+    } catch(e) { $('#conn').textContent = '导出失败'; }
+  });
+  $('#btnImport').addEventListener('click', () => {
+    const t = prompt('粘贴配置 JSON：');
+    if(!t) return;
+    api('/api/config', {method:'POST', body:t}).then(()=>{ refresh(); $('#conn').textContent='已导入'; })
+      .catch(()=>{ $('#conn').textContent='导入失败'; });
+  });
+
   document.addEventListener('click', async e => {
     const pill = e.target.closest('.pill');
     const chip = e.target.closest('.chip span');

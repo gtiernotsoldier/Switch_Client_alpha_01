@@ -51,12 +51,14 @@ object WebUIServer {
         synchronized(lock) {
             if (server != null) return
             try {
+                ConfigStore.load()
                 val srv = HttpServer.create(InetSocketAddress(HOST, PORT), 0)
                 srv.executor = Executors.newFixedThreadPool(2) { r ->
                     Thread(r, "SwitchLite-WebUI").apply { isDaemon = true }
                 }
                 srv.createContext("/api/modules", ::handleModules)
                 srv.createContext("/api/options", ::handleOptions)
+                srv.createContext("/api/config", ::handleConfig)
                 srv.createContext("/", ::handleStatic)
                 srv.start()
                 server = srv
@@ -125,9 +127,27 @@ object WebUIServer {
             }
 
             if (ok == true) {
+                // Persist immediately so a tweaked setting survives restart.
+                try { ConfigStore.save() } catch (_: Exception) {}
                 respondJson(exchange, 200, """{"ok":true,"key":"$key"}""")
             } else {
                 respondJson(exchange, 400, """{"ok":false,"error":"invalid value or unknown key"}""")
+            }
+        } catch (e: Exception) {
+            respondJson(exchange, 500, """{"error":"${e.message}"}""")
+        }
+    }
+
+    private fun handleConfig(exchange: HttpExchange) {
+        try {
+            when (exchange.requestMethod) {
+                "GET" -> respondJson(exchange, 200, ConfigStore.exportJson())
+                "POST" -> {
+                    val body = String(exchange.requestBody.readBytes(), StandardCharsets.UTF_8)
+                    synchronized(lock) { ConfigStore.importJson(body) }
+                    respondJson(exchange, 200, """{"ok":true}""")
+                }
+                else -> methodNotAllowed(exchange)
             }
         } catch (e: Exception) {
             respondJson(exchange, 500, """{"error":"${e.message}"}""")

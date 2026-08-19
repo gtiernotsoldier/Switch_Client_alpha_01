@@ -30,15 +30,19 @@ fn main() {
         .arg(&payload_build_dir)
         .arg(format!("-DJNI_INCLUDE_DIR={}", jni_include))
         .arg("-DCMAKE_BUILD_TYPE=Release")
-        .status();
+        .output();
     match cmake_configure {
-        Ok(status) if status.success() => {}
-        other => {
-            println!(
-                "cargo:warning=cmake configure payload: {:?} (payload.dll build skipped; sidecar path fallback in resource.rs)",
-                other.map(|s| s.code())
-            );
-            // Continue — resource.rs falls back to a sidecar payload.dll.
+        Ok(out) if out.status.success() => {}
+        Ok(out) => {
+            println!("cargo:warning=cmake configure payload FAILED (exit {:?})", out.status.code());
+            println!("cargo:warning=--- cmake configure stdout ---");
+            println!("cargo:warning={}", String::from_utf8_lossy(&out.stdout));
+            println!("cargo:warning=--- cmake configure stderr ---");
+            println!("cargo:warning={}", String::from_utf8_lossy(&out.stderr));
+            return finish_embed(&manifest, &resources_dir, &out_dir, None);
+        }
+        Err(e) => {
+            println!("cargo:warning=cmake configure payload spawn failed: {}", e);
             return finish_embed(&manifest, &resources_dir, &out_dir, None);
         }
     }
@@ -48,14 +52,19 @@ fn main() {
         .arg(&payload_build_dir)
         .arg("--config")
         .arg("Release")
-        .status();
+        .output();
     match cmake_build {
-        Ok(status) if status.success() => {}
-        other => {
-            println!(
-                "cargo:warning=cmake build payload: {:?} (payload.dll build skipped)",
-                other.map(|s| s.code())
-            );
+        Ok(out) if out.status.success() => {}
+        Ok(out) => {
+            println!("cargo:warning=cmake build payload FAILED (exit {:?})", out.status.code());
+            println!("cargo:warning=--- cmake build stdout ---");
+            println!("cargo:warning={}", String::from_utf8_lossy(&out.stdout));
+            println!("cargo:warning=--- cmake build stderr ---");
+            println!("cargo:warning={}", String::from_utf8_lossy(&out.stderr));
+            return finish_embed(&manifest, &resources_dir, &out_dir, None);
+        }
+        Err(e) => {
+            println!("cargo:warning=cmake build payload spawn failed: {}", e);
             return finish_embed(&manifest, &resources_dir, &out_dir, None);
         }
     }

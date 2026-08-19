@@ -4,6 +4,9 @@
 // (kept in payload/) does the in-process JNI attach work. This module only
 // does what the old inject.cpp did: write config, extract payload.dll,
 // CreateRemoteThread(LoadLibraryA), wait for the payload's done event.
+//
+// Targets windows-sys 0.59: HANDLE = *mut c_void, GetProcAddress returns
+// Option<FARPROC>.
 
 use std::ffi::c_void;
 use std::ffi::CString;
@@ -22,8 +25,6 @@ use windows_sys::Win32::System::Threading::{
 };
 
 use crate::process::ProcessInfo;
-
-type ThreadStart = unsafe extern "system" fn(*mut c_void) -> u32;
 
 /// Inject payload.dll into the target process and wait for it to finish
 /// attaching the Java agent. Mirrors injectJavaAgent() from the C++ injector.
@@ -118,23 +119,33 @@ pub fn inject_java_agent(
     }
 
     // 6. Find LoadLibraryA in target
-    // GetModuleHandleA/GetProcAddress return Option/pointer forms — normalize.
-    let h_kernel32 = unsafe { GetModuleHandleA(b"kernel32.dll\0".as_ptr() as *const u8) }
-        .unwrap_or(ptr::null_mut());
-    let p_load_library = unsafe { GetProcAddress(h_kernel32, b"LoadLibraryA\0".as_ptr() as *const u8) }
-        .unwrap_or(ptr::null_mut());
-    if p_load_library.is_null() {
-        eprintln!("[Inject] GetProcAddress(LoadLibraryA) failed");
+    let h_kernel32 = unsafe { GetModuleHandleA(b"kernel32.dll\0".as_ptr() as *const u8) };
+    if h_kernel32.is_null() {
+        eprintln!("[Inject] GetModuleHandleA(kernel32) failed");
         unsafe {
             VirtualFreeEx(h_process, p_remote_mem, 0, MEM_RELEASE);
             CloseHandle(h_process);
         }
         return false;
     }
+    let p_load_library =
+        unsafe { GetProcAddress(h_kernel32, b"LoadLibraryA\0".as_ptr() as *const u8) };
+    let p_load_library = match p_load_library {
+        Some(f) => f as *const c_void,
+        None => {
+            eprintln!("[Inject] GetProcAddress(LoadLibraryA) failed");
+            unsafe {
+                VirtualFreeEx(h_process, p_remote_mem, 0, MEM_RELEASE);
+                CloseHandle(h_process);
+            }
+            return false;
+        }
+    };
 
     // 7. Create remote thread to load the DLL
+    type LoadLibFn = unsafe extern "system" fn(*mut c_void) -> u32;
     let start_routine: LPTHREAD_START_ROUTINE =
-        Some(std::mem::transmute::<_, ThreadStart>(p_load_library));
+        Some(std::mem::transmute::<*const c_void, LoadLibFn>(p_load_library));
     let h_thread = unsafe {
         CreateRemoteThread(
             h_process,
@@ -161,8 +172,7 @@ pub fn inject_java_agent(
     // 8. Named event for payload completion (PID-scoped to avoid collisions)
     let event_name = format!("SwitchLitePayloadDone_{}", proc.pid);
     let event_cstr = CString::new(event_name.clone()).unwrap_or_default();
-    let h_done_event = unsafe { CreateEventA(ptr::null(), 1, 0, event_cstr.as_ptr()) }
-        .unwrap_or(ptr::null_mut());
+    let h_done_event = unsafe { CreateEventA(ptr::null(), 1, 0, event_cstr.as_ptr()) };
     if h_done_event.is_null() {
         eprintln!("[Inject] Failed to create done event");
     } else {

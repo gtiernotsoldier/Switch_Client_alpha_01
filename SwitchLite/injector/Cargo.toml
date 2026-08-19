@@ -9,7 +9,7 @@ name = "switchlite-injector"
 path = "src/main.rs"
 
 [dependencies]
-windows-sys = { version = "0.52", features = [
+windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
     "Win32_System_Threading",
     "Win32_System_Diagnostics_Debug",

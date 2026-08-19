@@ -110,6 +110,17 @@ jobs:
         with: { java-version: '8', distribution: 'temurin' }
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
+      - name: Build C++ payload.dll (cmake)
+        shell: pwsh
+        run: |
+          cd SwitchLite/injector
+          mkdir -Force -Path payload-build | Out-Null
+          cmake -S src/payload -B payload-build -DCMAKE_BUILD_TYPE=Release
+          cmake --build payload-build --config Release
+          $dll = Get-ChildItem -Path payload-build -Recurse -Filter "payload.dll" | Select-Object -First 1
+          if (-not $dll) { Write-Error "payload.dll not built"; exit 1 }
+          Copy-Item $dll.FullName -Destination "resources\payload.dll" -Force
+          Write-Host "payload.dll ready: $((Get-Item 'resources\payload.dll').Length) bytes"
       - name: Build Rust injector (cargo)
         run: |
           cd SwitchLite/injector

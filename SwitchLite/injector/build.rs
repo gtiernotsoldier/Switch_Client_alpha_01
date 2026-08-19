@@ -1,143 +1,22 @@
 // build.rs — build-time steps for the Rust injector:
-//   1. Compile the C++ payload.dll (payload.cpp + attach_pipe.cpp). The cc
-//      crate only builds static libs, so we use it to discover the MSVC
-//      compiler, then invoke cl.exe directly with /LD to produce a DLL.
-//      Needs jni.h (payload.cpp includes it).
-//   2. Generate a .rc that embeds agent.jar (RCDATA 101) + payload.dll
-//      (RCDATA 102) into the exe, then embed it with embed-resource.
+//   Embed agent.jar (RCDATA 101) + payload.dll (RCDATA 102) into the exe via
+//   embed-resource. Both artifacts are prepared by CI BEFORE cargo build:
+//     - agent.jar   -> resources/agent.jar   (copied from the JVM job)
+//     - payload.dll -> resources/payload.dll (built by cmake in CI, then
+//                                             copied here by the CI step)
+//   resource.rs reads those IDs back out at runtime.
 //
-// resource.rs reads those IDs back out at runtime.
+// We deliberately do NOT compile C++ inside build.rs: the MSVC environment
+// (vcvars INCLUDE/LIB) is not reliably available to a bare cargo build script,
+// which caused repeated cl.exe failures. C++ is built by CI's own cmake step.
 
 use std::env;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn main() {
     let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let resources_dir = manifest.join("resources");
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
-
-    // ── 1. Compile payload.dll (C++) — cc crate only builds static libs, so we
-    // use it just to discover the MSVC compiler, then invoke cl.exe directly
-    // with /LD to produce a DLL. Needs jni.h (find via JAVA_HOME / PATH).
-    let jni_include = find_jni_include();
-
-    let mut payload_built = None;
-    if !jni_include.is_empty() {
-        match compile_payload_dll(&jni_include, &out_dir) {
-            Ok(path) => payload_built = Some(path),
-            Err(e) => println!("cargo:warning=payload.dll compile FAILED: {}", e),
-        }
-    } else {
-        println!("cargo:warning=jni.h not found (JAVA_HOME missing) — payload.dll not built");
-    }
-
-    finish_embed(&manifest, &resources_dir, &out_dir, payload_built.as_ref());
-}
-
-/// Compile payload.dll with the MSVC compiler found by the cc crate.
-/// Invokes cl.exe directly: `cl /nologo /LD /MD /EHsc /I<jni> payload.cpp
-/// attach_pipe.cpp /Fe<payload.dll>`.
-fn compile_payload_dll(jni_include: &str, out_dir: &PathBuf) -> Result<PathBuf, String> {
-    let compiler = cc::Build::new().get_compiler();
-    let cl_path = compiler.path();
-
-    let payload_cpp = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap())
-        .join("src/payload/payload.cpp");
-    let attach_cpp = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap())
-        .join("src/payload/attach_pipe.cpp");
-    let dll_out = out_dir.join("payload.dll");
-
-    let mut cmd = Command::new(cl_path);
-    cmd.arg("/nologo")
-        .arg("/LD") // build a DLL
-        .arg("/MD")
-        .arg("/EHsc")
-        .arg(format!("/I{}", jni_include))
-        // jni.h includes jni_md.h, which lives in <jdk>/include/win32 on Windows.
-        .arg(format!("/I{}\\win32", jni_include))
-        .arg(payload_cpp)
-        .arg(attach_cpp)
-        .arg(format!("/Fe{}", dll_out.to_string_lossy()))
-        .arg("/link")
-        .arg("psapi.lib");
-
-    let out = cmd.output().map_err(|e| format!("spawn cl.exe: {}", e))?;
-    if !out.status.success() {
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        let stdout = String::from_utf8_lossy(&out.stdout);
-        // Write the full error to a log file (cargo:warning collapses multi-line
-        // messages, hiding the real cl.exe error).
-        let log_path = out_dir.join("payload-build.log");
-        let _ = std::fs::write(
-            &log_path,
-            format!(
-                "cl.exe exit {:?}\n--- stdout ---\n{}\n--- stderr ---\n{}\n",
-                out.status.code(),
-                stdout,
-                stderr
-            ),
-        );
-        // Single-line warning so it survives cargo's log folding:
-        let one_line = stderr.replace('\n', " | ").trim().to_string();
-        return Err(format!(
-            "cl.exe exit {:?}: {}",
-            out.status.code(),
-            one_line
-        ));
-    }
-
-    if dll_out.exists() {
-        println!("cargo:warning=payload.dll built: {}", dll_out.display());
-        Ok(dll_out)
-    } else {
-        Err(format!("cl.exe succeeded but {} not found", dll_out.display()))
-    }
-}
-
-/// Locate the JNI include dir (containing jni.h).
-fn find_jni_include() -> String {
-    // 1. JAVA_HOME
-    if let Ok(jh) = env::var("JAVA_HOME") {
-        let p = PathBuf::from(&jh).join("include");
-        if p.join("jni.h").exists() {
-            return p.to_string_lossy().into_owned();
-        }
-    }
-    // 2. java on PATH → resolve include dir
-    if let Ok(out) = Command::new("java")
-        .arg("-XshowSettings:properties")
-        .arg("-version")
-        .output()
-    {
-        let text = String::from_utf8_lossy(&out.stderr);
-        if let Some(line) = text.lines().find(|l| l.contains("java.home")) {
-            if let Some(val) = line.split('=').nth(1) {
-                let p = PathBuf::from(val.trim()).join("include");
-                if p.join("jni.h").exists() {
-                    return p.to_string_lossy().into_owned();
-                }
-            }
-        }
-    }
-    String::new()
-}
-
-/// Generate resources.rc and embed via embed-resource.
-fn finish_embed(
-    manifest: &PathBuf,
-    resources_dir: &PathBuf,
-    out_dir: &PathBuf,
-    payload_dll: Option<&PathBuf>,
-) {
-    // Locate agent.jar (CI copies it into resources/ before cargo build)
-    let agent_jar = resources_dir.join("agent.jar");
-
-    // Pick the payload.dll source: freshly built, else resources/payload.dll
-    let payload_source = match payload_dll {
-        Some(p) => p.clone(),
-        None => resources_dir.join("payload.dll"),
-    };
 
     let mut rc = String::new();
     rc.push_str("// Auto-generated by build.rs — embed agent.jar + payload.dll as RCDATA\n");
@@ -145,6 +24,7 @@ fn finish_embed(
     rc.push_str("#define AGENT_JAR_RCDATA 101\n");
     rc.push_str("#define PAYLOAD_DLL_RCDATA 102\n");
 
+    let agent_jar = resources_dir.join("agent.jar");
     let agent_rc_path = out_dir.join("agent.jar");
     if agent_jar.exists() {
         let _ = std::fs::copy(&agent_jar, &agent_rc_path);
@@ -157,16 +37,17 @@ fn finish_embed(
         println!("cargo:warning=resources/agent.jar not found — exe will lack embedded agent.jar");
     }
 
+    let payload_dll = resources_dir.join("payload.dll");
     let dll_rc_path = out_dir.join("payload.dll");
-    if payload_source.exists() {
-        let _ = std::fs::copy(&payload_source, &dll_rc_path);
+    if payload_dll.exists() {
+        let _ = std::fs::copy(&payload_dll, &dll_rc_path);
         rc.push_str(&format!(
             "PAYLOAD_DLL_RCDATA RCDATA \"{}\"\n",
             dll_rc_path.to_string_lossy().replace('\\', "\\\\")
         ));
-        println!("cargo:rerun-if-changed={}", payload_source.display());
+        println!("cargo:rerun-if-changed={}", payload_dll.display());
     } else {
-        println!("cargo:warning=payload.dll not found — exe will lack embedded payload.dll");
+        println!("cargo:warning=resources/payload.dll not found — exe will lack embedded payload.dll");
     }
 
     let rc_path = out_dir.join("resources.rc");

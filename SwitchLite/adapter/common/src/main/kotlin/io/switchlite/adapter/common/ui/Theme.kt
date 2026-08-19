@@ -11,24 +11,37 @@ import java.awt.Color
 object Theme {
 
     // ── Base palette ──
+    //
+    // Aligned with Nemui's Dark theme (me.sleepyfish.nemui ColorUtils):
+    //   backgroundColor  = #131313 @ a160
+    //   fontColor        = #A9A9A9 (gray 169)  — enabled text
+    //   disabled         = fontColor .darker().darker() — nearly black
+    //   full background  = #131313 @ a255
+    //
+    // Nemui's look is deliberately monochrome: gray text on near-black
+    // panels, with a handful of saturated accents reserved for state
+    // indicators (version icon / enabled toggle) and notifications.
 
-    /** Panel background: near-black with heavy opacity (Nemui 0xE6101014). */
-    const val PANEL_BG: Int = 0xE6101014.toInt()
+    /** Panel background: Nemui backgroundColor (#131313 @ a160). */
+    const val PANEL_BG: Int = 0xA0131313.toInt()
+
+    /** Fully-opaque panel background (Nemui backgroundColorFull #131313). */
+    const val PANEL_BG_FULL: Int = 0xFF131313.toInt()
 
     /** HUD card background: more transparent so the game stays visible. */
-    const val HUD_BG: Int = 0x99000000.toInt()
+    const val HUD_BG: Int = 0x73000000.toInt()
 
-    /** Hover highlight. */
-    const val HOVER: Int = 0x2AFFFFFF
+    /** Hover highlight (subtle, Nemui has no colored hover — just dimming). */
+    const val HOVER: Int = 0x14FFFFFF
 
-    /** Primary text. */
-    const val TEXT: Int = 0xFFFFFFFF.toInt()
+    /** Primary text: Nemui fontColor (#A9A9A9) — enabled / default. */
+    const val TEXT: Int = 0xFFA9A9A9.toInt()
 
-    /** Dim / disabled text. */
-    const val TEXT_DIM: Int = 0xFFAAAAAA.toInt()
+    /** Disabled text: Nemui fontColor.darker().darker() (nearly black). */
+    const val TEXT_DIM: Int = 0xFF4A4A4A.toInt()
 
-    /** Accent green (enabled / positive). */
-    const val ACCENT: Int = 0xFF55FF55.toInt()
+    /** Accent green — reserved for enabled state / positive (Nemui lightGreenNormal #50FF50). */
+    const val ACCENT: Int = 0xFF50FF50.toInt()
 
     /** Error red. */
     const val ERROR: Int = 0xFFFF5555.toInt()

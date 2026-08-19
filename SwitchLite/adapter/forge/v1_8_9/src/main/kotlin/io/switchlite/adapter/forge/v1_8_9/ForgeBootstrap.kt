@@ -131,7 +131,6 @@ object ForgeBootstrap {
                 ClickGUI.toggleFromPoll()
             }
             lastGuiKeyDown = rshiftDown
-
             // Module keybinds: each module's keybind is a GLFW code; translate
             // to LWJGL2 and check state with edge detection.
             for (module in ModuleRegistry.getAll()) {
@@ -145,8 +144,15 @@ object ForgeBootstrap {
                     module.tryKeybindToggle(module.keybind)
                 }
             }
-        } catch (_: Exception) {}
+        } catch (e: Exception) {
+            if (pollGuiKeysDiagLogged < 3) {
+                CoreLogger.error("[ForgeBootstrap] pollGuiKeys FAILED: ${e.javaClass.simpleName}: ${e.message}")
+                pollGuiKeysDiagLogged++
+            }
+        }
     }
+
+    private var pollGuiKeysDiagLogged = 0
 
     private val moduleKeyStates = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
 

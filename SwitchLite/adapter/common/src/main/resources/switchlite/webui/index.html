@@ -113,24 +113,24 @@
         }
         /* ===== 核心设置项 (可展开) ===== */
         .setting-item {
-            background: rgba(255,255,255,0.03); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
-            border-radius: 14px; border: 1px solid rgba(255,255,255,0.04); overflow: hidden;
+            background: rgba(255,255,255,0.05); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+            border-radius: 16px; border: 1px solid rgba(255,255,255,0.08); overflow: hidden;
             transition: border-color 0.4s cubic-bezier(0.34, 1.56, 0.64, 1),
                         background 0.3s ease,
                         box-shadow 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
         }
-        .setting-item:hover { background: rgba(255,255,255,0.06); border-color: rgba(255,255,255,0.08); }
+        .setting-item:hover { background: rgba(255,255,255,0.09); border-color: rgba(255,255,255,0.12); }
         .setting-item.expanded {
-            border-color: rgba(255, 122, 0, 0.4);
-            background: rgba(20, 20, 30, 0.5);
-            box-shadow: 0 8px 40px rgba(255, 122, 0, 0.12);
+            border-color: rgba(255, 122, 0, 0.45);
+            background: rgba(26, 26, 38, 0.55);
+            box-shadow: 0 8px 40px rgba(255, 122, 0, 0.15);
         }
-        .setting-header { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; cursor: pointer; transition: background 0.2s; }
-        .setting-header:hover { background: rgba(255,255,255,0.04); }
-        .setting-label { display: flex; align-items: center; gap: 8px; font-size: 14px; color: rgba(255,255,255,0.8); pointer-events: none; }
+        .setting-header { display: flex; justify-content: space-between; align-items: center; padding: 16px 20px; cursor: pointer; transition: background 0.2s; }
+        .setting-header:hover { background: rgba(255,255,255,0.05); }
+        .setting-label { display: flex; align-items: center; gap: 10px; font-size: 15px; color: rgba(255,255,255,0.92); pointer-events: none; }
         .setting-tag {
-            font-size: 9px; color: rgba(255, 122, 0, 0.6); background: rgba(255, 122, 0, 0.08);
-            padding: 1px 8px; border-radius: 30px; border: 1px solid rgba(255, 122, 0, 0.05);
+            font-size: 10px; color: rgba(255, 150, 60, 0.85); background: rgba(255, 122, 0, 0.12);
+            padding: 2px 10px; border-radius: 30px; border: 1px solid rgba(255, 122, 0, 0.12);
         }
         .setting-arrow {
             color: rgba(255,255,255,0.25); font-size: 14px; margin-left: 4px;
@@ -176,10 +176,10 @@
             overflow: hidden;
         }
         .setting-item.expanded .sub-options {
-            max-height: 1200px;
+            max-height: 2400px;
             opacity: 1;
             visibility: visible;
-            padding: 12px 16px 16px 16px;
+            padding: 14px 20px 20px 20px;
             border-top: 1px solid rgba(255,255,255,0.06);
         }
 
@@ -198,15 +198,21 @@
             opacity: 1;
         }
 
-        .sub-item { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 13px; color: rgba(255,255,255,0.7); padding: 3px 0; }
-        .sub-item .sub-label { display: flex; align-items: center; gap: 4px; white-space: nowrap; min-width: 0; }
+        .sub-item { display: flex; justify-content: space-between; align-items: center; gap: 10px; font-size: 13.5px; color: rgba(255,255,255,0.85); padding: 4px 0; }
+        .sub-item .sub-label { display: flex; align-items: center; gap: 6px; white-space: nowrap; min-width: 0; }
         .sub-item .sub-label .opt-name { overflow: hidden; text-overflow: ellipsis; }
-        .sub-value { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
-        .sub-dropdown {
-            color: rgba(255, 122, 0, 0.8); background: rgba(255, 122, 0, 0.08); padding: 1px 10px 1px 8px;
-            border-radius: 40px; font-size: 12px; cursor: pointer; border: 1px solid rgba(255, 122, 0, 0.1); transition: 0.2s; white-space: nowrap;
+        .ver-tag { font-size: 9px; padding: 1px 6px; border-radius: 20px; font-family:'SF Mono',monospace; }
+        .ver-tag.v19 { color:#7dd3fc; background:rgba(56,189,248,0.12); border:1px solid rgba(56,189,248,0.2); }
+        .ver-tag.v18 { color:#fca5a5; background:rgba(248,113,113,0.12); border:1px solid rgba(248,113,113,0.2); }
+        .sub-select {
+            background: rgba(255,255,255,0.09); color: #fff; border: 1px solid rgba(255,255,255,0.15);
+            border-radius: 8px; padding: 4px 8px; font-size: 12.5px; cursor: pointer;
+            max-width: 170px; transition: 0.2s;
         }
-        .sub-dropdown:hover { background: rgba(255, 122, 0, 0.15); }
+        .sub-select:hover { border-color: rgba(255,122,0,0.4); }
+        .sub-select:focus { outline: none; border-color: rgba(255,122,0,0.5); }
+        .sub-select option { background: #16161e; color:#fff; }
+        .sub-value { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
         .num-input {
             width: 56px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.08);
             border-radius: 6px; color: #fff; padding: 3px 6px; font-size: 12px; text-align: center; transition: 0.2s;
@@ -285,6 +291,10 @@
         let token = localStorage.getItem('sl_token') || '';
         let activeCat = 'COMBAT';
 
+        // ----- 展开状态持久化（按模块名） -----
+        // 跨 refresh 保持展开/折叠，避免 3 秒自动刷新把卡片重置成折叠。
+        let expandedSet = new Set();
+
         // ----- 分组状态 -----
         let leftModules = [];
         let rightModules = [];
@@ -331,16 +341,30 @@
             document.querySelectorAll('#tabBar .tab').forEach(t=>t.classList.toggle('active', t.dataset.cat===activeCat));
         }
 
-        // ----- 渲染选项控件（保持不变） -----
+        // ----- 渲染选项控件 -----
+        // 跨版本提示：根据选项名猜测它属于 1.8 还是 1.9+，打上小标签区分。
+        function versionTag(o){
+            const n = (o.name||'');
+            if(/19|1\.9|Cooldown/i.test(n)) return '<span class="ver-tag v19">1.9+</span>';
+            if(/^18|1\.8|Legit18/i.test(n)) return '<span class="ver-tag v18">1.8</span>';
+            return '';
+        }
         function optionWidget(o){
             const t = o.type;
             const key = o.key, val = o.value;
-            if(t === 'BOOLEAN'){
-                return `<div class="toggle-switch ${val?'on':''}" data-key="${key}"><span class="pulse-ring"></span></div>`;
-            }
             if(t === 'CHOICES' || t === 'ENUM'){
                 const label = (val && val.name) ? val.name : val;
-                return `<span class="sub-dropdown" data-key="${key}" data-choices="${(o.choices||[]).join(',')}">${label ?? ''}</span>`;
+                const opts = (o.choices||[]).map(c => `<option value="${c}" ${c===label?'selected':''}>${c}</option>`).join('');
+                return `<div class="sub-item">
+                    <span class="sub-label"><span class="opt-name">${o.name}</span>${versionTag(o)}</span>
+                    <select class="sub-select" data-key="${key}">${opts}</select>
+                </div>`;
+            }
+            if(t === 'BOOLEAN'){
+                return `<div class="sub-item">
+                    <span class="sub-label"><span class="opt-name">${o.name}</span>${versionTag(o)}</span>
+                    <div class="toggle-switch ${val?'on':''}" data-key="${key}"><span class="pulse-ring"></span></div>
+                </div>`;
             }
             if(t === 'FLOAT' || t === 'INT' || t === 'PROBABILITY'){
                 let min = typeof o.min==='number'?o.min:0;
@@ -372,7 +396,7 @@
         function moduleCard(m, fullIndex){
             const opts = (m.options||[]).map(optionWidget).join('');
             const enabled = !!m.enabled;
-            const expanded = m.expanded || false;
+            const expanded = expandedSet.has(m.name);
             return `<div class="setting-item ${expanded?'expanded':''}" data-fullindex="${fullIndex}" data-enabled="${enabled?'1':'0'}">
                 <div class="setting-header" data-fullindex="${fullIndex}">
                     <div class="setting-label">
@@ -431,8 +455,7 @@
                 const raw = await api('/api/modules');
                 // 去重
                 modules = [...new Map(raw.map(m => [m.name, m])).values()];
-                // 确保每个模块有 expanded 字段（默认为 false）
-                modules.forEach(m => { if (m.expanded === undefined) m.expanded = false; });
+                // 展开状态由 expandedSet 独立维护，刷新不重置（不再强制 expanded=false）
                 // 更新标签显示
                 document.querySelectorAll('#tabBar .tab').forEach(t=>{
                     const c = t.dataset.cat;
@@ -476,30 +499,29 @@
                 refresh(); return;
             }
 
-            // 下拉
-            if(e.target.closest('.sub-dropdown')){
-                const d = e.target.closest('.sub-dropdown');
-                const choices = (d.dataset.choices||'').split(',').filter(Boolean);
-                const cur = d.textContent;
-                const i = choices.indexOf(cur);
-                const next = choices[(i+1)%choices.length];
-                if(next){ await api('/api/options', {method:'POST', body:JSON.stringify({key:d.dataset.key, value:next.trim()})}); refresh(); }
-                return;
-            }
-
             // 展开/折叠：点击卡片头部（排除内部控件）
             const header = e.target.closest('.setting-header[data-fullindex]');
-            if(header && e.button === 0 && !e.target.closest('.toggle-switch') && !e.target.closest('.keybind-chip') && !e.target.closest('.sub-dropdown')){
+            if(header && e.button === 0 && !e.target.closest('.toggle-switch') && !e.target.closest('.keybind-chip') && !e.target.closest('.sub-select')){
                 const fullIndex = parseInt(header.dataset.fullindex, 10);
-                if(!isNaN(fullIndex) && modules[fullIndex]){
-                    modules[fullIndex].expanded = !modules[fullIndex].expanded;
-                    renderContent(); // 重新渲染
+                const m = !isNaN(fullIndex) ? modules[fullIndex] : null;
+                if(m){
+                    if(expandedSet.has(m.name)) expandedSet.delete(m.name);
+                    else expandedSet.add(m.name);
+                    renderContent(); // 重新渲染（保留其它卡片的展开状态）
                 }
                 return;
             }
         });
 
         // 滑块 + 数值输入（保持不变，但注意它们内部没有 fullindex，暂时使用 key 定位）
+        document.addEventListener('change', async e => {
+            const sel = e.target.closest('.sub-select[data-key]');
+            if(sel){
+                await api('/api/options', {method:'POST', body:JSON.stringify({key:sel.dataset.key, value:sel.value})});
+                refresh();
+                return;
+            }
+        });
         document.addEventListener('input', async e => {
             const num = e.target.closest('.num-input[data-key]');
             if(num){

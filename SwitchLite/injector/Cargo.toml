@@ -9,10 +9,17 @@ name = "switchlite-injector"
 path = "src/main.rs"
 
 [dependencies]
-# windows-sys: use the "Win32" aggregate feature — pulls in every Win32_*
-# module (Threading/Memory/Security/...) so no function is gated out and no
-# per-feature version conflicts can occur.
-windows-sys = { version = "0.59", features = ["Win32"] }
+# windows-sys 0.59: Win32_System aggregates every System_* submodule
+# (Threading/Memory/Debug/LibraryLoader/ProcessStatus/...), Win32_Security
+# provides SECURITY_ATTRIBUTES (needed by CreateEventA/CreateRemoteThread),
+# Win32_UI_WindowsAndMessaging for EnumWindows (later step).
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_System",
+    "Win32_Security",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_Storage_FileSystem",
+] }
 
 [profile.release]
 opt-level = 2

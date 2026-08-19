@@ -71,6 +71,7 @@ object ForgeBootstrap {
         // cursor / keyboard (open -> cursor shows + crosshair frozen; close ->
         // back to gameplay). We only draw the UI via OverlayRenderer.
         EventBridge.registerGuiOpenHandler { open ->
+            CoreLogger.info("[ForgeBootstrap] guiOpenHandler INVOKED open=$open")
             try {
                 val mc = MappingContext.invokeMethod(null, "forge:mc_getMinecraft")
                 if (mc == null) {
@@ -107,6 +108,7 @@ object ForgeBootstrap {
             }
         }
 
+        CoreLogger.info("[ForgeBootstrap] guiOpenHandler REGISTERED")
         CoreLogger.info("[ForgeBootstrap] Initialized (reflection mode) — ${ModuleRegistry.size()} modules registered")
     }
 

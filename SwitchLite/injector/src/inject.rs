@@ -186,7 +186,19 @@ pub fn inject_java_agent(
         return false;
     }
 
-    // 7. Create remote thread to load the DLL
+    // 7. Create the named done event BEFORE spawning the remote thread, so the
+    //    payload's OpenEventA always finds it (avoids a race where the payload
+    //    thread runs before the event exists -> OpenEventA fails -> signalDone
+    //    silently skipped -> injector waits the full timeout).
+    let event_name = format!("SwitchLitePayloadDone_{}\0", proc.pid);
+    let h_done_event = unsafe { CreateEventA(ptr::null(), 1, 0, event_name.as_ptr()) };
+    if h_done_event.is_null() {
+        eprintln!("[Inject] Failed to create done event");
+    } else {
+        println!("[Inject] Created done event: SwitchLitePayloadDone_{}", proc.pid);
+    }
+
+    // 8. Create remote thread to load the DLL
     // LPTHREAD_START_ROUTINE = fn(LPVOID) -> DWORD; LoadLibraryA has signature
     // fn(LPCSTR) -> HMODULE — both are one-pointer-arg functions, so the raw
     // address is compatible.
@@ -213,36 +225,55 @@ pub fn inject_java_agent(
         return false;
     }
 
-    // 8. Named event for payload completion (PID-scoped to avoid collisions)
-    let event_name = format!("SwitchLitePayloadDone_{}\0", proc.pid);
-    let h_done_event = unsafe { CreateEventA(ptr::null(), 1, 0, event_name.as_ptr()) };
-    if h_done_event.is_null() {
-        eprintln!("[Inject] Failed to create done event");
-    } else {
-        println!("[Inject] Created done event: SwitchLitePayloadDone_{}", proc.pid);
-    }
-
     // 9. Wait for LoadLibraryA thread (DLL load)
     unsafe { WaitForSingleObject(h_thread, 10_000) };
     unsafe { CloseHandle(h_thread) };
 
-    // 10. Wait for payload to signal real completion
+    // 10. Wait for payload to signal real completion. Poll in short slices and
+    //     also watch the payload log for "bootstrap() completed" so we finish
+    //     as soon as the agent is actually loaded instead of waiting the full
+    //     timeout (the payload logs every step to %TEMP%\switchlite-payload.log).
     if !h_done_event.is_null() {
-        println!("[Inject] Waiting for payload to complete (up to 15s)...");
-        let wait = unsafe { WaitForSingleObject(h_done_event, 15_000) };
-        match wait {
-            WAIT_OBJECT_0 => {
-                println!("[Inject] [+] Payload signaled completion (Agent loaded)")
+        let payload_log = format!(
+            "{}\\switchlite-payload.log",
+            std::env::var("TEMP").unwrap_or_default()
+        );
+        println!("[Inject] Waiting for payload to complete (up to 8s)...");
+        let mut done = false;
+        for _ in 0..16 {
+            // Event signaled?
+            let wait = unsafe { WaitForSingleObject(h_done_event, 500) };
+            if wait == WAIT_OBJECT_0 {
+                println!("[Inject] [+] Payload signaled completion (Agent loaded)");
+                done = true;
+                break;
             }
-            WAIT_TIMEOUT => eprintln!(
-                "[Inject] [!] Payload timed out after 15s — Agent may not have loaded"
-            ),
-            other => eprintln!("[Inject] [!] Wait error: {}", other),
+            // Or payload log shows completion?
+            if let Ok(log) = std::fs::read_to_string(&payload_log) {
+                if log.contains("Agent.bootstrap() completed successfully") {
+                    println!("[Inject] [+] Payload log shows agent loaded");
+                    done = true;
+                    break;
+                }
+                if log.contains("FATAL") || log.contains("JVM not found")
+                    || log.contains("AttachCurrentThread failed")
+                {
+                    println!("[Inject] [!] Payload log shows an error — see {} for details", payload_log);
+                    done = true;
+                    break;
+                }
+            }
+        }
+        if !done {
+            eprintln!(
+                "[Inject] [!] Payload timed out after 8s — see {} for details",
+                payload_log
+            );
         }
         unsafe { CloseHandle(h_done_event) };
     } else {
-        println!("[Inject] [!] No done event, waiting 5s as fallback...");
-        std::thread::sleep(std::time::Duration::from_secs(5));
+        println!("[Inject] [!] No done event, waiting 3s as fallback...");
+        std::thread::sleep(std::time::Duration::from_secs(3));
     }
 
     // 11. Cleanup

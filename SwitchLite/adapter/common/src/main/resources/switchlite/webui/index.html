@@ -90,29 +90,55 @@
         .tab.active { color: #fff; background: rgba(255, 122, 0, 0.15); box-shadow: inset 0 -2px 0 #FF7A00; }
 
         .tab-content { flex: 1; }
-        .tab-panel { display: none; }
-        .tab-panel.active { display: block; }
 
-        /* ===== 设置列表 (单列，垂直) ===== */
-        .setting-grid { display: flex; flex-direction: column; gap: 10px; max-width: 760px; }
+        /* ===== 双列容器 ===== */
+        .module-grid {
+            display: flex;
+            gap: 16px;
+            align-items: flex-start;
+        }
+        .module-column {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        /* ===== 设置列表（每列内部的垂直列表） ===== */
+        .setting-grid {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            width: 100%;
+        }
         /* ===== 核心设置项 (可展开) ===== */
         .setting-item {
             background: rgba(255,255,255,0.03); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
             border-radius: 14px; border: 1px solid rgba(255,255,255,0.04); overflow: hidden;
-            transition: all 0.3s cubic-bezier(0.34, 1.0, 0.64, 1);
+            transition: border-color 0.4s cubic-bezier(0.34, 1.56, 0.64, 1),
+                        background 0.3s ease,
+                        box-shadow 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
         }
         .setting-item:hover { background: rgba(255,255,255,0.06); border-color: rgba(255,255,255,0.08); }
-        .setting-item.expanded { border-color: rgba(255, 122, 0, 0.3); background: rgba(20, 20, 30, 0.5); box-shadow: 0 8px 32px rgba(0,0,0,0.3); }
+        .setting-item.expanded {
+            border-color: rgba(255, 122, 0, 0.4);
+            background: rgba(20, 20, 30, 0.5);
+            box-shadow: 0 8px 40px rgba(255, 122, 0, 0.12);
+        }
         .setting-header { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; cursor: pointer; transition: background 0.2s; }
         .setting-header:hover { background: rgba(255,255,255,0.04); }
-        .setting-label { display: flex; align-items: center; gap: 8px; font-size: 14px; color: rgba(255,255,255,0.8); }
+        .setting-label { display: flex; align-items: center; gap: 8px; font-size: 14px; color: rgba(255,255,255,0.8); pointer-events: none; }
         .setting-tag {
             font-size: 9px; color: rgba(255, 122, 0, 0.6); background: rgba(255, 122, 0, 0.08);
             padding: 1px 8px; border-radius: 30px; border: 1px solid rgba(255, 122, 0, 0.05);
         }
-        .setting-arrow { color: rgba(255,255,255,0.2); font-size: 14px; margin-left: 4px; transition: transform 0.3s; display: inline-block; }
+        .setting-arrow {
+            color: rgba(255,255,255,0.25); font-size: 14px; margin-left: 4px;
+            transition: transform 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+            display: inline-block;
+        }
         .setting-item.expanded .setting-arrow { transform: rotate(180deg); }
-        .setting-right { display: flex; align-items: center; gap: 10px; }
+        .setting-right { display: flex; align-items: center; gap: 10px; pointer-events: auto; }
         .keybind-chip {
             font-size: 10px; color: rgba(255,122,0,0.85); background: rgba(255,122,0,0.08);
             padding: 2px 10px; border-radius: 30px; border: 1px solid rgba(255,122,0,0.15);
@@ -128,7 +154,7 @@
         }
         .toggle-switch::after {
             content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; background: #fff;
-            border-radius: 50%; transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1), background 0.3s;
+            border-radius: 50%; transition: transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1), background 0.3s;
             box-shadow: 0 2px 6px rgba(0,0,0,0.3);
         }
         .toggle-switch.on { background: linear-gradient(135deg, #FF7A00, #FF0055); box-shadow: 0 0 24px rgba(255, 122, 0, 0.3); }
@@ -137,9 +163,41 @@
         .toggle-switch.on .pulse-ring { border-color: rgba(255, 122, 0, 0.3); animation: pulse-glow 2.5s infinite ease-in-out; }
         @keyframes pulse-glow { 0% { opacity: 0.4; transform: scale(1); } 50% { opacity: 1; transform: scale(1.12); } 100% { opacity: 0.4; transform: scale(1); } }
         /* ===== 展开的子选项面板 ===== */
-        .sub-options { max-height: 0; opacity: 0; visibility: hidden; transition: max-height 0.4s ease, opacity 0.3s ease, padding 0.4s ease, border-color 0.3s; padding: 0 16px; border-top: 1px solid transparent; overflow: hidden; }
-        .setting-item.expanded .sub-options { max-height: 1200px; opacity: 1; visibility: visible; padding: 12px 16px 16px 16px; border-top: 1px solid rgba(255,255,255,0.06); }
-        .sub-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 16px; }
+        .sub-options {
+            max-height: 0;
+            opacity: 0;
+            visibility: hidden;
+            transition: max-height 0.5s cubic-bezier(0.34, 1.0, 0.64, 1),
+                        opacity 0.4s ease,
+                        padding 0.4s ease,
+                        border-color 0.3s ease;
+            padding: 0 16px;
+            border-top: 1px solid transparent;
+            overflow: hidden;
+        }
+        .setting-item.expanded .sub-options {
+            max-height: 1200px;
+            opacity: 1;
+            visibility: visible;
+            padding: 12px 16px 16px 16px;
+            border-top: 1px solid rgba(255,255,255,0.06);
+        }
+
+        /* 子项内部渐入 */
+        .sub-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px 16px;
+            transform: translateY(-6px);
+            opacity: 0;
+            transition: transform 0.4s cubic-bezier(0.34, 1.0, 0.64, 1),
+                        opacity 0.4s ease;
+        }
+        .setting-item.expanded .sub-grid {
+            transform: translateY(0);
+            opacity: 1;
+        }
+
         .sub-item { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 13px; color: rgba(255,255,255,0.7); padding: 3px 0; }
         .sub-item .sub-label { display: flex; align-items: center; gap: 4px; white-space: nowrap; min-width: 0; }
         .sub-item .sub-label .opt-name { overflow: hidden; text-overflow: ellipsis; }
@@ -177,7 +235,12 @@
         ::-webkit-scrollbar-track { background: transparent; }
         ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 10px; }
         ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
-        @media (max-width: 820px) { .sidebar { width: 160px; } .main-content { padding: 20px; } .sub-grid { grid-template-columns: 1fr; } }
+        @media (max-width: 820px) {
+            .sidebar { width: 160px; }
+            .main-content { padding: 20px; }
+            .module-grid { flex-direction: column; }
+            .sub-grid { grid-template-columns: 1fr; }
+        }
         @media (max-width: 500px) { .sidebar { display: none; } .subtitle-overlay { white-space: normal; font-size: 12px; } }
         .tokbar { font-size: 10px; color: rgba(255,255,255,0.35); margin-bottom: 12px; display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
         .tokbar .bd { background: rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.08); padding:2px 10px; border-radius:40px; font-family:'SF Mono',monospace; }
@@ -210,7 +273,7 @@
         <div class="tab-content" id="tabContent"></div>
     </main>
 
-    <div class="subtitle-overlay">SwitchLite · Aurora 调试面板</div>
+    <div class="subtitle-overlay">SwitchLite · Aurora 调试面板 · 推桌子效果</div>
 
     <script>
         const $ = s => document.querySelector(s);
@@ -222,6 +285,11 @@
         let token = localStorage.getItem('sl_token') || '';
         let activeCat = 'COMBAT';
 
+        // ----- 分组状态 -----
+        let leftModules = [];
+        let rightModules = [];
+
+        // ----- API 相关（保持不变） -----
         function authHeaders(){
             return token ? { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' }
                          : { 'Content-Type': 'application/json' };
@@ -242,6 +310,7 @@
             if(t){ token = t.trim(); localStorage.setItem('sl_token', token); } else window.location.reload();
         }
 
+        // ----- 侧边栏和标签（保持不变） -----
         function buildSideNavAndTabs(){
             $('#sideNav').innerHTML = CATS.map(c => {
                 const n = (modules.filter(m => m.category===c)).length;
@@ -262,6 +331,7 @@
             document.querySelectorAll('#tabBar .tab').forEach(t=>t.classList.toggle('active', t.dataset.cat===activeCat));
         }
 
+        // ----- 渲染选项控件（保持不变） -----
         function optionWidget(o){
             const t = o.type;
             const key = o.key, val = o.value;
@@ -275,7 +345,6 @@
             if(t === 'FLOAT' || t === 'INT' || t === 'PROBABILITY'){
                 let min = typeof o.min==='number'?o.min:0;
                 let max = typeof o.max==='number'?o.max:100;
-                // 最小值不可能超过最大值 — clamp/swap defensively.
                 if(min > max){ const tmp=min; min=max; max=tmp; }
                 const v = Math.min(max, Math.max(min, typeof val==='number'?val:0));
                 const pct = max>min?Math.round((v-min)/(max-min)*100):0;
@@ -299,11 +368,13 @@
             return `<span class="noopts">—</span>`;
         }
 
-        function moduleCard(m){
+        // ----- 单个模块卡片（使用 fullIndex 标识） -----
+        function moduleCard(m, fullIndex){
             const opts = (m.options||[]).map(optionWidget).join('');
             const enabled = !!m.enabled;
-            return `<div class="setting-item ${m.expanded?'expanded':''}" data-name="${m.name}" data-enabled="${enabled?'1':'0'}">
-                <div class="setting-header" data-name="${m.name}">
+            const expanded = m.expanded || false;
+            return `<div class="setting-item ${expanded?'expanded':''}" data-fullindex="${fullIndex}" data-enabled="${enabled?'1':'0'}">
+                <div class="setting-header" data-fullindex="${fullIndex}">
                     <div class="setting-label">
                         <span>${m.name}</span>
                         <span class="setting-tag">${m.category||''}</span>
@@ -311,7 +382,7 @@
                     </div>
                     <div class="setting-right">
                         <span class="keybind-chip" data-kb="${m.name}" title="点击设置触发键">⏵ ${m.keyName||'未绑定'}</span>
-                        <div class="toggle-switch ${enabled?'on':''}" data-mod="${m.name}"><span class="pulse-ring"></span></div>
+                        <div class="toggle-switch ${enabled?'on':''}" data-mod="${m.name}" data-fullindex="${fullIndex}"><span class="pulse-ring"></span></div>
                     </div>
                 </div>
                 <div class="sub-options">
@@ -320,20 +391,49 @@
             </div>`;
         }
 
+        // ----- 渲染内容（双列） -----
         function renderContent(){
-            const list = modules.filter(m => m.category===activeCat);
-            const grid = list.map(moduleCard).join('') || `<div class="empty">该分类暂无模块</div>`;
-            $('#tabContent').innerHTML = `<div class="setting-grid">${grid}</div>`;
+            // 过滤当前分类的模块
+            const filtered = modules.filter(m => m.category === activeCat);
+            // 按原始顺序（保持奇偶分组）
+            const left = filtered.filter((_, i) => i % 2 === 0);
+            const right = filtered.filter((_, i) => i % 2 === 1);
+
+            // 存储到分组变量，用于后续展开更新（但我们将直接从 modules 读取状态）
+            // 渲染时使用全量 modules 中的 expanded 状态
+            const leftHtml = left.map((m, idx) => {
+                const fullIndex = modules.indexOf(m);
+                return moduleCard(m, fullIndex);
+            }).join('');
+
+            const rightHtml = right.map((m, idx) => {
+                const fullIndex = modules.indexOf(m);
+                return moduleCard(m, fullIndex);
+            }).join('');
+
+            const content = `
+                <div class="module-grid">
+                    <div class="module-column">
+                        <div class="setting-grid">${leftHtml || '<div class="empty">该分类暂无模块</div>'}</div>
+                    </div>
+                    <div class="module-column">
+                        <div class="setting-grid">${rightHtml || '<div class="empty">该分类暂无模块</div>'}</div>
+                    </div>
+                </div>
+            `;
+            $('#tabContent').innerHTML = content;
         }
 
+        // ----- 刷新数据 -----
         async function refresh(){
             await ensureToken();
             try {
                 const raw = await api('/api/modules');
-                // De-dup by module name (guard against any double registration).
+                // 去重
                 modules = [...new Map(raw.map(m => [m.name, m])).values()];
-                // Expand every card by default so all config is immediately visible.
-                modules.forEach(m => m.expanded = true);
+                // 确保每个模块有 expanded 字段（默认为 false）
+                modules.forEach(m => { if (m.expanded === undefined) m.expanded = false; });
+                // 更新标签显示
                 document.querySelectorAll('#tabBar .tab').forEach(t=>{
                     const c = t.dataset.cat;
                     t.style.display = modules.some(m=>m.category===c) ? '' : 'none';
@@ -346,7 +446,7 @@
             }
         }
 
-        // ── 交互 ──
+        // ----- 交互事件（修改为使用 fullindex 精确控制展开） -----
         let capturingKey = null;
 
         document.addEventListener('click', async e => {
@@ -359,7 +459,8 @@
                 kb.textContent = '⏵ 按任意键… (Esc清除)';
                 return;
             }
-            // 模块开关 (header capsule)
+
+            // 模块主开关 (使用 data-fullindex)
             const modSw = e.target.closest('.setting-header .toggle-switch[data-mod]');
             if(modSw){
                 const name = modSw.dataset.mod;
@@ -367,13 +468,15 @@
                 refresh();
                 e.stopPropagation(); return;
             }
+
             // 子选项开关
             if(e.target.closest('.sub-grid .toggle-switch[data-key]')){
                 const s = e.target.closest('.toggle-switch[data-key]');
                 await api('/api/options', {method:'POST', body:JSON.stringify({key:s.dataset.key, value:!s.classList.contains('on')})});
                 refresh(); return;
             }
-            // 下拉 (cycle choices)
+
+            // 下拉
             if(e.target.closest('.sub-dropdown')){
                 const d = e.target.closest('.sub-dropdown');
                 const choices = (d.dataset.choices||'').split(',').filter(Boolean);
@@ -383,16 +486,20 @@
                 if(next){ await api('/api/options', {method:'POST', body:JSON.stringify({key:d.dataset.key, value:next.trim()})}); refresh(); }
                 return;
             }
-            // 展开/折叠（点卡片头部，仅鼠标左键）
-            const header = e.target.closest('.setting-header[data-name]');
+
+            // 展开/折叠：点击卡片头部（排除内部控件）
+            const header = e.target.closest('.setting-header[data-fullindex]');
             if(header && e.button === 0 && !e.target.closest('.toggle-switch') && !e.target.closest('.keybind-chip') && !e.target.closest('.sub-dropdown')){
-                const card = header.closest('.setting-item');
-                card.classList.toggle('expanded');
+                const fullIndex = parseInt(header.dataset.fullindex, 10);
+                if(!isNaN(fullIndex) && modules[fullIndex]){
+                    modules[fullIndex].expanded = !modules[fullIndex].expanded;
+                    renderContent(); // 重新渲染
+                }
                 return;
             }
         });
 
-        // 滑块 + 数值输入
+        // 滑块 + 数值输入（保持不变，但注意它们内部没有 fullindex，暂时使用 key 定位）
         document.addEventListener('input', async e => {
             const num = e.target.closest('.num-input[data-key]');
             if(num){
@@ -402,8 +509,10 @@
                 v = Math.min(max, Math.max(min, v));
                 if(isDec) v = Math.round(v*10)/10;
                 await api('/api/options', {method:'POST', body:JSON.stringify({key, value:v})});
+                // 更新UI中的滑块显示（但重新渲染会丢失当前DOM状态，为保持流畅，我们用DOM操作更新）
                 const row = num.closest('.slider-row');
                 if(row){ const fill=row.querySelector('.slider-fill'), val=row.querySelector('.slider-value'), pct=max>min?Math.round((v-min)/(max-min)*100):0; fill.style.width=pct+'%'; val.textContent=v+(num.dataset.unit||''); }
+                // 不刷新全页面，只刷新数据（但为了保持一致性，简单调用refresh）
                 refresh();
                 return;
             }
@@ -413,7 +522,7 @@
             }
         });
 
-        // 滑块：点击 + 拖拽
+        // 滑块点击拖拽（使用 data-key 定位，但为了保持数据同步，不触发全刷新，只更新数值）
         document.addEventListener('mousedown', e => {
             const srow = e.target.closest('.slider-track[data-key]');
             if(!srow) return;
@@ -429,16 +538,16 @@
                 if(fill) fill.style.width=(x*100)+'%';
                 const val = srow.querySelector('.slider-value');
                 if(val) val.textContent=v+(srow.dataset.unit||'');
-                // live update (debounced naturally by input rate)
                 api('/api/options', {method:'POST', body:JSON.stringify({key:srow.dataset.key, value:v})});
             };
             drag(e);
             const move = ev => drag(ev);
-            const up = () => { document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up); refresh(); };
+            const up = () => { document.removeEventListener('mousemove', move); document.removeEventListener('mouseup', up); };
             document.addEventListener('mousemove', move);
             document.addEventListener('mouseup', up);
         });
-        // 滑块点击（触摸/无拖拽时的兜底）
+
+        // 滑块点击（触摸）
         document.addEventListener('click', async e => {
             const srow = e.target.closest('.slider-track[data-key]');
             if(srow){
@@ -453,13 +562,10 @@
                 if(fill) fill.style.width=(x*100)+'%';
                 const val = srow.querySelector('.slider-value');
                 if(val) val.textContent=v+(srow.dataset.unit||'');
-                refresh();
+                // 不刷新全页面，仅更新显示
                 return;
             }
         });
-
-        refresh();
-        setInterval(refresh, 3000);
 
         // 按键绑定捕获
         document.addEventListener('keydown', async e => {
@@ -477,16 +583,21 @@
             else if(/^[a-zA-Z]$/.test(e.key)) code = e.key.toUpperCase().charCodeAt(0);
             else if(/^[0-9]$/.test(e.key)) code = e.key.charCodeAt(0);
             else if(/^F([1-9]|1[0-2])$/.test(e.key)) code = 290 + (parseInt(e.key.slice(1),10) - 1);
-            else return; // ignore other keys while capturing
+            else return;
             capturingKey = null;
             try {
                 const r = await api('/api/modules/'+encodeURIComponent(name)+'/keybind', {method:'POST', body:JSON.stringify({key:code})});
                 const chip = document.querySelector(`.keybind-chip[data-kb="${name}"]`);
                 if(chip){ chip.classList.remove('capturing'); chip.textContent = '⏵ ' + (r.keyName||(code<=0?'未绑定':'键'+code)); }
+                refresh();
             } catch(err){}
         });
 
-        // 地址 + 快捷按钮
+        // 初始化
+        refresh();
+        setInterval(refresh, 3000);
+
+        // 获取地址信息
         try {
             fetch('/api/info').then(r=>r.json()).then(info=>{
                 if(info.urls && info.urls.length){

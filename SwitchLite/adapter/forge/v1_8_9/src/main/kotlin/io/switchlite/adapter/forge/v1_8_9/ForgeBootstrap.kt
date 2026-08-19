@@ -10,6 +10,7 @@ import io.switchlite.adapter.common.module.render.Fullbright
 import io.switchlite.adapter.common.module.render.HUD
 import io.switchlite.adapter.common.module.render.NoFOV
 import io.switchlite.adapter.common.module.render.NoHurtCam
+import io.switchlite.adapter.common.module.render.WebUI
 import io.switchlite.adapter.common.module.world.FastPlace
 import io.switchlite.adapter.common.render.OverlayRenderer
 import io.switchlite.adapter.common.render.RenderContext
@@ -67,10 +68,12 @@ object ForgeBootstrap {
             NoJumpDelay, NoKeyboardFix, NoMouseFix, Sprint, Strafe, StrafeFix,
             AntiBot, AutoTool, BridgeAssist, Eagle, ParallaxStrike, Teams,
             Fullbright, HUD, NoFOV, NoHurtCam,
+            WebUI,
             FastPlace
         )
         ModuleRegistry.initSafetyIntegration()
         try { ModuleRegistry.enable("HUD") } catch (_: Exception) {}
+        try { ModuleRegistry.enable("WebUI") } catch (_: Exception) {}
 
         CoreLogger.info("[ForgeBootstrap] Initialized (reflection mode) — ${ModuleRegistry.size()} modules registered")
     }

@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>SwitchLite · Aurora WebUI</title>
+<style>
+  :root {
+    --txt: #fff;
+    --txt2: rgba(255,255,255,.6);
+    --txt3: rgba(255,255,255,.35);
+    --mono: ui-monospace, "SF Mono", Consolas, monospace;
+    --sans: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    --spring: cubic-bezier(.34,1.56,.64,1);
+  }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  html,body { height:100%; }
+  body { font-family:var(--sans); color:var(--txt);
+    background: radial-gradient(circle at 30% 15%, rgba(255,80,160,.05), transparent 40%),
+                radial-gradient(circle at 75% 80%, rgba(40,190,255,.05), transparent 42%),
+                linear-gradient(155deg,#101016 0%, #0a0a0f 60%, #070709 100%); }
+  .stage { display:flex; flex-direction:column; gap:14px; padding:16px; min-height:100vh; }
+  .bar { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  .bar h1 { font-size:18px; font-weight:800; letter-spacing:.3px; }
+  .bar h1 em { font-style:normal; color:#8a93a3; }
+  .badges { display:flex; gap:6px; flex-wrap:wrap; }
+  .bd { font-size:10px; font-weight:600; padding:3px 9px; border-radius:99px; border:1px solid rgba(255,255,255,.14); color:rgba(255,255,255,.65); background:rgba(255,255,255,.04); font-family:var(--mono); }
+  .bd.hot { border-color:rgba(255,122,0,.45); color:#ffb066; }
+
+  .cards { display:flex; flex-wrap:wrap; gap:20px; align-items:flex-start; }
+  .card { width:300px; flex-shrink:0; position:relative;
+    background: linear-gradient(180deg, rgba(26,26,36,.92), rgba(20,20,30,.88));
+    border:1px solid rgba(255,255,255,.13);
+    border-radius:14px;
+    box-shadow: 0 20px 40px rgba(0,0,0,.55), 0 2px 10px rgba(0,0,0,.4), inset 0 0 0 1.5px rgba(255,255,255,.07);
+    overflow:hidden; }
+  .card.hidden { display:none; }
+  .c-head { display:flex; align-items:center; justify-content:space-between; height:32px; padding:0 16px;
+    background:linear-gradient(180deg, rgba(255,255,255,.05), transparent); border-bottom:1px solid rgba(255,255,255,.08); }
+  .c-title { font-size:12px; font-weight:800; letter-spacing:1.2px; }
+  .c-count { font-size:9px; font-family:var(--mono); color:var(--txt3); background:rgba(255,255,255,.07); border:1px solid rgba(255,255,255,.1); padding:2px 8px; border-radius:99px; }
+
+  .c-body { padding:12px; display:flex; flex-direction:column; gap:6px; }
+  .empty { font-size:10px; color:var(--txt3); padding:8px; text-align:center; }
+
+  .row { border-radius:10px; cursor:pointer; position:relative;
+    background:rgba(255,255,255,.045); border:1px solid rgba(255,255,255,.06);
+    transition: transform .18s var(--spring), box-shadow .25s ease, background .2s ease; }
+  .row:hover { transform:translateY(-1px); box-shadow:0 8px 20px rgba(0,0,0,.4); background:rgba(255,255,255,.065); }
+  .row.on { border-color:var(--accent-soft); box-shadow:0 0 0 1px var(--accent-soft), 0 10px 24px rgba(0,0,0,.35); }
+  .row-main { display:flex; align-items:center; justify-content:space-between; height:26px; padding:0 8px 0 12px; }
+  .r-name { font-size:11.5px; font-weight:650; color:rgba(255,255,255,.72); letter-spacing:.2px; }
+  .row.on .r-name { color:var(--txt); }
+  .r-right { display:flex; align-items:center; gap:8px; }
+  .r-caret { font-size:8px; color:var(--txt3); transition:transform .3s var(--spring); }
+  .row.expanded .r-caret { transform:rotate(180deg); color:var(--accent); }
+
+  .tgl { width:60px; height:22px; border-radius:20px; flex-shrink:0; position:relative; cursor:pointer; transition:all .22s var(--spring);
+    background:rgba(0,0,0,.32); border:1px solid rgba(255,255,255,.14); }
+  .tgl i { position:absolute; top:50%; left:3px; width:16px; height:16px; border-radius:99px; background:rgba(255,255,255,.55); transform:translateY(-50%); transition:left .22s var(--spring), background .2s; }
+  .row.on .tgl { background:var(--accent); border-color:transparent; box-shadow:0 0 16px var(--glow), inset 0 0 6px rgba(255,255,255,.3); }
+  .row.on .tgl i { left:calc(100% - 19px); background:#fff; }
+  .tgl:active { transform:scale(.96); }
+
+  .settings { display:grid; grid-template-rows:0fr; transition:grid-template-rows .38s var(--spring); }
+  .row.expanded .settings { grid-template-rows:1fr; }
+  .settings > div { overflow:hidden; }
+  .set-list { padding:6px 6px 6px 14px; display:flex; flex-direction:column; gap:8px; border-left:1px solid rgba(255,255,255,.1); margin-left:12px; }
+  .set { display:flex; align-items:center; justify-content:space-between; gap:8px; min-height:22px; }
+  .s-name { font-size:10px; color:var(--txt2); white-space:nowrap; }
+
+  .pill { width:38px; height:18px; border-radius:20px; background:rgba(0,0,0,.32); border:1px solid rgba(255,255,255,.12); position:relative; cursor:pointer; flex-shrink:0; transition:all .2s var(--spring); }
+  .pill i { position:absolute; top:50%; left:2px; width:13px; height:13px; border-radius:99px; background:rgba(255,255,255,.6); transform:translateY(-50%); transition:left .2s var(--spring); }
+  .pill.on { background:var(--accent); border-color:transparent; box-shadow:0 0 10px var(--glow); }
+  .pill.on i { left:21px; background:#fff; }
+  .pill:active { transform:scale(.96); }
+
+  .track { position:relative; width:96px; height:5px; border-radius:99px; background:rgba(255,255,255,.13); cursor:pointer; }
+  .track i { position:absolute; left:0; top:50%; height:5px; border-radius:99px; background:var(--accent); transform:translateY(-50%); box-shadow:0 0 8px var(--glow); }
+  .track b { position:absolute; top:50%; width:13px; height:13px; border-radius:99px; background:#fff; transform:translate(-50%,-50%); box-shadow:0 1px 5px rgba(0,0,0,.6), 0 0 8px var(--glow); }
+  .s-val { font-size:9px; font-family:var(--mono); color:var(--txt2); width:30px; text-align:right; }
+
+  .chip { display:flex; gap:2px; background:rgba(0,0,0,.3); border:1px solid rgba(255,255,255,.1); border-radius:20px; padding:2px; }
+  .chip span { font-size:9px; font-weight:600; padding:2px 9px; border-radius:20px; color:var(--txt2); cursor:pointer; transition:all .2s; font-family:var(--mono); }
+  .chip span.act { background:var(--accent); color:#fff; box-shadow:0 0 10px var(--glow); }
+  .chip span:not(.act):hover { color:var(--txt); }
+  .chip span:active { transform:scale(.96); }
+
+  .foot { display:flex; gap:8px; flex-wrap:wrap; font-size:11px; color:var(--txt3); }
+  .foot .k { background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.08); padding:3px 10px; border-radius:8px; }
+  .foot .k b { color:rgba(255,140,60,.95); }
+</style>
+</head>
+<body>
+<div class="stage">
+  <div class="bar">
+    <h1>SwitchLite <em>— Aurora WebUI 调试面板</em></h1>
+    <div class="badges">
+      <span class="bd hot" id="conn">connecting…</span>
+      <span class="bd">模块开关</span><span class="bd">实时生效</span><span class="bd">游戏内 HUD 同步</span>
+    </div>
+  </div>
+  <div class="cards" id="cards"></div>
+  <div class="foot">
+    <span class="k">点行 → 展开参数</span>
+    <span class="k">胶囊 → 开关模块</span>
+    <span class="k">pill / 滑块 / chip → 调参</span>
+    <span class="k">每张卡片 accent 按类别轮换</span>
+  </div>
+</div>
+
+<script>
+(function(){
+  const $ = s => document.querySelector(s);
+
+  /* HSL→RGB, same palette as the Aurora visual system */
+  function hslToRgb(h, s, l){
+    h = ((h % 1) + 1) % 1;
+    const hue = h * 360;
+    const c = (1 - Math.abs(2*l - 1)) * s;
+    const x = c * (1 - Math.abs((hue/60) % 2 - 1));
+    const m = l - c/2;
+    let r=0,g=0,b=0;
+    if(hue<60){r=c;g=x;}else if(hue<120){r=x;g=c;}else if(hue<180){g=c;b=x;}
+    else if(hue<240){g=x;b=c;}else if(hue<300){r=x;b=c;}else{r=c;b=x;}
+    return [Math.round((r+m)*255), Math.round((g+m)*255), Math.round((b+m)*255)];
+  }
+  const rgb = a => `rgb(${a[0]},${a[1]},${a[2]})`;
+  function palette(offset){
+    const baseHue = (0.8 + offset) % 1.0;
+    return { accent: hslToRgb(baseHue, 0.9, 0.6), glow: hslToRgb(baseHue, 1.0, 0.7) };
+  }
+  const CAT_OFF = {
+    RENDER: 0.00, COMBAT: 0.33, MOVEMENT: 0.66, PLAYER: 0.15, WORLD: 0.50
+  };
+  const CAT_LABEL = { RENDER:"Render", COMBAT:"Combat", MOVEMENT:"Move", PLAYER:"Player", WORLD:"World" };
+
+  let modules = [];
+
+  async function api(url, opts){
+    const r = await fetch(url, Object.assign({headers:{'Content-Type':'application/json'}}, opts));
+    if(!r.ok) throw new Error(r.status);
+    return r.json();
+  }
+
+  async function refresh(){
+    try {
+      modules = await api('/api/modules');
+      $('#conn').textContent = `已连接 · ${modules.length} 模块`;
+      $('#conn').style.borderColor = 'rgba(255,122,0,.45)';
+      $('#conn').style.color = '#ffb066';
+      render();
+    } catch(e) {
+      $('#conn').textContent = '未连接 — 模块未启用 WebUI';
+    }
+  }
+
+  function rowHTML(m, i){
+    const opts = (m.options||[]).map(setHTML).join('');
+    return `<div class="row ${m.enabled?'on':''}" data-i="${i}">
+      <div class="row-main">
+        <span class="r-name">${m.name}</span>
+        <div class="r-right">
+          ${m.options && m.options.length ? '<span class="r-caret">▼</span>' : ''}
+          <div class="tgl"><i></i></div>
+        </div>
+      </div>
+      <div class="settings"><div><div class="set-list">${opts}</div></div></div>
+    </div>`;
+  }
+
+  function setHTML(o){
+    const t = o.type;
+    if(t === 'BOOLEAN'){
+      return `<div class="set"><span class="s-name">${o.name}</span><div class="pill ${o.value?'on':''}"><i></i></div></div>`;
+    }
+    if(t === 'CHOICES' || t === 'ENUM'){
+      const opts = (o.choices||[]).map((c,i)=>`<span class="${c===o.value?'act':''}">${c}</span>`).join('');
+      return `<div class="set"><span class="s-name">${o.name}</span><div class="chip">${opts}</div></div>`;
+    }
+    if(t === 'FLOAT' || t === 'INT' || t === 'PROBABILITY'){
+      const min = typeof o.min==='number'?o.min:0;
+      const max = typeof o.max==='number'?o.max:100;
+      const v = typeof o.value==='number'?o.value:0;
+      const p = Math.round((v-min)/(max-min||1)*100);
+      const unit = o.unit||'';
+      return `<div class="set"><span class="s-name">${o.name}</span><div style="display:flex;align-items:center;gap:6px">
+        <div class="track" data-key="${o.key}" data-min="${min}" data-max="${max}" data-int="${t==='INT'||t==='PROBABILITY'?1:0}" style="--p:${p}">
+          <i style="width:${p}%"></i><b style="left:${p}%"></b></div>
+        <span class="s-val">${t==='FLOAT'?Number(v).toFixed(1):v}${unit}</span></div></div>`;
+    }
+    return '';
+  }
+
+  function render(){
+    const cats = {};
+    modules.forEach(m => { (cats[m.category] = cats[m.category]||[]).push(m); });
+    const order = ['COMBAT','MOVEMENT','PLAYER','RENDER','WORLD'];
+    $('#cards').innerHTML = order
+      .filter(c => cats[c] && cats[c].length)
+      .map(c => {
+        const p = palette(CAT_OFF[c]||0);
+        return `<div class="card" style="--accent:${rgb(p.accent)};--glow:${rgb(p.glow)};--accent-soft:rgba(${p.accent[0]},${p.accent[1]},${p.accent[2]},.35)">
+          <div class="c-head"><span class="c-title">${CAT_LABEL[c]||c}</span><span class="c-count">${cats[c].length} mods</span></div>
+          <div class="c-body">${cats[c].map(rowHTML).join('')}</div>
+        </div>`;
+      }).join('') || '<div class="empty">暂无模块</div>';
+  }
+
+  // ── interactions ──
+  document.addEventListener('click', async e => {
+    const pill = e.target.closest('.pill');
+    const chip = e.target.closest('.chip span');
+    const track = e.target.closest('.track');
+    const tgl = e.target.closest('.tgl');
+    if(pill){
+      const set = pill.closest('.set');
+      const key = null; // resolve from module row
+      // find the option key: walk the row's set-list
+      const row = pill.closest('.row');
+      const idx = +row.dataset.i;
+      const mod = modules[idx];
+      const o = mod.options.find(opt => opt.type==='BOOLEAN');
+      if(o){
+        await api('/api/options', {method:'POST', body:JSON.stringify({key:o.key, value:!o.value})});
+        pill.classList.toggle('on');
+      }
+      e.stopPropagation(); return;
+    }
+    if(chip){
+      const row = chip.closest('.row');
+      const idx = +row.dataset.i;
+      const mod = modules[idx];
+      const o = mod.options.find(opt => (opt.type==='CHOICES'||opt.type==='ENUM'));
+      if(o){
+        await api('/api/options', {method:'POST', body:JSON.stringify({key:o.key, value:chip.textContent})});
+        chip.parentElement.querySelectorAll('span').forEach(s=>s.classList.remove('act'));
+        chip.classList.add('act');
+      }
+      e.stopPropagation(); return;
+    }
+    if(track){
+      const row = track.closest('.row');
+      const idx = +row.dataset.i;
+      const mod = modules[idx];
+      const o = mod.options.find(opt => opt.type==='FLOAT'||opt.type==='INT'||opt.type==='PROBABILITY');
+      if(!o) return;
+      const r = track.getBoundingClientRect();
+      let p = Math.min(100, Math.max(0, (e.clientX-r.left)/r.width*100));
+      const min = +track.dataset.min, max = +track.dataset.max;
+      const isInt = track.dataset.int==='1';
+      const raw = min + p/100*(max-min);
+      const val = isInt ? Math.round(raw) : Math.round(raw*10)/10;
+      await api('/api/options', {method:'POST', body:JSON.stringify({key:o.key, value:val})});
+      track.style.setProperty('--p', p);
+      track.querySelector('i').style.width = p+'%';
+      track.querySelector('b').style.left = p+'%';
+      const sval = track.parentElement.querySelector('.s-val');
+      sval.textContent = (isInt?val:val.toFixed(1)) + (o.unit||'');
+      e.stopPropagation(); return;
+    }
+    if(tgl){
+      const row = tgl.closest('.row');
+      const idx = +row.dataset.i;
+      const mod = modules[idx];
+      await api('/api/modules/'+encodeURIComponent(mod.name)+'/toggle', {method:'POST'});
+      row.classList.toggle('on');
+      refresh(); // re-fetch to sync options/state
+      e.stopPropagation(); return;
+    }
+    const rowEl = e.target.closest('.row');
+    if(rowEl && rowEl.querySelector('.set-list').children.length) rowEl.classList.toggle('expanded');
+  });
+
+  refresh();
+  setInterval(refresh, 2000);
+})();
+</script>
+</body>
+</html>

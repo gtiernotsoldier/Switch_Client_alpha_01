@@ -49,8 +49,10 @@ object AgentBridge {
         "Teams" to "player",
         // Render
         "Fullbright" to "render",
+        "HUD" to "render",
         "NoFOV" to "render",
         "NoHurtCam" to "render",
+        "WebUI" to "render",
         // World
         "FastPlace" to "world",
     )
@@ -94,6 +96,7 @@ object AgentBridge {
         if (ModuleRegistry.size() > 0) {
             log("[AgentBridge] ${ModuleRegistry.size()} modules already registered — skipping duplicate registration")
             try { ModuleRegistry.initSafetyIntegration() } catch (_: Exception) {}
+            try { if (ModuleRegistry.isRegistered("WebUI")) ModuleRegistry.enable("WebUI") } catch (_: Exception) {}
             return "${ModuleRegistry.size()} already registered (delegated to platform bootstrap)"
         }
 
@@ -126,6 +129,7 @@ object AgentBridge {
         }
 
         try { ModuleRegistry.initSafetyIntegration() } catch (_: Exception) {}
+        try { if (ModuleRegistry.isRegistered("WebUI")) ModuleRegistry.enable("WebUI") } catch (_: Exception) {}
 
         val msg = "$ok registered, $failed failed" +
             if (failedNames.isNotEmpty()) " (${failedNames.joinToString()})" else ""

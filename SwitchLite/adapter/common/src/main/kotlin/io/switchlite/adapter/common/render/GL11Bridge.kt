@@ -47,4 +47,30 @@ interface GL11Bridge {
     fun glBegin(mode: Int)
     fun glVertex2f(x: Float, y: Float)
     fun glEnd()
+
+    // ── Texture (SmoothFontRenderer) ──
+
+    /** Generate a texture name (GL11.glGenTextures). */
+    fun glGenTextures(): Int
+
+    /** Bind a 2D texture (GL11.glBindTexture(GL_TEXTURE_2D, id)). */
+    fun glBindTexture(id: Int)
+
+    /** Set a texture parameter (e.g. GL_TEXTURE_MIN_FILTER / GL_LINEAR). */
+    fun glTexParameteri(target: Int, pname: Int, param: Int)
+
+    /**
+     * Upload RGBA pixel data into the currently bound texture.
+     * [pixels] is a ByteBuffer of width*height*4 bytes in R,G,B,A order.
+     */
+    fun glTexImage2DRGBA(width: Int, height: Int, pixels: java.nio.ByteBuffer)
+
+    /** Set the 2D texture coordinate for the next vertex. */
+    fun glTexCoord2f(u: Float, v: Float)
+
+    /** Scale the current matrix by (x, y, z). */
+    fun glScalef(x: Float, y: Float, z: Float)
+
+    /** Translate the current matrix by (x, y, z). */
+    fun glTranslatef(x: Float, y: Float, z: Float)
 }

@@ -117,6 +117,94 @@ object RenderUtils {
         }
     }
 
+    // ═══════════════════ Aurora shadow / glow ═══════════════════
+
+    /**
+     * Soft drop shadow for a rounded card. Draws several slightly larger
+     * translucent rounded rects behind the card; alpha builds toward the
+     * center so it reads as a soft edge rather than a hard outline.
+     */
+    fun shadow(
+        ctx: RenderContext,
+        x: Float, y: Float, w: Float, h: Float,
+        r: Float,
+        depth: Int = 3,
+        color: Int = 0x40000000.toInt()
+    ) {
+        for (i in depth downTo 1) {
+            val spread = i * 1.6f
+            val alphaMul = (depth - i + 1).toFloat() / (depth + 1).toFloat()
+            roundedRect(
+                ctx,
+                x - spread, y - spread,
+                w + spread * 2, h + spread * 2,
+                r + spread,
+                withAlpha(color, alphaMul)
+            )
+        }
+    }
+
+    /**
+     * Outer glow around a rounded card using the given accent/glow color.
+     * Stacked translucent layers create a soft neon halo.
+     */
+    fun glow(
+        ctx: RenderContext,
+        x: Float, y: Float, w: Float, h: Float,
+        r: Float,
+        color: Int,
+        spread: Float = 6f,
+        layers: Int = 4
+    ) {
+        for (i in layers downTo 1) {
+            val s = spread * i / layers
+            val alphaMul = (layers - i + 1).toFloat() / (layers + 1).toFloat()
+            roundedRect(
+                ctx,
+                x - s, y - s,
+                w + s * 2, h + s * 2,
+                r + s,
+                withAlpha(color, alphaMul * 0.35f)
+            )
+        }
+    }
+
+    /** Vertical gradient rectangle drawn as [bands] horizontal strips. */
+    fun verticalGradient(
+        ctx: RenderContext,
+        x: Float, y: Float, w: Float, h: Float,
+        topColor: Int,
+        bottomColor: Int,
+        bands: Int = 12
+    ) {
+        val step = h / bands
+        for (i in 0 until bands) {
+            val t = i.toFloat() / (bands - 1).coerceAtLeast(1)
+            val color = lerpColor(topColor, bottomColor, t)
+            rect(ctx, x, y + i * step, w, step + 1f, color)
+        }
+    }
+
+    private fun lerpColor(a: Int, b: Int, t: Float): Int {
+        val ta = t.coerceIn(0f, 1f)
+        val ar = (a shr 16) and 0xFF
+        val ag = (a shr 8) and 0xFF
+        val ab = a and 0xFF
+        val aa = (a ushr 24) and 0xFF
+        val br = (b shr 16) and 0xFF
+        val bg = (b shr 8) and 0xFF
+        val bb = b and 0xFF
+        val ba = (b ushr 24) and 0xFF
+        fun mix(x: Int, y: Int) = (x + (y - x) * ta).toInt()
+        return (mix(aa, ba) shl 24) or (mix(ar, br) shl 16) or (mix(ag, bg) shl 8) or mix(ab, bb)
+    }
+
+    /** Apply an alpha multiplier to an ARGB color (same as Theme.withAlpha). */
+    fun withAlpha(argb: Int, mul: Float): Int {
+        val a = (((argb ushr 24) and 0xFF) * mul).toInt().coerceIn(0, 255)
+        return (a shl 24) or (argb and 0x00FFFFFF)
+    }
+
     // ═══════════════════ Rainbow text ═══════════════════
 
     /**

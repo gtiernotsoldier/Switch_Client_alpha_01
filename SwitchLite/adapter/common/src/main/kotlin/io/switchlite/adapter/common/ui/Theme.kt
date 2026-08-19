@@ -1,5 +1,6 @@
 package io.switchlite.adapter.common.ui
 
+import io.switchlite.adapter.common.module.Category
 import java.awt.Color
 
 /**
@@ -51,32 +52,67 @@ object Theme {
     /** Legacy single accent (kept for callers that don't use per-category). */
     const val ACCENT: Int = 0xFFFF6A00.toInt()
 
+    // ── Aurora depth / light ──
+
+    /** Soft black shadow behind cards (used with multiple stacked layers). */
+    const val SHADOW: Int = 0x33000000.toInt()
+
+    /** Deeper shadow for the outermost layer. */
+    const val SHADOW_DEEP: Int = 0x55000000.toInt()
+
+    /** Subtle top highlight line on Aurora cards. */
+    const val TOP_HIGHLIGHT: Int = 0x14FFFFFF
+
+    /** Card border glow when active/hovered. */
+    const val GLOW_WHITE: Int = 0x26FFFFFF
+
     // ── Per-category Aurora accents (HSL-hue rotated) ──
 
     /**
      * Accent color for a category, matching Aurora's per-card hue rotation.
      * Base hue 0.8 (warm orange), categories offset their hue.
+     *
+     * Maps by category NAME (not enum ordinal) so the palette matches the
+     * `aurora_gui_visual_system_preview.html` design: RENDER=orange,
+     * COMBAT=gold, MOVEMENT=mint, PLAYER=pink, WORLD=yellow-green.
      */
-    fun accentFor(categoryOrdinal: Int): Int {
-        val offset = when (categoryOrdinal) {
-            0 -> 0.00f  // RENDER  — warm orange
-            1 -> 0.33f  // COMBAT  — gold
-            2 -> 0.66f  // MOVEMENT— mint
-            3 -> 0.15f  // PLAYER  — pink/purple
-            4 -> 0.50f  // WORLD   — yellow-green
-            else -> 0.0f
+    fun accentFor(category: Category): Int {
+        val offset = when (category) {
+            Category.RENDER   -> 0.00f  // warm orange
+            Category.COMBAT   -> 0.33f  // gold
+            Category.MOVEMENT -> 0.66f  // mint
+            Category.PLAYER   -> 0.15f  // pink/purple
+            Category.WORLD    -> 0.50f  // yellow-green
+            else              -> 0.0f
         }
         val hue = (0.8f + offset) % 1.0f
         return Color.HSBtoRGB(hue, 0.9f, 0.6f) or 0xFF000000.toInt()
     }
 
     /** Soft accent (35% alpha) for borders/glow on category cards. */
-    fun accentSoft(categoryOrdinal: Int): Int {
-        val base = accentFor(categoryOrdinal)
+    fun accentSoft(category: Category): Int {
+        val base = accentFor(category)
         val r = (base shr 16) and 0xFF
         val g = (base shr 8) and 0xFF
         val b = base and 0xFF
         return (0x59 shl 24) or (r shl 16) or (g shl 8) or b
+    }
+
+    /**
+     * Brighter, more saturated accent used for glows (Aurora `glow`).
+     * Same hue as [accentFor] but lightness 0.7 instead of 0.6.
+     */
+    fun accentGlow(category: Category): Int {
+        val offset = when (category) {
+            Category.RENDER   -> 0.00f  // warm orange
+            Category.COMBAT   -> 0.33f  // gold
+            Category.MOVEMENT -> 0.66f  // mint
+            Category.PLAYER   -> 0.15f  // pink/purple
+            Category.WORLD    -> 0.50f  // yellow-green
+            else              -> 0.0f
+        }
+        val hue = (0.8f + offset) % 1.0f
+        return Color.HSBtoRGB(hue, 1.0f, 0.72f) or 0xFF000000.toInt()
     }
 
     // ── Rainbow ──

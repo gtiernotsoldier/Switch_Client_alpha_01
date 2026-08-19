@@ -32,14 +32,17 @@ object ClickGUI : Module("ClickGUI", Category.RENDER) {
         showRedIndicator = false
     }
 
-    /** Panel width — compact Aurora card (was 260, too wide; 200 fits nicely). */
-    const val PANEL_WIDTH = 200
+    /** Panel width — Aurora card (matches the 260px visual system preview). */
+    const val PANEL_WIDTH = 260
 
-    /** Hit-test size of the per-row module toggle area (Aurora capsule). */
-    const val TOGGLE_DOT_SIZE = 44
+    /** Hit-test size of the per-row module toggle area (Aurora 60px capsule). */
+    const val TOGGLE_DOT_SIZE = 60
 
-    /** Row height (px) — compact Aurora rows. */
-    const val ROW_HEIGHT = 18
+    /** Row height (px) — roomy Aurora rows. */
+    const val ROW_HEIGHT = 22
+
+    /** Title bar height (px) — Aurora 32px draggable header. */
+    const val TITLE_BAR_HEIGHT = 32
 
     private var isOpen = false
 
@@ -49,7 +52,9 @@ object ClickGUI : Module("ClickGUI", Category.RENDER) {
         var x: Int,
         var y: Int,
         var expanded: Boolean = true,
-        val heightAnim: Animation = Animation(0f)
+        val heightAnim: Animation = Animation(0f),
+        /** Aurora card entrance: 0 → 1 (fade + slide + scale). */
+        val entrance: Animation = Animation(0f)
     )
 
     private val panels = mutableMapOf<Category, Panel>()
@@ -62,7 +67,17 @@ object ClickGUI : Module("ClickGUI", Category.RENDER) {
     }
 
     /** Height of the draggable title bar. */
-    fun titleBarHeight(lineHeight: Int): Int = lineHeight + 2
+    fun titleBarHeight(lineHeight: Int): Int = TITLE_BAR_HEIGHT
+
+    /** Aurora entrance progress (0..1) for a category panel. */
+    fun entrance(cat: Category): Float = panel(cat).entrance.valueF
+
+    /** Restart the Aurora card entrance animation for all panels. */
+    fun resetEntrance() {
+        for (p in panels.values) {
+            p.entrance.snap(0f)
+        }
+    }
 
     // ═══════════════ Setting items ═══════════════
 
@@ -226,6 +241,8 @@ object ClickGUI : Module("ClickGUI", Category.RENDER) {
             val p = panel(cat)
             val target = if (p.expanded) panelHeight(cat, lineHeight) - titleBarHeight(lineHeight).toFloat() else 0f
             p.heightAnim.setTarget(target, 16f)
+            // Aurora entrance: fade + slide + scale in when the GUI is open.
+            p.entrance.setTarget(if (isOpen) 1f else 0f, 10f)
         }
     }
 
@@ -400,8 +417,8 @@ object ClickGUI : Module("ClickGUI", Category.RENDER) {
 
     /** Slider track geometry inside a setting row. Shared with the renderer. */
     fun sliderTrack(row: ModuleRow): Pair<Float, Float> {
-        val trackStart = row.x + 80f
-        val trackWidth = (row.x + row.width - 26 - trackStart).coerceAtLeast(10f)
+        val trackStart = row.x + 100f
+        val trackWidth = (row.x + row.width - 34 - trackStart).coerceAtLeast(10f)
         return trackStart to trackWidth
     }
 
@@ -425,7 +442,10 @@ object ClickGUI : Module("ClickGUI", Category.RENDER) {
                 // Delegate to the platform: opens/closes the ClickGUI as a real
                 // MC GuiScreen, so MC owns the mouse grab / cursor / keyboard.
                 EventBridge.notifyGuiOpen(isOpen)
-                if (isOpen) wasLeftDown = false
+                if (isOpen) {
+                    wasLeftDown = false
+                    resetEntrance()
+                }
             }
             // ESC is handled by MC's GuiScreen (closes itself via
             // displayGuiScreen(null)) — nothing to do here.
@@ -464,7 +484,10 @@ object ClickGUI : Module("ClickGUI", Category.RENDER) {
     fun toggleFromPoll() {
         isOpen = !isOpen
         EventBridge.notifyGuiOpen(isOpen)
-        if (isOpen) wasLeftDown = false
+        if (isOpen) {
+            wasLeftDown = false
+            resetEntrance()
+        }
     }
 
     /**

@@ -69,12 +69,47 @@ class ForgeGL11Bridge : GL11Bridge {
         gl11Class.getMethod("glEnd")
     }
 
+    // ── Texture (SmoothFontRenderer) ──
+
+    private val glGenTexturesMethod by lazy {
+        gl11Class.getMethod("glGenTextures")
+    }
+    private val glBindTextureMethod by lazy {
+        gl11Class.getMethod("glBindTexture", Int::class.javaPrimitiveType, Int::class.javaPrimitiveType)
+    }
+    private val glTexParameteriMethod by lazy {
+        gl11Class.getMethod("glTexParameteri", Int::class.javaPrimitiveType, Int::class.javaPrimitiveType, Int::class.javaPrimitiveType)
+    }
+    private val glTexImage2DMethod by lazy {
+        gl11Class.getMethod("glTexImage2D",
+            Int::class.javaPrimitiveType, Int::class.javaPrimitiveType, Int::class.javaPrimitiveType,
+            Int::class.javaPrimitiveType, Int::class.javaPrimitiveType, Int::class.javaPrimitiveType,
+            Int::class.javaPrimitiveType, Int::class.javaPrimitiveType, java.nio.ByteBuffer::class.java)
+    }
+    private val glTexCoord2fMethod by lazy {
+        gl11Class.getMethod("glTexCoord2f", Float::class.javaPrimitiveType, Float::class.javaPrimitiveType)
+    }
+    private val glScalefMethod by lazy {
+        gl11Class.getMethod("glScalef", Float::class.javaPrimitiveType, Float::class.javaPrimitiveType, Float::class.javaPrimitiveType)
+    }
+    private val glTranslatefMethod by lazy {
+        gl11Class.getMethod("glTranslatef", Float::class.javaPrimitiveType, Float::class.javaPrimitiveType, Float::class.javaPrimitiveType)
+    }
+
     /** Track which methods have already logged errors to avoid spam. */
     private val loggedErrors = mutableSetOf<String>()
 
     private fun safeInvoke(methodName: String, method: java.lang.reflect.Method?, vararg args: Any?) {
         try {
             method?.invoke(null, *args)
+        } catch (e: java.lang.reflect.InvocationTargetException) {
+            // Reflection wraps the real GL exception — surface its message so
+            // failures like LWJGL's "direct buffer required" are diagnosable.
+            val cause = e.cause
+            val detail = if (cause != null) "${cause.javaClass.simpleName}: ${cause.message}" else "null cause"
+            if (loggedErrors.add(methodName)) {
+                CoreLogger.error("[ForgeGL11Bridge] $methodName failed: $detail")
+            }
         } catch (e: Exception) {
             if (loggedErrors.add(methodName)) {
                 CoreLogger.error("[ForgeGL11Bridge] $methodName failed: ${e.javaClass.simpleName}: ${e.message}")
@@ -143,4 +178,46 @@ class ForgeGL11Bridge : GL11Bridge {
     override fun glEnd() {
         safeInvoke("glEnd", glEndMethod)
     }
+
+    // ── Texture (SmoothFontRenderer) ──
+
+    override fun glGenTextures(): Int {
+        return try {
+            (glGenTexturesMethod.invoke(null) as? Int) ?: 0
+        } catch (e: Exception) {
+            if (loggedErrors.add("glGenTextures")) {
+                CoreLogger.error("[ForgeGL11Bridge] glGenTextures failed: ${e.javaClass.simpleName}: ${e.message}")
+            }
+            0
+        }
+    }
+
+    override fun glBindTexture(id: Int) {
+        safeInvoke("glBindTexture", glBindTextureMethod, GL_TEXTURE_2D, id)
+    }
+
+    override fun glTexParameteri(target: Int, pname: Int, param: Int) {
+        safeInvoke("glTexParameteri", glTexParameteriMethod, target, pname, param)
+    }
+
+    override fun glTexImage2DRGBA(width: Int, height: Int, pixels: java.nio.ByteBuffer) {
+        safeInvoke("glTexImage2D", glTexImage2DMethod, GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels)
+    }
+
+    override fun glTexCoord2f(u: Float, v: Float) {
+        safeInvoke("glTexCoord2f", glTexCoord2fMethod, u, v)
+    }
+
+    override fun glScalef(x: Float, y: Float, z: Float) {
+        safeInvoke("glScalef", glScalefMethod, x, y, z)
+    }
+
+    override fun glTranslatef(x: Float, y: Float, z: Float) {
+        safeInvoke("glTranslatef", glTranslatefMethod, x, y, z)
+    }
+
+    /** GL_TEXTURE_2D constant for [glBindTexture]. */
+    private val GL_TEXTURE_2D = 0x0DE1
+    private val GL_RGBA = 0x1908
+    private val GL_UNSIGNED_BYTE = 0x1401
 }

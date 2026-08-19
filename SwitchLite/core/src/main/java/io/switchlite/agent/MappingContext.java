@@ -47,8 +47,16 @@ public class MappingContext {
      * diagnostic logs. This mirrors the CoreLogger file sink so that a failed
      * semantic key (e.g. a wrong SRG field name) actually surfaces in
      * switchlite-agent.log instead of vanishing silently.
+     *
+     * Deduplicated per message: tick() runs at 20Hz and retries the same
+     * missing keys every tick, which used to spam the log thousands of times.
+     * Each distinct failure is now reported once.
      */
+    private static final java.util.Set<String> REPORTED_ERRS =
+            java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<>());
+
     private static void logErr(String msg) {
+        if (!REPORTED_ERRS.add(msg)) return;
         try {
             String tmp = System.getProperty("java.io.tmpdir");
             if (tmp != null) {

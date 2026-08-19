@@ -80,24 +80,16 @@ object ForgeBootstrap {
                 }
                 if (open) {
                     try {
-                        // GuiScreen is ABSTRACT — cannot `new GuiScreen()`. Use the
-                        // Javassist-generated concrete subclass (in the game CL).
-                        //
-                        // Load the factory with OUR ClassLoader (agent jar is on it),
-                        // NOT the render-thread context CL (LaunchClassLoader can't see
-                        // io.switchlite.agent.* — that threw NoClassDefFoundError, which
-                        // is an Error and escaped every catch(Exception)).
-                        val gameCL = Thread.currentThread().contextClassLoader
-                        val factoryClass = Class.forName(
-                            "io.switchlite.agent.ForgeGuiScreenFactory", true,
-                            ForgeBootstrap::class.java.classLoader
-                        )
-                        val screen = factoryClass.getMethod("createGuiScreen", ClassLoader::class.java)
-                            .invoke(null, gameCL)
-                        if (screen == null) {
-                            CoreLogger.error("[ForgeBootstrap] ForgeGuiScreenFactory returned null — GUI cannot open")
-                            return@registerGuiOpenHandler
-                        }
+                        // GuiScreen is ABSTRACT — can't `new GuiScreen()`. Javassist
+                        // subclassing kept hitting NoClassDefFoundError (javassist on
+                        // the agent CL isn't visible to the render-thread CL). Brute
+                        // force: open a concrete, already-present GuiScreen subclass.
+                        // GuiChat is concrete and requires no args — MC accepts it,
+                        // ungrabs the mouse, shows the cursor, freezes the crosshair,
+                        // and closes on ESC. We cover it with our full-screen UI in
+                        // OverlayRenderer (drawn on top via the Display.update hook).
+                        val guiChatClass = Class.forName("net.minecraft.client.gui.GuiChat")
+                        val screen = guiChatClass.getConstructor().newInstance()
                         val invoked = MappingContext.invokeMethod(mc, "forge:mc_displayGuiScreen", screen)
                         CoreLogger.info("[ForgeBootstrap] ClickGUI screen opened (invoked=$invoked)")
                     } catch (e: Throwable) {

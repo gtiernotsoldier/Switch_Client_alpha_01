@@ -8,7 +8,14 @@
 use std::ffi::c_void;
 use std::ptr;
 
-use crate::process::ProcessInfo;
+/// Information about a detected Minecraft process.
+#[derive(Debug, Clone, Default)]
+pub struct ProcessInfo {
+    pub pid: u32,
+    pub valid: bool,
+    pub window_title: String,
+    pub path: String,
+}
 
 // ── Win32 types ──
 

@@ -72,16 +72,28 @@ object ForgeBootstrap {
         // back to gameplay). We only draw the UI via OverlayRenderer.
         EventBridge.registerGuiOpenHandler { open ->
             try {
-                val mc = MappingContext.invokeMethod(null, "forge:mc_getMinecraft") ?: return@registerGuiOpenHandler
+                val mc = MappingContext.invokeMethod(null, "forge:mc_getMinecraft")
+                if (mc == null) {
+                    CoreLogger.error("[ForgeBootstrap] guiOpenHandler: mc is null")
+                    return@registerGuiOpenHandler
+                }
                 if (open) {
-                    val guiScreenClass = Class.forName("net.minecraft.client.gui.GuiScreen")
-                    val screen = guiScreenClass.getConstructor().newInstance()
-                    MappingContext.invokeMethod(mc, "forge:mc_displayGuiScreen", screen)
+                    try {
+                        val guiScreenClass = Class.forName("net.minecraft.client.gui.GuiScreen")
+                        val screen = guiScreenClass.getConstructor().newInstance()
+                        val invoked = MappingContext.invokeMethod(mc, "forge:mc_displayGuiScreen", screen)
+                        CoreLogger.info("[ForgeBootstrap] ClickGUI screen opened (invoked=$invoked)")
+                    } catch (e: Exception) {
+                        CoreLogger.error("[ForgeBootstrap] open GuiScreen FAILED: ${e.javaClass.simpleName}: ${e.message}")
+                        return@registerGuiOpenHandler
+                    }
                 } else {
                     MappingContext.invokeMethod(mc, "forge:mc_displayGuiScreen", null)
                 }
                 EventBridge.isGuiOpen = open
-            } catch (_: Exception) {}
+            } catch (e: Exception) {
+                CoreLogger.error("[ForgeBootstrap] guiOpenHandler FAILED: ${e.javaClass.simpleName}: ${e.message}")
+            }
         }
 
         CoreLogger.info("[ForgeBootstrap] Initialized (reflection mode) — ${ModuleRegistry.size()} modules registered")
@@ -115,6 +127,7 @@ object ForgeBootstrap {
         try {
             val rshiftDown = (keyboardIsKeyDown.invoke(null, 54) as? Boolean) ?: false
             if (rshiftDown && !lastGuiKeyDown) {
+                CoreLogger.info("[ForgeBootstrap] RShift edge detected — toggling ClickGUI")
                 ClickGUI.toggleFromPoll()
             }
             lastGuiKeyDown = rshiftDown

@@ -95,6 +95,7 @@ object EventBridge {
     // The platform adapter registers a handler that opens/closes the ClickGUI
     // as a real MC GuiScreen (mc.displayGuiScreen). MC then owns the mouse
     // grab / cursor / keyboard — we only draw the UI.
+    @Volatile
     private var guiOpenHandler: ((Boolean) -> Unit)? = null
 
     /** Platform adapter registers this to open/close the ClickGUI GuiScreen. */

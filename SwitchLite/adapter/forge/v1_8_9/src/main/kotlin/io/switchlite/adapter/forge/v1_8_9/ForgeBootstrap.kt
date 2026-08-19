@@ -85,8 +85,14 @@ object ForgeBootstrap {
                         // Hide the chat box entirely (drawScreen -> no-op) so the
                         // GUI opens over a clean world view — no chat background,
                         // no input field. Mouse/keyboard/ESC still owned by MC.
+                        // Transformer lives in the agent jar (same runtime CL as this
+                        // class) but is NOT a compile dependency of the forge adapter,
+                        // so we reach it reflectively — mirrors how MappingContext /
+                        // RenderBridge are already accessed across that boundary.
                         try {
-                            io.switchlite.agent.Transformer.hideChatScreen(guiChatClass)
+                            val transformer = Class.forName("io.switchlite.agent.Transformer")
+                            transformer.getMethod("hideChatScreen", Class::class.java)
+                                .invoke(null, guiChatClass)
                         } catch (_: Throwable) {}
                         val screen = guiChatClass.getConstructor().newInstance()
                         MappingContext.invokeMethod(mc, "forge:mc_displayGuiScreen", screen)

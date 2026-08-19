@@ -454,6 +454,16 @@ object ClickGUI : Module("ClickGUI", Category.RENDER) {
     fun isOpen(): Boolean = isOpen
 
     /**
+     * Toggle the GUI open/closed. Called by the adapter's key-state poller
+     * (render thread) when it detects a RIGHT_SHIFT press edge.
+     */
+    fun toggleFromPoll() {
+        isOpen = !isOpen
+        EventBridge.notifyGuiOpen(isOpen)
+        if (isOpen) wasLeftDown = false
+    }
+
+    /**
      * Called by the adapter when MC closes the GuiScreen itself (e.g. ESC,
      * which MC handles internally by displayGuiScreen(null)). Resets the open
      * state WITHOUT re-invoking the guiOpenHandler (avoids a loop).

@@ -13,6 +13,18 @@ object KeyTranslator {
     }
 
     /**
+     * Translate a GLFW standard key code back to LWJGL 2.
+     * Used for Keyboard.isKeyDown() polling (state check, does NOT consume
+     * MC's key event queue — that's what was causing input lag).
+     */
+    fun toLwjgl2(glfwCode: Int): Int {
+        for ((lwjgl, glfw) in LWJGL2_TO_GLFW) {
+            if (glfw == glfwCode) return lwjgl
+        }
+        return glfwCode
+    }
+
+    /**
      * LWJGL 2 Keyboard constants → GLFW key codes.
      * LWJGL 2 uses its own sequential codes, GLFW uses different values.
      * Reference: org.lwjgl.input.Keyboard (LWJGL 2) vs org.lwjgl.glfw.GLFW (LWJGL 3)

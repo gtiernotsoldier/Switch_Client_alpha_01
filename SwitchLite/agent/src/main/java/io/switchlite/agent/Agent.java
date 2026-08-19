@@ -39,7 +39,6 @@ public class Agent {
 
     private static Instrumentation instrumentation;
     private static volatile boolean running = true;
-    private static Thread keyPollThread = null;
     private static File logFile = null;
     private static PrintWriter logStream = null;
 
@@ -270,10 +269,13 @@ public class Agent {
             }
 
             // 6. Start threads (dispatch only — no rendering)
-            startKeyPollThread();
+            // NOTE: key polling no longer consumes LWJGL's Keyboard.next() queue
+            // — that raced MC's own KeyBinding input and caused input lag.
+            // Keyboard STATE polling (isKeyDown, edge detection) lives in
+            // ForgeBootstrap.render() on the render thread.
             startTickThread();
 
-            log("[SwitchLite Agent] Ready — tick + key listener active");
+            log("[SwitchLite Agent] Ready — tick active");
         } catch (Throwable t) {
             log("[Agent] ============================================================");
             log("[Agent] FATAL: coreInit step 5-6 crashed: " + t.getClass().getName() + ": " + t.getMessage());
@@ -329,96 +331,31 @@ public class Agent {
     }
 
     // ═══════════════════════════════════════════
-    //  Key Polling (LWJGL2 Keyboard)
+    //  Key Polling — DISABLED (was consuming MC's key queue -> input lag)
     // ═══════════════════════════════════════════
-
+    // The old KeyPoll thread drained LWJGL's Keyboard.next() event queue and
+    // forwarded events to ForgeBootstrap.onKey(). That raced Minecraft's own
+    // KeyBinding input loop (both consume the same queue) — MC lost key
+    // events, causing input lag and "press many times to trigger" for the
+    // user's keybinds (R, movement keys).
+    //
+    // Key handling now follows the architecture: MC owns the keyboard. The
+    // ClickGUI is a real GuiScreen (MC dispatches its keys). For in-game
+    // module keybinds we poll Keyboard.isKeyDown() STATE (never the event
+    // queue) with edge detection in ForgeBootstrap.render().
+    //
+    // startKeyPollThread() is intentionally NOT called (see coreInit step 6).
+    // The methods below are kept only so the file still parses; they are dead.
     private static void startKeyPollThread() {
-        keyPollThread = new Thread(() -> {
-            log("[KeyPoll] Thread started, dispatching LWJGL keyboard polling to the render thread");
-            try {
-                Class<?> mcClass = Class.forName("net.minecraft.client.Minecraft");
-                Method getMc = mcClass.getMethod("func_71410_x");
-                // NOTE: func_152343_a takes Callable, NOT Runnable (verified 1.8.8 SRG).
-                Method addTask = mcClass.getMethod("func_152343_a", java.util.concurrent.Callable.class);
-
-                while (running) {
-                    try {
-                        Object mc = getMc.invoke(null);
-                        if (mc != null) {
-                            // CRITICAL: poll ON the MC render thread. Consuming
-                            // Keyboard.next() from a background thread races MC's
-                            // own per-frame Keyboard.next() loop, which caused
-                            // input lag / dropped key events after injection.
-                            addTask.invoke(mc, (java.util.concurrent.Callable<Object>) () -> {
-                                pollKeysOnce();
-                                return null;
-                            });
-                        }
-                    } catch (Exception e) {
-                        // MC not ready yet — retry next loop
-                    }
-                    try {
-                        Thread.sleep(50); // 20 Hz dispatch
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                        break;
-                    }
-                }
-            } catch (ClassNotFoundException e) {
-                log("[KeyPoll] LWJGL/MC classes not found! MC not fully loaded yet.");
-                retryKeyPoll();
-            } catch (Exception e) {
-                log("[KeyPoll] Fatal error: " + e.getMessage());
-            }
-        }, "SwitchLite-KeyPoll");
-        keyPollThread.setDaemon(true);
-        keyPollThread.start();
+        // Disabled — do nothing. Keyboard.state polling lives in ForgeBootstrap.render().
     }
 
-    /**
-     * Consume LWJGL keyboard events and dispatch them.
-     * MUST run on the MC render thread — posted via Minecraft.addScheduledTask
-     * by {@link #startKeyPollThread()}. Running it on a background thread
-     * races MC's own Keyboard.next() consumption and introduces input lag.
-     */
+    /** Dead stub — kept only so callers parse; never invoked. */
     private static void pollKeysOnce() {
-        try {
-            Class<?> keyboardClass = Class.forName("org.lwjgl.input.Keyboard");
-            Method isNext = keyboardClass.getMethod("next");
-            Method getEventKey = keyboardClass.getMethod("getEventKey");
-            Method getEventKeyState = keyboardClass.getMethod("getEventKeyState");
-
-            while ((Boolean) isNext.invoke(null)) {
-                int lwjglCode = (Integer) getEventKey.invoke(null);
-                boolean pressed = (Boolean) getEventKeyState.invoke(null);
-                if (lwjglCode != 0 && forgeBootstrapAvailable) {
-                    ForgeBootstrap.INSTANCE.onKey(lwjglCode, pressed);
-                }
-            }
-        } catch (Exception e) {
-            // Ignore — Keyboard not created yet or disposed
-        }
     }
 
+    /** Dead stub — kept only so callers parse; never invoked. */
     private static void retryKeyPoll() {
-        log("[KeyPoll] Will retry every 2s until LWJGL Keyboard is available...");
-        Thread retryThread = new Thread(() -> {
-            try {
-                while (running) {
-                    try {
-                        Thread.sleep(2000);
-                        Class.forName("org.lwjgl.input.Keyboard");
-                        log("[KeyPoll] LWJGL Keyboard found! Restarting poll...");
-                        startKeyPollThread();
-                        return;
-                    } catch (ClassNotFoundException e) {
-                        // Keep retrying
-                    }
-                }
-            } catch (InterruptedException ignored) {}
-        }, "SwitchLite-KeyPollRetry");
-        retryThread.setDaemon(true);
-        retryThread.start();
     }
 
     // ═══════════════════════════════════════════

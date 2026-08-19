@@ -98,6 +98,45 @@ object ForgeBootstrap {
         try { mouseClass.getMethod("getY") } catch (_: Exception) { null }
     }
 
+    // ── Keyboard state polling (does NOT consume MC's key event queue) ──
+    private val keyboardClass by lazy { Class.forName("org.lwjgl.input.Keyboard") }
+    private val keyboardIsKeyDown by lazy { keyboardClass.getMethod("isKeyDown", Int::class.javaPrimitiveType) }
+    private var lastGuiKeyDown = false
+
+    /**
+     * Poll keyboard STATE (isKeyDown — never Keyboard.next()) for our own
+     * keybinds: RIGHT_SHIFT toggles the ClickGUI, and each module's keybind
+     * toggles the module. Edge-detected so a press fires once. Runs on the
+     * render thread (from render()). This is the ONLY place we touch keys —
+     * we must NOT drain the LWJGL event queue (that raced MC's KeyBinding
+     * input and caused the "press many times" lag).
+     */
+    private fun pollGuiKeys() {
+        try {
+            val rshiftDown = (keyboardIsKeyDown.invoke(null, 54) as? Boolean) ?: false
+            if (rshiftDown && !lastGuiKeyDown) {
+                ClickGUI.toggleFromPoll()
+            }
+            lastGuiKeyDown = rshiftDown
+
+            // Module keybinds: each module's keybind is a GLFW code; translate
+            // to LWJGL2 and check state with edge detection.
+            for (module in ModuleRegistry.getAll()) {
+                if (module.keybind <= 0 || module.keybind == 344) continue // 344 = RShift (GUI)
+                val lwjgl = KeyTranslator.toLwjgl2(module.keybind)
+                if (lwjgl <= 0) continue
+                val down = (keyboardIsKeyDown.invoke(null, lwjgl) as? Boolean) ?: false
+                val prev = moduleKeyStates[module.name] ?: false
+                moduleKeyStates[module.name] = down
+                if (down && !prev) {
+                    module.tryKeybindToggle(module.keybind)
+                }
+            }
+        } catch (_: Exception) {}
+    }
+
+    private val moduleKeyStates = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
+
     /**
      * Read the LWJGL mouse into EventBridge (scaled GUI coordinates) and
      * forward clicks to ClickGUI. Runs on the MC render thread (from render()).
@@ -260,6 +299,9 @@ object ForgeBootstrap {
             // Mouse grab/cursor is owned by MC's GuiScreen now (see
             // registerGuiOpenHandler). We only READ the mouse to feed ClickGUI
             // interactions (panel drag, module click).
+            // Keyboard: poll state (isKeyDown, edge-detected) — never the event
+            // queue (that raced MC's KeyBinding and caused input lag).
+            try { pollGuiKeys() } catch (_: Exception) {}
             if (EventBridge.isGuiOpen) {
                 // Detect ESC-close: MC closes our GuiScreen itself via
                 // displayGuiScreen(null); currentScreen becomes null. Reset our

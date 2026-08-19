@@ -18,4 +18,16 @@ object GLConstants {
     const val GL_PROJECTION = 0x1701
     const val GL_MODELVIEW = 0x1700
     const val GL_LIGHTING = 0x0B50
+
+    // ── Texture / font rendering (SmoothFontRenderer) ──
+    const val GL_RGBA = 0x1908
+    const val GL_UNSIGNED_BYTE = 0x1401
+    const val GL_LINEAR = 0x2601
+    const val GL_NEAREST = 0x2600
+    const val GL_TEXTURE_MIN_FILTER = 0x2801
+    const val GL_TEXTURE_MAG_FILTER = 0x2800
+    const val GL_CLAMP_TO_EDGE = 0x812F
+
+    // ── Alpha test (GuiScreen enables alpha discard — must disable for quads) ──
+    const val GL_ALPHA_TEST = 0x0B20
 }

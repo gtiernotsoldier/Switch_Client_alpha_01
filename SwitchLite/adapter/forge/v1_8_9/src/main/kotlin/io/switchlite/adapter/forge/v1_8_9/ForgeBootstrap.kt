@@ -68,29 +68,10 @@ object ForgeBootstrap {
         ModuleRegistry.enable("HUD")
 
         // ClickGUI opens as a real MC GuiScreen: MC owns the mouse grab /
-        // cursor / keyboard (open -> cursor shows + crosshair frozen; close ->
-        // back to gameplay). We only draw the UI via OverlayRenderer.
-        //
-        // We open a BLANK GuiScreen (Javassist-generated, draws nothing) so the
-        // world stays fully visible behind the translucent panels. GuiChat would
-        // paint its own chat-box background and darken the view. Generated here
-        // in init() (agent bootstrap thread, where javassist is visible).
-        val blankGuiScreen: Any? = try {
-            val gameCL = Thread.currentThread().contextClassLoader
-            val factoryClass = Class.forName(
-                "io.switchlite.agent.ForgeGuiScreenFactory", true,
-                ForgeBootstrap::class.java.classLoader
-            )
-            factoryClass.getMethod("createGuiScreen", ClassLoader::class.java)
-                .invoke(null, gameCL)
-        } catch (e: Throwable) {
-            CoreLogger.error("[ForgeBootstrap] blank GuiScreen generation failed: ${e.javaClass.simpleName}: ${e.message}")
-            null
-        }
-        if (blankGuiScreen == null) {
-            CoreLogger.error("[ForgeBootstrap] blank GuiScreen unavailable — GUI may not open")
-        }
-
+        // cursor / keyboard. We open the concrete GuiChat — verified to keep
+        // isGuiOpen in sync and render the panels reliably. Its own semi-
+        // transparent chat background lets the world show through (transparent
+        // backdrop — no full-screen dark rect in OverlayRenderer).
         EventBridge.registerGuiOpenHandler { open ->
             try {
                 val mc = MappingContext.invokeMethod(null, "forge:mc_getMinecraft")
@@ -100,14 +81,9 @@ object ForgeBootstrap {
                 }
                 if (open) {
                     try {
-                        if (blankGuiScreen == null) {
-                            // Fallback: GuiChat so the GUI still opens
-                            val guiChatClass = Class.forName("net.minecraft.client.gui.GuiChat")
-                            val screen = guiChatClass.getConstructor().newInstance()
-                            MappingContext.invokeMethod(mc, "forge:mc_displayGuiScreen", screen)
-                        } else {
-                            MappingContext.invokeMethod(mc, "forge:mc_displayGuiScreen", blankGuiScreen)
-                        }
+                        val guiChatClass = Class.forName("net.minecraft.client.gui.GuiChat")
+                        val screen = guiChatClass.getConstructor().newInstance()
+                        MappingContext.invokeMethod(mc, "forge:mc_displayGuiScreen", screen)
                     } catch (e: Throwable) {
                         CoreLogger.error("[ForgeBootstrap] open GuiScreen FAILED: ${e.javaClass.simpleName}: ${e.message}")
                         return@registerGuiOpenHandler
@@ -363,9 +339,15 @@ object ForgeBootstrap {
             }
             if (EventBridge.isGuiOpen) {
                 // Detect ESC-close: MC closes our GuiScreen itself via
-                // displayGuiScreen(null); currentScreen becomes null. Reset our
-                // state so the ClickGUI overlay stops rendering.
-                val currentScreen = MappingContext.getFieldValue(mc, "forge:mc_currentScreen")
+                // displayGuiScreen(null); currentScreen becomes null. Only treat
+                // a *confirmed* null (read succeeded) as closed — a failed read
+                // must NOT flip isGuiOpen off (that hid the panels before).
+                val currentScreen: Any? = try {
+                    MappingContext.getFieldValue(mc, "forge:mc_currentScreen")
+                } catch (_: Exception) {
+                    // read failed — don't assume closed
+                    Unit
+                }
                 if (currentScreen == null) {
                     ClickGUI.markClosed()
                 } else {

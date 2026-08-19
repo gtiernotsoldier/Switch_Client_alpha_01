@@ -150,6 +150,12 @@ object RenderUtils {
         g.glBlendFunc(GLConstants.GL_SRC_ALPHA, GLConstants.GL_ONE_MINUS_SRC_ALPHA)
         g.glDisable(GLConstants.GL_DEPTH_TEST)
         g.glDepthMask(false)
+        // CRITICAL: disable ALPHA_TEST. When the ClickGUI opens as a GuiScreen,
+        // MC enables GL_ALPHA_TEST and our semi-transparent quads (low alpha)
+        // get discarded -> panels/toggles appear invisible while text (a real
+        // texture) still shows. This is exactly "borders & toggles transparent,
+        // font visible".
+        g.glDisable(GLConstants.GL_ALPHA_TEST)
         g.glColor4f(
             ((color shr 16) and 0xFF) / 255f,
             ((color shr 8) and 0xFF) / 255f,

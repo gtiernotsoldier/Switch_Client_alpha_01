@@ -36,11 +36,6 @@ subprojects {
         // Coroutines
         implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3")
 
-        // Kotlin reflection — used to enumerate a module's delegated option
-        // properties so the WebUI can show the FULL config list even for options
-        // that haven't been lazily touched yet.
-        implementation("org.jetbrains.kotlin:kotlin-reflect:1.9.10")
-
         // JSON parsing (Jackson)
         implementation("com.fasterxml.jackson.core:jackson-databind:2.15.2")
         implementation("com.fasterxml.jackson.core:jackson-core:2.15.2")

@@ -99,6 +99,7 @@
     <h1>SwitchLite <em>— Aurora WebUI 调试面板</em></h1>
     <div class="badges">
       <span class="bd hot" id="conn">connecting…</span>
+      <span class="bd" id="urls"></span>
       <button class="btn" id="btnSave">保存</button>
       <button class="btn" id="btnExport">导出</button>
       <button class="btn" id="btnImport">导入</button>
@@ -140,14 +141,43 @@
   const CAT_LABEL = { RENDER:"Render", COMBAT:"Combat", MOVEMENT:"Move", PLAYER:"Player", WORLD:"World" };
 
   let modules = [];
+  let token = localStorage.getItem('sl_token') || '';
+
+  function authHeaders(){
+    return token ? { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' }
+                 : { 'Content-Type': 'application/json' };
+  }
 
   async function api(url, opts){
-    const r = await fetch(url, Object.assign({headers:{'Content-Type':'application/json'}}, opts));
+    const r = await fetch(url, Object.assign({headers:authHeaders()}, opts));
+    if(r.status === 401){
+      // token missing/invalid — start login flow
+      ensureToken();
+      throw new Error('unauthorized');
+    }
     if(!r.ok) throw new Error(r.status);
     return r.json();
   }
 
+  // On loopback /api/info reveals the token automatically. Remotely, prompt.
+  async function ensureToken(){
+    if(token) return;
+    try {
+      const info = await fetch('/api/info', {headers:{'Content-Type':'application/json'}}).then(r=>r.json());
+      if(info.defaultPassword){
+        token = info.defaultPassword;
+        localStorage.setItem('sl_token', token);
+        $('#urls').textContent = (info.urls||[]).join('  ·  ');
+        return;
+      }
+    } catch(e){}
+    const t = prompt('输入 WebUI 访问口令（看游戏内 HUD / 注入日志）：');
+    if(t){ token = t.trim(); localStorage.setItem('sl_token', token); }
+    else window.location.reload();
+  }
+
   async function refresh(){
+    await ensureToken();
     try {
       modules = await api('/api/modules');
       $('#conn').textContent = `已连接 · ${modules.length} 模块`;
@@ -155,7 +185,7 @@
       $('#conn').style.color = '#ffb066';
       render();
     } catch(e) {
-      $('#conn').textContent = '未连接 — 模块未启用 WebUI';
+      $('#conn').textContent = '未连接 — 请检查口令或 WebUI 模块';
     }
   }
 
@@ -299,6 +329,18 @@
 
   refresh();
   setInterval(refresh, 2000);
+
+  // Show access URLs immediately (info endpoint is auth-free); on the local
+  // machine this also pre-submits the token so no login prompt appears.
+  try {
+    fetch('/api/info').then(r=>r.json()).then(info=>{
+      if(info.urls && info.urls.length) $('#urls').textContent = info.urls.join('  ·  ');
+      if(info.defaultPassword){
+        token = info.defaultPassword;
+        localStorage.setItem('sl_token', token);
+      }
+    });
+  } catch(e){}
 })();
 </script>
 </body>

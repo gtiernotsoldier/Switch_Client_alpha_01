@@ -9,17 +9,9 @@ name = "switchlite-injector"
 path = "src/main.rs"
 
 [dependencies]
-# windows-sys 0.59: Win32_System aggregates every System_* submodule
-# (Threading/Memory/Debug/LibraryLoader/ProcessStatus/...), Win32_Security
-# provides SECURITY_ATTRIBUTES (needed by CreateEventA/CreateRemoteThread),
-# Win32_UI_WindowsAndMessaging for EnumWindows (later step).
-windows-sys = { version = "0.59", features = [
-    "Win32_Foundation",
-    "Win32_System",
-    "Win32_Security",
-    "Win32_UI_WindowsAndMessaging",
-    "Win32_Storage_FileSystem",
-] }
+# Zero third-party deps: we call the handful of kernel32 functions we need via
+# raw extern "system" FFI. This avoids windows-sys version/feature conflicts
+# that cost many CI round-trips.
 
 [profile.release]
 opt-level = 2

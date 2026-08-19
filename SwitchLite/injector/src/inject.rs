@@ -1,30 +1,78 @@
 // inject.rs — DLL injection core (ported from C++ inject.cpp)
 //
 // Architecture: Rust-led injector performs the injection; the C++ payload.dll
-// (kept in payload/) does the in-process JNI attach work. This module only
-// does what the old inject.cpp did: write config, extract payload.dll,
-// CreateRemoteThread(LoadLibraryA), wait for the payload's done event.
+// (kept in payload/) does the in-process JNI attach work.
 //
-// Targets windows-sys 0.59: HANDLE = *mut c_void, GetProcAddress returns
-// Option<FARPROC>.
+// Uses raw FFI to kernel32 (zero dependencies) — same calls as the old C++
+// inject.cpp: OpenProcess, VirtualAllocEx, WriteProcessMemory,
+// CreateRemoteThread(LoadLibraryA), CreateEventA, WaitForSingleObject.
 
 use std::ffi::c_void;
 use std::ffi::CString;
 use std::ptr;
 
-use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, WAIT_OBJECT_0, WAIT_TIMEOUT};
-use windows_sys::Win32::System::Diagnostics::Debug::WriteProcessMemory;
-use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleA, GetProcAddress};
-use windows_sys::Win32::System::Memory::{
-    VirtualAllocEx, VirtualFreeEx, MEM_COMMIT, MEM_RELEASE, MEM_RESERVE, PAGE_READWRITE,
-};
-use windows_sys::Win32::System::Threading::{
-    CreateEventA, CreateRemoteThread, OpenProcess, WaitForSingleObject, LPTHREAD_START_ROUTINE,
-    PROCESS_CREATE_THREAD, PROCESS_QUERY_INFORMATION, PROCESS_VM_OPERATION, PROCESS_VM_READ,
-    PROCESS_VM_WRITE,
-};
-
 use crate::process::ProcessInfo;
+
+// ── kernel32 FFI declarations ──
+
+#[link(name = "kernel32")]
+extern "system" {
+    fn OpenProcess(dw_desired_access: u32, b_inherit_handle: i32, dw_process_id: u32)
+        -> *mut c_void;
+    fn VirtualAllocEx(
+        h_process: *mut c_void,
+        lp_address: *const c_void,
+        dw_size: usize,
+        fl_allocation_type: u32,
+        fl_protect: u32,
+    ) -> *mut c_void;
+    fn VirtualFreeEx(
+        h_process: *mut c_void,
+        lp_address: *mut c_void,
+        dw_size: usize,
+        dw_free_type: u32,
+    ) -> i32;
+    fn WriteProcessMemory(
+        h_process: *mut c_void,
+        lp_base_address: *mut c_void,
+        lp_buffer: *const c_void,
+        n_size: usize,
+        lp_number_of_bytes_written: *mut usize,
+    ) -> i32;
+    fn GetModuleHandleA(lp_module_name: *const u8) -> *mut c_void;
+    fn GetProcAddress(h_module: *mut c_void, lp_proc_name: *const u8) -> *mut c_void;
+    fn CreateRemoteThread(
+        h_process: *mut c_void,
+        lp_thread_attributes: *const c_void,
+        dw_stack_size: usize,
+        lp_start_address: *mut c_void,
+        lp_parameter: *mut c_void,
+        dw_creation_flags: u32,
+        lp_thread_id: *mut u32,
+    ) -> *mut c_void;
+    fn CreateEventA(
+        lp_event_attributes: *const c_void,
+        b_manual_reset: i32,
+        b_initial_state: i32,
+        lp_name: *const u8,
+    ) -> *mut c_void;
+    fn WaitForSingleObject(h_handle: *mut c_void, dw_milliseconds: u32) -> u32;
+    fn CloseHandle(h_object: *mut c_void) -> i32;
+    fn GetLastError() -> u32;
+}
+
+// Constants (kernel32 / winnt)
+const PROCESS_CREATE_THREAD: u32 = 0x0002;
+const PROCESS_QUERY_INFORMATION: u32 = 0x0400;
+const PROCESS_VM_OPERATION: u32 = 0x0008;
+const PROCESS_VM_WRITE: u32 = 0x0020;
+const PROCESS_VM_READ: u32 = 0x0010;
+const MEM_COMMIT: u32 = 0x1000;
+const MEM_RESERVE: u32 = 0x2000;
+const MEM_RELEASE: u32 = 0x8000;
+const PAGE_READWRITE: u32 = 0x04;
+const WAIT_OBJECT_0: u32 = 0x00000000;
+const WAIT_TIMEOUT: u32 = 0x00000102;
 
 /// Inject payload.dll into the target process and wait for it to finish
 /// attaching the Java agent. Mirrors injectJavaAgent() from the C++ injector.
@@ -119,7 +167,7 @@ pub fn inject_java_agent(
     }
 
     // 6. Find LoadLibraryA in target
-    let h_kernel32 = unsafe { GetModuleHandleA(b"kernel32.dll\0".as_ptr() as *const u8) };
+    let h_kernel32 = unsafe { GetModuleHandleA(b"kernel32.dll\0".as_ptr()) };
     if h_kernel32.is_null() {
         eprintln!("[Inject] GetModuleHandleA(kernel32) failed");
         unsafe {
@@ -128,30 +176,26 @@ pub fn inject_java_agent(
         }
         return false;
     }
-    let p_load_library =
-        unsafe { GetProcAddress(h_kernel32, b"LoadLibraryA\0".as_ptr() as *const u8) };
-    let p_load_library = match p_load_library {
-        Some(f) => f as *const c_void,
-        None => {
-            eprintln!("[Inject] GetProcAddress(LoadLibraryA) failed");
-            unsafe {
-                VirtualFreeEx(h_process, p_remote_mem, 0, MEM_RELEASE);
-                CloseHandle(h_process);
-            }
-            return false;
+    let p_load_library = unsafe { GetProcAddress(h_kernel32, b"LoadLibraryA\0".as_ptr()) };
+    if p_load_library.is_null() {
+        eprintln!("[Inject] GetProcAddress(LoadLibraryA) failed");
+        unsafe {
+            VirtualFreeEx(h_process, p_remote_mem, 0, MEM_RELEASE);
+            CloseHandle(h_process);
         }
-    };
+        return false;
+    }
 
     // 7. Create remote thread to load the DLL
-    type LoadLibFn = unsafe extern "system" fn(*mut c_void) -> u32;
-    let start_routine: LPTHREAD_START_ROUTINE =
-        Some(std::mem::transmute::<*const c_void, LoadLibFn>(p_load_library));
+    // LPTHREAD_START_ROUTINE = fn(LPVOID) -> DWORD; LoadLibraryA has signature
+    // fn(LPCSTR) -> HMODULE — both are one-pointer-arg functions, so the raw
+    // address is compatible.
     let h_thread = unsafe {
         CreateRemoteThread(
             h_process,
             ptr::null(),
             0,
-            start_routine,
+            p_load_library,
             p_remote_mem,
             0,
             ptr::null_mut(),
@@ -170,13 +214,12 @@ pub fn inject_java_agent(
     }
 
     // 8. Named event for payload completion (PID-scoped to avoid collisions)
-    let event_name = format!("SwitchLitePayloadDone_{}", proc.pid);
-    let event_cstr = CString::new(event_name.clone()).unwrap_or_default();
-    let h_done_event = unsafe { CreateEventA(ptr::null(), 1, 0, event_cstr.as_ptr()) };
+    let event_name = format!("SwitchLitePayloadDone_{}\0", proc.pid);
+    let h_done_event = unsafe { CreateEventA(ptr::null(), 1, 0, event_name.as_ptr()) };
     if h_done_event.is_null() {
         eprintln!("[Inject] Failed to create done event");
     } else {
-        println!("[Inject] Created done event: {}", event_name);
+        println!("[Inject] Created done event: SwitchLitePayloadDone_{}", proc.pid);
     }
 
     // 9. Wait for LoadLibraryA thread (DLL load)

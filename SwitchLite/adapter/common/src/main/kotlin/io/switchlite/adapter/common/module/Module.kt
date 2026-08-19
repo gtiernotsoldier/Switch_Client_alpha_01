@@ -59,12 +59,14 @@ abstract class Module(
     fun enable() {
         if (enabled) return
         enabled = true
+        io.switchlite.core.logging.CoreLogger.info("[Module] ENABLE $name (${category.name})")
         onEnable()
     }
 
     fun disable() {
         if (!enabled) return
         enabled = false
+        io.switchlite.core.logging.CoreLogger.info("[Module] DISABLE $name (${category.name})")
         onDisable()
     }
 

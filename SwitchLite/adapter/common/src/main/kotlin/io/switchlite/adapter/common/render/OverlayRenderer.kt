@@ -179,9 +179,9 @@ object OverlayRenderer {
             val panelH = clickGui.panelHeight(cat, lineHeight)
             val accent = Theme.accentFor(cat)
             val entrance = clickGui.entrance(cat)
-            // Aurora card entrance is a pure transform (slide+scale); the card is
-            // always fully drawn at its target opacity — no alpha fade, ever.
-            val slide = (1f - entrance) * 14f
+            // Aurora entrance is a pure transform (slide+scale from HTML @cardIn);
+            // the card is always fully drawn — never alpha-faded.
+            val slide = (1f - entrance) * 16f
             val scale = 0.95f + 0.05f * entrance
 
             val px = (p.x - 6).toFloat()
@@ -196,40 +196,58 @@ object OverlayRenderer {
             g.glScalef(scale, scale, 1f)
             g.glTranslatef(-cx, -cy, 0f)
 
-            // ── Aurora card (HTML .card): deep soft shadow, 85% translucent
-            // dark fill, 1px 13% white border, subtle inner top highlight ──
+            // ── .card: deep shadow, vertical gradient rgba(26,26,36,.85)→rgba(20,20,30,.8),
+            // 1px rgba(255,255,255,.13) border, radius 14 ──
             RenderUtils.shadow(ctx, px, py, pw, ph, PANEL_RADIUS, depth = 5, color = 0x8C000000.toInt())
-            RenderUtils.roundedRect(ctx, px, py, pw, ph, PANEL_RADIUS, 0xD91A1A24.toInt())
+            RenderUtils.verticalGradient(
+                ctx, px, py, pw, ph,
+                0xD91A1A24.toInt(),   // rgba(26,26,36,.85)
+                0xCC14141E.toInt(),   // rgba(20,20,30,.80)
+                bands = 12
+            )
             RenderUtils.roundedRectOutline(
                 ctx, px, py, pw, ph, PANEL_RADIUS,
-                0x21FFFFFF.toInt(), 1f, 0xD91A1A24.toInt()
-            )
-            RenderUtils.rect(
-                ctx, px + 10, py + 2, pw - 20, 1f, 0x12FFFFFF.toInt()
+                0x21FFFFFF.toInt(), 1f, 0xCC14141E.toInt()
             )
 
-            // ── Title + count — SAME card background as the module list
-            // (no separate header bar, per user: 标题跟列表一起、背景相同) ──
-            val titleY = p.y + 7
-            font.drawStringWithShadow(cat.name, p.x, titleY, accent)
+            // ── .c-head: 32px header, own subtle bg + bottom hairline, title+count ──
+            val headY = p.y
+            val headH = clickGui.titleBarHeight(lineHeight)
+            RenderUtils.verticalGradient(
+                ctx, px, headY.toFloat(), pw, headH.toFloat(),
+                0x0DFFFFFF.toInt(), 0x00000000.toInt(),
+                bands = 4
+            )
+            RenderUtils.rect(
+                ctx, px + 2, (headY + headH - 1).toFloat(), pw - 4, 1f,
+                0x14FFFFFF.toInt()
+            )
+            // title (brand weight, letterspaced) at left
+            font.drawStringWithShadow(cat.name, p.x, p.y + 8, accent)
+            // count badge top-right (.c-count pill)
             val countText = "${rows.size} mods"
             val countW = font.getStringWidth(countText) + 14
             val countX = p.x + ClickGUI.PANEL_WIDTH - countW - 14
             RenderUtils.roundedRect(
-                ctx, countX.toFloat(), (p.y + 3).toFloat(),
-                countW.toFloat(), (font.fontHeight + 5).toFloat(),
-                (font.fontHeight + 5) / 2f, 0x12FFFFFF.toInt()
+                ctx, countX.toFloat(), (p.y + 6).toFloat(),
+                countW.toFloat(), (font.fontHeight + 6).toFloat(),
+                (font.fontHeight + 6) / 2f, 0x12FFFFFF.toInt()
             )
             RenderUtils.roundedRectOutline(
-                ctx, countX.toFloat(), (p.y + 3).toFloat(),
-                countW.toFloat(), (font.fontHeight + 5).toFloat(),
-                (font.fontHeight + 5) / 2f, 0x1AFFFFFF.toInt(), 1f, 0x12FFFFFF.toInt()
+                ctx, countX.toFloat(), (p.y + 6).toFloat(),
+                countW.toFloat(), (font.fontHeight + 6).toFloat(),
+                (font.fontHeight + 6) / 2f, 0x1AFFFFFF.toInt(), 1f, 0x12FFFFFF.toInt()
             )
             font.drawStringWithShadow(
-                countText, countX + 7, p.y + 5, Theme.TEXT_FAINT
+                countText, countX + 7, p.y + 8, Theme.TEXT_FAINT
+            )
+            // .r-caret  — collapse arrow, right edge of the header
+            font.drawStringWithShadow(
+                if (p.expanded) "\u00A7f\u25BC" else "\u00A7f\u25B2",
+                p.x + ClickGUI.PANEL_WIDTH - 16, p.y + 8, Theme.TEXT_DIM
             )
 
-            // ── Module rows ──
+            // ── .c-body (16px padding) module rows ──
             for (row in rows) {
                 if (row.y + row.height > clipBottom) continue
 
@@ -240,53 +258,43 @@ object OverlayRenderer {
                 val ry = (row.y - 1).toFloat()
                 val rw = (row.width + 10).toFloat()
                 val rh = (row.height + 2).toFloat()
-                val lift = if (hovered) -1f else 0f
+                val lift = if (hovered) -1.5f else 0f
                 val on = row.module.enabled
 
-                // HTML .row: rgba(255,255,255,.045) fill + 6% border, 10px radius.
-                // Hover: .065 fill + lift + shadow. Expanded/on: accent border.
+                // .row: radius 10, rgba(255,255,255,.045) fill + .06 border;
+                // hover lifts + shadow + .065 fill; on/enabled = accent border.
                 if (hovered) {
-                    RenderUtils.shadow(ctx, rx, ry + lift, rw, rh, 9f, depth = 2, color = 0x66000000.toInt())
+                    RenderUtils.shadow(ctx, rx, ry + lift, rw, rh, 10f, depth = 2, color = 0x66000000.toInt())
                 }
                 RenderUtils.roundedRect(
                     ctx, rx, ry + lift, rw, rh, 10f,
                     if (hovered) 0x10FFFFFF.toInt() else 0x0BFFFFFF.toInt()
                 )
-                if (on) {
-                    RenderUtils.roundedRectOutline(
-                        ctx, rx, ry + lift, rw, rh, 10f,
-                        Theme.accentSoft(cat), 1f,
-                        if (hovered) 0x10FFFFFF.toInt() else 0x0BFFFFFF.toInt()
-                    )
-                } else {
-                    RenderUtils.roundedRectOutline(
-                        ctx, rx, ry + lift, rw, rh, 10f,
-                        0x0FFFFFFF.toInt(), 1f,
-                        if (hovered) 0x10FFFFFF.toInt() else 0x0BFFFFFF.toInt()
-                    )
-                }
+                RenderUtils.roundedRectOutline(
+                    ctx, rx, ry + lift, rw, rh, 10f,
+                    if (on) Theme.accentSoft(cat) else 0x0FFFFFFF.toInt(), 1f,
+                    if (hovered) 0x10FFFFFF.toInt() else 0x0BFFFFFF.toInt()
+                )
 
-                // Module name (HTML .r-name: 72% white, full white when on)
+                // .r-name (72% white, full white when on) + .r-caret on the right.
                 val textColor = if (on) Theme.TEXT else 0xB7FFFFFF.toInt()
                 val textY = (row.y + (row.height - font.fontHeight) / 2 + lift).toInt()
                 font.drawStringWithShadow(row.module.name, row.x + 3, textY, textColor)
 
-                // ── Aurora 60px capsule toggle (HTML .tgl) ──
-                drawCapsuleToggle(ctx, row, accent, lift)
-
-                // Hover "lift": a 2px accent bar at the row's left edge
-                if (hovered) {
-                    RenderUtils.rect(
-                        ctx, rx, (row.y + 2 + lift).toFloat(),
-                        2f, (row.height - 4).toFloat(), accent
+                // right-aligned: caret (if settings) then 60px .tgl capsule
+                if (row.settings.isNotEmpty()) {
+                    font.drawStringWithShadow(
+                        "\u00A77\u25BE",
+                        (row.toggleDotX - 10).toFloat().toInt(), textY, Theme.TEXT_FAINT
                     )
                 }
+                drawCapsuleToggle(ctx, row, accent, lift)
             }
 
-            // Expanded setting items (clipped too)
+            // Expanded setting items (clipped to the collapse-bottom)
             for (row in rows) {
                 if (!row.expanded) continue
-                // Aurora settings: left accent border line + indented list
+                // .set-list: left accent hairline + indented settings
                 val setStartY = row.y + row.height
                 val setCount = row.settings.size
                 if (setCount > 0 && setStartY + setCount * lineHeight <= clipBottom) {
@@ -307,8 +315,8 @@ object OverlayRenderer {
         }
     }
 
-    /** Aurora 60px capsule toggle — HTML .tgl: 60×22, dark track, 14% white
-     *  border, grey knob; ON = accent track + white knob + glow. Always visible. */
+    /** HTML .tgl — 60×22 capsule, dark track + 14% white border + grey/white knob.
+     *  ON = accent track + glow + white knob. Always visible. */
     private fun drawCapsuleToggle(
         ctx: RenderContext,
         row: ClickGUI.ModuleRow,
@@ -317,22 +325,19 @@ object OverlayRenderer {
     ) {
         val w = 60f
         val h = 22f
-        // Right edge of the row, vertically centered in the row height.
-        val x = (row.x + row.width - w - 4).toFloat()
+        val x = (row.toggleDotX).toFloat()
         val y = row.y + (row.height - h.toInt()) / 2f + lift
         val on = row.module.enabled
 
         if (on) {
             RenderUtils.glow(ctx, x, y, w, h, 11f, accent, spread = 4f, layers = 3)
         }
-        // Track: rgba(0,0,0,.32) fill + rgba(255,255,255,.14) border (visible off).
         RenderUtils.roundedRect(ctx, x, y, w, h, 11f, if (on) accent else 0x52000000.toInt())
         RenderUtils.roundedRectOutline(
             ctx, x, y, w, h, 11f,
             if (on) accent else 0x24FFFFFF.toInt(), 1f,
             if (on) accent else 0x52000000.toInt()
         )
-        // Knob: 16px, 55% white off / pure white on, slides with the state.
         val knob = 16f
         val knobX = if (on) x + w - knob - 3f else x + 3f
         val knobY = y + (h - knob) / 2f

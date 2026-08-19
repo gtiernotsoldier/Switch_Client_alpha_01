@@ -32,18 +32,20 @@ object ClickGUI : Module("ClickGUI", Category.RENDER) {
         showRedIndicator = false
     }
 
-    /** Panel width — Aurora card, kept compact so panels don't eat the screen. */
-    const val PANEL_WIDTH = 200
+    /** Panel width — Aurora .card 260px per the HTML reference. */
+    const val PANEL_WIDTH = 260
 
-    /** Hit-test size of the per-row module toggle area (Aurora 60px capsule). */
+    /** Hit-test size of the per-row module toggle area (Aurora .tgl 60px capsule). */
     const val TOGGLE_DOT_SIZE = 60
 
-    /** Row height (px) — Aurora row-main 26px per the HTML visual spec. */
-    const val ROW_HEIGHT = 24
+    /** Row height (.row-main 26px) — module list rows. */
+    const val ROW_HEIGHT = 26
 
-    /** Title bar height (px) — Aurora drag header; same card background as the
-     *  module list (the title is NOT a separate visual bar). */
-    const val TITLE_BAR_HEIGHT = 26
+    /** Header height — Aurora .c-head is 32px per the HTML reference. */
+    const val TITLE_BAR_HEIGHT = 32
+
+    /** Vertical padding under the header before the first row (.c-body top pad). */
+    const val BODY_PAD_TOP = 8
 
     private var isOpen = false
 
@@ -210,7 +212,7 @@ object ClickGUI : Module("ClickGUI", Category.RENDER) {
     fun layout(cat: Category, lineHeight: Int): List<ModuleRow> {
         val pos = panel(cat)
         val modules = ModuleRegistry.getByCategory(cat).filter { !it.hidden }
-        var y = pos.y + titleBarHeight(lineHeight)
+        var y = pos.y + titleBarHeight(lineHeight) + BODY_PAD_TOP
         return modules.map { m ->
             val expanded = m.name in expandedModules
             val settings = if (expanded) settingsOf(m) else emptyList()
@@ -222,7 +224,7 @@ object ClickGUI : Module("ClickGUI", Category.RENDER) {
 
     /** Full height of one panel (title + rows + expanded settings + footer pad). */
     fun panelHeight(cat: Category, lineHeight: Int): Int {
-        var h = titleBarHeight(lineHeight)
+        var h = titleBarHeight(lineHeight) + BODY_PAD_TOP
         for (row in layout(cat, lineHeight)) {
             h += row.height + row.settings.size * lineHeight
         }
@@ -240,7 +242,7 @@ object ClickGUI : Module("ClickGUI", Category.RENDER) {
     fun tickAnimations(lineHeight: Int) {
         for ((cat, _) in categoriesWithRows(lineHeight)) {
             val p = panel(cat)
-            val target = if (p.expanded) panelHeight(cat, lineHeight) - titleBarHeight(lineHeight).toFloat() else 0f
+            val target = if (p.expanded) panelHeight(cat, lineHeight) - titleBarHeight(lineHeight).toFloat() - BODY_PAD_TOP else 0f
             p.heightAnim.setTarget(target, 16f)
             // Aurora entrance: fade + slide + scale in when the GUI is open.
             p.entrance.setTarget(if (isOpen) 1f else 0f, 10f)
@@ -250,7 +252,7 @@ object ClickGUI : Module("ClickGUI", Category.RENDER) {
     /** Content clip bottom (y) for a panel — drives the collapse animation. */
     fun contentClipBottom(cat: Category, lineHeight: Int): Int {
         val p = panel(cat)
-        return p.y + titleBarHeight(lineHeight) + p.heightAnim.valueI
+        return p.y + titleBarHeight(lineHeight) + BODY_PAD_TOP + p.heightAnim.valueI
     }
 
     // ═══════════════ Drag state ═══════════════

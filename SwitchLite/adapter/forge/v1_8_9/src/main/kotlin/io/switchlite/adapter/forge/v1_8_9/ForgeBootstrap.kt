@@ -167,9 +167,6 @@ object ForgeBootstrap {
     /** Lazily-cached list of (module, lwjglKey) pairs for bound keybinds. */
     private var boundModules: List<Pair<io.switchlite.adapter.common.module.Module, Int>>? = null
 
-    /** Frame counter for throttling key polling (see render()). */
-    private var keyPollFrame = 0
-
     private val moduleKeyStates = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
 
     /**

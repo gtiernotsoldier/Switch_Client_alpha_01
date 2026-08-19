@@ -1,7 +1,8 @@
 // build.rs — build-time steps for the Rust injector:
-//   1. Compile the C++ payload.dll (payload.cpp + attach_pipe.cpp) via the cc
-//      crate — it discovers MSVC/GCC automatically (cmake was unreliable in
-//      CI: silent exit 1 with no output). Needs jni.h for payload.cpp.
+//   1. Compile the C++ payload.dll (payload.cpp + attach_pipe.cpp). The cc
+//      crate only builds static libs, so we use it to discover the MSVC
+//      compiler, then invoke cl.exe directly with /LD to produce a DLL.
+//      Needs jni.h (payload.cpp includes it).
 //   2. Generate a .rc that embeds agent.jar (RCDATA 101) + payload.dll
 //      (RCDATA 102) into the exe, then embed it with embed-resource.
 //
@@ -16,53 +17,67 @@ fn main() {
     let resources_dir = manifest.join("resources");
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
 
-    // ── 1. Compile payload.dll (C++) via the cc crate ──
-    // Needs jni.h: find it via JAVA_HOME, or the JDK on PATH (CI sets up JDK 8).
+    // ── 1. Compile payload.dll (C++) — cc crate only builds static libs, so we
+    // use it just to discover the MSVC compiler, then invoke cl.exe directly
+    // with /LD to produce a DLL. Needs jni.h (find via JAVA_HOME / PATH).
     let jni_include = find_jni_include();
 
     let mut payload_built = None;
     if !jni_include.is_empty() {
-        let mut build = cc::Build::new();
-        build
-            .cargo_metadata(false) // we link manually, not into the Rust crate
-            .cpp(true)
-            .shared_flag(true)
-            .flag_if_supported("/EHsc")
-            .include(&jni_include)
-            .file(manifest.join("src/payload/payload.cpp"))
-            .file(manifest.join("src/payload/attach_pipe.cpp"));
-
-        // Link psapi (payload uses psapi functions)
-        if env::consts::OS == "windows" {
-            build.flag_if_supported("/DPSAPI_VERSION=2");
-        }
-
-        let compile_result = build.try_compile("switchlite_payload");
-        match compile_result {
-            Ok(()) => {
-                // cc::Build writes the artifact into OUT_DIR; find it.
-                let candidate = out_dir.join("libswitchlite_payload.dll");
-                let candidate2 = out_dir.join("switchlite_payload.dll");
-                if candidate.exists() {
-                    payload_built = Some(candidate);
-                } else if candidate2.exists() {
-                    payload_built = Some(candidate2);
-                } else {
-                    println!(
-                        "cargo:warning=payload compiled but dll not found in {} (expected libswitchlite_payload.dll)",
-                        out_dir.display()
-                    );
-                }
-            }
-            Err(e) => {
-                println!("cargo:warning=cc compile payload FAILED: {}", e);
-            }
+        match compile_payload_dll(&jni_include, &out_dir) {
+            Ok(path) => payload_built = Some(path),
+            Err(e) => println!("cargo:warning=payload.dll compile FAILED: {}", e),
         }
     } else {
         println!("cargo:warning=jni.h not found (JAVA_HOME missing) — payload.dll not built");
     }
 
     finish_embed(&manifest, &resources_dir, &out_dir, payload_built.as_ref());
+}
+
+/// Compile payload.dll with the MSVC compiler found by the cc crate.
+/// Invokes cl.exe directly: `cl /nologo /LD /MD /EHsc /I<jni> payload.cpp
+/// attach_pipe.cpp /Fe<payload.dll>`.
+fn compile_payload_dll(jni_include: &str, out_dir: &PathBuf) -> Result<PathBuf, String> {
+    let compiler = cc::Build::new().get_compiler();
+    let cl_path = compiler.path();
+
+    let payload_cpp = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap())
+        .join("src/payload/payload.cpp");
+    let attach_cpp = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap())
+        .join("src/payload/attach_pipe.cpp");
+    let dll_out = out_dir.join("payload.dll");
+
+    let mut cmd = Command::new(cl_path);
+    cmd.arg("/nologo")
+        .arg("/LD") // build a DLL
+        .arg("/MD")
+        .arg("/EHsc")
+        .arg(format!("/I{}", jni_include))
+        .arg(payload_cpp)
+        .arg(attach_cpp)
+        .arg(format!("/Fe{}", dll_out.to_string_lossy()))
+        .arg("/link")
+        .arg("psapi.lib");
+
+    let out = cmd.output().map_err(|e| format!("spawn cl.exe: {}", e))?;
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        return Err(format!(
+            "cl.exe exit {:?}\n--- stdout ---\n{}\n--- stderr ---\n{}",
+            out.status.code(),
+            stdout,
+            stderr
+        ));
+    }
+
+    if dll_out.exists() {
+        println!("cargo:warning=payload.dll built: {}", dll_out.display());
+        Ok(dll_out)
+    } else {
+        Err(format!("cl.exe succeeded but {} not found", dll_out.display()))
+    }
 }
 
 /// Locate the JNI include dir (containing jni.h).

@@ -54,6 +54,8 @@ fn compile_payload_dll(jni_include: &str, out_dir: &PathBuf) -> Result<PathBuf, 
         .arg("/MD")
         .arg("/EHsc")
         .arg(format!("/I{}", jni_include))
+        // jni.h includes jni_md.h, which lives in <jdk>/include/win32 on Windows.
+        .arg(format!("/I{}\\win32", jni_include))
         .arg(payload_cpp)
         .arg(attach_cpp)
         .arg(format!("/Fe{}", dll_out.to_string_lossy()))
@@ -64,11 +66,24 @@ fn compile_payload_dll(jni_include: &str, out_dir: &PathBuf) -> Result<PathBuf, 
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr);
         let stdout = String::from_utf8_lossy(&out.stdout);
+        // Write the full error to a log file (cargo:warning collapses multi-line
+        // messages, hiding the real cl.exe error).
+        let log_path = out_dir.join("payload-build.log");
+        let _ = std::fs::write(
+            &log_path,
+            format!(
+                "cl.exe exit {:?}\n--- stdout ---\n{}\n--- stderr ---\n{}\n",
+                out.status.code(),
+                stdout,
+                stderr
+            ),
+        );
+        // Single-line warning so it survives cargo's log folding:
+        let one_line = stderr.replace('\n', " | ").trim().to_string();
         return Err(format!(
-            "cl.exe exit {:?}\n--- stdout ---\n{}\n--- stderr ---\n{}",
+            "cl.exe exit {:?}: {}",
             out.status.code(),
-            stdout,
-            stderr
+            one_line
         ));
     }
 

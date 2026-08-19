@@ -33,6 +33,12 @@ public class ForgeGuiScreenFactory {
         if (cachedScreen != null) return cachedScreen;
         try {
             ClassPool pool = new ClassPool();
+            // Explicitly add the factory's OWN CL so javassist classes resolve
+            // from the agent jar (a bare `new ClassPool()` uses the thread's
+            // context CL, which on the render thread is LaunchClassLoader — it
+            // cannot see javassist and throws NoClassDefFoundError: ClassPath).
+            pool.appendClassPath(new LoaderClassPath(ForgeGuiScreenFactory.class.getClassLoader()));
+            // Add the game CL so javassist can resolve Minecraft's GuiScreen.
             if (gameCL != null) {
                 pool.appendClassPath(new LoaderClassPath(gameCL));
             }

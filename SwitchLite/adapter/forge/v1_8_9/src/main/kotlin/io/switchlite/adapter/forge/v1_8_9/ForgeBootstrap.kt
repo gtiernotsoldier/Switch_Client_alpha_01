@@ -71,31 +71,10 @@ object ForgeBootstrap {
         // cursor / keyboard (open -> cursor shows + crosshair frozen; close ->
         // back to gameplay). We only draw the UI via OverlayRenderer.
         //
-        // We open a BLANK GuiScreen subclass (Javassist-generated), NOT GuiChat:
-        // GuiChat draws the chat box background + input line, which showed
-        // through as a "transparent chat background" behind our UI. The blank
-        // screen draws nothing — MC just ungrabs the mouse and we paint the
-        // full-screen backdrop + panels on top.
-        //
-        // IMPORTANT: generate it HERE (init runs on the agent's bootstrap thread
-        // where javassist is visible). Generating inside the render-thread
-        // handler threw NoClassDefFoundError: javassist/ClassPath.
-        val blankGuiScreen: Any? = try {
-            val gameCL = Thread.currentThread().contextClassLoader
-            val factoryClass = Class.forName(
-                "io.switchlite.agent.ForgeGuiScreenFactory", true,
-                ForgeBootstrap::class.java.classLoader
-            )
-            factoryClass.getMethod("createGuiScreen", ClassLoader::class.java)
-                .invoke(null, gameCL)
-        } catch (e: Throwable) {
-            CoreLogger.error("[ForgeBootstrap] blank GuiScreen generation failed: ${e.javaClass.simpleName}: ${e.message}")
-            null
-        }
-        if (blankGuiScreen == null) {
-            CoreLogger.error("[ForgeBootstrap] No blank GuiScreen available — ClickGUI cannot open")
-        }
-
+        // We open GuiChat (concrete, verified to work) so RShift reliably opens
+        // the GUI. Its own chat UI is fully covered by the Aurora full-screen
+        // backdrop that OverlayRenderer paints on top (Display.update hook runs
+        // at end of frame, after GuiChat.drawScreen).
         EventBridge.registerGuiOpenHandler { open ->
             try {
                 val mc = MappingContext.invokeMethod(null, "forge:mc_getMinecraft")
@@ -105,11 +84,9 @@ object ForgeBootstrap {
                 }
                 if (open) {
                     try {
-                        if (blankGuiScreen == null) {
-                            CoreLogger.error("[ForgeBootstrap] blank GuiScreen is null")
-                            return@registerGuiOpenHandler
-                        }
-                        MappingContext.invokeMethod(mc, "forge:mc_displayGuiScreen", blankGuiScreen)
+                        val guiChatClass = Class.forName("net.minecraft.client.gui.GuiChat")
+                        val screen = guiChatClass.getConstructor().newInstance()
+                        MappingContext.invokeMethod(mc, "forge:mc_displayGuiScreen", screen)
                     } catch (e: Throwable) {
                         CoreLogger.error("[ForgeBootstrap] open GuiScreen FAILED: ${e.javaClass.simpleName}: ${e.message}")
                         return@registerGuiOpenHandler

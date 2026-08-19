@@ -162,47 +162,64 @@ object OverlayRenderer {
             val p = clickGui.panel(cat)
             val clipBottom = clickGui.contentClipBottom(cat, lineHeight)
             val panelH = clickGui.panelHeight(cat, lineHeight)
+            val accent = Theme.accentFor(cat.ordinal)
 
-            // Panel background (full height; collapse animation clips the rows)
+            // ── Aurora card: translucent panel + border + inner top highlight ──
             RenderUtils.roundedRect(
                 ctx, (p.x - 6).toFloat(), (p.y - 6).toFloat(),
                 (ClickGUI.PANEL_WIDTH + 12).toFloat(), (panelH + 6).toFloat(),
-                CORNER_RADIUS, Theme.PANEL_BG
+                12f, Theme.PANEL_BG
+            )
+            // 1px border
+            RenderUtils.roundedRectOutline(
+                ctx, (p.x - 6).toFloat(), (p.y - 6).toFloat(),
+                (ClickGUI.PANEL_WIDTH + 12).toFloat(), (panelH + 6).toFloat(),
+                12f, Theme.BORDER, 1f, Theme.PANEL_BG
+            )
+            // subtle top highlight line
+            RenderUtils.rect(
+                ctx, (p.x - 4).toFloat(), (p.y - 4).toFloat(),
+                (ClickGUI.PANEL_WIDTH + 8).toFloat(), 1f, Theme.withAlpha(Theme.TEXT, 0.08f)
             )
 
-            // Title bar + collapse arrow (category name in primary text,
-            // right-side arrow glyph for expand/collapse)
-            font.drawStringWithShadow(cat.name, p.x, p.y, Theme.TEXT)
+            // ── Title bar: category name in accent, count on right ──
+            font.drawStringWithShadow(cat.name, p.x, p.y, accent)
             font.drawStringWithShadow(
-                if (p.expanded) "\u00A77\u25BC" else "\u00A77\u25B2",
-                p.x + ClickGUI.PANEL_WIDTH - 10, p.y, Theme.TEXT_DIM
+                "\u00A7f${rows.size} mods", p.x + ClickGUI.PANEL_WIDTH - 58, p.y, Theme.TEXT_FAINT
+            )
+            font.drawStringWithShadow(
+                if (p.expanded) "\u00A7f\u25BC" else "\u00A7f\u25B2",
+                p.x + ClickGUI.PANEL_WIDTH - 12, p.y, Theme.TEXT_DIM
             )
 
-            // Module rows (clipped to the animated content area)
+            // ── Module rows ──
             for (row in rows) {
                 if (row.y + row.height > clipBottom) continue
 
                 val hovered = mx >= row.x && mx < row.x + row.width &&
                     my >= row.y && my < row.y + row.height
-                if (hovered) {
-                    RenderUtils.roundedRect(
+
+                // Aurora row: rounded, subtle bg; hover lifts
+                RenderUtils.roundedRect(
+                    ctx, (row.x - 4).toFloat(), (row.y - 1).toFloat(),
+                    (row.width + 8).toFloat(), (row.height + 2).toFloat(),
+                    8f, if (row.module.enabled) Theme.withAlpha(accent, 0.10f) else Theme.HOVER
+                )
+                if (row.module.enabled) {
+                    RenderUtils.roundedRectOutline(
                         ctx, (row.x - 4).toFloat(), (row.y - 1).toFloat(),
                         (row.width + 8).toFloat(), (row.height + 2).toFloat(),
-                        2f, Theme.HOVER
+                        8f, Theme.accentSoft(cat.ordinal), 1f,
+                        Theme.withAlpha(accent, 0.10f)
                     )
                 }
 
-                // Status bar + name — enabled = primary text, disabled = dim
+                // Module name
                 val textColor = if (row.module.enabled) Theme.TEXT else Theme.TEXT_DIM
-                RenderUtils.rect(ctx, (row.x - 4).toFloat(), (row.y + 1).toFloat(), 2f, (row.height - 2).toFloat(), textColor)
                 font.drawStringWithShadow(row.module.name, row.x + 2, row.y, textColor)
 
-                // Toggle indicator (right side) — small filled square, only bright when enabled
-                val dotColor = if (row.module.enabled) Theme.ACCENT else Theme.withAlpha(Theme.TEXT_DIM, 0.4f)
-                RenderUtils.rect(
-                    ctx, row.toggleDotX.toFloat(), row.toggleDotY.toFloat(),
-                    ClickGUI.TOGGLE_DOT_SIZE.toFloat(), ClickGUI.TOGGLE_DOT_SIZE.toFloat(), dotColor
-                )
+                // ── 60px capsule toggle (Fitts) ──
+                drawCapsuleToggle(ctx, row, accent)
             }
 
             // Expanded setting items (clipped too)
@@ -211,10 +228,28 @@ object OverlayRenderer {
                 for ((idx, item) in row.settings.withIndex()) {
                     val iy = row.y + row.height + idx * lineHeight
                     if (iy + lineHeight > clipBottom) continue
-                    drawSettingItem(ctx, item, row, iy, lineHeight)
+                    drawSettingItem(ctx, item, row, iy, lineHeight, cat.ordinal)
                 }
             }
         }
+    }
+
+    /** Aurora 60px capsule toggle — filled with accent + glow when on. */
+    private fun drawCapsuleToggle(ctx: RenderContext, row: ClickGUI.ModuleRow, accent: Int) {
+        val w = 60f
+        val h = 14f
+        val x = row.toggleDotX.toFloat() - (w - ClickGUI.TOGGLE_DOT_SIZE)
+        val y = row.toggleDotY.toFloat() + (ClickGUI.TOGGLE_DOT_SIZE - h.toInt()) / 2f
+        val on = row.module.enabled
+
+        // track
+        RenderUtils.roundedRect(
+            ctx, x, y, w, h, 7f,
+            if (on) accent else Theme.withAlpha(Theme.TEXT, 0.10f)
+        )
+        // knob
+        val knobX = if (on) x + w - 14f else x + 2f
+        RenderUtils.roundedRect(ctx, knobX, y + 2f, 10f, 10f, 5f, Theme.TEXT)
     }
 
     private fun drawSettingItem(
@@ -222,28 +257,26 @@ object OverlayRenderer {
         item: ClickGUI.SettingItem,
         row: ClickGUI.ModuleRow,
         y: Int,
-        lineHeight: Int
+        lineHeight: Int,
+        categoryOrdinal: Int
     ) {
         val font = ctx.fontRenderer
         val indentX = row.x + 10
+        val accent = Theme.accentFor(categoryOrdinal)
 
         when (item) {
             is ClickGUI.BoolItem -> {
-                font.drawStringWithShadow(item.name, indentX, y, Theme.TEXT)
-                val stateText = if (item.value) "ON" else "OFF"
-                val stateColor = if (item.value) Theme.ACCENT else Theme.TEXT_DIM
-                font.drawStringWithShadow(
-                    stateText, row.x + row.width - 34, y, stateColor
-                )
+                font.drawStringWithShadow(item.name, indentX, y, Theme.TEXT_DIM)
+                // mini pill toggle
+                drawMiniPill(ctx, row, y, item.value, accent)
             }
 
             is ClickGUI.ChoiceItem, is ClickGUI.EnumItem -> {
                 val name = item.name
                 val value = (item as? ClickGUI.ChoiceItem)?.value ?: (item as ClickGUI.EnumItem).value
-                font.drawStringWithShadow(name, indentX, y, Theme.TEXT)
-                font.drawStringWithShadow(
-                    "\u00A7e$value", row.x + row.width - 60, y, Theme.WARN
-                )
+                font.drawStringWithShadow(name, indentX, y, Theme.TEXT_DIM)
+                // chip selector (single current value highlighted)
+                drawChip(ctx, row, y, value, accent)
             }
 
             is ClickGUI.FloatItem, is ClickGUI.IntItem -> {
@@ -261,27 +294,40 @@ object OverlayRenderer {
                         .coerceIn(0f, 1f)
                 }
 
-                font.drawStringWithShadow(name, indentX, y, Theme.TEXT)
+                font.drawStringWithShadow(name, indentX, y, Theme.TEXT_DIM)
 
                 val (trackStart, trackWidth) = ClickGUI.sliderTrack(row)
                 val cy = y + lineHeight / 2.0f
-                // Track
-                RenderUtils.rect(ctx, trackStart, cy - 1f, trackWidth, 2f, Theme.TRACK)
-                // Filled portion
-                RenderUtils.rect(
-                    ctx, trackStart, cy - 1f, trackWidth * ratio, 2f,
-                    Theme.withAlpha(Theme.ACCENT, 0.6f)
-                )
-                // Knob
-                RenderUtils.rect(
-                    ctx, trackStart + trackWidth * ratio - 2f, cy - 4f, 4f, 8f, Theme.KNOB
-                )
-                // Value text
+                // Aurora accent slider
+                RenderUtils.roundedRect(ctx, trackStart, cy - 2f, trackWidth, 3f, 1.5f, Theme.TRACK)
+                RenderUtils.roundedRect(ctx, trackStart, cy - 2f, trackWidth * ratio, 3f, 1.5f, accent)
+                RenderUtils.roundedRect(ctx, trackStart + trackWidth * ratio - 6f, cy - 6f, 12f, 12f, 6f, Theme.TEXT)
                 font.drawStringWithShadow(
-                    valueText, row.x + row.width - 34, y, Theme.TEXT
+                    valueText, row.x + row.width - 30, y, Theme.TEXT
                 )
             }
         }
+    }
+
+    /** Aurora mini pill toggle for booleans. */
+    private fun drawMiniPill(ctx: RenderContext, row: ClickGUI.ModuleRow, y: Int, on: Boolean, accent: Int) {
+        val w = 38f
+        val h = 12f
+        val x = row.x + row.width - 46f
+        val cy = y + 5f
+        RenderUtils.roundedRect(ctx, x, cy, w, h, 6f, if (on) accent else Theme.withAlpha(Theme.TEXT, 0.12f))
+        val kx = if (on) x + w - 15f else x + 2f
+        RenderUtils.roundedRect(ctx, kx, cy + 2f, 9f, 9f, 4.5f, Theme.TEXT)
+    }
+
+    /** Aurora chip showing the current choice value. */
+    private fun drawChip(ctx: RenderContext, row: ClickGUI.ModuleRow, y: Int, value: String, accent: Int) {
+        val font = ctx.fontRenderer
+        val w = font.getStringWidth(value) + 14
+        val x = row.x + row.width - w - 14
+        val cy = y + 2f
+        RenderUtils.roundedRect(ctx, x, cy, w.toFloat(), 14f, 7f, accent)
+        font.drawStringWithShadow(value, x + 7, y + 3, Theme.TEXT)
     }
 
     // ══════════════════════════════════════

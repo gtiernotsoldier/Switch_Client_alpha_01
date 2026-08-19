@@ -10,32 +10,37 @@ import java.awt.Color
  */
 object Theme {
 
-    // ── Base palette ──
-    // SwitchLite's own dark theme — clean, modern, high-contrast.
-    // Panels are deep neutral dark; text is near-white for readability;
-    // a single cool accent (cyan) marks active/positive state; red/gold
-    // reserved for errors/warnings. No muddled gray-on-gray.
+    // ── Aurora visual system ──
+    // Deep gradient background, translucent cards, near-white text, and a
+    // per-category accent color (HSL-hue rotated) — each category card gets
+    // its own accent/glow instead of a single global color.
 
-    /** Panel background: deep near-black, slightly translucent. */
-    const val PANEL_BG: Int = 0xE6141418.toInt()
+    /** Full-screen GUI backdrop — Aurora deep gradient base (most opaque). */
+    const val PANEL_BG_FULL: Int = 0xFF0A0A0F.toInt()
 
-    /** Fully-opaque panel background (for full-screen GUI backdrop). */
-    const val PANEL_BG_FULL: Int = 0xFF101014.toInt()
+    /** Card background — translucent deep panel (Aurora rgba(26,26,36,.85)). */
+    const val PANEL_BG: Int = 0xD91A1A24.toInt()
 
-    /** HUD card background: more transparent so the game stays visible. */
-    const val HUD_BG: Int = 0x66000000.toInt()
+    /** HUD card background. */
+    const val HUD_BG: Int = 0xB3181820.toInt()
 
     /** Hover highlight (subtle white overlay). */
-    const val HOVER: Int = 0x14FFFFFF
+    const val HOVER: Int = 0x12FFFFFF
 
-    /** Primary text: near-white for readability. */
-    const val TEXT: Int = 0xFFF0F0F0.toInt()
+    /** Primary text: white. */
+    const val TEXT: Int = 0xFFFFFFFF.toInt()
 
-    /** Dim / disabled text: muted gray. */
-    const val TEXT_DIM: Int = 0xFF707070.toInt()
+    /** Secondary text: 60% white. */
+    const val TEXT_DIM: Int = 0x99FFFFFF
 
-    /** Accent cyan — active / enabled / positive (modern, not garish green). */
-    const val ACCENT: Int = 0xFF4FC3F7.toInt()
+    /** Tertiary text: 35% white. */
+    const val TEXT_FAINT: Int = 0x59FFFFFF
+
+    /** Card border (13% white). */
+    const val BORDER: Int = 0x21FFFFFF
+
+    /** Slider track (unfilled). */
+    const val TRACK: Int = 0x21FFFFFF
 
     /** Error red. */
     const val ERROR: Int = 0xFFFF5252.toInt()
@@ -43,17 +48,36 @@ object Theme {
     /** Warning gold. */
     const val WARN: Int = 0xFFFFB300.toInt()
 
-    /** ClickGUI title accent (same cyan family, slightly brighter). */
-    const val TITLE: Int = 0xFF81D4FA.toInt()
+    /** Legacy single accent (kept for callers that don't use per-category). */
+    const val ACCENT: Int = 0xFFFF6A00.toInt()
 
-    /** Panel border (subtle). */
-    const val BORDER: Int = 0x22FFFFFF
+    // ── Per-category Aurora accents (HSL-hue rotated) ──
 
-    /** Slider track (unfilled). */
-    const val TRACK: Int = 0x33FFFFFF
+    /**
+     * Accent color for a category, matching Aurora's per-card hue rotation.
+     * Base hue 0.8 (warm orange), categories offset their hue.
+     */
+    fun accentFor(categoryOrdinal: Int): Int {
+        val offset = when (categoryOrdinal) {
+            0 -> 0.00f  // RENDER  — warm orange
+            1 -> 0.33f  // COMBAT  — gold
+            2 -> 0.66f  // MOVEMENT— mint
+            3 -> 0.15f  // PLAYER  — pink/purple
+            4 -> 0.50f  // WORLD   — yellow-green
+            else -> 0.0f
+        }
+        val hue = (0.8f + offset) % 1.0f
+        return Color.HSBtoRGB(hue, 0.9f, 0.6f) or 0xFF000000.toInt()
+    }
 
-    /** Slider knob. */
-    const val KNOB: Int = 0xFFE0E0E0.toInt()
+    /** Soft accent (35% alpha) for borders/glow on category cards. */
+    fun accentSoft(categoryOrdinal: Int): Int {
+        val base = accentFor(categoryOrdinal)
+        val r = (base shr 16) and 0xFF
+        val g = (base shr 8) and 0xFF
+        val b = base and 0xFF
+        return (0x59 shl 24) or (r shl 16) or (g shl 8) or b
+    }
 
     // ── Rainbow ──
 

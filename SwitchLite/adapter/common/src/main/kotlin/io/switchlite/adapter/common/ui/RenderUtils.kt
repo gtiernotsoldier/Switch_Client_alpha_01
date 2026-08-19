@@ -14,8 +14,9 @@ import io.switchlite.adapter.common.render.RenderContext
  */
 object RenderUtils {
 
-    /** Number of arc segments per 90° corner. */
-    private const val CORNER_SEGMENTS = 6
+    /** Number of arc segments per 90° corner. Higher = smoother (Nemui's
+     *  shader SDF is perfectly smooth; we approximate with more segments). */
+    private const val CORNER_SEGMENTS = 10
 
     // ═══════════════════ Filled rectangle ═══════════════════
 
@@ -95,6 +96,25 @@ object RenderUtils {
             g.glVertex2f(vx, vy)
         }
         g.glEnd()
+    }
+
+    /**
+     * Rounded-rectangle outline (border) of [width] px. Draws a filled rounded
+     * rect in [color], then a smaller inset rounded rect punched with the
+     * caller-provided fill, leaving a ring. Pass [fill] = the panel background
+     * color so the border reads as a crisp outline.
+     */
+    fun roundedRectOutline(
+        ctx: RenderContext,
+        x: Float, y: Float, w: Float, h: Float, r: Float,
+        color: Int, width: Float = 1f, fill: Int = 0x00000000
+    ) {
+        // Outer (border) ring
+        roundedRect(ctx, x, y, w, h, r, color)
+        // Inner punch (only if we have an opaque-ish fill to reveal the ring)
+        if (fill != 0x00000000 && width < kotlin.math.min(w, h) / 2f) {
+            roundedRect(ctx, x + width, y + width, w - width * 2, h - width * 2, (r - width).coerceAtLeast(0f), fill)
+        }
     }
 
     // ═══════════════════ Rainbow text ═══════════════════

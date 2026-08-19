@@ -1,347 +1,435 @@
 <!DOCTYPE html>
-<html lang="zh">
+<html lang="zh-CN">
 <head>
-<meta charset="utf-8">
-<title>SwitchLite · Aurora WebUI</title>
-<style>
-  :root {
-    --txt: #fff;
-    --txt2: rgba(255,255,255,.6);
-    --txt3: rgba(255,255,255,.35);
-    --mono: ui-monospace, "SF Mono", Consolas, monospace;
-    --sans: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
-    --spring: cubic-bezier(.34,1.56,.64,1);
-  }
-  * { box-sizing:border-box; margin:0; padding:0; }
-  html,body { height:100%; }
-  body { font-family:var(--sans); color:var(--txt);
-    background: radial-gradient(circle at 30% 15%, rgba(255,80,160,.05), transparent 40%),
-                radial-gradient(circle at 75% 80%, rgba(40,190,255,.05), transparent 42%),
-                linear-gradient(155deg,#101016 0%, #0a0a0f 60%, #070709 100%); }
-  .stage { display:flex; flex-direction:column; gap:14px; padding:16px; min-height:100vh; }
-  .bar { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
-  .bar h1 { font-size:18px; font-weight:800; letter-spacing:.3px; }
-  .bar h1 em { font-style:normal; color:#8a93a3; }
-  .badges { display:flex; gap:6px; flex-wrap:wrap; }
-  .bd { font-size:10px; font-weight:600; padding:3px 9px; border-radius:99px; border:1px solid rgba(255,255,255,.14); color:rgba(255,255,255,.65); background:rgba(255,255,255,.04); font-family:var(--mono); }
-  .bd.hot { border-color:rgba(255,122,0,.45); color:#ffb066; }
-  .btn { font-size:10px; font-weight:600; padding:4px 11px; border-radius:99px; border:1px solid rgba(255,255,255,.14); color:var(--txt2); background:rgba(255,255,255,.05); cursor:pointer; font-family:var(--mono); transition:all .18s var(--spring); }
-  .btn:hover { background:rgba(255,255,255,.1); color:var(--txt); }
-  .btn:active { transform:scale(.96); }
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SwitchLite · Aurora 模块控制台</title>
+    <style>
+        /* ===== 全局重置 & Aurora 基础 ===== */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            user-select: none;
+        }
+        body {
+            background: #0A0A0F;
+            min-height: 100vh;
+            display: flex;
+            background-image: radial-gradient(circle at 20% 30%, rgba(255, 122, 0, 0.06) 0%, transparent 40%),
+                              radial-gradient(circle at 80% 70%, rgba(255, 0, 85, 0.06) 0%, transparent 40%);
+            overflow: hidden;
+            color: #fff;
+        }
+        /* ===== 侧边栏 (毛玻璃) ===== */
+        .sidebar {
+            width: 200px;
+            background: rgba(20, 20, 30, 0.6);
+            backdrop-filter: blur(24px);
+            -webkit-backdrop-filter: blur(24px);
+            border-right: 1px solid rgba(255, 255, 255, 0.06);
+            display: flex;
+            flex-direction: column;
+            padding: 24px 0 20px 0;
+            flex-shrink: 0;
+            height: 100vh;
+            position: relative;
+            z-index: 10;
+            box-shadow: 4px 0 40px rgba(0,0,0,0.4);
+        }
+        .sidebar-brand { padding: 0 20px 18px 20px; border-bottom: 1px solid rgba(255,255,255,0.04); margin-bottom: 12px; }
+        .sidebar-brand .brand-text {
+            font-size: 16px; font-weight: 600;
+            background: linear-gradient(135deg, #FF7A00, #FF0055);
+            -webkit-background-clip: text; -webkit-text-fill-color: transparent; letter-spacing: 0.02em;
+        }
+        .sidebar-brand .brand-sub { font-size: 10px; color: rgba(255,255,255,0.2); margin-top: 2px; }
+        .nav-menu { flex: 1; overflow-y: auto; padding: 0 10px; }
+        .nav-item {
+            display: flex; align-items: center; padding: 10px 14px; margin: 2px 0; border-radius: 10px;
+            font-size: 14px; color: rgba(255,255,255,0.5); cursor: pointer; transition: all 0.2s ease; position: relative;
+        }
+        .nav-item:hover { background: rgba(255,255,255,0.05); color: #fff; }
+        .nav-item.active {
+            background: linear-gradient(135deg, rgba(255, 122, 0, 0.2), rgba(255, 0, 85, 0.15));
+            color: #fff; box-shadow: 0 0 30px rgba(255, 122, 0, 0.05); border: 1px solid rgba(255, 122, 0, 0.15);
+        }
+        .nav-item .icon { margin-right: 12px; font-size: 16px; width: 22px; text-align: center; opacity: 0.6; }
+        .nav-item.active .icon { opacity: 1; }
+        .nav-item .badge {
+            font-size: 9px; background: rgba(255, 122, 0, 0.3); padding: 1px 8px; border-radius: 40px;
+            margin-left: auto; color: rgba(255,255,255,0.7); border: 1px solid rgba(255, 122, 0, 0.1);
+        }
+        .sidebar-divider { border-top: 1px solid rgba(255,255,255,0.05); margin: 8px 14px; }
+        .sidebar-foot { padding: 12px 20px; border-top: 1px solid rgba(255,255,255,0.03); font-size: 10px; color: rgba(255,255,255,0.1); text-align: center; }
+        /* ===== 主体 ===== */
+        .main-content { flex: 1; display: flex; flex-direction: column; padding: 28px 40px 20px 40px; overflow-y: auto; height: 100vh; }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 10px; }
+        .header-left { display: flex; align-items: center; gap: 12px; }
+        .header-title {
+            font-size: 20px; font-weight: 600;
+            background: linear-gradient(135deg, #FF7A00, #FF0055);
+            -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+        }
+        .header-status {
+            color: #4ade80; font-size: 13px; background: rgba(74, 222, 128, 0.08);
+            padding: 4px 14px; border-radius: 40px; border: 1px solid rgba(74, 222, 128, 0.15);
+        }
+        .header-shortcut {
+            background: rgba(255,255,255,0.04); padding: 5px 14px; border-radius: 6px; font-size: 12px;
+            color: rgba(255,255,255,0.3); border: 1px solid rgba(255,255,255,0.06); font-family: 'SF Mono', monospace;
+        }
+        /* ===== 标签栏 (Tabs) ===== */
+        .tab-bar { display: flex; background: rgba(255,255,255,0.03); border-radius: 12px; padding: 4px; width: fit-content; margin-bottom: 20px; border: 1px solid rgba(255,255,255,0.04); flex-wrap: wrap; }
+        .tab {
+            padding: 8px 22px; color: rgba(255,255,255,0.4); font-size: 14px; cursor: pointer;
+            border-radius: 8px; transition: all 0.2s; font-weight: 450;
+        }
+        .tab:hover { color: #fff; background: rgba(255,255,255,0.04); }
+        .tab.active { color: #fff; background: rgba(255, 122, 0, 0.15); box-shadow: inset 0 -2px 0 #FF7A00; }
 
-  .cards { display:flex; flex-wrap:wrap; gap:20px; align-items:flex-start; }
-  .card { width:300px; flex-shrink:0; position:relative;
-    background: linear-gradient(180deg, rgba(26,26,36,.92), rgba(20,20,30,.88));
-    border:1px solid rgba(255,255,255,.13);
-    border-radius:14px;
-    box-shadow: 0 20px 40px rgba(0,0,0,.55), 0 2px 10px rgba(0,0,0,.4), inset 0 0 0 1.5px rgba(255,255,255,.07);
-    overflow:hidden; }
-  .card.hidden { display:none; }
-  .c-head { display:flex; align-items:center; justify-content:space-between; height:32px; padding:0 16px;
-    background:linear-gradient(180deg, rgba(255,255,255,.05), transparent); border-bottom:1px solid rgba(255,255,255,.08); }
-  .c-title { font-size:12px; font-weight:800; letter-spacing:1.2px; }
-  .c-count { font-size:9px; font-family:var(--mono); color:var(--txt3); background:rgba(255,255,255,.07); border:1px solid rgba(255,255,255,.1); padding:2px 8px; border-radius:99px; }
+        .tab-content { flex: 1; }
+        .tab-panel { display: none; }
+        .tab-panel.active { display: block; }
 
-  .c-body { padding:12px; display:flex; flex-direction:column; gap:6px; }
-  .empty { font-size:10px; color:var(--txt3); padding:8px; text-align:center; }
-
-  .row { border-radius:10px; cursor:pointer; position:relative;
-    background:rgba(255,255,255,.045); border:1px solid rgba(255,255,255,.06);
-    transition: transform .18s var(--spring), box-shadow .25s ease, background .2s ease; }
-  .row:hover { transform:translateY(-1px); box-shadow:0 8px 20px rgba(0,0,0,.4); background:rgba(255,255,255,.065); }
-  .row.on { border-color:var(--accent-soft); box-shadow:0 0 0 1px var(--accent-soft), 0 10px 24px rgba(0,0,0,.35); }
-  .row-main { display:flex; align-items:center; justify-content:space-between; height:26px; padding:0 8px 0 12px; }
-  .r-name { font-size:11.5px; font-weight:650; color:rgba(255,255,255,.72); letter-spacing:.2px; }
-  .row.on .r-name { color:var(--txt); }
-  .r-right { display:flex; align-items:center; gap:8px; }
-  .r-caret { font-size:8px; color:var(--txt3); transition:transform .3s var(--spring); }
-  .row.expanded .r-caret { transform:rotate(180deg); color:var(--accent); }
-
-  .tgl { width:60px; height:22px; border-radius:20px; flex-shrink:0; position:relative; cursor:pointer; transition:all .22s var(--spring);
-    background:rgba(0,0,0,.32); border:1px solid rgba(255,255,255,.14); }
-  .tgl i { position:absolute; top:50%; left:3px; width:16px; height:16px; border-radius:99px; background:rgba(255,255,255,.55); transform:translateY(-50%); transition:left .22s var(--spring), background .2s; }
-  .row.on .tgl { background:var(--accent); border-color:transparent; box-shadow:0 0 16px var(--glow), inset 0 0 6px rgba(255,255,255,.3); }
-  .row.on .tgl i { left:calc(100% - 19px); background:#fff; }
-  .tgl:active { transform:scale(.96); }
-
-  .settings { display:grid; grid-template-rows:0fr; transition:grid-template-rows .38s var(--spring); }
-  .row.expanded .settings { grid-template-rows:1fr; }
-  .settings > div { overflow:hidden; }
-  .set-list { padding:6px 6px 6px 14px; display:flex; flex-direction:column; gap:8px; border-left:1px solid rgba(255,255,255,.1); margin-left:12px; }
-  .set { display:flex; align-items:center; justify-content:space-between; gap:8px; min-height:22px; }
-  .s-name { font-size:10px; color:var(--txt2); white-space:nowrap; }
-
-  .pill { width:38px; height:18px; border-radius:20px; background:rgba(0,0,0,.32); border:1px solid rgba(255,255,255,.12); position:relative; cursor:pointer; flex-shrink:0; transition:all .2s var(--spring); }
-  .pill i { position:absolute; top:50%; left:2px; width:13px; height:13px; border-radius:99px; background:rgba(255,255,255,.6); transform:translateY(-50%); transition:left .2s var(--spring); }
-  .pill.on { background:var(--accent); border-color:transparent; box-shadow:0 0 10px var(--glow); }
-  .pill.on i { left:21px; background:#fff; }
-  .pill:active { transform:scale(.96); }
-
-  .track { position:relative; width:96px; height:5px; border-radius:99px; background:rgba(255,255,255,.13); cursor:pointer; }
-  .track i { position:absolute; left:0; top:50%; height:5px; border-radius:99px; background:var(--accent); transform:translateY(-50%); box-shadow:0 0 8px var(--glow); }
-  .track b { position:absolute; top:50%; width:13px; height:13px; border-radius:99px; background:#fff; transform:translate(-50%,-50%); box-shadow:0 1px 5px rgba(0,0,0,.6), 0 0 8px var(--glow); }
-  .s-val { font-size:9px; font-family:var(--mono); color:var(--txt2); width:30px; text-align:right; }
-
-  .chip { display:flex; gap:2px; background:rgba(0,0,0,.3); border:1px solid rgba(255,255,255,.1); border-radius:20px; padding:2px; }
-  .chip span { font-size:9px; font-weight:600; padding:2px 9px; border-radius:20px; color:var(--txt2); cursor:pointer; transition:all .2s; font-family:var(--mono); }
-  .chip span.act { background:var(--accent); color:#fff; box-shadow:0 0 10px var(--glow); }
-  .chip span:not(.act):hover { color:var(--txt); }
-  .chip span:active { transform:scale(.96); }
-
-  .foot { display:flex; gap:8px; flex-wrap:wrap; font-size:11px; color:var(--txt3); }
-  .foot .k { background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.08); padding:3px 10px; border-radius:8px; }
-  .foot .k b { color:rgba(255,140,60,.95); }
-</style>
+        /* ===== 设置网格 (多列自适应) ===== */
+        .setting-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 14px; }
+        /* ===== 核心设置项 (可展开) ===== */
+        .setting-item {
+            background: rgba(255,255,255,0.03); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+            border-radius: 14px; border: 1px solid rgba(255,255,255,0.04); overflow: hidden;
+            transition: all 0.3s cubic-bezier(0.34, 1.0, 0.64, 1);
+        }
+        .setting-item:hover { background: rgba(255,255,255,0.06); border-color: rgba(255,255,255,0.08); }
+        .setting-item.expanded { border-color: rgba(255, 122, 0, 0.3); background: rgba(20, 20, 30, 0.5); box-shadow: 0 8px 32px rgba(0,0,0,0.3); }
+        .setting-header { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; cursor: pointer; transition: background 0.2s; }
+        .setting-header:hover { background: rgba(255,255,255,0.04); }
+        .setting-label { display: flex; align-items: center; gap: 8px; font-size: 14px; color: rgba(255,255,255,0.8); }
+        .setting-tag {
+            font-size: 9px; color: rgba(255, 122, 0, 0.6); background: rgba(255, 122, 0, 0.08);
+            padding: 1px 8px; border-radius: 30px; border: 1px solid rgba(255, 122, 0, 0.05);
+        }
+        .setting-arrow { color: rgba(255,255,255,0.2); font-size: 14px; margin-left: 4px; transition: transform 0.3s; display: inline-block; }
+        .setting-item.expanded .setting-arrow { transform: rotate(180deg); }
+        .setting-right { display: flex; align-items: center; gap: 10px; }
+        /* ===== 胶囊开关 (暖色) ===== */
+        .toggle-switch {
+            width: 38px; height: 20px; background: rgba(255,255,255,0.08); border-radius: 40px;
+            position: relative; cursor: pointer; transition: background 0.3s, box-shadow 0.3s; flex-shrink: 0;
+            box-shadow: inset 0 2px 4px rgba(0,0,0,0.3);
+        }
+        .toggle-switch::after {
+            content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; background: #fff;
+            border-radius: 50%; transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1), background 0.3s;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+        }
+        .toggle-switch.on { background: linear-gradient(135deg, #FF7A00, #FF0055); box-shadow: 0 0 24px rgba(255, 122, 0, 0.3); }
+        .toggle-switch.on::after { transform: translateX(18px); }
+        .toggle-switch .pulse-ring { position: absolute; top: -4px; left: -4px; right: -4px; bottom: -4px; border-radius: 40px; border: 1px solid transparent; pointer-events: none; transition: border-color 0.3s; }
+        .toggle-switch.on .pulse-ring { border-color: rgba(255, 122, 0, 0.3); animation: pulse-glow 2.5s infinite ease-in-out; }
+        @keyframes pulse-glow { 0% { opacity: 0.4; transform: scale(1); } 50% { opacity: 1; transform: scale(1.12); } 100% { opacity: 0.4; transform: scale(1); } }
+        /* ===== 展开的子选项面板 ===== */
+        .sub-options { max-height: 0; opacity: 0; visibility: hidden; transition: max-height 0.4s ease, opacity 0.3s ease, padding 0.4s ease, border-color 0.3s; padding: 0 16px; border-top: 1px solid transparent; overflow: hidden; }
+        .setting-item.expanded .sub-options { max-height: 1200px; opacity: 1; visibility: visible; padding: 12px 16px 16px 16px; border-top: 1px solid rgba(255,255,255,0.06); }
+        .sub-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 16px; }
+        .sub-item { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 13px; color: rgba(255,255,255,0.7); padding: 3px 0; }
+        .sub-item .sub-label { display: flex; align-items: center; gap: 4px; white-space: nowrap; min-width: 0; }
+        .sub-item .sub-label .opt-name { overflow: hidden; text-overflow: ellipsis; }
+        .sub-value { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+        .sub-dropdown {
+            color: rgba(255, 122, 0, 0.8); background: rgba(255, 122, 0, 0.08); padding: 1px 10px 1px 8px;
+            border-radius: 40px; font-size: 12px; cursor: pointer; border: 1px solid rgba(255, 122, 0, 0.1); transition: 0.2s; white-space: nowrap;
+        }
+        .sub-dropdown:hover { background: rgba(255, 122, 0, 0.15); }
+        .num-input {
+            width: 56px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 6px; color: #fff; padding: 3px 6px; font-size: 12px; text-align: center; transition: 0.2s;
+        }
+        .num-input:focus { outline: none; border-color: rgba(255, 122, 0, 0.4); }
+        .text-input { flex: 1; min-width: 90px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.08); border-radius: 6px; color: #fff; padding: 3px 8px; font-size: 12px; }
+        /* 滑块 */
+        .slider-row { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 4px; margin: 4px 0; }
+        .slider-label-row { display: flex; justify-content: space-between; font-size: 13px; color: rgba(255,255,255,0.6); }
+        .slider-label-row .slider-value { color: rgba(255, 122, 0, 0.8); font-weight: 500; }
+        .slider-track { width: 100%; height: 6px; background: rgba(255,255,255,0.08); border-radius: 6px; position: relative; cursor: pointer; }
+        .slider-fill { height: 100%; border-radius: 6px; background: linear-gradient(90deg, #FF7A00, #FF0055); transition: width 0.15s; box-shadow: 0 0 12px rgba(255, 122, 0, 0.2); }
+        .empty { font-size: 12px; color: rgba(255,255,255,0.25); padding: 16px; text-align: center; }
+        .noopts { font-size: 11px; color: rgba(255,255,255,0.2); font-style: italic; }
+        .sub-actions { margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap; }
+        .mini-btn { font-size: 10px; padding: 3px 10px; border-radius: 30px; border: 1px solid rgba(255,122,0,0.15); color: rgba(255,122,0,0.7); background: rgba(255,122,0,0.06); cursor: pointer; }
+        .mini-btn:hover { background: rgba(255,122,0,0.12); }
+        /* 底部字幕 */
+        .subtitle-overlay {
+            position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+            background: rgba(0,0,0,0.5); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+            padding: 8px 20px; border-radius: 40px; color: rgba(255,255,255,0.5); font-size: 13px;
+            border: 1px solid rgba(255,255,255,0.04); white-space: nowrap; z-index: 100; font-weight: 300;
+        }
+        ::-webkit-scrollbar { width: 4px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 10px; }
+        ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
+        @media (max-width: 820px) { .sidebar { width: 160px; } .main-content { padding: 20px; } .sub-grid { grid-template-columns: 1fr; } }
+        @media (max-width: 500px) { .sidebar { display: none; } .subtitle-overlay { white-space: normal; font-size: 12px; } }
+        .tokbar { font-size: 10px; color: rgba(255,255,255,0.35); margin-bottom: 12px; display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+        .tokbar .bd { background: rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.08); padding:2px 10px; border-radius:40px; font-family:'SF Mono',monospace; }
+    </style>
 </head>
 <body>
-<div class="stage">
-  <div class="bar">
-    <h1>SwitchLite <em>— Aurora WebUI 调试面板</em></h1>
-    <div class="badges">
-      <span class="bd hot" id="conn">connecting…</span>
-      <span class="bd" id="urls"></span>
-      <button class="btn" id="btnSave">保存</button>
-      <button class="btn" id="btnExport">导出</button>
-      <button class="btn" id="btnImport">导入</button>
-    </div>
-  </div>
-  <div class="cards" id="cards"></div>
-  <div class="foot">
-    <span class="k">点行 → 展开参数</span>
-    <span class="k">胶囊 → 开关模块</span>
-    <span class="k">pill / 滑块 / chip → 调参</span>
-    <span class="k">每张卡片 accent 按类别轮换</span>
-  </div>
-</div>
-
-<script>
-(function(){
-  const $ = s => document.querySelector(s);
-
-  /* HSL→RGB, same palette as the Aurora visual system */
-  function hslToRgb(h, s, l){
-    h = ((h % 1) + 1) % 1;
-    const hue = h * 360;
-    const c = (1 - Math.abs(2*l - 1)) * s;
-    const x = c * (1 - Math.abs((hue/60) % 2 - 1));
-    const m = l - c/2;
-    let r=0,g=0,b=0;
-    if(hue<60){r=c;g=x;}else if(hue<120){r=x;g=c;}else if(hue<180){g=c;b=x;}
-    else if(hue<240){g=x;b=c;}else if(hue<300){r=x;b=c;}else{r=c;b=x;}
-    return [Math.round((r+m)*255), Math.round((g+m)*255), Math.round((b+m)*255)];
-  }
-  const rgb = a => `rgb(${a[0]},${a[1]},${a[2]})`;
-  function palette(offset){
-    const baseHue = (0.8 + offset) % 1.0;
-    return { accent: hslToRgb(baseHue, 0.9, 0.6), glow: hslToRgb(baseHue, 1.0, 0.7) };
-  }
-  const CAT_OFF = {
-    RENDER: 0.00, COMBAT: 0.33, MOVEMENT: 0.66, PLAYER: 0.15, WORLD: 0.50
-  };
-  const CAT_LABEL = { RENDER:"Render", COMBAT:"Combat", MOVEMENT:"Move", PLAYER:"Player", WORLD:"World" };
-
-  let modules = [];
-  let token = localStorage.getItem('sl_token') || '';
-
-  function authHeaders(){
-    return token ? { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' }
-                 : { 'Content-Type': 'application/json' };
-  }
-
-  async function api(url, opts){
-    const r = await fetch(url, Object.assign({headers:authHeaders()}, opts));
-    if(r.status === 401){
-      // token missing/invalid — start login flow
-      ensureToken();
-      throw new Error('unauthorized');
-    }
-    if(!r.ok) throw new Error(r.status);
-    return r.json();
-  }
-
-  // On loopback /api/info reveals the token automatically. Remotely, prompt.
-  async function ensureToken(){
-    if(token) return;
-    try {
-      const info = await fetch('/api/info', {headers:{'Content-Type':'application/json'}}).then(r=>r.json());
-      if(info.defaultPassword){
-        token = info.defaultPassword;
-        localStorage.setItem('sl_token', token);
-        $('#urls').textContent = (info.urls||[]).join('  ·  ');
-        return;
-      }
-    } catch(e){}
-    const t = prompt('输入 WebUI 访问口令（看游戏内 HUD / 注入日志）：');
-    if(t){ token = t.trim(); localStorage.setItem('sl_token', token); }
-    else window.location.reload();
-  }
-
-  async function refresh(){
-    await ensureToken();
-    try {
-      modules = await api('/api/modules');
-      $('#conn').textContent = `已连接 · ${modules.length} 模块`;
-      $('#conn').style.borderColor = 'rgba(255,122,0,.45)';
-      $('#conn').style.color = '#ffb066';
-      render();
-    } catch(e) {
-      $('#conn').textContent = '未连接 — 请检查口令或 WebUI 模块';
-    }
-  }
-
-  function rowHTML(m, i){
-    const opts = (m.options||[]).map(setHTML).join('');
-    return `<div class="row ${m.enabled?'on':''}" data-i="${i}">
-      <div class="row-main">
-        <span class="r-name">${m.name}</span>
-        <div class="r-right">
-          ${m.options && m.options.length ? '<span class="r-caret">▼</span>' : ''}
-          <div class="tgl"><i></i></div>
+    <!-- ===== 侧边栏 (SwitchLite 分类导航) ===== -->
+    <aside class="sidebar">
+        <div class="sidebar-brand">
+            <div class="brand-text">⚡ SwitchLite</div>
+            <div class="brand-sub">Aurora · 极光</div>
         </div>
-      </div>
-      <div class="settings"><div><div class="set-list">${opts}</div></div></div>
-    </div>`;
-  }
+        <nav class="nav-menu" id="sideNav"></nav>
+        <div class="sidebar-foot">v2.1 · 跨版本</div>
+    </aside>
 
-  function setHTML(o){
-    const t = o.type;
-    if(t === 'BOOLEAN'){
-      return `<div class="set"><span class="s-name">${o.name}</span><div class="pill ${o.value?'on':''}"><i></i></div></div>`;
-    }
-    if(t === 'CHOICES' || t === 'ENUM'){
-      const opts = (o.choices||[]).map((c,i)=>`<span class="${c===o.value?'act':''}">${c}</span>`).join('');
-      return `<div class="set"><span class="s-name">${o.name}</span><div class="chip">${opts}</div></div>`;
-    }
-    if(t === 'FLOAT' || t === 'INT' || t === 'PROBABILITY'){
-      const min = typeof o.min==='number'?o.min:0;
-      const max = typeof o.max==='number'?o.max:100;
-      const v = typeof o.value==='number'?o.value:0;
-      const p = Math.round((v-min)/(max-min||1)*100);
-      const unit = o.unit||'';
-      return `<div class="set"><span class="s-name">${o.name}</span><div style="display:flex;align-items:center;gap:6px">
-        <div class="track" data-key="${o.key}" data-min="${min}" data-max="${max}" data-int="${t==='INT'||t==='PROBABILITY'?1:0}" style="--p:${p}">
-          <i style="width:${p}%"></i><b style="left:${p}%"></b></div>
-        <span class="s-val">${t==='FLOAT'?Number(v).toFixed(1):v}${unit}</span></div></div>`;
-    }
-    return '';
-  }
+    <!-- ===== 主体 ===== -->
+    <main class="main-content">
+        <header class="header">
+            <div class="header-left">
+                <span class="header-title">SwitchLite</span>
+                <span class="header-status" id="conn">● 连接中…</span>
+            </div>
+            <div style="display:flex; gap:8px; flex-wrap:wrap;" id="hdrShortcuts"></div>
+        </header>
 
-  function render(){
-    const cats = {};
-    modules.forEach(m => { (cats[m.category] = cats[m.category]||[]).push(m); });
-    const order = ['COMBAT','MOVEMENT','PLAYER','RENDER','WORLD'];
-    $('#cards').innerHTML = order
-      .filter(c => cats[c] && cats[c].length)
-      .map(c => {
-        const p = palette(CAT_OFF[c]||0);
-        return `<div class="card" style="--accent:${rgb(p.accent)};--glow:${rgb(p.glow)};--accent-soft:rgba(${p.accent[0]},${p.accent[1]},${p.accent[2]},.35)">
-          <div class="c-head"><span class="c-title">${CAT_LABEL[c]||c}</span><span class="c-count">${cats[c].length} mods</span></div>
-          <div class="c-body">${cats[c].map(rowHTML).join('')}</div>
-        </div>`;
-      }).join('') || '<div class="empty">暂无模块</div>';
-  }
+        <div class="tokbar" id="urls"></div>
 
-  // ── interactions ──
-  $('#btnSave').addEventListener('click', () => {
-    // Options auto-save on each change server-side; this button just confirms.
-    $('#conn').textContent = '已保存 · 每次改动自动存盘';
-    setTimeout(()=>refresh(), 1500);
-  });
-  $('#btnExport').addEventListener('click', async () => {
-    try {
-      const cfg = await api('/api/config');
-      navigator.clipboard.writeText(JSON.stringify(cfg)).then(()=>{
-        $('#conn').textContent = '配置已复制到剪贴板';
-        setTimeout(()=>refresh(), 1500);
-      });
-    } catch(e) { $('#conn').textContent = '导出失败'; }
-  });
-  $('#btnImport').addEventListener('click', () => {
-    const t = prompt('粘贴配置 JSON：');
-    if(!t) return;
-    api('/api/config', {method:'POST', body:t}).then(()=>{ refresh(); $('#conn').textContent='已导入'; })
-      .catch(()=>{ $('#conn').textContent='导入失败'; });
-  });
+        <div class="tab-bar" id="tabBar"></div>
+        <div class="tab-content" id="tabContent"></div>
+    </main>
 
-  document.addEventListener('click', async e => {
-    const pill = e.target.closest('.pill');
-    const chip = e.target.closest('.chip span');
-    const track = e.target.closest('.track');
-    const tgl = e.target.closest('.tgl');
-    if(pill){
-      const set = pill.closest('.set');
-      const key = null; // resolve from module row
-      // find the option key: walk the row's set-list
-      const row = pill.closest('.row');
-      const idx = +row.dataset.i;
-      const mod = modules[idx];
-      const o = mod.options.find(opt => opt.type==='BOOLEAN');
-      if(o){
-        await api('/api/options', {method:'POST', body:JSON.stringify({key:o.key, value:!o.value})});
-        pill.classList.toggle('on');
-      }
-      e.stopPropagation(); return;
-    }
-    if(chip){
-      const row = chip.closest('.row');
-      const idx = +row.dataset.i;
-      const mod = modules[idx];
-      const o = mod.options.find(opt => (opt.type==='CHOICES'||opt.type==='ENUM'));
-      if(o){
-        await api('/api/options', {method:'POST', body:JSON.stringify({key:o.key, value:chip.textContent})});
-        chip.parentElement.querySelectorAll('span').forEach(s=>s.classList.remove('act'));
-        chip.classList.add('act');
-      }
-      e.stopPropagation(); return;
-    }
-    if(track){
-      const row = track.closest('.row');
-      const idx = +row.dataset.i;
-      const mod = modules[idx];
-      const o = mod.options.find(opt => opt.type==='FLOAT'||opt.type==='INT'||opt.type==='PROBABILITY');
-      if(!o) return;
-      const r = track.getBoundingClientRect();
-      let p = Math.min(100, Math.max(0, (e.clientX-r.left)/r.width*100));
-      const min = +track.dataset.min, max = +track.dataset.max;
-      const isInt = track.dataset.int==='1';
-      const raw = min + p/100*(max-min);
-      const val = isInt ? Math.round(raw) : Math.round(raw*10)/10;
-      await api('/api/options', {method:'POST', body:JSON.stringify({key:o.key, value:val})});
-      track.style.setProperty('--p', p);
-      track.querySelector('i').style.width = p+'%';
-      track.querySelector('b').style.left = p+'%';
-      const sval = track.parentElement.querySelector('.s-val');
-      sval.textContent = (isInt?val:val.toFixed(1)) + (o.unit||'');
-      e.stopPropagation(); return;
-    }
-    if(tgl){
-      const row = tgl.closest('.row');
-      const idx = +row.dataset.i;
-      const mod = modules[idx];
-      await api('/api/modules/'+encodeURIComponent(mod.name)+'/toggle', {method:'POST'});
-      row.classList.toggle('on');
-      refresh(); // re-fetch to sync options/state
-      e.stopPropagation(); return;
-    }
-    const rowEl = e.target.closest('.row');
-    if(rowEl && rowEl.querySelector('.set-list').children.length) rowEl.classList.toggle('expanded');
-  });
+    <div class="subtitle-overlay">SwitchLite · Aurora 调试面板</div>
 
-  refresh();
-  setInterval(refresh, 2000);
+    <script>
+        const $ = s => document.querySelector(s);
+        const CATS = ['COMBAT','PLAYER','MOVEMENT','WORLD','RENDER','MISC'];
+        const CAT_ICON = { COMBAT:'◉', PLAYER:'♟', MOVEMENT:'➤', WORLD:'◈', RENDER:'◧', MISC:'⋯' };
+        const CAT_TAB = { COMBAT:'Combat', PLAYER:'Player', MOVEMENT:'Movement', WORLD:'World', RENDER:'Visual', MISC:'Misc' };
 
-  // Show access URLs immediately (info endpoint is auth-free); on the local
-  // machine this also pre-submits the token so no login prompt appears.
-  try {
-    fetch('/api/info').then(r=>r.json()).then(info=>{
-      if(info.urls && info.urls.length) $('#urls').textContent = info.urls.join('  ·  ');
-      if(info.defaultPassword){
-        token = info.defaultPassword;
-        localStorage.setItem('sl_token', token);
-      }
-    });
-  } catch(e){}
-})();
-</script>
+        let modules = [];
+        let token = localStorage.getItem('sl_token') || '';
+        let activeCat = 'COMBAT';
+
+        function authHeaders(){
+            return token ? { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' }
+                         : { 'Content-Type': 'application/json' };
+        }
+        async function api(url, opts){
+            const r = await fetch(url, Object.assign({headers:authHeaders()}, opts));
+            if(r.status === 401){ ensureToken(); throw new Error('unauthorized'); }
+            if(!r.ok) throw new Error(r.status);
+            return r.json();
+        }
+        async function ensureToken(){
+            if(token) return;
+            try {
+                const info = await fetch('/api/info').then(r=>r.json());
+                if(info.defaultPassword){ token = info.defaultPassword; localStorage.setItem('sl_token', token); return; }
+            } catch(e){}
+            const t = prompt('输入 WebUI 访问口令（看注入 cmd / switchlite-agent.log）：');
+            if(t){ token = t.trim(); localStorage.setItem('sl_token', token); } else window.location.reload();
+        }
+
+        function buildSideNavAndTabs(){
+            $('#sideNav').innerHTML = CATS.map(c => {
+                const n = (modules.filter(m => m.category===c)).length;
+                return `<div class="nav-item ${c===activeCat?'active':''}" data-cat="${c}">
+                    <span class="icon">${CAT_ICON[c]||'◉'}</span> ${CAT_TAB[c]||c}
+                    ${n?`<span class="badge">${n}</span>`:''}
+                </div>`;
+            }).join('');
+            $('#tabBar').innerHTML = CATS.map(c =>
+                `<div class="tab ${c===activeCat?'active':''}" data-cat="${c}">${CAT_TAB[c]||c}</div>`
+            ).join('');
+            document.querySelectorAll('#sideNav .nav-item, #tabBar .tab').forEach(el => {
+                el.addEventListener('click', () => { activeCat = el.dataset.cat; renderNavActive(); renderContent(); });
+            });
+        }
+        function renderNavActive(){
+            document.querySelectorAll('#sideNav .nav-item').forEach(i=>i.classList.toggle('active', i.dataset.cat===activeCat));
+            document.querySelectorAll('#tabBar .tab').forEach(t=>t.classList.toggle('active', t.dataset.cat===activeCat));
+        }
+
+        function optionWidget(o){
+            const t = o.type;
+            const key = o.key, val = o.value;
+            if(t === 'BOOLEAN'){
+                return `<div class="toggle-switch ${val?'on':''}" data-key="${key}" data-mod="${o.name}"><span class="pulse-ring"></span></div>`;
+            }
+            if(t === 'CHOICES' || t === 'ENUM'){
+                const label = (val && val.name) ? val.name : val;
+                return `<span class="sub-dropdown" data-key="${key}" data-choices="${(o.choices||[]).join(',')}">${label ?? ''}</span>`;
+            }
+            if(t === 'FLOAT' || t === 'INT' || t === 'PROBABILITY'){
+                const min = typeof o.min==='number'?o.min:0;
+                const max = typeof o.max==='number'?o.max:100;
+                const v = typeof val==='number'?val:0;
+                const pct = max>min?Math.round((v-min)/(max-min)*100):0;
+                const unit = o.unit||'';
+                const isDec = t==='FLOAT';
+                const disp = isDec ? Number(v).toFixed(1) : v;
+                return `<div class="slider-row">
+                    <div class="slider-label-row"><span>${o.name}</span><span class="slider-value">${disp}${unit}</span></div>
+                    <div class="slider-track" data-key="${key}" data-min="${min}" data-max="${max}" data-int="${isDec?0:1}" data-unit="${unit}" data-dec="${isDec?1:0}">
+                        <div class="slider-fill" style="width:${pct}%;"></div>
+                    </div>
+                    <div style="display:flex; gap:6px; align-items:center; justify-content:flex-end; margin-top:2px;">
+                        <span style="opacity:.4">${o.name}</span>
+                        <input type="number" class="num-input" data-key="${key}" data-min="${min}" data-max="${max}" data-int="${isDec?0:1}" data-unit="${unit}" data-dec="${isDec?1:0}" value="${disp}">
+                    </div>
+                </div>`;
+            }
+            if(t === 'STRING'){
+                return `<div style="display:flex; gap:6px; align-items:center; flex:1;"><span style="opacity:.4;white-space:nowrap">${o.name}</span><input class="text-input" data-key="${key}" data-str="1" value="${val||''}"></div>`;
+            }
+            return `<span class="noopts">—</span>`;
+        }
+
+        function moduleCard(m){
+            const opts = (m.options||[]).map(optionWidget).join('');
+            const enabled = !!m.enabled;
+            return `<div class="setting-item ${m.expanded?'expanded':''}" data-name="${m.name}" data-enabled="${enabled?'1':'0'}">
+                <div class="setting-header" data-name="${m.name}">
+                    <div class="setting-label">
+                        <span>${m.name}</span>
+                        <span class="setting-tag">${m.category||''}</span>
+                        <span class="setting-arrow">⌄</span>
+                    </div>
+                    <div class="setting-right">
+                        ${opts ? `<button class="mini-btn" data-expand="${m.name}">${m.expanded?'折叠':'配置'}</button>` : ''}
+                        <div class="toggle-switch ${enabled?'on':''}" data-mod="${m.name}"><span class="pulse-ring"></span></div>
+                    </div>
+                </div>
+                <div class="sub-options">
+                    <div class="sub-grid" data-options="${m.name}">${opts || '<span class="noopts">该模块暂无配置项</span>'}</div>
+                </div>
+            </div>`;
+        }
+
+        function renderContent(){
+            const list = modules.filter(m => m.category===activeCat);
+            const grid = list.map(moduleCard).join('') || `<div class="empty">该分类暂无模块</div>`;
+            $('#tabContent').innerHTML = `<div class="setting-grid">${grid}</div>`;
+        }
+
+        async function refresh(){
+            await ensureToken();
+            try {
+                modules = await api('/api/modules');
+                modules.forEach(m => m.expanded = (m.name==='AutoClicker' || m.name==='Velocity' || m.name==='AimAssist'));
+                document.querySelectorAll('#tabBar .tab').forEach(t=>{
+                    const c = t.dataset.cat;
+                    t.style.display = modules.some(m=>m.category===c) ? '' : 'none';
+                });
+                buildSideNavAndTabs();
+                renderContent();
+                $('#conn').textContent = '● 在线 · ' + modules.length + ' 模块';
+            } catch(e) {
+                $('#conn').textContent = '● 未连接';
+            }
+        }
+
+        // ── 交互 ──
+        document.addEventListener('click', async e => {
+            // 模块开关 (header capsule)
+            const modSw = e.target.closest('.setting-header .toggle-switch[data-mod]');
+            if(modSw){
+                const name = modSw.dataset.mod;
+                await api('/api/modules/'+encodeURIComponent(name)+'/toggle', {method:'POST'});
+                refresh();
+                e.stopPropagation(); return;
+            }
+            // 子选项开关
+            if(e.target.closest('.sub-grid .toggle-switch[data-key]')){
+                const s = e.target.closest('.toggle-switch[data-key]');
+                await api('/api/options', {method:'POST', body:JSON.stringify({key:s.dataset.key, value:!s.classList.contains('on')})});
+                refresh(); return;
+            }
+            // 下拉 (cycle choices)
+            if(e.target.closest('.sub-dropdown')){
+                const d = e.target.closest('.sub-dropdown');
+                const choices = (d.dataset.choices||'').split(',').filter(Boolean);
+                const cur = d.textContent;
+                const i = choices.indexOf(cur);
+                const next = choices[(i+1)%choices.length];
+                if(next){ await api('/api/options', {method:'POST', body:JSON.stringify({key:d.dataset.key, value:next.trim()})}); refresh(); }
+                return;
+            }
+            // 展开/折叠
+            const expand = e.target.closest('[data-expand]');
+            if(expand){
+                const name = expand.dataset.expand;
+                const card = document.querySelector(`.setting-item[data-name="${name}"]`);
+                if(card) card.classList.toggle('expanded');
+                expand.textContent = card.classList.contains('expanded')?'折叠':'配置';
+                return;
+            }
+            const header = e.target.closest('.setting-header[data-name]');
+            if(header && !e.target.closest('.toggle-switch') && !e.target.closest('.mini-btn')){
+                const card = header.closest('.setting-item');
+                card.classList.toggle('expanded');
+                const btn = card.querySelector('[data-expand]');
+                if(btn) btn.textContent = card.classList.contains('expanded')?'折叠':'配置';
+                return;
+            }
+        });
+
+        // 滑块 + 数值输入
+        document.addEventListener('input', async e => {
+            const num = e.target.closest('.num-input[data-key]');
+            if(num){
+                const key = num.dataset.key, min=+num.dataset.min, max=+num.dataset.max, isDec=num.dataset.dec==='1';
+                let v = isDec ? parseFloat(num.value) : parseInt(num.value,10);
+                if(isNaN(v)) return;
+                v = Math.min(max, Math.max(min, v));
+                if(isDec) v = Math.round(v*10)/10;
+                await api('/api/options', {method:'POST', body:JSON.stringify({key, value:v})});
+                const row = num.closest('.slider-row');
+                if(row){ const fill=row.querySelector('.slider-fill'), val=row.querySelector('.slider-value'), pct=max>min?Math.round((v-min)/(max-min)*100):0; fill.style.width=pct+'%'; val.textContent=v+(num.dataset.unit||''); }
+                refresh();
+                return;
+            }
+            const txt = e.target.closest('.text-input[data-key]');
+            if(txt){
+                await api('/api/options', {method:'POST', body:JSON.stringify({key:txt.dataset.key, value:txt.value})});
+            }
+        });
+
+        document.addEventListener('click', async e => {
+            const srow = e.target.closest('.slider-track[data-key]');
+            if(srow){
+                const rect = srow.getBoundingClientRect();
+                const x = Math.max(0, Math.min(1, (e.clientX-rect.left)/rect.width));
+                const min=+srow.dataset.min, max=+srow.dataset.max, isDec=srow.dataset.dec==='1';
+                const raw = min + x*(max-min);
+                const v = isDec ? Math.round(raw*10)/10 : Math.round(raw);
+                await api('/api/options', {method:'POST', body:JSON.stringify({key:srow.dataset.key, value:v})});
+                const fill = srow.querySelector('.slider-fill');
+                if(fill) fill.style.width=(x*100)+'%';
+                const val = srow.querySelector('.slider-value');
+                if(val) val.textContent=v+(srow.dataset.unit||'');
+                refresh();
+                return;
+            }
+        });
+
+        refresh();
+        setInterval(refresh, 3000);
+
+        // 地址 + 快捷按钮
+        try {
+            fetch('/api/info').then(r=>r.json()).then(info=>{
+                if(info.urls && info.urls.length){
+                    $('#urls').innerHTML = info.urls.map(u=>`<span class="bd">${u}</span>`).join('');
+                }
+                if(info.defaultPassword){ token=info.defaultPassword; localStorage.setItem('sl_token', token); }
+            });
+        } catch(e){}
+    </script>
 </body>
 </html>

@@ -275,6 +275,47 @@ object EventBridge {
     // ========== HUD Text (HUD — Render) ==========
     @Volatile var hudTextLine: String = ""
 
+    // ========== GUI Mouse State (populated by platform render hook for HUD drag) ==========
+    // Scaled GUI coordinates (left-top origin, y down).
+    @Volatile var guiMouseX: Int = 0
+    @Volatile var guiMouseY: Int = 0
+    /** Physical left mouse button state (for HUD click/drag detection). */
+    @Volatile var guiLeftMouseDown: Boolean = false
+
+    // ========== GUI Notifications (Render — right-corner toast) ==========
+
+    data class Notification(
+        val text: String,
+        val type: NotificationType = NotificationType.INFO
+    )
+
+    enum class NotificationType {
+        SUCCESS,  // green — module enabled / injection success
+        ERROR,    // red — module disabled / injection failure
+        INFO      // gold — general info
+    }
+
+    private val notificationQueue = mutableListOf<Notification>()
+
+    fun pushNotification(text: String, type: NotificationType = NotificationType.INFO) {
+        synchronized(notificationQueue) {
+            // Cap at 5 to prevent overflow
+            if (notificationQueue.size >= 5) {
+                notificationQueue.removeAt(0)
+            }
+            notificationQueue.add(Notification(text, type))
+        }
+    }
+
+    /** Drain all pending notifications (called by adapter render hook each frame). */
+    fun drainNotifications(): List<Notification> {
+        return synchronized(notificationQueue) {
+            val copy = notificationQueue.toList()
+            notificationQueue.clear()
+            copy
+        }
+    }
+
     // ========== Reach (Reach — 1.8 exclusive) ==========
     private var reachSetter: ((Float) -> Unit)? = null
 
@@ -431,6 +472,10 @@ object EventBridge {
         entityTicksProvider = null
         entityOnGroundChecker = null
         hudTextLine = ""
+        guiMouseX = 0
+        guiMouseY = 0
+        guiLeftMouseDown = false
+        synchronized(notificationQueue) { notificationQueue.clear() }
         keyListeners.clear()
         tickCounter = 0
         mouseDeltaX = 0f

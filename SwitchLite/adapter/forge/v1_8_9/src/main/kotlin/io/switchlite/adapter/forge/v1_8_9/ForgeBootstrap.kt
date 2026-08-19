@@ -7,9 +7,12 @@ import io.switchlite.adapter.common.module.combat.*
 import io.switchlite.adapter.common.module.movement.*
 import io.switchlite.adapter.common.module.player.*
 import io.switchlite.adapter.common.module.render.Fullbright
+import io.switchlite.adapter.common.module.render.HUD
 import io.switchlite.adapter.common.module.render.NoFOV
 import io.switchlite.adapter.common.module.render.NoHurtCam
 import io.switchlite.adapter.common.module.world.FastPlace
+import io.switchlite.adapter.common.render.OverlayRenderer
+import io.switchlite.adapter.common.render.RenderContext
 import io.switchlite.core.logging.CoreLogger
 import io.switchlite.agent.MappingContext
 
@@ -45,6 +48,11 @@ object ForgeBootstrap {
     // Cached field refs for tick
     private val keybindingPressedField by lazy { MappingContext.getField("forge:keybinding_pressed") }
 
+    // Version-specific render bridges (lazy, created once) — HUD overlay.
+    private val glBridge by lazy { ForgeGL11Bridge() }
+    private val mouseGetX by lazy { try { mouseClass.getMethod("getX") } catch (_: Exception) { null } }
+    private val mouseGetY by lazy { try { mouseClass.getMethod("getY") } catch (_: Exception) { null } }
+
     fun init() {
         if (initialized) return
         initialized = true
@@ -58,10 +66,11 @@ object ForgeBootstrap {
             SprintReset, STap, SuperKnockback, TriggerBot, Velocity, WTap,
             NoJumpDelay, NoKeyboardFix, NoMouseFix, Sprint, Strafe, StrafeFix,
             AntiBot, AutoTool, BridgeAssist, Eagle, ParallaxStrike, Teams,
-            Fullbright, NoFOV, NoHurtCam,
+            Fullbright, HUD, NoFOV, NoHurtCam,
             FastPlace
         )
         ModuleRegistry.initSafetyIntegration()
+        try { ModuleRegistry.enable("HUD") } catch (_: Exception) {}
 
         CoreLogger.info("[ForgeBootstrap] Initialized (reflection mode) — ${ModuleRegistry.size()} modules registered")
     }
@@ -160,13 +169,73 @@ object ForgeBootstrap {
     }
 
     /**
-     * No-op render hook. Called every frame by the Javassist Display.update()
-     * hook via RenderBridge. The in-game GUI was removed in favor of a WebUI
-     * panel, so nothing is drawn here. Kept so RenderBridge's reflection
-     * (`getMethod("render")`) continues to resolve.
+     * Called by Javassist hook (or Agent.java fallback) on MC's render thread.
+     *
+     * Renders ONLY the in-game HUD (module status card) + toasts via
+     * OverlayRenderer. The ClickGUI configuration panels were removed in favor
+     * of a cross-version WebUI panel, so there is no in-game config UI.
      */
     fun render() {
-        // In-game GUI removed — WebUI panel handles all configuration UI.
+        try {
+            val mc = MappingContext.invokeMethod(null, "forge:mc_getMinecraft")
+            if (mc == null) return
+
+            // Feed LWJGL mouse into EventBridge so the HUD card can be dragged.
+            try {
+                val displayWidth = MappingContext.getFieldValue(mc, "forge:mc_displayWidth") as? Int ?: 854
+                val displayHeight = MappingContext.getFieldValue(mc, "forge:mc_displayHeight") as? Int ?: 480
+                val guiScaleSetting = MappingContext.getFieldValue(mc, "forge:mc_gameSettings")?.let {
+                    MappingContext.getFieldValue(it, "forge:gs_guiScale") as? Int ?: 0
+                } ?: 0
+                val scale = computeGuiScale(displayWidth, displayHeight, guiScaleSetting)
+                val rawX = (mouseGetX?.invoke(null) as? Int) ?: 0
+                val rawY = (mouseGetY?.invoke(null) as? Int) ?: 0
+                EventBridge.guiMouseX = rawX / scale
+                EventBridge.guiMouseY = (displayHeight - rawY) / scale
+                EventBridge.guiLeftMouseDown = (mouseIsButtonDown.invoke(null, 0) as? Boolean) ?: false
+            } catch (_: Exception) {}
+
+            val fontRendererObj = MappingContext.getFieldValue(mc, "forge:mc_fontRendererObj")
+            if (fontRendererObj == null) return
+
+            val displayWidth = MappingContext.getFieldValue(mc, "forge:mc_displayWidth") as? Int ?: 854
+            val displayHeight = MappingContext.getFieldValue(mc, "forge:mc_displayHeight") as? Int ?: 480
+            val guiScaleSetting = MappingContext.getFieldValue(mc, "forge:mc_gameSettings")?.let {
+                MappingContext.getFieldValue(it, "forge:gs_guiScale") as? Int ?: 0
+            } ?: 0
+            val scale = computeGuiScale(displayWidth, displayHeight, guiScaleSetting)
+            val scaledWidth = displayWidth / scale
+            val scaledHeight = displayHeight / scale
+
+            val ctx = RenderContext(
+                scaledWidth = scaledWidth,
+                scaledHeight = scaledHeight,
+                fontRenderer = ForgeFontRendererBridge(fontRendererObj),
+                gl = glBridge
+            )
+
+            OverlayRenderer.render(ctx)
+
+        } catch (e: Exception) {
+            // HUD rendering must never crash the game — swallow and continue.
+        }
+    }
+
+    /**
+     * MC 1.8.9 ScaledResolution scaling algorithm (mirrors vanilla logic).
+     * guiScale == 0 means auto: the factor grows while the scaled size stays
+     * >= 320x240 at the next factor step. Integer division like vanilla.
+     */
+    private fun computeGuiScale(displayWidth: Int, displayHeight: Int, guiScaleSetting: Int): Int {
+        var setting = if (guiScaleSetting == 0) 1000 else guiScaleSetting
+        var factor = 1
+        while (factor < setting
+            && displayWidth / (factor + 1) >= 320
+            && displayHeight / (factor + 1) >= 240
+        ) {
+            factor++
+        }
+        return factor.coerceAtLeast(1)
     }
 
     fun onDisconnect() {

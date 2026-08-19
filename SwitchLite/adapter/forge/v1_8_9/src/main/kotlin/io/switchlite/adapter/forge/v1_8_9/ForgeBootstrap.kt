@@ -79,8 +79,19 @@ object ForgeBootstrap {
                 }
                 if (open) {
                     try {
-                        val guiScreenClass = Class.forName("net.minecraft.client.gui.GuiScreen")
-                        val screen = guiScreenClass.getConstructor().newInstance()
+                        // GuiScreen is ABSTRACT — cannot `new GuiScreen()`. Use the
+                        // Javassist-generated concrete subclass (in the game CL).
+                        val gameCL = Thread.currentThread().contextClassLoader
+                        val factoryClass = Class.forName(
+                            "io.switchlite.agent.ForgeGuiScreenFactory", true,
+                            gameCL ?: javaClass.classLoader
+                        )
+                        val screen = factoryClass.getMethod("createGuiScreen", ClassLoader::class.java)
+                            .invoke(null, gameCL)
+                        if (screen == null) {
+                            CoreLogger.error("[ForgeBootstrap] ForgeGuiScreenFactory returned null — GUI cannot open")
+                            return@registerGuiOpenHandler
+                        }
                         val invoked = MappingContext.invokeMethod(mc, "forge:mc_displayGuiScreen", screen)
                         CoreLogger.info("[ForgeBootstrap] ClickGUI screen opened (invoked=$invoked)")
                     } catch (e: Exception) {

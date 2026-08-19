@@ -32,11 +32,14 @@ object ClickGUI : Module("ClickGUI", Category.RENDER) {
         showRedIndicator = false
     }
 
-    /** Panel width for every category panel. */
-    const val PANEL_WIDTH = 190
+    /** Panel width for every category panel — Aurora card width (260px). */
+    const val PANEL_WIDTH = 260
 
-    /** Hit-test size of the per-row module toggle dot. */
-    const val TOGGLE_DOT_SIZE = 10
+    /** Hit-test size of the per-row module toggle area (Aurora 60px capsule). */
+    const val TOGGLE_DOT_SIZE = 60
+
+    /** Row height (px) — Aurora rows are taller than vanilla's 12px lines. */
+    const val ROW_HEIGHT = 20
 
     private var isOpen = false
 

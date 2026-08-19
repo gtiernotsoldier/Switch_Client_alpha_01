@@ -56,14 +56,9 @@ object OverlayRenderer {
 
             drawHudCard(ctx)
             if (EventBridge.isGuiOpen) {
-                // Full-screen dim backdrop covering the underlying MC GuiScreen
-                // (we open a concrete GuiChat to borrow MC's mouse/keyboard, then
-                // draw over it). Solid dark so the UI is readable.
-                RenderUtils.rect(
-                    ctx, 0f, 0f,
-                    ctx.scaledWidth.toFloat(), ctx.scaledHeight.toFloat(),
-                    Theme.PANEL_BG_FULL
-                )
+                // Transparent backdrop — the world stays visible behind the
+                // ClickGUI panels (you need to see enemies coming). The panels
+                // themselves are translucent; no full-screen dark rect.
                 drawClickGUI(ctx)
             }
             drawToasts(ctx)
@@ -150,7 +145,7 @@ object OverlayRenderer {
 
     private fun drawClickGUI(ctx: RenderContext) {
         val font = ctx.fontRenderer
-        val lineHeight = font.fontHeight + 3
+        val lineHeight = ClickGUI.ROW_HEIGHT
         val clickGui = ClickGUI
 
         clickGui.tickAnimations(lineHeight)
@@ -214,9 +209,10 @@ object OverlayRenderer {
                     )
                 }
 
-                // Module name
+                // Module name (vertically centered in the taller Aurora row)
                 val textColor = if (row.module.enabled) Theme.TEXT else Theme.TEXT_DIM
-                font.drawStringWithShadow(row.module.name, row.x + 2, row.y, textColor)
+                val textY = row.y + (row.height - font.fontHeight) / 2
+                font.drawStringWithShadow(row.module.name, row.x + 2, textY, textColor)
 
                 // ── 60px capsule toggle (Fitts) ──
                 drawCapsuleToggle(ctx, row, accent)
@@ -238,8 +234,9 @@ object OverlayRenderer {
     private fun drawCapsuleToggle(ctx: RenderContext, row: ClickGUI.ModuleRow, accent: Int) {
         val w = 60f
         val h = 14f
-        val x = row.toggleDotX.toFloat() - (w - ClickGUI.TOGGLE_DOT_SIZE)
-        val y = row.toggleDotY.toFloat() + (ClickGUI.TOGGLE_DOT_SIZE - h.toInt()) / 2f
+        // Right edge of the row, vertically centered in the row height.
+        val x = (row.x + row.width - w - 4).toFloat()
+        val y = row.y + (row.height - h.toInt()) / 2f
         val on = row.module.enabled
 
         // track

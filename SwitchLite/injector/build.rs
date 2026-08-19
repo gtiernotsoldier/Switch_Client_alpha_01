@@ -146,8 +146,7 @@ fn finish_embed(
     let rc_path = out_dir.join("resources.rc");
     let _ = std::fs::write(&rc_path, rc);
 
-    match embed_resource::compile(rc_path.to_str().unwrap(), embed_resource::NONE) {
-        Ok(_) => println!("cargo:warning=embedded agent.jar + payload.dll resources"),
-        Err(e) => println!("cargo:warning=embed-resource failed: {}", e),
-    };
+    // embed-resource's compile() returns () — it compiles + links the .rc.
+    embed_resource::compile(rc_path.to_str().unwrap(), embed_resource::NONE);
+    println!("cargo:warning=embedded agent.jar + payload.dll resources");
 }

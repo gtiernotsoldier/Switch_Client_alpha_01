@@ -108,22 +108,21 @@ jobs:
       - name: Set up JDK 8 (for jni.h in payload build)
         uses: actions/setup-java@v4
         with: { java-version: '8', distribution: 'temurin' }
-      - name: Build injector
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Build Rust injector (cargo)
         run: |
           cd SwitchLite/injector
-          mkdir build
-          cd build
-          cmake ..
-          cmake --build . --config Release
+          cargo build --release
       - name: Show build info
         shell: pwsh
         run: |
           echo "Commit: ${{ github.sha }}"
           echo "Build time: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss UTC')"
-          $exe = "SwitchLite\injector\build\Release\injector.exe"
-          if (Test-Path $exe) { echo "injector.exe: $((Get-Item $exe).Length) bytes" } else { echo "WARNING: injector.exe not found" }
+          $exe = "SwitchLite\injector\target\release\switchlite-injector.exe"
+          if (Test-Path $exe) { echo "switchlite-injector.exe: $((Get-Item $exe).Length) bytes" } else { echo "WARNING: switchlite-injector.exe not found" }
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: switchlite-injector
-          path: SwitchLite/injector/build/Release/injector.exe
+          path: SwitchLite/injector/target/release/switchlite-injector.exe

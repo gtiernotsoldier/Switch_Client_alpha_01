@@ -1,0 +1,25 @@
+[package]
+name = "switchlite-injector"
+version = "0.1.0-alpha"
+edition = "2021"
+description = "SwitchLite Rust-led injector — C++ payload.dll stays for the in-process JNI attach"
+
+[[bin]]
+name = "switchlite-injector"
+path = "src/main.rs"
+
+[dependencies]
+windows-sys = { version = "0.52", features = [
+    "Win32_Foundation",
+    "Win32_System_Threading",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_Memory",
+    "Win32_System_LibraryLoader",
+    "Win32_System_ProcessStatus",
+    "Win32_System_SystemServices",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_Storage_FileSystem",
+] }
+
+[profile.release]
+opt-level = 2

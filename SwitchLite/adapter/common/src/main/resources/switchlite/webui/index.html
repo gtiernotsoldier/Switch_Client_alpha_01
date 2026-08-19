@@ -259,7 +259,7 @@
             const t = o.type;
             const key = o.key, val = o.value;
             if(t === 'BOOLEAN'){
-                return `<div class="toggle-switch ${val?'on':''}" data-key="${key}" data-mod="${o.name}"><span class="pulse-ring"></span></div>`;
+                return `<div class="toggle-switch ${val?'on':''}" data-key="${key}"><span class="pulse-ring"></span></div>`;
             }
             if(t === 'CHOICES' || t === 'ENUM'){
                 const label = (val && val.name) ? val.name : val;
@@ -274,14 +274,14 @@
                 const isDec = t==='FLOAT';
                 const disp = isDec ? Number(v).toFixed(1) : v;
                 return `<div class="slider-row">
-                    <div class="slider-label-row"><span>${o.name}</span><span class="slider-value">${disp}${unit}</span></div>
+                    <div class="slider-label-row">
+                        <span class="opt-name" style="overflow:hidden;text-overflow:ellipsis">${o.name}</span>
+                        <span class="slider-value" style="white-space:nowrap">${disp}${unit}</span>
+                    </div>
                     <div class="slider-track" data-key="${key}" data-min="${min}" data-max="${max}" data-int="${isDec?0:1}" data-unit="${unit}" data-dec="${isDec?1:0}">
                         <div class="slider-fill" style="width:${pct}%;"></div>
                     </div>
-                    <div style="display:flex; gap:6px; align-items:center; justify-content:flex-end; margin-top:2px;">
-                        <span style="opacity:.4">${o.name}</span>
-                        <input type="number" class="num-input" data-key="${key}" data-min="${min}" data-max="${max}" data-int="${isDec?0:1}" data-unit="${unit}" data-dec="${isDec?1:0}" value="${disp}">
-                    </div>
+                    <input type="number" class="num-input" data-key="${key}" data-min="${min}" data-max="${max}" data-dec="${isDec?1:0}" data-unit="${unit}" value="${disp}" style="width:100%;margin-top:4px;">
                 </div>`;
             }
             if(t === 'STRING'){
@@ -301,7 +301,6 @@
                         <span class="setting-arrow">⌄</span>
                     </div>
                     <div class="setting-right">
-                        ${opts ? `<button class="mini-btn" data-expand="${m.name}">${m.expanded?'折叠':'配置'}</button>` : ''}
                         <div class="toggle-switch ${enabled?'on':''}" data-mod="${m.name}"><span class="pulse-ring"></span></div>
                     </div>
                 </div>
@@ -320,8 +319,11 @@
         async function refresh(){
             await ensureToken();
             try {
-                modules = await api('/api/modules');
-                modules.forEach(m => m.expanded = (m.name==='AutoClicker' || m.name==='Velocity' || m.name==='AimAssist'));
+                const raw = await api('/api/modules');
+                // De-dup by module name (guard against any double registration).
+                modules = [...new Map(raw.map(m => [m.name, m])).values()];
+                // Expand every card by default so all config is immediately visible.
+                modules.forEach(m => m.expanded = true);
                 document.querySelectorAll('#tabBar .tab').forEach(t=>{
                     const c = t.dataset.cat;
                     t.style.display = modules.some(m=>m.category===c) ? '' : 'none';
@@ -360,21 +362,11 @@
                 if(next){ await api('/api/options', {method:'POST', body:JSON.stringify({key:d.dataset.key, value:next.trim()})}); refresh(); }
                 return;
             }
-            // 展开/折叠
-            const expand = e.target.closest('[data-expand]');
-            if(expand){
-                const name = expand.dataset.expand;
-                const card = document.querySelector(`.setting-item[data-name="${name}"]`);
-                if(card) card.classList.toggle('expanded');
-                expand.textContent = card.classList.contains('expanded')?'折叠':'配置';
-                return;
-            }
+            // 展开/折叠（点卡片头部）
             const header = e.target.closest('.setting-header[data-name]');
-            if(header && !e.target.closest('.toggle-switch') && !e.target.closest('.mini-btn')){
+            if(header && !e.target.closest('.toggle-switch')){
                 const card = header.closest('.setting-item');
                 card.classList.toggle('expanded');
-                const btn = card.querySelector('[data-expand]');
-                if(btn) btn.textContent = card.classList.contains('expanded')?'折叠':'配置';
                 return;
             }
         });

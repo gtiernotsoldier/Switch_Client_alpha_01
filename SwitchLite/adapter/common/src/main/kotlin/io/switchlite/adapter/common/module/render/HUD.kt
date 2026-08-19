@@ -7,7 +7,6 @@ import io.switchlite.adapter.common.module.ModuleRegistry
 import io.switchlite.adapter.common.option.boolean
 import io.switchlite.adapter.common.option.choices
 import io.switchlite.adapter.common.ui.Theme
-import io.switchlite.adapter.common.webui.WebUIServer
 import io.switchlite.core.model.PlayerState
 import io.switchlite.core.model.TargetState
 
@@ -66,18 +65,8 @@ object HUD : Module("HUD", Category.RENDER) {
     private fun onTick() {
         // Red indicator always on (config moves to the WebUI panel).
         val redEnabled = true
-        val list = mutableListOf<HUDEntry>()
 
-        // WebUI access line — URL + password, so a phone/another PC can connect.
-        // Drawn at the top so it's impossible to miss.
-        if (WebUIServer.isRunning) {
-            list += HUDEntry(
-                name = "Panel http://${WebUIServer.lanIp}:${WebUIServer.PORT} pw:${WebUIServer.accessToken}",
-                isRed = true
-            )
-        }
-
-        list += ModuleRegistry.getEnabled()
+        hudEntries = ModuleRegistry.getEnabled()
             .filter { it.visible }
             .map { module ->
                 HUDEntry(
@@ -87,7 +76,6 @@ object HUD : Module("HUD", Category.RENDER) {
                         && module.category !in Module.silentCategories
                 )
             }
-        hudEntries = list
         // Also set the simple text line for backward compat (adapter may use either)
         val names = hudEntries.joinToString(" | ") { it.name }
         EventBridge.hudTextLine = if (names.isNotEmpty()) "SwitchLite | $names" else "SwitchLite"

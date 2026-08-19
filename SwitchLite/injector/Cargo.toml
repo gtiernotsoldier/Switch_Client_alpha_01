@@ -3,15 +3,20 @@ name = "switchlite-injector"
 version = "0.1.0-alpha"
 edition = "2021"
 description = "SwitchLite Rust-led injector — C++ payload.dll stays for the in-process JNI attach"
+build = "build.rs"
 
 [[bin]]
 name = "switchlite-injector"
 path = "src/main.rs"
 
 [dependencies]
-# Zero third-party deps: we call the handful of kernel32 functions we need via
-# raw extern "system" FFI. This avoids windows-sys version/feature conflicts
-# that cost many CI round-trips.
+# Zero third-party deps at runtime: we call the handful of kernel32 functions
+# we need via raw extern "system" FFI.
+
+[build-dependencies]
+# embed-resource: at build time, embeds agent.jar + payload.dll as RCDATA
+# resources (IDs 101/102) into the exe — resource.rs extracts them at runtime.
+embed-resource = "2"
 
 [profile.release]
 opt-level = 2

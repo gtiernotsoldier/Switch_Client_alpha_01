@@ -32,14 +32,14 @@ object ClickGUI : Module("ClickGUI", Category.RENDER) {
         showRedIndicator = false
     }
 
-    /** Panel width for every category panel — Aurora card width (260px). */
-    const val PANEL_WIDTH = 260
+    /** Panel width — compact Aurora card (was 260, too wide; 200 fits nicely). */
+    const val PANEL_WIDTH = 200
 
-    /** Hit-test size of the per-row module toggle area (Aurora 60px capsule). */
-    const val TOGGLE_DOT_SIZE = 60
+    /** Hit-test size of the per-row module toggle area (Aurora capsule). */
+    const val TOGGLE_DOT_SIZE = 44
 
-    /** Row height (px) — Aurora rows are taller than vanilla's 12px lines. */
-    const val ROW_HEIGHT = 20
+    /** Row height (px) — compact Aurora rows. */
+    const val ROW_HEIGHT = 18
 
     private var isOpen = false
 
@@ -54,10 +54,11 @@ object ClickGUI : Module("ClickGUI", Category.RENDER) {
 
     private val panels = mutableMapOf<Category, Panel>()
 
-    /** Panel state for a category (cascade-arranged on first open). */
+    /** Panel state for a category (cascade-arranged on first open, compact). */
     fun panel(cat: Category): Panel = panels.getOrPut(cat) {
         val idx = cat.ordinal
-        Panel(20 + idx * 30, 20 + idx * 24)
+        // Tight cascade so panels don't sprawl across the screen
+        Panel(16 + idx * 14, 16 + idx * 12)
     }
 
     /** Height of the draggable title bar. */
@@ -120,7 +121,7 @@ object ClickGUI : Module("ClickGUI", Category.RENDER) {
         val expanded: Boolean,
         val settings: List<SettingItem>
     ) {
-        val toggleDotX: Int get() = x + width - TOGGLE_DOT_SIZE - 6
+        val toggleDotX: Int get() = x + width - TOGGLE_DOT_SIZE - 2
         val toggleDotY: Int get() = y + (height - TOGGLE_DOT_SIZE) / 2
     }
 

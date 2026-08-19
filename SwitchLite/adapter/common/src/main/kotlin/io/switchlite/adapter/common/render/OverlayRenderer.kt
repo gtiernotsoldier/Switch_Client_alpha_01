@@ -214,13 +214,31 @@ object OverlayRenderer {
                 val textY = row.y + (row.height - font.fontHeight) / 2
                 font.drawStringWithShadow(row.module.name, row.x + 2, textY, textColor)
 
-                // ── 60px capsule toggle (Fitts) ──
+                // ── capsule toggle (compact) ──
                 drawCapsuleToggle(ctx, row, accent)
+
+                // Hover "lift": a 2px accent bar at the row's left edge
+                if (hovered) {
+                    RenderUtils.rect(
+                        ctx, (row.x - 4).toFloat(), (row.y + 2).toFloat(),
+                        2f, (row.height - 4).toFloat(), accent
+                    )
+                }
             }
 
             // Expanded setting items (clipped too)
             for (row in rows) {
                 if (!row.expanded) continue
+                // Aurora settings: left accent border line + indented list
+                val setStartY = row.y + row.height
+                val setCount = row.settings.size
+                if (setCount > 0 && setStartY + setCount * lineHeight <= clipBottom) {
+                    RenderUtils.rect(
+                        ctx, (row.x + 10).toFloat(), setStartY.toFloat() + 2,
+                        1f, (setCount * lineHeight - 4).toFloat(),
+                        Theme.withAlpha(accent, 0.4f)
+                    )
+                }
                 for ((idx, item) in row.settings.withIndex()) {
                     val iy = row.y + row.height + idx * lineHeight
                     if (iy + lineHeight > clipBottom) continue
@@ -230,23 +248,23 @@ object OverlayRenderer {
         }
     }
 
-    /** Aurora 60px capsule toggle — filled with accent + glow when on. */
+    /** Aurora compact capsule toggle — filled with accent when on. */
     private fun drawCapsuleToggle(ctx: RenderContext, row: ClickGUI.ModuleRow, accent: Int) {
-        val w = 60f
-        val h = 14f
+        val w = 36f
+        val h = 12f
         // Right edge of the row, vertically centered in the row height.
-        val x = (row.x + row.width - w - 4).toFloat()
+        val x = (row.x + row.width - w - 2).toFloat()
         val y = row.y + (row.height - h.toInt()) / 2f
         val on = row.module.enabled
 
         // track
         RenderUtils.roundedRect(
-            ctx, x, y, w, h, 7f,
+            ctx, x, y, w, h, 6f,
             if (on) accent else Theme.withAlpha(Theme.TEXT, 0.10f)
         )
         // knob
-        val knobX = if (on) x + w - 14f else x + 2f
-        RenderUtils.roundedRect(ctx, knobX, y + 2f, 10f, 10f, 5f, Theme.TEXT)
+        val knobX = if (on) x + w - 12f else x + 2f
+        RenderUtils.roundedRect(ctx, knobX, y + 2f, 8f, 8f, 4f, Theme.TEXT)
     }
 
     private fun drawSettingItem(
@@ -258,7 +276,8 @@ object OverlayRenderer {
         categoryOrdinal: Int
     ) {
         val font = ctx.fontRenderer
-        val indentX = row.x + 10
+        // Indent past the Aurora settings left-border line (row.x + 10)
+        val indentX = row.x + 18
         val accent = Theme.accentFor(categoryOrdinal)
 
         when (item) {

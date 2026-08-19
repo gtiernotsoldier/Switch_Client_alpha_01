@@ -180,9 +180,13 @@ object OverlayRenderer {
             val accent = Theme.accentFor(cat)
             val glow = Theme.accentGlow(cat)
             val entrance = clickGui.entrance(cat)
-            val alphaMul = entrance.coerceIn(0f, 1f)
-            val slide = (1f - entrance) * 18f
-            val scale = 0.92f + 0.08f * entrance
+            // Panels must ALWAYS be fully visible — never scale the alpha by the
+            // entrance animation. An alpha-multiplied-by-entrance made every card
+            // invisible (transparent panels / missing capsules) when the animation
+            // sat near 0. Only a subtle slide+scale entrance is kept, it never hides.
+            val alphaMul = 1f
+            val slide = (1f - entrance) * 14f
+            val scale = 0.95f + 0.05f * entrance
 
             val px = (p.x - 6).toFloat()
             val py = (p.y - 6).toFloat()
@@ -310,7 +314,7 @@ object OverlayRenderer {
         }
     }
 
-    /** Aurora 60px capsule toggle — filled with accent when on. */
+    /** Aurora capsule toggle — always visible: dark opaque track + white knob. */
     private fun drawCapsuleToggle(
         ctx: RenderContext,
         row: ClickGUI.ModuleRow,
@@ -318,24 +322,31 @@ object OverlayRenderer {
         alphaMul: Float = 1f,
         lift: Float = 0f
     ) {
-        val w = 56f
-        val h = 20f
+        val w = 42f
+        val h = 14f
         // Right edge of the row, vertically centered in the row height.
         val x = (row.x + row.width - w - 4).toFloat()
         val y = row.y + (row.height - h.toInt()) / 2f + lift
         val on = row.module.enabled
 
-        // track (with soft glow when on)
+        // Track — always a visible solid shape (dark fill + border + inner glow when on).
         if (on) {
-            RenderUtils.glow(ctx, x, y, w, h, 10f, accent, spread = 4f, layers = 3)
+            RenderUtils.glow(ctx, x, y, w, h, 7f, accent, spread = 3f, layers = 3)
         }
         RenderUtils.roundedRect(
-            ctx, x, y, w, h, 10f,
-            RenderUtils.withAlpha(if (on) accent else Theme.withAlpha(Theme.TEXT, 0.12f), alphaMul)
+            ctx, x, y, w, h, 7f,
+            if (on) accent else 0xFF2A2A34.toInt()
         )
-        // knob
-        val knobX = if (on) x + w - 18f else x + 2f
-        RenderUtils.roundedRect(ctx, knobX, y + 2f, 16f, 16f, 8f, Theme.TEXT)
+        RenderUtils.roundedRectOutline(
+            ctx, x, y, w, h, 7f,
+            if (on) RenderUtils.withAlpha(accent, 0.9f) else Theme.BORDER, 1f,
+            if (on) accent else 0xFF2A2A34.toInt()
+        )
+        // Knob — opaque white, clearly visible off or on.
+        val knobSize = 10f
+        val knobX = if (on) x + w - knobSize - 2f else x + 2f
+        val knobY = y + (h - knobSize) / 2f
+        RenderUtils.roundedRect(ctx, knobX, knobY, knobSize, knobSize, knobSize / 2f, Theme.TEXT)
     }
 
     private fun drawSettingItem(
@@ -401,7 +412,7 @@ object OverlayRenderer {
         }
     }
 
-    /** Aurora mini pill toggle for booleans. */
+    /** Aurora mini pill toggle for booleans — always visible. */
     private fun drawMiniPill(
         ctx: RenderContext,
         row: ClickGUI.ModuleRow,
@@ -410,19 +421,26 @@ object OverlayRenderer {
         accent: Int,
         alphaMul: Float = 1f
     ) {
-        val w = 42f
-        val h = 14f
-        val x = row.x + row.width - 52f
+        val w = 34f
+        val h = 12f
+        val x = row.x + row.width - 44f
         val cy = y + 4f
         if (on) {
-            RenderUtils.glow(ctx, x, cy, w, h, 7f, accent, spread = 3f, layers = 3)
+            RenderUtils.glow(ctx, x, cy, w, h, 6f, accent, spread = 3f, layers = 3)
         }
         RenderUtils.roundedRect(
-            ctx, x, cy, w, h, 7f,
-            RenderUtils.withAlpha(if (on) accent else Theme.withAlpha(Theme.TEXT, 0.12f), alphaMul)
+            ctx, x, cy, w, h, 6f,
+            if (on) accent else 0xFF2A2A34.toInt()
         )
-        val kx = if (on) x + w - 16f else x + 2f
-        RenderUtils.roundedRect(ctx, kx, cy + 2f, 10f, 10f, 5f, Theme.TEXT)
+        RenderUtils.roundedRectOutline(
+            ctx, x, cy, w, h, 6f,
+            if (on) RenderUtils.withAlpha(accent, 0.9f) else Theme.BORDER, 1f,
+            if (on) accent else 0xFF2A2A34.toInt()
+        )
+        val ksize = 8f
+        val kx = if (on) x + w - ksize - 1f else x + 1f
+        val ky = cy + (h - ksize) / 2f
+        RenderUtils.roundedRect(ctx, kx, ky, ksize, ksize, ksize / 2f, Theme.TEXT)
     }
 
     /** Aurora chip showing the current choice value. */

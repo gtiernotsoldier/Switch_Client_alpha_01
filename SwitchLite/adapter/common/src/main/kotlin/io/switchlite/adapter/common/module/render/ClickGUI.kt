@@ -32,17 +32,18 @@ object ClickGUI : Module("ClickGUI", Category.RENDER) {
         showRedIndicator = false
     }
 
-    /** Panel width — Aurora card (matches the 260px visual system preview). */
-    const val PANEL_WIDTH = 260
+    /** Panel width — compact so panels don't eat the whole screen.
+     *  The GUI must stay narrow enough to see enemies around it. */
+    const val PANEL_WIDTH = 190
 
-    /** Hit-test size of the per-row module toggle area (Aurora 60px capsule). */
-    const val TOGGLE_DOT_SIZE = 60
+    /** Hit-test size of the per-row module toggle area. */
+    const val TOGGLE_DOT_SIZE = 44
 
-    /** Row height (px) — roomy Aurora rows. */
-    const val ROW_HEIGHT = 22
+    /** Row height (px) — compact rows. */
+    const val ROW_HEIGHT = 19
 
-    /** Title bar height (px) — Aurora 32px draggable header. */
-    const val TITLE_BAR_HEIGHT = 32
+    /** Title bar height (px) — compact draggable header. */
+    const val TITLE_BAR_HEIGHT = 26
 
     private var isOpen = false
 
@@ -63,7 +64,7 @@ object ClickGUI : Module("ClickGUI", Category.RENDER) {
     fun panel(cat: Category): Panel = panels.getOrPut(cat) {
         val idx = cat.ordinal
         // Tight cascade so panels don't sprawl across the screen
-        Panel(16 + idx * 14, 16 + idx * 12)
+        Panel(14 + idx * 12, 14 + idx * 10)
     }
 
     /** Height of the draggable title bar. */
@@ -417,8 +418,8 @@ object ClickGUI : Module("ClickGUI", Category.RENDER) {
 
     /** Slider track geometry inside a setting row. Shared with the renderer. */
     fun sliderTrack(row: ModuleRow): Pair<Float, Float> {
-        val trackStart = row.x + 100f
-        val trackWidth = (row.x + row.width - 34 - trackStart).coerceAtLeast(10f)
+        val trackStart = row.x + 74f
+        val trackWidth = (row.x + row.width - 30 - trackStart).coerceAtLeast(10f)
         return trackStart to trackWidth
     }
 

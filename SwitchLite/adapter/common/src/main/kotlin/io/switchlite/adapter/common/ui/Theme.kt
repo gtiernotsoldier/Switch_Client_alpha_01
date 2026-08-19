@@ -26,7 +26,7 @@ object Theme {
     const val HUD_BG: Int = 0xB3181820.toInt()
 
     /** Hover highlight (subtle white overlay). */
-    const val HOVER: Int = 0x12FFFFFF
+    const val HOVER: Int = 0x26FFFFFF
 
     /** Primary text: white. */
     const val TEXT: Int = 0xFFFFFFFF.toInt()
@@ -37,11 +37,11 @@ object Theme {
     /** Tertiary text: 35% white. */
     const val TEXT_FAINT: Int = 0x59FFFFFF.toInt()
 
-    /** Card border (13% white). */
-    const val BORDER: Int = 0x21FFFFFF
+    /** Card border (25% white — clearly visible outline). */
+    const val BORDER: Int = 0x40FFFFFF
 
-    /** Slider track (unfilled). */
-    const val TRACK: Int = 0x21FFFFFF
+    /** Slider track (unfilled) — visible. */
+    const val TRACK: Int = 0x3DFFFFFF
 
     /** Error red. */
     const val ERROR: Int = 0xFFFF5252.toInt()
@@ -89,13 +89,13 @@ object Theme {
         return Color.HSBtoRGB(hue, 0.9f, 0.6f) or 0xFF000000.toInt()
     }
 
-    /** Soft accent (35% alpha) for borders/glow on category cards. */
+    /** Soft accent (45% alpha) for borders/glow on category cards. */
     fun accentSoft(category: Category): Int {
         val base = accentFor(category)
         val r = (base shr 16) and 0xFF
         val g = (base shr 8) and 0xFF
         val b = base and 0xFF
-        return (0x59 shl 24) or (r shl 16) or (g shl 8) or b
+        return (0x73 shl 24) or (r shl 16) or (g shl 8) or b
     }
 
     /**

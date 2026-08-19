@@ -32,17 +32,17 @@ object ClickGUI : Module("ClickGUI", Category.RENDER) {
         showRedIndicator = false
     }
 
-    /** Panel width — compact so panels don't eat the whole screen.
-     *  The GUI must stay narrow enough to see enemies around it. */
-    const val PANEL_WIDTH = 190
+    /** Panel width — Aurora card, kept compact so panels don't eat the screen. */
+    const val PANEL_WIDTH = 200
 
-    /** Hit-test size of the per-row module toggle area. */
-    const val TOGGLE_DOT_SIZE = 44
+    /** Hit-test size of the per-row module toggle area (Aurora 60px capsule). */
+    const val TOGGLE_DOT_SIZE = 60
 
-    /** Row height (px) — compact rows. */
-    const val ROW_HEIGHT = 19
+    /** Row height (px) — Aurora row-main 26px per the HTML visual spec. */
+    const val ROW_HEIGHT = 24
 
-    /** Title bar height (px) — compact draggable header. */
+    /** Title bar height (px) — Aurora drag header; same card background as the
+     *  module list (the title is NOT a separate visual bar). */
     const val TITLE_BAR_HEIGHT = 26
 
     private var isOpen = false

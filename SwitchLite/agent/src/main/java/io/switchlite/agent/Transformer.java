@@ -37,6 +37,10 @@ public class Transformer implements ClassFileTransformer {
     private static boolean hooked = false;
     private static volatile boolean installed = false;
 
+    /** Captured Instrumentation (available in the jni-attach path). Used for
+     *  auxiliary retransforms (e.g. blanking GuiChat's drawScreen). */
+    private static volatile Instrumentation inst = null;
+
     /**
      * Cached game ClassLoader — found once, reused for all Class.forName() calls.
      * When agentmain() is called by the JPLIS agent, it loads this Agent class
@@ -68,6 +72,7 @@ public class Transformer implements ClassFileTransformer {
     public static boolean install(Instrumentation inst) {
         // Strategy 1: Use provided Instrumentation
         if (inst != null) {
+            Transformer.inst = inst;
             try {
                 // CRITICAL: Class.forName() uses the caller's ClassLoader.
                 // When called from agentmain() via JPLIS, the caller (Transformer)
@@ -166,10 +171,57 @@ public class Transformer implements ClassFileTransformer {
         }
     }
 
+    /**
+     * Hide the GuiChat screen's visuals (drawScreen → no-op) so the chat box
+     * never renders when the ClickGUI opens through GuiChat. The screen still
+     * exists (mouse grab / keyboard / ESC close all work) — it just draws
+     * nothing, leaving the world fully visible behind our panels.
+     *
+     * Uses the Instrumentation captured at install() time (available in the
+     * jni-attach path where javassist is on the system ClassLoader).
+     */
+    public static void hideChatScreen(Class<?> guiChatClass) {
+        if (guiChatClass == null || inst == null) return;
+        try {
+            if (inst.isModifiableClass(guiChatClass)) {
+                inst.retransformClasses(guiChatClass);
+                Agent.log("[Transformer] GuiChat retransform requested — drawScreen will be blanked");
+            } else {
+                Agent.log("[Transformer] GuiChat not modifiable — chat box will still draw");
+            }
+        } catch (Throwable e) {
+            Agent.log("[Transformer] GuiChat retransform failed: " + e.getClass().getSimpleName() + ": " + e.getMessage());
+        }
+    }
+
+    /**
+     * Blank GuiChat.drawScreen(IIF)V so the chat box (background, text field,
+     * hint) never renders. Everything else (mouse capture, keyboard, ESC) is
+     * untouched — MC's GuiScreen machinery still owns input for the GUI.
+     */
+    private static byte[] blankGuiChatDrawScreen(byte[] classfileBuffer) {
+        try {
+            ClassPool pool = ClassPool.getDefault();
+            CtClass ctClass = pool.makeClass(new ByteArrayInputStream(classfileBuffer));
+            CtMethod draw = ctClass.getDeclaredMethod("drawScreen");
+            draw.setBody("{}");
+            byte[] result = ctClass.toBytecode();
+            ctClass.defrost();
+            Agent.log("[Transformer] GuiChat.drawScreen blanked — chat hidden");
+            return result;
+        } catch (Throwable e) {
+            Agent.log("[Transformer] blankGuiChatDrawScreen failed: " + e.getClass().getSimpleName() + ": " + e.getMessage());
+            return null;
+        }
+    }
+
     @Override
     public byte[] transform(ClassLoader loader, String className,
                            Class<?> classBeingRedefined, ProtectionDomain protectionDomain,
                            byte[] classfileBuffer) {
+        if ("net/minecraft/client/gui/GuiChat".equals(className)) {
+            return blankGuiChatDrawScreen(classfileBuffer);
+        }
         if (!"org/lwjgl/opengl/Display".equals(className)) {
             return null;
         }

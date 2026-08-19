@@ -82,6 +82,12 @@ object ForgeBootstrap {
                 if (open) {
                     try {
                         val guiChatClass = Class.forName("net.minecraft.client.gui.GuiChat")
+                        // Hide the chat box entirely (drawScreen -> no-op) so the
+                        // GUI opens over a clean world view — no chat background,
+                        // no input field. Mouse/keyboard/ESC still owned by MC.
+                        try {
+                            io.switchlite.agent.Transformer.hideChatScreen(guiChatClass)
+                        } catch (_: Throwable) {}
                         val screen = guiChatClass.getConstructor().newInstance()
                         MappingContext.invokeMethod(mc, "forge:mc_displayGuiScreen", screen)
                     } catch (e: Throwable) {

@@ -31,10 +31,10 @@ object Theme {
     const val TEXT: Int = 0xFFFFFFFF.toInt()
 
     /** Secondary text: 60% white. */
-    const val TEXT_DIM: Int = 0x99FFFFFF
+    const val TEXT_DIM: Int = 0x99FFFFFF.toInt()
 
     /** Tertiary text: 35% white. */
-    const val TEXT_FAINT: Int = 0x59FFFFFF
+    const val TEXT_FAINT: Int = 0x59FFFFFF.toInt()
 
     /** Card border (13% white). */
     const val BORDER: Int = 0x21FFFFFF

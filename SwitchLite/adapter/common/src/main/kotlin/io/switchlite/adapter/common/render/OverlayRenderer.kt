@@ -324,10 +324,10 @@ object OverlayRenderer {
     private fun drawChip(ctx: RenderContext, row: ClickGUI.ModuleRow, y: Int, value: String, accent: Int) {
         val font = ctx.fontRenderer
         val w = font.getStringWidth(value) + 14
-        val x = row.x + row.width - w - 14
+        val x = (row.x + row.width - w - 14).toFloat()
         val cy = y + 2f
         RenderUtils.roundedRect(ctx, x, cy, w.toFloat(), 14f, 7f, accent)
-        font.drawStringWithShadow(value, x + 7, y + 3, Theme.TEXT)
+        font.drawStringWithShadow(value, (x + 7f).toInt(), y + 3, Theme.TEXT)
     }
 
     // ══════════════════════════════════════

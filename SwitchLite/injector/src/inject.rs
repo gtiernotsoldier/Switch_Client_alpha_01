@@ -278,17 +278,30 @@ pub fn inject_java_agent(
 
     // 11. Surface the WebUI panel address to the user's console, if the agent
     //     has already started it (mirrored into the payload log by WebUIServer).
+    //     The server starts asynchronously right after bootstrap, so poll the log
+    //     for a couple seconds to catch the address reliably.
     {
         let webui_log = format!(
             "{}\\switchlite-payload.log",
             std::env::var("TEMP").unwrap_or_default()
         );
-        if let Ok(log) = std::fs::read_to_string(webui_log) {
-            for line in log.lines() {
-                if line.contains("[WebUI] Panel") {
-                    println!("{}", line);
+        let mut printed = false;
+        for _ in 0..10 {
+            if let Ok(log) = std::fs::read_to_string(&webui_log) {
+                for line in log.lines() {
+                    if line.contains("[WebUI] Panel") {
+                        println!("{}", line);
+                        printed = true;
+                    }
+                }
+                if printed {
+                    break;
                 }
             }
+            std::thread::sleep(std::time::Duration::from_millis(500));
+        }
+        if !printed {
+            println!("[WebUI] Panel address not ready yet - see %TEMP%\\switchlite-payload.log or switchlite-agent.log");
         }
     }
 

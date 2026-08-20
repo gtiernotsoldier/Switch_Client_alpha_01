@@ -150,14 +150,14 @@ object OverlayRenderer {
                 RenderUtils.roundedRectOutline(ctx, panelX + 6, rowYf, panelW - 12, rowH, 8f, 0x12FFFFFF.toInt(), 1f, 0x0EFFFFFF.toInt())
             }
 
-            // Text: name left, value right-aligned at the panel's right edge.
+            // Text: name, then value right after it with a small fixed gap
+            // (so the number is close to the name, not pushed to the far edge).
             val tx = (panelX + 14).toInt()
-            val vx = (panelX + panelW - 20).toInt()
             font.drawStringWithShadow(entry.name, tx, y, nameColor)
             if (entry.value.isNotEmpty()) {
                 val vc = if (entry.highlight) RenderUtils.withAlpha(Theme.ACCENT, 0.75f + 0.25f * breathe) else Theme.TEXT_DIM
-                val valueText = entry.value
-                font.drawStringWithShadow(valueText, vx - font.getStringWidth(valueText), y, vc)
+                val valueX = tx + font.getStringWidth(entry.name) + 8
+                font.drawStringWithShadow(entry.value, valueX, y, vc)
             }
             y += lineHeight
         }

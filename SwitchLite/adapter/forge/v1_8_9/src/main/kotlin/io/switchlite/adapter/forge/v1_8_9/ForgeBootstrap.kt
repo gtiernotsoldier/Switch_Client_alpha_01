@@ -14,6 +14,8 @@ import io.switchlite.adapter.common.module.render.WebUI
 import io.switchlite.adapter.common.module.world.FastPlace
 import io.switchlite.adapter.common.render.OverlayRenderer
 import io.switchlite.adapter.common.render.RenderContext
+import io.switchlite.adapter.common.render.FontFactory
+import io.switchlite.adapter.common.render.SmoothFontRenderer
 import io.switchlite.core.logging.CoreLogger
 import io.switchlite.agent.MappingContext
 
@@ -53,6 +55,17 @@ object ForgeBootstrap {
     private val glBridge by lazy { ForgeGL11Bridge() }
     private val mouseGetX by lazy { try { mouseClass.getMethod("getX") } catch (_: Exception) { null } }
     private val mouseGetY by lazy { try { mouseClass.getMethod("getY") } catch (_: Exception) { null } }
+
+    // Smooth font for the HUD (built lazily on the render thread — it uploads a
+    // glyph atlas texture via GL11Bridge). Falls back gracefully if loading fails.
+    private val smoothFont: SmoothFontRenderer? by lazy {
+        try {
+            SmoothFontRenderer(FontFactory.loadRegular(16f), glBridge)
+        } catch (e: Exception) {
+            CoreLogger.error("[ForgeBootstrap] SmoothFont init failed: ${e.javaClass.simpleName}: ${e.message}")
+            null
+        }
+    }
 
     // ── Keyboard state polling for module keybinds (state, edge-detected) ──
     // Polls Keyboard.isKeyDown() (NOT Keyboard.next(), which races MC) on the
@@ -244,7 +257,7 @@ object ForgeBootstrap {
             val ctx = RenderContext(
                 scaledWidth = scaledWidth,
                 scaledHeight = scaledHeight,
-                fontRenderer = ForgeFontRendererBridge(fontRendererObj),
+                fontRenderer = smoothFont ?: ForgeFontRendererBridge(fontRendererObj),
                 gl = glBridge
             )
 

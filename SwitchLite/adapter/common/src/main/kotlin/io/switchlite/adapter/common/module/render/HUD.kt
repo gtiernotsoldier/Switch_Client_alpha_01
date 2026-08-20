@@ -63,14 +63,14 @@ object HUD : Module("HUD", Category.RENDER) {
     fun refreshLines() {
         if (!enabled) return
         val entries = ModuleRegistry.getEnabled()
-            .filter { !it.hudHidden && it is HudLineProvider }
+            .filter { !it.hudHidden }
             .sortedWith(comparator())
             .map { module ->
-                val provider = module as HudLineProvider
+                val provider = module as? HudLineProvider
                 HUDEntry(
                     name = module.name,
-                    value = provider.hudValue(),
-                    highlight = provider.hudHighlight(),
+                    value = provider?.hudValue() ?: "",
+                    highlight = provider?.hudHighlight() ?: false,
                     isRed = module.enabled && module.showRedIndicator &&
                         module.category !in Module.silentCategories
                 )

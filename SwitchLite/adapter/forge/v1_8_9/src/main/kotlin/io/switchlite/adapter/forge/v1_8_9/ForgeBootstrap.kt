@@ -59,26 +59,16 @@ object ForgeBootstrap {
     private val mouseGetX by lazy { try { mouseClass.getMethod("getX") } catch (_: Exception) { null } }
     private val mouseGetY by lazy { try { mouseClass.getMethod("getY") } catch (_: Exception) { null } }
 
-    // Smooth font for the HUD. Built lazily once, defensively; atlas upload now
-    // goes through MC's TextureUtil (nemui-style) which is reliable. Any failure
-    // falls back to the vanilla font so HUD always renders.
+    // Smooth font for the HUD. DISABLED: its manual/reflected GL glyph-atlas
+    // upload does not reliably render. The vanilla font renderer is what we use
+    // for the HUD (known-good). Rolled back from attempting smooth font.
     private var smoothFont: SmoothFontRenderer? = null
-    private var smoothFontFailed = false
+    private var smoothFontFailed = true   // disabled → use vanilla font
 
     private fun resolveFont(fallback: io.switchlite.adapter.common.render.FontRendererBridge): io.switchlite.adapter.common.render.FontRendererBridge {
-        if (smoothFontFailed) return fallback
-        if (smoothFont == null) {
-            try {
-                smoothFont = SmoothFontRenderer(FontFactory.loadRegular(16f), glBridge)
-                CoreLogger.info("[ForgeBootstrap] Smooth font initialized for HUD")
-            } catch (t: Throwable) {
-                smoothFontFailed = true
-                smoothFont = null
-                CoreLogger.error("[ForgeBootstrap] SmoothFont init failed (${t.javaClass.simpleName}: ${t.message}) — using vanilla font")
-            }
-        }
         val sf = smoothFont
-        return sf ?: fallback
+        if (smoothFontFailed || sf == null) return fallback
+        return sf
     }
 
     // ── Keyboard state polling for module keybinds (state, edge-detected) ──

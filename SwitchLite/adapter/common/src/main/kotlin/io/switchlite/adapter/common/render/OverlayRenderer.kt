@@ -104,7 +104,10 @@ object OverlayRenderer {
         val panelW = (maxW + 34).toFloat()
         val panelH = (entries.size * lineHeight + 16).toFloat()
         val panelX = if (left) margin.toFloat() else (rightEdge - panelW).toFloat()
-        val panelY = (HUD.posY + breathOffset).toFloat()
+        // Clamp vertically so a long module list never runs off the screen.
+        val rawPanelY = HUD.posY + breathOffset
+        val maxPanelY = (ctx.scaledHeight - panelH).coerceAtLeast(0f)
+        val panelY = rawPanelY.coerceIn(0f, maxPanelY).toFloat()
 
         // ── Whole glass panel: soft shadow + translucent gradient + border ──
         RenderUtils.shadow(ctx, panelX, panelY, panelW, panelH, 14f, depth = 4)
@@ -126,22 +129,25 @@ object OverlayRenderer {
             val nameColor = when {
                 isTitle -> Theme.ACCENT
                 entry.isRed -> Theme.ERROR
-                else -> Theme.TEXT
+                else -> Theme.TEXT_DIM   // disabled/plain modules are dimmer → clearer hierarchy
             }
             val rowH = (lineHeight - 1).toFloat()
 
-            // Per-row glass bar — warm accent glow when enabled, faint when not.
+            // Per-row glass bar — strong red glow when enabled, accent for title,
+            // faint + dim for disabled so enabled modules stand out.
             val rowYf = y.toFloat()
             if (entry.isRed) {
-                RenderUtils.glow(ctx, panelX + 6, rowYf, panelW - 12, rowH, 8f, 0xFFFF5A5A.toInt(), spread = 4f, layers = 3)
-                RenderUtils.roundedRect(ctx, panelX + 6, rowYf, panelW - 12, rowH, 8f, 0x2E1A0A0A.toInt())
-                RenderUtils.roundedRectOutline(ctx, panelX + 6, rowYf, panelW - 12, rowH, 8f, 0x3EFF4D4D.toInt(), 1f, 0x2E1A0A0A.toInt())
+                RenderUtils.glow(ctx, panelX + 6, rowYf, panelW - 12, rowH, 8f, 0xFFFF5A5A.toInt(), spread = 5f, layers = 4)
+                RenderUtils.roundedRect(ctx, panelX + 6, rowYf, panelW - 12, rowH, 8f, 0x381A0A0A.toInt())
+                RenderUtils.roundedRectOutline(ctx, panelX + 6, rowYf, panelW - 12, rowH, 8f, 0x4AFF4D4D.toInt(), 1f, 0x381A0A0A.toInt())
             } else if (isTitle) {
-                RenderUtils.roundedRect(ctx, panelX + 6, rowYf, panelW - 12, rowH, 8f, 0x24FFFFFF.toInt())
-                RenderUtils.roundedRectOutline(ctx, panelX + 6, rowYf, panelW - 12, rowH, 8f, 0x3AFF7A00.toInt(), 1f, 0x24FFFFFF.toInt())
+                RenderUtils.glow(ctx, panelX + 6, rowYf, panelW - 12, rowH, 8f, 0xFFFF7A00.toInt(), spread = 4f, layers = 3)
+                RenderUtils.roundedRect(ctx, panelX + 6, rowYf, panelW - 12, rowH, 8f, 0x2EFFFFFF.toInt())
+                RenderUtils.roundedRectOutline(ctx, panelX + 6, rowYf, panelW - 12, rowH, 8f, 0x4AFF7A00.toInt(), 1f, 0x2EFFFFFF.toInt())
             } else {
-                RenderUtils.roundedRect(ctx, panelX + 6, rowYf, panelW - 12, rowH, 8f, 0x14FFFFFF.toInt())
-                RenderUtils.roundedRectOutline(ctx, panelX + 6, rowYf, panelW - 12, rowH, 8f, 0x1AFFFFFF.toInt(), 1f, 0x14FFFFFF.toInt())
+                // Disabled: very faint bar + dim text.
+                RenderUtils.roundedRect(ctx, panelX + 6, rowYf, panelW - 12, rowH, 8f, 0x0EFFFFFF.toInt())
+                RenderUtils.roundedRectOutline(ctx, panelX + 6, rowYf, panelW - 12, rowH, 8f, 0x12FFFFFF.toInt(), 1f, 0x0EFFFFFF.toInt())
             }
 
             // Text: name left, value right-aligned at the panel's right edge.

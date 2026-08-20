@@ -40,6 +40,9 @@ object ForgeBootstrap {
 
     private var initialized = false
 
+    /** Diagnostic — log render-hook liveness once. */
+    private var renderDiagLogged = false
+
     // Lazy class references
     private val mouseClass by lazy { Class.forName("org.lwjgl.input.Mouse") }
     private val mouseGetDX by lazy { mouseClass.getMethod("getDX") }
@@ -234,6 +237,11 @@ object ForgeBootstrap {
         try {
             val mc = MappingContext.invokeMethod(null, "forge:mc_getMinecraft")
             if (mc == null) return
+
+            if (!renderDiagLogged) {
+                renderDiagLogged = true
+                CoreLogger.info("[ForgeBootstrap.render] hook alive. HUD.enabled=${io.switchlite.adapter.common.module.render.HUD.enabled}, entries=${io.switchlite.adapter.common.module.render.HUD.hudEntries.size}")
+            }
 
             // Module keybinds — poll keyboard state on the render thread, throttled.
             if (++keybindFrame % 4 == 0) {

@@ -23,6 +23,7 @@ object OverlayRenderer {
 
     /** Diagnostic — log HUD visibility issue once, not every frame. */
     private var hudDiagLogged = false
+    private var renderEntryDiagLogged = false
 
     fun render(ctx: RenderContext) {
         val g = ctx.gl
@@ -35,6 +36,10 @@ object OverlayRenderer {
         g.glPushMatrix()
 
         try {
+            if (!renderEntryDiagLogged) {
+                renderEntryDiagLogged = true
+                io.switchlite.core.logging.CoreLogger.info("[Overlay.render] entered. HUD.enabled=${HUD.enabled}, entries=${HUD.hudEntries.size}")
+            }
             // Setup 2D ortho (origin top-left, y-down)
             g.glMatrixMode(GLConstants.GL_PROJECTION)
             g.glLoadIdentity()

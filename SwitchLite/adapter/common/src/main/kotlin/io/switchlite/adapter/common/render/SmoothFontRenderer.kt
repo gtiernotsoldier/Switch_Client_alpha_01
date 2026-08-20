@@ -5,7 +5,6 @@ import java.awt.Graphics2D
 import java.awt.RenderingHints
 import java.awt.geom.Rectangle2D
 import java.awt.image.BufferedImage
-import java.nio.ByteBuffer
 
 /**
  * Smooth font renderer — a zero-Minecraft-dependency port of the classic
@@ -46,7 +45,9 @@ class SmoothFontRenderer(
 
     private var textureId: Int = -1
 
-    private val bufferedPixels: ByteBuffer
+    /** The rasterized glyph atlas (RGB = alpha mask), kept for upload via the
+     *  platform's reliable MC texture path. */
+    private val atlasImage: java.awt.image.BufferedImage
 
     init {
         // Rasterize glyphs into an ARGB BufferedImage (value = alpha mask,
@@ -85,40 +86,14 @@ class SmoothFontRenderer(
         } finally {
             graphics.dispose()
         }
-
-        // Extract raw pixels for GL upload as RGBA bytes. The glyph shape
-        // lives in the image's alpha; we bake it into RGB (grayscale mask)
-        // and set A=255 so GL_MODULATE with glColor4f tints the glyph.
-        //
-        // CRITICAL: LWJGL2's glTexImage2D goes through MemoryUtil.getAddress,
-        // which REQUIRES a direct buffer. ByteBuffer.wrap (heap) throws
-        // IllegalArgumentException -> wrapped as InvocationTargetException.
-        val rgba = ByteArray(atlasSize * atlasSize * 4)
-        for (y in 0 until atlasSize) {
-            for (x in 0 until atlasSize) {
-                val argb = img.getRGB(x, y)
-                val a = (argb ushr 24) and 0xFF
-                val idx = (y * atlasSize + x) * 4
-                rgba[idx] = a.toByte()
-                rgba[idx + 1] = a.toByte()
-                rgba[idx + 2] = a.toByte()
-                rgba[idx + 3] = 255.toByte()
-            }
-        }
-        val direct = java.nio.ByteBuffer.allocateDirect(rgba.size)
-        direct.put(rgba)
-        direct.flip()
-        bufferedPixels = direct
+        atlasImage = img
     }
 
     private fun ensureTexture() {
         if (textureId != -1) return
-        textureId = gl.glGenTextures()
-        if (textureId == 0) return
-        gl.glBindTexture(textureId)
-        gl.glTexParameteri(GLConstants.GL_TEXTURE_2D, GLConstants.GL_TEXTURE_MIN_FILTER, GLConstants.GL_LINEAR)
-        gl.glTexParameteri(GLConstants.GL_TEXTURE_2D, GLConstants.GL_TEXTURE_MAG_FILTER, GLConstants.GL_LINEAR)
-        gl.glTexImage2DRGBA(atlasSize, atlasSize, bufferedPixels)
+        // Upload via the platform's reliable MC texture path (nemui-style). This
+        // avoids the manual glGenTextures/glTexImage2D path that failed to render.
+        textureId = gl.uploadFontTexture(atlasImage)
     }
 
     override fun drawStringWithShadow(text: String, x: Int, y: Int, color: Int): Int {

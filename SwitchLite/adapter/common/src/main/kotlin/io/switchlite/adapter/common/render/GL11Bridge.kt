@@ -68,6 +68,14 @@ interface GL11Bridge {
      */
     fun glTexImage2DRGBA(width: Int, height: Int, pixels: java.nio.ByteBuffer)
 
+    /**
+     * Reliably upload a glyph atlas image as a GL texture (nemui-style, via the
+     * platform's Minecraft texture path). Returns a valid texture id, or 0 on
+     * failure. Implementations should use MC's TextureUtil/DynamicTexture so the
+     * upload always works (manual glTexImage2D has proven unreliable here).
+     */
+    fun uploadFontTexture(image: java.awt.image.BufferedImage): Int
+
     /** Set the 2D texture coordinate for the next vertex. */
     fun glTexCoord2f(u: Float, v: Float)
 

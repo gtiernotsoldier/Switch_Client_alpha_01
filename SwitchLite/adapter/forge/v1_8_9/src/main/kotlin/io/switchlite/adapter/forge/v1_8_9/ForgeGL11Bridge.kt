@@ -211,6 +211,29 @@ class ForgeGL11Bridge : GL11Bridge {
         safeInvoke("glTexImage2D", glTexImage2DMethod, GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels)
     }
 
+    // ── Font atlas upload via Minecraft's TextureUtil (reliable, nemui-style) ──
+
+    private val textureUtilClass by lazy { Class.forName("net.minecraft.client.renderer.texture.TextureUtil") }
+    private val tuGlGenTextures by lazy { textureUtilClass.getMethod("glGenTextures") }
+    private val tuUploadImage by lazy {
+        textureUtilClass.getMethod("uploadTextureImageAllocate",
+            Int::class.javaPrimitiveType, java.awt.image.BufferedImage::class.java,
+            Boolean::class.javaPrimitiveType, Boolean::class.javaPrimitiveType)
+    }
+
+    override fun uploadFontTexture(image: java.awt.image.BufferedImage): Int {
+        return try {
+            val id = tuGlGenTextures.invoke(null) as? Int ?: return 0
+            tuUploadImage.invoke(null, id, image, true, false)
+            id
+        } catch (e: Exception) {
+            if (loggedErrors.add("uploadFontTexture")) {
+                CoreLogger.error("[ForgeGL11Bridge] uploadFontTexture failed: ${e.javaClass.simpleName}: ${e.message}")
+            }
+            0
+        }
+    }
+
     override fun glTexCoord2f(u: Float, v: Float) {
         safeInvoke("glTexCoord2f", glTexCoord2fMethod, u, v)
     }

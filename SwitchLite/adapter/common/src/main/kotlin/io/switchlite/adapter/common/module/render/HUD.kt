@@ -74,10 +74,16 @@ object HUD : Module("HUD", Category.RENDER) {
                     .sortedWith(comparator())
                     .map { module ->
                         val provider = module as? HudLineProvider
+                        // Custom value if the module overrides; else auto-derive the
+                        // module's first numeric option (e.g. STap/WTap). No numeric
+                        // option -> name only.
+                        val (value, hl) = provider?.hudValue()?.takeIf { it.isNotEmpty() }?.let {
+                            it to provider.hudHighlight()
+                        } ?: autoHudValue(module)
                         HUDEntry(
                             name = module.name,
-                            value = provider?.hudValue() ?: "",
-                            highlight = provider?.hudHighlight() ?: false,
+                            value = value,
+                            highlight = hl,
                             isRed = module.enabled && module.showRedIndicator &&
                                 module.category !in Module.silentCategories
                         )
@@ -88,6 +94,25 @@ object HUD : Module("HUD", Category.RENDER) {
         val names = entries.drop(1).joinToString(" | ") { it.name }
         EventBridge.hudTextLine = if (names.isNotEmpty()) "SwitchLite | $names" else "SwitchLite"
         io.switchlite.core.logging.CoreLogger.info("[HUD] refreshLines: ${entries.size} entries, enabled=$enabled")
+    }
+
+    /**
+     * Auto-derive a HUD value for a module: the first numeric option (FLOAT/INT)
+     * registered under it, rendered as "value+unit". Returns ("",false) for
+     * toggle-only modules (no numeric option) so they show name only.
+     */
+    private fun autoHudValue(module: Module): Pair<String, Boolean> {
+        for (desc in ConfigManager.optionsOf(module.name)) {
+            if (desc.type == io.switchlite.adapter.common.option.OptionType.FLOAT ||
+                desc.type == io.switchlite.adapter.common.option.OptionType.INT
+            ) {
+                val v = ConfigManager.currentValue(desc.key) ?: continue
+                val num = (v as? Number)?.toString() ?: continue
+                val unit = desc.meta.unit
+                return (if (unit.isNotEmpty()) "$num $unit" else num) to true
+            }
+        }
+        return "" to false
     }
 
     private fun comparator(): Comparator<Module> {

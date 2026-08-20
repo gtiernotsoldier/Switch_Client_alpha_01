@@ -1,21 +1,21 @@
 package io.switchlite.adapter.common.module
 
 /**
- * Declares what a module wants to show on the in-game HUD while it is enabled.
+ * OPTIONAL customization for a module's in-game HUD line.
  *
- * The HUD is event-driven, not per-tick: it collects lines once when a module
- * is enabled (or its config changes), so [hudValue] should be cheap to compute.
- * Only modules implementing this interface appear on the HUD. Per-module
- * visibility (hide from HUD) lives on [Module.hudHidden].
+ * By default the HUD auto-shows a module's first numeric option (e.g. STap/WTap
+ * display their first number); toggle-only modules show just their name. Only
+ * implement this to override with a custom value (e.g. Velocity's "Legit 50/50%"
+ * or AutoClicker's "10-20 CPS").
  *
- * Example: AutoClicker returns "20 CPS" (highlight = true, numeric value);
- * a toggle-only module like Sprint returns "" (name only, no value).
+ * The HUD is event-driven (collect on enable / config change / toggle), so
+ * [hudValue] should be cheap.
  */
 interface HudLineProvider {
 
     /**
      * The value text shown next to the module name, e.g. "20 CPS" / "Adaptive".
-     * Return "" to show only the module name (no value column).
+     * Return "" to fall back to the auto-derived first-numeric-option value.
      */
     fun hudValue(): String = ""
 

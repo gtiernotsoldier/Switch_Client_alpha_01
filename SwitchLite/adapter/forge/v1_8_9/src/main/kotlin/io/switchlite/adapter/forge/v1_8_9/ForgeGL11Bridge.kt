@@ -80,6 +80,9 @@ class ForgeGL11Bridge : GL11Bridge {
     private val glTexParameteriMethod by lazy {
         gl11Class.getMethod("glTexParameteri", Int::class.javaPrimitiveType, Int::class.javaPrimitiveType, Int::class.javaPrimitiveType)
     }
+    private val glTexEnvMethod by lazy {
+        gl11Class.getMethod("glTexEnvi", Int::class.javaPrimitiveType, Int::class.javaPrimitiveType, Int::class.javaPrimitiveType)
+    }
     private val glTexImage2DMethod by lazy {
         gl11Class.getMethod("glTexImage2D",
             Int::class.javaPrimitiveType, Int::class.javaPrimitiveType, Int::class.javaPrimitiveType,
@@ -198,6 +201,10 @@ class ForgeGL11Bridge : GL11Bridge {
 
     override fun glTexParameteri(target: Int, pname: Int, param: Int) {
         safeInvoke("glTexParameteri", glTexParameteriMethod, target, pname, param)
+    }
+
+    override fun glTexEnv(target: Int, pname: Int, param: Int) {
+        safeInvoke("glTexEnvi", glTexEnvMethod, target, pname, param)
     }
 
     override fun glTexImage2DRGBA(width: Int, height: Int, pixels: java.nio.ByteBuffer) {

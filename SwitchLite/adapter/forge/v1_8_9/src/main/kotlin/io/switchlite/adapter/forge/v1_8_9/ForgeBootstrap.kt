@@ -56,18 +56,28 @@ object ForgeBootstrap {
     private val mouseGetX by lazy { try { mouseClass.getMethod("getX") } catch (_: Exception) { null } }
     private val mouseGetY by lazy { try { mouseClass.getMethod("getY") } catch (_: Exception) { null } }
 
-    // Smooth font for the HUD. NOTE: disabled by default — the smooth font's
-    // GL texture (atlas) can fail to bind on the render thread and then report
-    // zero widths, which blanks the whole HUD. The vanilla font renderer is
-    // reliable and was what rendered the HUD before. Keep smooth font behind a
-    // flag until the GL-upload path is hardened.
+    // Smooth font for the HUD. Built lazily once and defensively: it uses
+    // java.awt for the glyph atlas, which may not be available on MC's
+    // LaunchClassLoader, so we catch Throwable (incl. NoClassDefFoundError /
+    // OutOfMemoryError from the 4MB atlas) and fall back to the vanilla font.
+    // HUD must always render regardless.
     private var smoothFont: SmoothFontRenderer? = null
-    private var smoothFontFailed = true   // start disabled → use vanilla font
+    private var smoothFontFailed = false
 
     private fun resolveFont(fallback: io.switchlite.adapter.common.render.FontRendererBridge): io.switchlite.adapter.common.render.FontRendererBridge {
+        if (smoothFontFailed) return fallback
+        if (smoothFont == null) {
+            try {
+                smoothFont = SmoothFontRenderer(FontFactory.loadRegular(16f), glBridge)
+                CoreLogger.info("[ForgeBootstrap] Smooth font initialized for HUD")
+            } catch (t: Throwable) {
+                smoothFontFailed = true
+                smoothFont = null
+                CoreLogger.error("[ForgeBootstrap] SmoothFont init failed (${t.javaClass.simpleName}: ${t.message}) — using vanilla font")
+            }
+        }
         val sf = smoothFont
-        if (smoothFontFailed || sf == null) return fallback
-        return sf
+        return sf ?: fallback
     }
 
     // ── Keyboard state polling for module keybinds (state, edge-detected) ──

@@ -136,6 +136,10 @@ class SmoothFontRenderer(
         gl.glBlendFunc(GLConstants.GL_SRC_ALPHA, GLConstants.GL_ONE_MINUS_SRC_ALPHA)
         gl.glDisable(GLConstants.GL_DEPTH_TEST)
         gl.glDepthMask(false)
+        // Ensure glColor4f tints the glyph atlas (RGB = alpha mask). Without
+        // MODULATE, a REPLACE environment shows the raw alpha mask instead of
+        // the requested color, which can make the font invisible / wrong.
+        gl.glTexEnv(GLConstants.GL_TEXTURE_ENV, GLConstants.GL_TEXTURE_ENV_MODE, GLConstants.GL_MODULATE)
 
         val shadowColor = (alpha shl 24) or ((r / 4) shl 16) or ((g / 4) shl 8) or (b / 4)
 

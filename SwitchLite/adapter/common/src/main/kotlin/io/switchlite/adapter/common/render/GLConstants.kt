@@ -27,6 +27,9 @@ object GLConstants {
     const val GL_TEXTURE_MIN_FILTER = 0x2801
     const val GL_TEXTURE_MAG_FILTER = 0x2800
     const val GL_CLAMP_TO_EDGE = 0x812F
+    const val GL_TEXTURE_ENV = 0x2300
+    const val GL_TEXTURE_ENV_MODE = 0x2200
+    const val GL_MODULATE = 0x2100
 
     // ── Alpha test (GuiScreen enables alpha discard — must disable for quads) ──
     const val GL_ALPHA_TEST = 0x0B20

@@ -362,33 +362,66 @@
             if(v==='18') return '<span class="ver-tag v18">1.8</span>';
             return '';
         }
-        // 根据模块的 CombatVersion 过滤选项：选择器/共享项始终显示，版本项只显示对应版本。
+        // ----- Mode 配置联动规则 -----
+        // selector: 该模块选择模式的选项名（Mode / CooldownMode）
+        // groups:   { 模式名: [该模式专属的选项名] }  不在任何组里的选项 = 共享，始终显示
+        const MODE_RULES = {
+            'Velocity': { selector:'Mode', groups:{ 'Legit':['HorizontalMin','HorizontalMax','VerticalMin','VerticalMax','Chance'],
+                                                    'Delay':['DelayMs','DelayTicks'],
+                                                    'Click':['ClicksMin','ClicksMax','HurtTimeToClick','WhenFacingEnemyOnly','MaxAngleDifference','ClickRange'] } },
+            'KeepSprint': { selector:'Mode', groups:{ 'Normal':['HorizontalKeep'],
+                                                      'Legit':['MinReach','MaxReach','MinKeep','MaxKeep'] } },
+            'SuperKnockback': { selector:'Mode', groups:{ 'SprintTap2':['StopTicks','UnSprintTicks'] } },
+            'JumpReset': { selector:'CooldownMode', groups:{ 'Ticks':['TicksUntilJump'],
+                                                             'ReceivedHits':['HitsUntilJump'] } }
+        };
+        function modeOf(o, rule){
+            for(const [mode, opts] of Object.entries(rule.groups)){
+                if(opts.includes(o.name)) return mode;
+            }
+            return '';
+        }
+        function modeTag(o, rule){
+            const m = modeOf(o, rule);
+            return m ? `<span class="ver-tag v19">${m}</span>` : '';
+        }
+        // 根据模块的 CombatVersion / Mode 过滤选项：选择器 + 共享项始终显示，版本/模式专属项只显示当前值。
         function optionsForModule(m){
             if(!m.options || m.options.length===0) return [];
+            // 版本过滤（AutoClicker 等）
             const cvOpt = m.options.find(o => o.name==='CombatVersion');
             const cv = cvOpt ? cvOpt.value : null;
-            if(!cv) return m.options; // 该模块没有版本选择器 → 全显示
+            // 模式过滤（Velocity/KeepSprint/SuperKnockback/JumpReset 等）
+            const rule = MODE_RULES[m.name];
+            const selOpt = rule ? m.options.find(o => o.name===rule.selector) : null;
+            const sel = selOpt ? selOpt.value : null;
             return m.options.filter(o => {
-                if(o.name==='CombatVersion') return true;      // 选择器本身
-                const v = versionOf(o);
-                if(v==='') return true;                         // 共享项
-                return (v==='18' && cv==='1.8') || (v==='19' && cv==='1.9+');
+                if(cvOpt && o.name==='CombatVersion') return true;
+                if(cv && versionOf(o)!=='' && !(versionOf(o)==='18' && cv==='1.8') && !(versionOf(o)==='19' && cv==='1.9+')) return false;
+                if(selOpt && o.name===rule.selector) return true;
+                if(rule && sel){
+                    const m2 = modeOf(o, rule);
+                    if(m2!=='' && m2!==sel) return false;   // 其它模式的专属项隐藏
+                }
+                return true;
             });
         }
-        function optionWidget(o){
+        function optionWidget(o, rule){
             const t = o.type;
             const key = o.key, val = o.value;
             if(t === 'CHOICES' || t === 'ENUM'){
                 const label = (val && val.name) ? val.name : val;
                 const opts = (o.choices||[]).map(c => `<option value="${c}" ${c===label?'selected':''}>${c}</option>`).join('');
+                const tag = versionTag(o) + (rule ? modeTag(o, rule) : '');
                 return `<div class="sub-item">
-                    <span class="sub-label"><span class="opt-name">${o.name}</span>${versionTag(o)}</span>
+                    <span class="sub-label"><span class="opt-name">${o.name}</span>${tag}</span>
                     <select class="sub-select" data-key="${key}">${opts}</select>
                 </div>`;
             }
             if(t === 'BOOLEAN'){
+                const tag = versionTag(o) + (rule ? modeTag(o, rule) : '');
                 return `<div class="sub-item">
-                    <span class="sub-label"><span class="opt-name">${o.name}</span>${versionTag(o)}</span>
+                    <span class="sub-label"><span class="opt-name">${o.name}</span>${tag}</span>
                     <div class="toggle-switch ${val?'on':''}" data-key="${key}"><span class="pulse-ring"></span></div>
                 </div>`;
             }
@@ -403,7 +436,7 @@
                 const disp = isDec ? Number(v).toFixed(1) : v;
                 return `<div class="slider-row">
                     <div class="slider-label-row">
-                        <span class="opt-name" style="overflow:hidden;text-overflow:ellipsis">${o.name}</span>
+                        <span class="opt-name" style="overflow:hidden;text-overflow:ellipsis">${o.name}</span>${versionTag(o)}${rule?modeTag(o,rule):''}
                         <span class="slider-value" style="white-space:nowrap">${disp}${unit}</span>
                     </div>
                     <div class="slider-track" data-key="${key}" data-min="${min}" data-max="${max}" data-int="${isDec?0:1}" data-unit="${unit}" data-dec="${isDec?1:0}">
@@ -420,7 +453,8 @@
 
         // ----- 单个模块卡片（使用 fullIndex 标识） -----
         function moduleCard(m, fullIndex){
-            const opts = optionsForModule(m).map(optionWidget).join('');
+            const rule = MODE_RULES[m.name];
+            const opts = optionsForModule(m).map(o => optionWidget(o, rule)).join('');
             const enabled = !!m.enabled;
             const expanded = expandedSet.has(m.name);
             return `<div class="setting-item ${expanded?'expanded':''}" data-fullindex="${fullIndex}" data-enabled="${enabled?'1':'0'}">

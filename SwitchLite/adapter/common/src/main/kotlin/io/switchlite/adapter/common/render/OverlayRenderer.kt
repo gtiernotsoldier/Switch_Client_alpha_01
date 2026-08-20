@@ -77,8 +77,12 @@ object OverlayRenderer {
 
         val entries = HUD.hudEntries
         if (entries.isEmpty()) {
-            if (!hudDiagLogged) { io.switchlite.core.logging.CoreLogger.warn("[Overlay] drawHudCard: no entries"); hudDiagLogged = true }
+            if (!hudDiagLogged) { io.switchlite.core.logging.CoreLogger.warn("[Overlay] drawHudCard: no entries (HUD enabled=${HUD.enabled})"); hudDiagLogged = true }
             return
+        }
+        if (!hudDiagLogged) {
+            io.switchlite.core.logging.CoreLogger.info("[Overlay] drawHudCard: ${entries.size} entries, font=${font::class.simpleName}, enabled=${HUD.enabled}")
+            hudDiagLogged = true
         }
 
         val lineHeight = font.fontHeight + 4

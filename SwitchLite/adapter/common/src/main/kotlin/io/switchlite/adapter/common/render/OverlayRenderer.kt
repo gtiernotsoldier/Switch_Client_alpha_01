@@ -84,38 +84,61 @@ object OverlayRenderer {
             return
         }
 
-        val lineHeight = font.fontHeight + 3
+        val lineHeight = font.fontHeight + 4
         val left = HUD.position != "Right"
         val margin = HUD.posX
         // Right-aligned: value hugs the right edge, name sits to its left.
         val rightEdge = ctx.scaledWidth - margin
-        // "Breathing": a slow time-based pulse for the highlight value text.
-        val breathe = ((System.currentTimeMillis() % 2000L) / 2000f).let {
+        // "Breathing": slow 3.2s pulse (matches the reference's bone-breathe).
+        val breathe = ((System.currentTimeMillis() % 3200L) / 3200f).let {
             if (it < 0.5f) it * 2f else 2f - it * 2f   // 0..1..0 triangle wave
         }
+        val breathOffset = (breathe - 0.5f) * -2f   // -1..1, for y lift
+
+        // ── Left spine (gradient warm-orange vertical bar with glow) ──
+        val spineX = if (left) margin + 2f else rightEdge - 6f
+        val spineTop = (HUD.posY - 6).toFloat()
+        val spineH = (entries.size * lineHeight + 12).toFloat()
+        // Glow behind the spine
+        RenderUtils.rect(ctx, spineX - 2, spineTop, 8f, spineH, RenderUtils.withAlpha(0xFFFFB432.toInt(), 0.10f + 0.12f * breathe))
+        // The spine bar itself
+        RenderUtils.rect(ctx, spineX, spineTop, 2f, spineH, RenderUtils.withAlpha(0xFFFFB432.toInt(), 0.55f + 0.30f * breathe))
 
         var y = HUD.posY
         for (entry in entries) {
-            val nameColor = if (entry.isRed) Theme.ERROR else Theme.TEXT
-            if (left) {
-                // Left: "Name" then "value" to the right.
-                font.drawStringWithShadow(entry.name, margin, y, nameColor)
-                if (entry.value.isNotEmpty()) {
-                    val vc = if (entry.highlight) Theme.withAlpha(Theme.ACCENT, 0.6f + 0.4f * breathe) else Theme.TEXT_DIM
-                    font.drawStringWithShadow(entry.value, margin + font.getStringWidth(entry.name) + 8, y, vc)
-                }
-            } else {
-                // Right (mirror of left): row is right-aligned. "value" then "Name",
-                // value hugs the right edge.
-                val total = font.getStringWidth(entry.name) +
-                    (if (entry.value.isNotEmpty()) font.getStringWidth(entry.value) + 8 else 0)
-                var x = rightEdge - total
-                if (entry.value.isNotEmpty()) {
-                    val vc = if (entry.highlight) Theme.withAlpha(Theme.ACCENT, 0.6f + 0.4f * breathe) else Theme.TEXT_DIM
-                    font.drawStringWithShadow(entry.value, x, y, vc)
-                    x += font.getStringWidth(entry.value) + 8
-                }
-                font.drawStringWithShadow(entry.name, x, y, nameColor)
+            val isTitle = entry.name == "SwitchLite"
+            val nameColor = when {
+                isTitle -> Theme.ACCENT
+                entry.isRed -> Theme.ERROR
+                else -> Theme.TEXT
+            }
+            val lift = if (entry.isRed) breathOffset * 0.8f else breathOffset * 0.5f
+            val rowY = (y + lift).toInt()
+
+            // Bone row: translucent dark rounded card + border.
+            val rowTextW = font.getStringWidth(entry.name) +
+                (if (entry.value.isNotEmpty()) font.getStringWidth(entry.value) + 10 else 0)
+            val rowW = (rowTextW + 22).toFloat()
+            val rowH = (lineHeight + 2).toFloat()
+            val rowX = if (left) margin.toFloat() else (rightEdge - rowW).toFloat()
+
+            // Row background (bone) — red-tinted when enabled.
+            val rowBg = if (entry.isRed) 0x331E0A0A.toInt() else RenderUtils.withAlpha(0x14120F16.toInt(), 0.22f + 0.06f * breathe)
+            RenderUtils.roundedRect(ctx, rowX, rowY.toFloat(), rowW, rowH, 10f, rowBg)
+            val border = if (entry.isRed)
+                RenderUtils.withAlpha(0xFFFF4D4D.toInt(), 0.08f + 0.06f * breathe)
+            else
+                RenderUtils.withAlpha(0xFFFFFFFF.toInt(), 0.04f + 0.03f * breathe)
+            RenderUtils.roundedRectOutline(ctx, rowX, rowY.toFloat(), rowW, rowH, 10f, border, 1f, rowBg)
+
+            // Text
+            var tx = (rowX + 10).toInt()
+            font.drawStringWithShadow(entry.name, tx, rowY, nameColor)
+            tx += font.getStringWidth(entry.name)
+            if (entry.value.isNotEmpty()) {
+                tx += 10
+                val vc = if (entry.highlight) RenderUtils.withAlpha(Theme.ACCENT, 0.7f + 0.3f * breathe) else Theme.TEXT_DIM
+                font.drawStringWithShadow(entry.value, tx, rowY, vc)
             }
             y += lineHeight
         }

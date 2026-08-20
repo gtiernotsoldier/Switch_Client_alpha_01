@@ -65,21 +65,27 @@ object HUD : Module("HUD", Category.RENDER) {
             io.switchlite.core.logging.CoreLogger.warn("[HUD] refreshLines skipped — HUD not enabled")
             return
         }
-        val entries = ModuleRegistry.getEnabled()
-            .filter { !it.hudHidden }
-            .sortedWith(comparator())
-            .map { module ->
-                val provider = module as? HudLineProvider
-                HUDEntry(
-                    name = module.name,
-                    value = provider?.hudValue() ?: "",
-                    highlight = provider?.hudHighlight() ?: false,
-                    isRed = module.enabled && module.showRedIndicator &&
-                        module.category !in Module.silentCategories
-                )
-            }
+        val entries = buildList {
+            // Title row ("SwitchLite") at the top — matches the reference layout.
+            add(HUDEntry(name = "SwitchLite", value = "", highlight = false, isRed = false))
+            addAll(
+                ModuleRegistry.getEnabled()
+                    .filter { !it.hudHidden }
+                    .sortedWith(comparator())
+                    .map { module ->
+                        val provider = module as? HudLineProvider
+                        HUDEntry(
+                            name = module.name,
+                            value = provider?.hudValue() ?: "",
+                            highlight = provider?.hudHighlight() ?: false,
+                            isRed = module.enabled && module.showRedIndicator &&
+                                module.category !in Module.silentCategories
+                        )
+                    }
+            )
+        }
         hudEntries = entries
-        val names = entries.joinToString(" | ") { it.name }
+        val names = entries.drop(1).joinToString(" | ") { it.name }
         EventBridge.hudTextLine = if (names.isNotEmpty()) "SwitchLite | $names" else "SwitchLite"
         io.switchlite.core.logging.CoreLogger.info("[HUD] refreshLines: ${entries.size} entries, enabled=$enabled")
     }

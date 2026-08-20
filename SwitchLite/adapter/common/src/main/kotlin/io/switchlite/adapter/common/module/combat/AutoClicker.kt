@@ -15,6 +15,7 @@ import io.switchlite.core.strategy.click.CritMode
 import io.switchlite.core.strategy.click.ProbabilisticClickStrategy
 import io.switchlite.core.strategy.click.WeaponType
 import io.switchlite.adapter.common.api.EventBridge
+import io.switchlite.adapter.common.module.HudLineProvider
 import io.switchlite.adapter.common.module.Module
 import io.switchlite.adapter.common.module.Category
 import io.switchlite.adapter.common.option.int
@@ -41,12 +42,16 @@ import io.switchlite.adapter.common.option.triggerOptions
  * not mining, etc.), regardless of who is under the crosshair.
  * Target selection and aim are handled by AimAssist.
  */
-object AutoClicker : Module("AutoClicker", Category.COMBAT) {
+object AutoClicker : Module("AutoClicker", Category.COMBAT), HudLineProvider {
 
     init {
         // AutoClicker is a stealth module — no visible red indicator on HUD
         showRedIndicator = false
     }
+
+    // ── HUD value (event-driven; read once on enable/config change) ──
+    override fun hudValue(): String = "$minCps-$maxCps CPS"
+    override fun hudHighlight(): Boolean = true
 
     // ====================================================================
     // Version Selection

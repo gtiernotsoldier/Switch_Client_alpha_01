@@ -42,6 +42,13 @@ abstract class Module(
     var showRedIndicator: Boolean = true
 
     /**
+     * Whether this module is hidden from the HUD module list. Configured from
+     * the WebUI (per-module "show on HUD" toggle). Modules are visible by
+     * default. Only meaningful for modules implementing [HudLineProvider].
+     */
+    var hudHidden: Boolean = false
+
+    /**
      * Whether this module should be included in HUD display.
      * Hidden modules are excluded regardless of enabled state.
      * Modules with showRedIndicator=false are included but shown in default color.

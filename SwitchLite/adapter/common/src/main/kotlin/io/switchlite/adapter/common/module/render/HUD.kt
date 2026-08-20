@@ -2,164 +2,122 @@ package io.switchlite.adapter.common.module.render
 
 import io.switchlite.adapter.common.api.EventBridge
 import io.switchlite.adapter.common.module.Category
+import io.switchlite.adapter.common.module.HudLineProvider
 import io.switchlite.adapter.common.module.Module
 import io.switchlite.adapter.common.module.ModuleRegistry
 import io.switchlite.adapter.common.option.boolean
 import io.switchlite.adapter.common.option.choices
-import io.switchlite.adapter.common.ui.Theme
+import io.switchlite.adapter.common.option.ConfigManager
 import io.switchlite.core.model.PlayerState
 import io.switchlite.core.model.TargetState
 
 /**
- * HUD — on-screen module status card (Nemui-style).
+ * HUD — transparent in-game module status list (SwitchLite style).
  *
- * Builds the enabled-module list every tick, then exposes layout data for
- * OverlayRenderer to draw as a draggable card. Sorting, coloring and
- * brightness are configurable via the ClickGUI settings panel
- * (they register as options under "HUD.*").
+ * Visual: plain text lines, no card background — module name + optional value.
+ * A line turns RED while its module is enabled (quick debug visibility); values
+ * that are numeric (CPS/ms) can be highlighted in warm orange.
  *
- * Dragging is only active while the ClickGUI is open (avoids stealing
- * clicks from normal gameplay). Positions are clamped to the screen.
+ * Refresh is event-driven, NOT per tick:
+ *  - collected once when the HUD enables,
+ *  - re-collected when any module option changes (ConfigManager.onModuleDirty),
+ *  - re-collected when a module toggles on/off (tick diff is a cheap safety net).
+ * Position (left/right) is configured from the WebUI.
  */
 object HUD : Module("HUD", Category.RENDER) {
 
-    /**
-     * A single HUD line entry to be rendered by the adapter.
-     */
+    /** A single HUD line. */
     data class HUDEntry(
         val name: String,
-        /** True if this entry should be rendered in red (active indicator). */
-        val isRed: Boolean
+        val value: String = "",
+        val highlight: Boolean = false,
+        /** True = module currently enabled (draw red). */
+        val isRed: Boolean = false
     )
 
-    /** Current HUD entries — rebuilt every tick when enabled. */
+    /** Current HUD lines — rebuilt on events, not per tick. */
     @Volatile
     var hudEntries: List<HUDEntry> = emptyList()
         private set
 
-    // ── Card position (draggable while GUI is open) ──
+    // ── Position (WebUI configurable) ──
 
     var posX: Int = 4
         private set
-    var posY: Int = 4
+    var posY: Int = 20
         private set
 
-    private var dragging = false
-    private var dragOffsetX = 0
-    private var dragOffsetY = 0
-    private var wasLeftDown = false
+    /** "Left" or "Right" — anchored side of the list (WebUI config). */
+    var position by choices("Position", arrayOf("Left", "Right"))
 
-    // ── Configurable display options (ClickGUI settings panel) ──
+    // ── Configurable display options ──
 
     var sortMode by choices("Sort", arrayOf("None", "Alphabetical", "Length", "Category"))
-    var colorMode by choices("Color", arrayOf("Static", "RandomRainbow", "FadeRainbow"))
-    var brightness by choices("Brightness", arrayOf("Darker", "Dark", "Normal", "Bright", "Brighter"))
     var reversed by boolean("Reversed", false)
 
-    // ── Data (every tick) ──
+    // ═══════════════════════════════════════════
+    //  Collection (event-driven)
+    // ═══════════════════════════════════════════
 
-    private val tickListener: (PlayerState, TargetState?) -> Unit = { _, _ ->
-        if (enabled) onTick()
-    }
-
-    private fun onTick() {
-        // Red indicator always on (config moves to the WebUI panel).
-        val redEnabled = true
-
-        hudEntries = ModuleRegistry.getEnabled()
-            .filter { it.visible }
+    /** Rebuild the line list. Cheap; called on enable / config change / toggle. */
+    fun refreshLines() {
+        if (!enabled) return
+        val entries = ModuleRegistry.getEnabled()
+            .filter { it is HudLineProvider && !it.hudHidden }
+            .sortedWith(comparator())
             .map { module ->
+                val provider = module as HudLineProvider
                 HUDEntry(
                     name = module.name,
-                    isRed = redEnabled
-                        && module.showRedIndicator
-                        && module.category !in Module.silentCategories
+                    value = provider.hudValue(),
+                    highlight = provider.hudHighlight(),
+                    isRed = module.enabled && module.showRedIndicator &&
+                        module.category !in Module.silentCategories
                 )
             }
-        // Also set the simple text line for backward compat (adapter may use either)
-        val names = hudEntries.joinToString(" | ") { it.name }
+        hudEntries = entries
+        val names = entries.joinToString(" | ") { it.name }
         EventBridge.hudTextLine = if (names.isNotEmpty()) "SwitchLite | $names" else "SwitchLite"
     }
 
-    // ── Layout helpers for OverlayRenderer ──
-
-    /** Sorted entries according to [sortMode] + [reversed]. */
-    fun sortedEntries(): List<HUDEntry> {
-        val entries = hudEntries.toMutableList()
+    private fun comparator(): Comparator<Module> = Comparator { a, b ->
         when (sortMode) {
-            "Alphabetical" -> entries.sortBy { it.name }
-            "Length" -> entries.sortBy { it.name.length }
-            "Category" -> entries.sortBy { categoryOrder(it.name) }
+            "Alphabetical" -> a.name.compareTo(b.name)
+            "Length" -> a.name.length.compareTo(b.name.length)
+            "Category" -> {
+                val c = a.category.ordinal.compareTo(b.category.ordinal)
+                if (c != 0) c else a.name.compareTo(b.name)
+            }
+            else -> 0
         }
-        if (reversed) entries.reverse()
-        return entries
-    }
+    }.let { if (reversed) it.reversed() else it }
 
-    private fun categoryOrder(moduleName: String): Int {
-        return ModuleRegistry.getAll()
-            .firstOrNull { it.name == moduleName }
-            ?.category?.ordinal ?: Int.MAX_VALUE
-    }
+    // ═══════════════════════════════════════════
+    //  Config change → refresh once (not per tick)
+    // ═══════════════════════════════════════════
 
-    /** Per-line color according to [colorMode] (red indicator wins). */
-    fun entryColor(index: Int, entry: HUDEntry): Int {
-        if (entry.isRed) return Theme.ERROR
-        return when (colorMode) {
-            "RandomRainbow" -> Theme.rainbow(entry.name.hashCode())
-            "FadeRainbow" -> Theme.rainbow(index * 25)
-            else -> Theme.TEXT
-        }
-    }
+    /** Fires when any option under a module changes → rebuild lines once. */
+    private val configListener: () -> Unit = { refreshLines() }
 
-    /** Brightness multiplier from the [brightness] option. */
-    fun brightnessFactor(): Float {
-        return try {
-            Theme.Brightness.valueOf(brightness.uppercase()).factor
-        } catch (e: Exception) {
-            1.0f
-        }
-    }
+    /** Modules we already subscribed a dirty-listener for (avoid duplicates). */
+    private val subscribedModules = mutableSetOf<String>()
 
-    // ── Drag handling ──
-
-    /**
-     * Handle mouse input for HUD dragging. Always active (the in-game ClickGUI
-     * was removed; dragging the HUD is the only in-game mouse UI).
-     * [cardWidth]/[cardHeight] describe the card's rendered size.
-     */
-    fun handleMouseInput(
-        x: Int,
-        y: Int,
-        leftDown: Boolean,
-        scaledWidth: Int,
-        scaledHeight: Int,
-        cardWidth: Int,
-        cardHeight: Int
-    ) {
-        val clicked = leftDown && !wasLeftDown
-        val released = !leftDown && wasLeftDown
-        wasLeftDown = leftDown
-
-        if (leftDown && clicked) {
-            if (x >= posX && x < posX + cardWidth && y >= posY && y < posY + cardHeight) {
-                dragging = true
-                dragOffsetX = x - posX
-                dragOffsetY = y - posY
-                return
+    private fun listenToModuleConfigs() {
+        for (module in ModuleRegistry.getEnabled()) {
+            if (subscribedModules.add(module.name)) {
+                ConfigManager.onModuleDirty(module.name, configListener)
             }
         }
-        if (leftDown && dragging) {
-            posX = (x - dragOffsetX).coerceIn(0, (scaledWidth - cardWidth).coerceAtLeast(0))
-            posY = (y - dragOffsetY).coerceIn(0, (scaledHeight - cardHeight).coerceAtLeast(0))
-        }
-        if (released) {
-            dragging = false
-        }
     }
 
-    // ── Lifecycle ──
+    // ═══════════════════════════════════════════
+    //  Lifecycle
+    // ═══════════════════════════════════════════
 
     override fun onEnable() {
+        lastEnabledKey = ""
+        refreshLines()
+        listenToModuleConfigs()
         EventBridge.registerTickListener(tickListener)
     }
 
@@ -167,7 +125,25 @@ object HUD : Module("HUD", Category.RENDER) {
         EventBridge.unregisterTickListener(tickListener)
         EventBridge.hudTextLine = ""
         hudEntries = emptyList()
-        dragging = false
-        wasLeftDown = false
+    }
+
+    // Safety net: if a module toggled but no config event fired, re-collect.
+    // Cost is a cheap string diff per tick; actual rebuild only on change.
+    private var lastEnabledKey = ""
+
+    /** Poke from the WebUI (e.g. hudHidden toggled) → re-collect immediately. */
+    fun notifyModuleToggled() {
+        refreshLines()
+        listenToModuleConfigs()
+    }
+
+    private val tickListener: (PlayerState, TargetState?) -> Unit = { _, _ ->
+        if (!enabled) return@tickListener
+        val key = ModuleRegistry.getEnabled().map { it.name }.sorted().joinToString(",")
+        if (key != lastEnabledKey) {
+            lastEnabledKey = key
+            refreshLines()
+            listenToModuleConfigs()
+        }
     }
 }

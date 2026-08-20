@@ -204,6 +204,23 @@ object WebUIServer {
                     respondJson(exchange, 200, mapper.writeValueAsString(
                         mapOf("ok" to true, "name" to name, "key" to code, "keyName" to keyName(code))))
                 }
+                path.endsWith("/hud") && name.isNotBlank() -> {
+                    if (exchange.requestMethod != "POST") return methodNotAllowed(exchange)
+                    val body = String(exchange.requestBody.readBytes(), StandardCharsets.UTF_8)
+                    @Suppress("UNCHECKED_CAST")
+                    val req = mapper.readValue(body, Map::class.java) as Map<String, Any?>
+                    val hidden = (req["hidden"] as? Boolean) ?: false
+                    synchronized(lock) {
+                        ModuleRegistry.get(name)?.hudHidden = hidden
+                    }
+                    // Poke the HUD to re-collect immediately.
+                    try {
+                        io.switchlite.adapter.common.module.render.HUD.notifyModuleToggled()
+                    } catch (_: Throwable) {}
+                    try { ConfigStore.save() } catch (_: Exception) {}
+                    respondJson(exchange, 200, mapper.writeValueAsString(
+                        mapOf("ok" to true, "name" to name, "hudHidden" to hidden)))
+                }
                 exchange.requestMethod == "GET" -> {
                     val list = synchronized(lock) {
                         ModuleRegistry.getAll().filter { !it.hidden }.map { moduleJson(it) }
@@ -318,6 +335,8 @@ object WebUIServer {
             "enabled" to module.enabled,
             "keybind" to module.keybind,
             "keyName" to keyName(module.keybind),
+            "hudHidden" to module.hudHidden,
+            "hudEnabled" to (module is io.switchlite.adapter.common.module.HudLineProvider),
             "options" to options
         )
     }

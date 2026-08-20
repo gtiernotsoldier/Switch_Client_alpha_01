@@ -69,67 +69,30 @@ object OverlayRenderer {
         val font = ctx.fontRenderer
         if (!HUD.enabled) return
 
-        val entries = HUD.sortedEntries()
+        // Transparent text list — no card background (SwitchLite HUD style).
+        // One line per enabled module: "Name" + optional value; red when the
+        // module is active, orange highlight for numeric values.
+        val entries = HUD.hudEntries
+        if (entries.isEmpty()) return
+
         val lineHeight = font.fontHeight + 3
-        val pad = 8
-        val barW = 3
+        val left = HUD.position != "Right"
+        val startX = if (left) HUD.posX else ctx.scaledWidth - HUD.posX
 
-        // Measure card.
-        var maxTextW = font.getStringWidth("SwitchLite")
-        for (e in entries) {
-            maxTextW = maxOf(maxTextW, font.getStringWidth(e.name))
-        }
-        val cardW = pad * 2 + barW + 6 + maxTextW + 12
-        val cardH = HUD_TITLE_BAR + pad + entries.size * lineHeight + pad
-
-        // Drag — must run before drawing so pos updates apply this frame.
-        HUD.handleMouseInput(
-            EventBridge.guiMouseX, EventBridge.guiMouseY, EventBridge.guiLeftMouseDown,
-            ctx.scaledWidth, ctx.scaledHeight, cardW, cardH
-        )
-
-        val x = HUD.posX
-        val y = HUD.posY
-        val factor = HUD.brightnessFactor()
-        val fx = x.toFloat()
-        val fy = y.toFloat()
-        val fw = cardW.toFloat()
-        val fh = cardH.toFloat()
-
-        // Aurora depth: soft shadow + border + top highlight.
-        RenderUtils.shadow(ctx, fx, fy, fw, fh, CORNER_RADIUS, depth = 4)
-        RenderUtils.roundedRect(
-            ctx, fx, fy, fw, fh, CORNER_RADIUS,
-            RenderUtils.withAlpha(Theme.HUD_BG, factor.coerceAtMost(1f))
-        )
-        RenderUtils.roundedRectOutline(
-            ctx, fx, fy, fw, fh, CORNER_RADIUS,
-            Theme.BORDER, 1f, RenderUtils.withAlpha(Theme.HUD_BG, factor.coerceAtMost(1f))
-        )
-        RenderUtils.rect(
-            ctx, fx + 6, fy + 2, fw - 12, 1f, Theme.TOP_HIGHLIGHT
-        )
-
-        // Title bar with accent underline.
-        font.drawStringWithShadow(
-            "SwitchLite", x + pad + barW + 4, y + 6,
-            Theme.shade(Theme.TEXT, factor)
-        )
-        RenderUtils.rect(
-            ctx, (x + pad).toFloat(), (y + HUD_TITLE_BAR - 4).toFloat(),
-            (cardW - pad * 2).toFloat(), 1f, Theme.withAlpha(Theme.ACCENT, 0.35f * factor)
-        )
-
-        // Rows: [3px status bar] [module name]
-        var ry = y + HUD_TITLE_BAR + pad
-        for ((idx, entry) in entries.withIndex()) {
-            val color = Theme.shade(HUD.entryColor(idx, entry), factor)
-            RenderUtils.rect(
-                ctx, (x + pad).toFloat(), (ry + 1).toFloat(),
-                barW.toFloat(), (lineHeight - 2).toFloat(), color
-            )
-            font.drawStringWithShadow(entry.name, x + pad + barW + 6, ry, color)
-            ry += lineHeight
+        var y = HUD.posY
+        for (entry in entries) {
+            val nameColor = if (entry.isRed) Theme.ERROR else Theme.TEXT
+            font.drawStringWithShadow(entry.name, startX, y, nameColor)
+            if (entry.value.isNotEmpty()) {
+                val valueColor = if (entry.highlight) Theme.ACCENT else Theme.TEXT_DIM
+                val valueX = if (left) {
+                    startX + font.getStringWidth(entry.name) + 8
+                } else {
+                    startX - font.getStringWidth("${entry.name}  ${entry.value}") - 2
+                }
+                font.drawStringWithShadow(entry.value, valueX, y, valueColor)
+            }
+            y += lineHeight
         }
     }
 

@@ -65,8 +65,9 @@ object ForgeBootstrap {
     private var smoothFontFailed = true   // start disabled → use vanilla font
 
     private fun resolveFont(fallback: io.switchlite.adapter.common.render.FontRendererBridge): io.switchlite.adapter.common.render.FontRendererBridge {
-        if (smoothFontFailed || smoothFont == null) return fallback
-        return smoothFont
+        val sf = smoothFont
+        if (smoothFontFailed || sf == null) return fallback
+        return sf
     }
 
     // ── Keyboard state polling for module keybinds (state, edge-detected) ──

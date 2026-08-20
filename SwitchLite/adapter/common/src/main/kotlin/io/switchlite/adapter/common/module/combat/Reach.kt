@@ -5,6 +5,7 @@ import io.switchlite.core.model.PlayerState
 import io.switchlite.core.model.TargetState
 import io.switchlite.core.strategy.combat.CombatTrigger
 import io.switchlite.adapter.common.api.EventBridge
+import io.switchlite.adapter.common.module.HudLineProvider
 import io.switchlite.adapter.common.module.Module
 import io.switchlite.adapter.common.module.Category
 import io.switchlite.adapter.common.option.boolean
@@ -19,7 +20,11 @@ import io.switchlite.adapter.common.option.triggerOptions
  * (attack just landed), counts toward attack threshold. On fire, extends
  * reach via EventBridge.setReach(). Fabric and Forge both supported.
  */
-object Reach : Module("Reach", Category.COMBAT) {
+object Reach : Module("Reach", Category.COMBAT), HudLineProvider {
+
+    // ========== HUD value ==========
+    override fun hudValue(): String = "$reachMin-$reachMax"
+    override fun hudHighlight(): Boolean = true
 
     // ========== Reach Distance ==========
     private val reachMin by float("Min", 3.0f, 3.0f..3.5f, "blocks")

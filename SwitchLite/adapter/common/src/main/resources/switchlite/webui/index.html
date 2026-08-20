@@ -349,12 +349,31 @@
         }
 
         // ----- 渲染选项控件 -----
-        // 跨版本提示：根据选项名猜测它属于 1.8 还是 1.9+，打上小标签区分。
-        function versionTag(o){
+        // 跨版本：根据选项名归类 1.8 / 1.9+ / 通用。
+        function versionOf(o){
             const n = (o.name||'');
-            if(/19|1\.9|Cooldown/i.test(n)) return '<span class="ver-tag v19">1.9+</span>';
-            if(/^18|1\.8|Legit18/i.test(n)) return '<span class="ver-tag v18">1.8</span>';
+            if(/19|1\.9|Cooldown|CritMode|CritStop|WeaponFilter|OnItemUse/.test(n)) return '19';
+            if(/^18|1\.8|MaxCPS|MinCPS|ClickMode|^Mode$/.test(n)) return '18';
             return '';
+        }
+        function versionTag(o){
+            const v = versionOf(o);
+            if(v==='19') return '<span class="ver-tag v19">1.9+</span>';
+            if(v==='18') return '<span class="ver-tag v18">1.8</span>';
+            return '';
+        }
+        // 根据模块的 CombatVersion 过滤选项：选择器/共享项始终显示，版本项只显示对应版本。
+        function optionsForModule(m){
+            if(!m.options || m.options.length===0) return [];
+            const cvOpt = m.options.find(o => o.name==='CombatVersion');
+            const cv = cvOpt ? cvOpt.value : null;
+            if(!cv) return m.options; // 该模块没有版本选择器 → 全显示
+            return m.options.filter(o => {
+                if(o.name==='CombatVersion') return true;      // 选择器本身
+                const v = versionOf(o);
+                if(v==='') return true;                         // 共享项
+                return (v==='18' && cv==='1.8') || (v==='19' && cv==='1.9+');
+            });
         }
         function optionWidget(o){
             const t = o.type;
@@ -401,7 +420,7 @@
 
         // ----- 单个模块卡片（使用 fullIndex 标识） -----
         function moduleCard(m, fullIndex){
-            const opts = (m.options||[]).map(optionWidget).join('');
+            const opts = optionsForModule(m).map(optionWidget).join('');
             const enabled = !!m.enabled;
             const expanded = expandedSet.has(m.name);
             return `<div class="setting-item ${expanded?'expanded':''}" data-fullindex="${fullIndex}" data-enabled="${enabled?'1':'0'}">

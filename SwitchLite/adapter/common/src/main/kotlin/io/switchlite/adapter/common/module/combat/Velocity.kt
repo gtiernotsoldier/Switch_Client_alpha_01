@@ -9,6 +9,7 @@ import io.switchlite.core.strategy.velocity.VelocityMode
 import io.switchlite.core.strategy.velocity.VelocityResult
 import io.switchlite.core.strategy.velocity.VelocityStrategy
 import io.switchlite.adapter.common.api.EventBridge
+import io.switchlite.adapter.common.module.HudLineProvider
 import io.switchlite.adapter.common.module.Module
 import io.switchlite.adapter.common.module.Category
 import io.switchlite.adapter.common.option.boolean
@@ -27,7 +28,15 @@ import io.switchlite.adapter.common.option.triggerOptions
  * 2. Algorithm in Core: all condition checking, scaling, delay queue,
  *    and click-burst logic lives in [VelocityStrategy] implementations.
  */
-object Velocity : Module("Velocity", Category.COMBAT) {
+object Velocity : Module("Velocity", Category.COMBAT), HudLineProvider {
+
+    // ========== HUD value (read once on enable/config change) ==========
+    override fun hudValue(): String {
+        val hPct = ((horizontalMin + horizontalMax) / 2f * 100f).toInt()
+        val vPct = ((verticalMin + verticalMax) / 2f * 100f).toInt()
+        return "$mode ${hPct}/${vPct}%"
+    }
+    override fun hudHighlight(): Boolean = true
 
     // ========== Mode ==========
     private val mode by choices("Mode", arrayOf("Legit", "Delay", "Click"))

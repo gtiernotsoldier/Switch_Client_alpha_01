@@ -61,7 +61,10 @@ object HUD : Module("HUD", Category.RENDER) {
 
     /** Rebuild the line list. Cheap; called on enable / config change / toggle. */
     fun refreshLines() {
-        if (!enabled) return
+        if (!enabled) {
+            io.switchlite.core.logging.CoreLogger.warn("[HUD] refreshLines skipped — HUD not enabled")
+            return
+        }
         val entries = ModuleRegistry.getEnabled()
             .filter { !it.hudHidden }
             .sortedWith(comparator())
@@ -78,6 +81,7 @@ object HUD : Module("HUD", Category.RENDER) {
         hudEntries = entries
         val names = entries.joinToString(" | ") { it.name }
         EventBridge.hudTextLine = if (names.isNotEmpty()) "SwitchLite | $names" else "SwitchLite"
+        io.switchlite.core.logging.CoreLogger.info("[HUD] refreshLines: ${entries.size} entries, enabled=$enabled")
     }
 
     private fun comparator(): Comparator<Module> {

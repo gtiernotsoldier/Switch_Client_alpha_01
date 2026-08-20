@@ -21,6 +21,9 @@ object OverlayRenderer {
     private const val CORNER_RADIUS = 8f
     private const val HUD_TITLE_BAR = 26
 
+    /** Diagnostic — log HUD visibility issue once, not every frame. */
+    private var hudDiagLogged = false
+
     fun render(ctx: RenderContext) {
         val g = ctx.gl
 
@@ -67,13 +70,19 @@ object OverlayRenderer {
 
     private fun drawHudCard(ctx: RenderContext) {
         val font = ctx.fontRenderer
-        if (!HUD.enabled) return
+        if (!HUD.enabled) {
+            if (!hudDiagLogged) { io.switchlite.core.logging.CoreLogger.warn("[Overlay] drawHudCard: HUD disabled"); hudDiagLogged = true }
+            return
+        }
 
         // Transparent text list — no card background (SwitchLite HUD style).
         // One line per enabled module: "Name" + optional value; red when the
         // module is active, orange highlight for numeric values.
         val entries = HUD.hudEntries
-        if (entries.isEmpty()) return
+        if (entries.isEmpty()) {
+            if (!hudDiagLogged) { io.switchlite.core.logging.CoreLogger.warn("[Overlay] drawHudCard: no entries"); hudDiagLogged = true }
+            return
+        }
 
         val lineHeight = font.fontHeight + 3
         val left = HUD.position != "Right"

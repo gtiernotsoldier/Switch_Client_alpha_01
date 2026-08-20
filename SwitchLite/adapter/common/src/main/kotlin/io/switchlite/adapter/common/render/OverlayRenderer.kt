@@ -120,11 +120,6 @@ object OverlayRenderer {
         // accent tint on the left edge (spine)
         RenderUtils.rect(ctx, panelX + 1, panelY + 8, 3f, panelH - 16, RenderUtils.withAlpha(0xFFFF7A00.toInt(), 0.35f + 0.20f * breathe))
 
-        // ── Flowing spine light (bright spot travelling down the left edge) ──
-        val flowY = panelY + 8 + ((System.currentTimeMillis() % 2800L) / 2800f) * (panelH - 16)
-        RenderUtils.rect(ctx, panelX - 1, (flowY - 7).toFloat(), 6f, 14f, RenderUtils.withAlpha(0xFFFFB432.toInt(), 0.55f))
-        RenderUtils.rect(ctx, panelX - 1, (flowY - 3).toFloat(), 6f, 6f, RenderUtils.withAlpha(0xFFFFE0A0.toInt(), 0.8f))
-
         var y = (panelY + 10).toInt()
         for (entry in entries) {
             val isTitle = entry.name == "SwitchLite"

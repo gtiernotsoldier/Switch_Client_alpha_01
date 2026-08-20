@@ -86,20 +86,36 @@ object OverlayRenderer {
 
         val lineHeight = font.fontHeight + 3
         val left = HUD.position != "Right"
-        val startX = if (left) HUD.posX else ctx.scaledWidth - HUD.posX
+        val margin = HUD.posX
+        // Right-aligned: value hugs the right edge, name sits to its left.
+        val rightEdge = ctx.scaledWidth - margin
+        // "Breathing": a slow time-based pulse for the highlight value text.
+        val breathe = ((System.currentTimeMillis() % 2000L) / 2000f).let {
+            if (it < 0.5f) it * 2f else 2f - it * 2f   // 0..1..0 triangle wave
+        }
 
         var y = HUD.posY
         for (entry in entries) {
             val nameColor = if (entry.isRed) Theme.ERROR else Theme.TEXT
-            font.drawStringWithShadow(entry.name, startX, y, nameColor)
-            if (entry.value.isNotEmpty()) {
-                val valueColor = if (entry.highlight) Theme.ACCENT else Theme.TEXT_DIM
-                val valueX = if (left) {
-                    startX + font.getStringWidth(entry.name) + 8
-                } else {
-                    startX - font.getStringWidth("${entry.name}  ${entry.value}") - 2
+            if (left) {
+                // Left: "Name" then "value" to the right.
+                font.drawStringWithShadow(entry.name, margin, y, nameColor)
+                if (entry.value.isNotEmpty()) {
+                    val vc = if (entry.highlight) Theme.withAlpha(Theme.ACCENT, 0.6f + 0.4f * breathe) else Theme.TEXT_DIM
+                    font.drawStringWithShadow(entry.value, margin + font.getStringWidth(entry.name) + 8, y, vc)
                 }
-                font.drawStringWithShadow(entry.value, valueX, y, valueColor)
+            } else {
+                // Right (mirror of left): row is right-aligned. "value" then "Name",
+                // value hugs the right edge.
+                val total = font.getStringWidth(entry.name) +
+                    (if (entry.value.isNotEmpty()) font.getStringWidth(entry.value) + 8 else 0)
+                var x = rightEdge - total
+                if (entry.value.isNotEmpty()) {
+                    val vc = if (entry.highlight) Theme.withAlpha(Theme.ACCENT, 0.6f + 0.4f * breathe) else Theme.TEXT_DIM
+                    font.drawStringWithShadow(entry.value, x, y, vc)
+                    x += font.getStringWidth(entry.value) + 8
+                }
+                font.drawStringWithShadow(entry.name, x, y, nameColor)
             }
             y += lineHeight
         }

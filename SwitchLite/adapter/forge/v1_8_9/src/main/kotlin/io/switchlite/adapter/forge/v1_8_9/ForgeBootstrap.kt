@@ -56,15 +56,25 @@ object ForgeBootstrap {
     private val mouseGetX by lazy { try { mouseClass.getMethod("getX") } catch (_: Exception) { null } }
     private val mouseGetY by lazy { try { mouseClass.getMethod("getY") } catch (_: Exception) { null } }
 
-    // Smooth font for the HUD (built lazily on the render thread — it uploads a
-    // glyph atlas texture via GL11Bridge). Falls back gracefully if loading fails.
-    private val smoothFont: SmoothFontRenderer? by lazy {
-        try {
-            SmoothFontRenderer(FontFactory.loadRegular(16f), glBridge)
-        } catch (e: Exception) {
-            CoreLogger.error("[ForgeBootstrap] SmoothFont init failed: ${e.javaClass.simpleName}: ${e.message}")
-            null
+    // Smooth font for the HUD. Built once, defensively: any failure (incl.
+    // errors from the heavy atlas allocation) must never break HUD rendering —
+    // it falls back to the vanilla font renderer.
+    private var smoothFont: SmoothFontRenderer? = null
+    private var smoothFontFailed = false
+
+    private fun resolveFont(fallback: io.switchlite.adapter.common.render.FontRendererBridge): io.switchlite.adapter.common.render.FontRendererBridge {
+        if (smoothFontFailed) return fallback
+        if (smoothFont == null) {
+            try {
+                smoothFont = SmoothFontRenderer(FontFactory.loadRegular(16f), glBridge)
+                CoreLogger.info("[ForgeBootstrap] Smooth font initialized for HUD")
+            } catch (t: Throwable) {
+                smoothFontFailed = true
+                CoreLogger.error("[ForgeBootstrap] SmoothFont init failed: ${t.javaClass.simpleName}: ${t.message} — using vanilla font")
+                smoothFont = null
+            }
         }
+        return smoothFont ?: fallback
     }
 
     // ── Keyboard state polling for module keybinds (state, edge-detected) ──
@@ -257,7 +267,7 @@ object ForgeBootstrap {
             val ctx = RenderContext(
                 scaledWidth = scaledWidth,
                 scaledHeight = scaledHeight,
-                fontRenderer = smoothFont ?: ForgeFontRendererBridge(fontRendererObj),
+                fontRenderer = resolveFont(ForgeFontRendererBridge(fontRendererObj)),
                 gl = glBridge
             )
 

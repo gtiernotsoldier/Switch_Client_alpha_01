@@ -21,10 +21,10 @@ object ConfigManager {
     private val mapper = ObjectMapper().enable(SerializationFeature.INDENT_OUTPUT)
 
     /** Current values: key = "ModuleName.optionName", value = current runtime value. */
-    private val values = mutableMapOf<String, Any>()
+    private val values = linkedMapOf<String, Any>()
 
-    /** Registered option metadata for validation and serialization. */
-    private val registry = mutableMapOf<String, OptionMeta>()
+    /** Registered option metadata (LinkedHashMap → keeps module-declaration order). */
+    private val registry = linkedMapOf<String, OptionMeta>()
 
     /** Change listeners: key = option key, listeners notified on value change. */
     private val listeners = mutableMapOf<String, MutableList<(Any) -> Unit>>()

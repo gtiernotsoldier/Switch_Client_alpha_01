@@ -75,89 +75,56 @@ object OverlayRenderer {
             return
         }
 
-        // Transparent text list — no card background (SwitchLite HUD style).
-        // One line per enabled module: "Name" + optional value; red when the
-        // module is active, orange highlight for numeric values.
         val entries = HUD.hudEntries
         if (entries.isEmpty()) {
             if (!hudDiagLogged) { io.switchlite.core.logging.CoreLogger.warn("[Overlay] drawHudCard: no entries"); hudDiagLogged = true }
             return
         }
 
-        val lineHeight = font.fontHeight + 5
+        val lineHeight = font.fontHeight + 4
         val left = HUD.position != "Right"
         val margin = HUD.posX
         val rightEdge = ctx.scaledWidth - margin
-        // "Breathing": slow 3.6s pulse for the whole panel.
         val breathe = ((System.currentTimeMillis() % 3600L) / 3600f).let {
             if (it < 0.5f) it * 2f else 2f - it * 2f
         }
-        val breathOffset = (breathe - 0.5f) * -1.5f
 
-        // Measure the widest row (name + value) for a uniform panel width.
-        var maxW = font.getStringWidth("SwitchLite")
-        for (e in entries) {
-            var w = font.getStringWidth(e.name)
-            if (e.value.isNotEmpty()) w += 10 + font.getStringWidth(e.value)
-            if (w > maxW) maxW = w
-        }
-        val panelW = (maxW + 34).toFloat()
-        val panelH = (entries.size * lineHeight + 16).toFloat()
-        val panelX = if (left) margin.toFloat() else (rightEdge - panelW).toFloat()
-        // Clamp vertically so a long module list never runs off the screen.
-        val rawPanelY = HUD.posY + breathOffset
-        val maxPanelY = (ctx.scaledHeight - panelH).coerceAtLeast(0f)
-        val panelY = rawPanelY.coerceIn(0f, maxPanelY).toFloat()
-
-        // ── Whole glass panel: soft shadow + translucent gradient + border ──
-        RenderUtils.shadow(ctx, panelX, panelY, panelW, panelH, 14f, depth = 4)
-        RenderUtils.verticalGradient(
-            ctx, panelX, panelY, panelW, panelH,
-            RenderUtils.withAlpha(0x141018.toInt(), 0.78f + 0.05f * breathe),
-            RenderUtils.withAlpha(0x0A0A12.toInt(), 0.86f + 0.04f * breathe),
-            bands = 6
-        )
-        RenderUtils.roundedRectOutline(ctx, panelX, panelY, panelW, panelH, 14f, 0x26FFFFFF.toInt(), 1f, 0x00000000.toInt())
-        // top highlight (glass reflection)
-        RenderUtils.rect(ctx, panelX + 8, panelY + 1.5f, panelW - 16, 1f, 0x2EFFFFFF.toInt())
-        // accent tint on the left edge (spine)
-        RenderUtils.rect(ctx, panelX + 1, panelY + 8, 3f, panelH - 16, RenderUtils.withAlpha(0xFFFF7A00.toInt(), 0.35f + 0.20f * breathe))
-
-        var y = (panelY + 10).toInt()
+        // ── Per-module independent bars (no enclosing panel) ──
+        var y = HUD.posY
         for (entry in entries) {
             val isTitle = entry.name == "SwitchLite"
+            // Measure this row's width (name + value).
+            var rowW = font.getStringWidth(entry.name) + 20
+            if (entry.value.isNotEmpty()) rowW += 8 + font.getStringWidth(entry.value)
+            val rowH = (lineHeight + 2).toFloat()
+
+            val rowX = if (left) margin.toFloat() else (rightEdge - rowW).toFloat()
+            val rowYf = y.toFloat()
+
+            // Individual rounded bar (no enclosing panel).
+            if (entry.isRed) {
+                RenderUtils.glow(ctx, rowX, rowYf, rowW.toFloat(), rowH, 8f, 0xFFFF5A5A.toInt(), spread = 4f, layers = 3)
+                RenderUtils.roundedRect(ctx, rowX, rowYf, rowW.toFloat(), rowH, 8f, 0x381A0A0A.toInt())
+                RenderUtils.roundedRectOutline(ctx, rowX, rowYf, rowW.toFloat(), rowH, 8f, 0x4AFF4D4D.toInt(), 1f, 0x381A0A0A.toInt())
+            } else if (isTitle) {
+                RenderUtils.roundedRect(ctx, rowX, rowYf, rowW.toFloat(), rowH, 8f, 0x2EFFFFFF.toInt())
+                RenderUtils.roundedRectOutline(ctx, rowX, rowYf, rowW.toFloat(), rowH, 8f, 0x4AFF7A00.toInt(), 1f, 0x2EFFFFFF.toInt())
+            } else {
+                RenderUtils.roundedRect(ctx, rowX, rowYf, rowW.toFloat(), rowH, 8f, 0x0EFFFFFF.toInt())
+                RenderUtils.roundedRectOutline(ctx, rowX, rowYf, rowW.toFloat(), rowH, 8f, 0x12FFFFFF.toInt(), 1f, 0x0EFFFFFF.toInt())
+            }
+
+            // Text: name, value right after it.
             val nameColor = when {
                 isTitle -> Theme.ACCENT
                 entry.isRed -> Theme.ERROR
-                else -> Theme.TEXT_DIM   // disabled/plain modules are dimmer → clearer hierarchy
+                else -> Theme.TEXT_DIM
             }
-            val rowH = (lineHeight - 1).toFloat()
-
-            // Per-row glass bar — strong red glow when enabled, accent for title,
-            // faint + dim for disabled so enabled modules stand out.
-            val rowYf = y.toFloat()
-            if (entry.isRed) {
-                RenderUtils.glow(ctx, panelX + 6, rowYf, panelW - 12, rowH, 8f, 0xFFFF5A5A.toInt(), spread = 5f, layers = 4)
-                RenderUtils.roundedRect(ctx, panelX + 6, rowYf, panelW - 12, rowH, 8f, 0x381A0A0A.toInt())
-                RenderUtils.roundedRectOutline(ctx, panelX + 6, rowYf, panelW - 12, rowH, 8f, 0x4AFF4D4D.toInt(), 1f, 0x381A0A0A.toInt())
-            } else if (isTitle) {
-                RenderUtils.glow(ctx, panelX + 6, rowYf, panelW - 12, rowH, 8f, 0xFFFF7A00.toInt(), spread = 4f, layers = 3)
-                RenderUtils.roundedRect(ctx, panelX + 6, rowYf, panelW - 12, rowH, 8f, 0x2EFFFFFF.toInt())
-                RenderUtils.roundedRectOutline(ctx, panelX + 6, rowYf, panelW - 12, rowH, 8f, 0x4AFF7A00.toInt(), 1f, 0x2EFFFFFF.toInt())
-            } else {
-                // Disabled: very faint bar + dim text.
-                RenderUtils.roundedRect(ctx, panelX + 6, rowYf, panelW - 12, rowH, 8f, 0x0EFFFFFF.toInt())
-                RenderUtils.roundedRectOutline(ctx, panelX + 6, rowYf, panelW - 12, rowH, 8f, 0x12FFFFFF.toInt(), 1f, 0x0EFFFFFF.toInt())
-            }
-
-            // Text: name, then value right after it with a small fixed gap
-            // (so the number is close to the name, not pushed to the far edge).
-            val tx = (panelX + 14).toInt()
+            val tx = (rowX + 10).toInt()
             font.drawStringWithShadow(entry.name, tx, y, nameColor)
             if (entry.value.isNotEmpty()) {
                 val vc = if (entry.highlight) RenderUtils.withAlpha(Theme.ACCENT, 0.75f + 0.25f * breathe) else Theme.TEXT_DIM
-                val valueX = tx + font.getStringWidth(entry.name) + 8
-                font.drawStringWithShadow(entry.value, valueX, y, vc)
+                font.drawStringWithShadow(entry.value, tx + font.getStringWidth(entry.name) + 8, y, vc)
             }
             y += lineHeight
         }

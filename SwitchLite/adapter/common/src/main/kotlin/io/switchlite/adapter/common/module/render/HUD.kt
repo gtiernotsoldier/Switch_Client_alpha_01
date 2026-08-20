@@ -63,7 +63,7 @@ object HUD : Module("HUD", Category.RENDER) {
     fun refreshLines() {
         if (!enabled) return
         val entries = ModuleRegistry.getEnabled()
-            .filter { it is HudLineProvider && !it.hudHidden }
+            .filter { !it.hudHidden && it is HudLineProvider }
             .sortedWith(comparator())
             .map { module ->
                 val provider = module as HudLineProvider
@@ -80,17 +80,20 @@ object HUD : Module("HUD", Category.RENDER) {
         EventBridge.hudTextLine = if (names.isNotEmpty()) "SwitchLite | $names" else "SwitchLite"
     }
 
-    private fun comparator(): Comparator<Module> = Comparator { a, b ->
-        when (sortMode) {
-            "Alphabetical" -> a.name.compareTo(b.name)
-            "Length" -> a.name.length.compareTo(b.name.length)
-            "Category" -> {
-                val c = a.category.ordinal.compareTo(b.category.ordinal)
-                if (c != 0) c else a.name.compareTo(b.name)
+    private fun comparator(): Comparator<Module> {
+        val base = Comparator<Module> { a, b ->
+            when (sortMode) {
+                "Alphabetical" -> a.name.compareTo(b.name)
+                "Length" -> a.name.length.compareTo(b.name.length)
+                "Category" -> {
+                    val c = a.category.ordinal.compareTo(b.category.ordinal)
+                    if (c != 0) c else a.name.compareTo(b.name)
+                }
+                else -> 0
             }
-            else -> 0
         }
-    }.let { if (reversed) it.reversed() else it }
+        return if (reversed) base.reversed() else base
+    }
 
     // ═══════════════════════════════════════════
     //  Config change → refresh once (not per tick)
@@ -138,12 +141,13 @@ object HUD : Module("HUD", Category.RENDER) {
     }
 
     private val tickListener: (PlayerState, TargetState?) -> Unit = { _, _ ->
-        if (!enabled) return@tickListener
-        val key = ModuleRegistry.getEnabled().map { it.name }.sorted().joinToString(",")
-        if (key != lastEnabledKey) {
-            lastEnabledKey = key
-            refreshLines()
-            listenToModuleConfigs()
+        if (enabled) {
+            val key = ModuleRegistry.getEnabled().map { it.name }.sorted().joinToString(",")
+            if (key != lastEnabledKey) {
+                lastEnabledKey = key
+                refreshLines()
+                listenToModuleConfigs()
+            }
         }
     }
 }

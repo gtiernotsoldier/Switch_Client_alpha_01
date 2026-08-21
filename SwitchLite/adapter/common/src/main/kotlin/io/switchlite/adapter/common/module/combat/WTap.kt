@@ -99,6 +99,13 @@ object WTap : Module("WTap", Category.COMBAT) {
         // Player is holding W and not tapping — ensure the key reads as pressed.
         EventBridge.syntheticForward = true
 
+        // Raven: only tap while attacking — require the effective left click (physical OR
+        // synthetic) so it works both manually and with AutoClicker.
+        if (!(EventBridge.syntheticAttack || player.isAttackKeyDown)) {
+            hitCounter = 0
+            return
+        }
+
         // Target guards
         if (target == null || target.distance < rangeMin || target.distance > rangeMax) { hitCounter = 0; return }
         if (target.health <= 0f) { hitCounter = 0; return }

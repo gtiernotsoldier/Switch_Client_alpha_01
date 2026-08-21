@@ -96,7 +96,9 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
         }
 
         // ---------- Attack detection (rising edge) ----------
-        val isAttacking = player.isAttackKeyDown
+        // Use the EFFECTIVE attack state (physical OR synthetic) so AutoBlock follows
+        // AutoClicker's synthetic clicks too, not just the player's physical left click.
+        val isAttacking = EventBridge.syntheticAttack || player.isAttackKeyDown
         val attackJustStarted = isAttacking && !wasAttacking
         wasAttacking = isAttacking
 

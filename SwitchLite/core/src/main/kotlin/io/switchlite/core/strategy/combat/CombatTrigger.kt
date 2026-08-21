@@ -48,11 +48,15 @@ object CombatTrigger {
         hitPerMax: Int,
         chance: Int
     ): EvalResult {
-        // 1. POST/PRE hurt-time gate
+        // POST/PRE hurt window gate. Raven semantics (MC 1.8.9 Entity.hurtResistantTime,
+        // i-frames counted down from 20): the target is "just hit" while in the window.
+        //   POST — fire right after the target was hit (still inside the i-frame window).
+        //   PRE  — fire right before / as the i-frame window ends (attack about to land).
+        // We mirror Raven's `hurtResistantTime >= 10` (POST) / `<= 10` (PRE).
         val hurtOk = when (mode) {
-            Mode.POST  -> target.hurtTime >= maxHurtTime
-            Mode.PRE   -> target.hurtTime <  maxHurtTime
-            Mode.EQUAL -> target.hurtTime == maxHurtTime
+            Mode.POST  -> target.hurtResistantTime >= 10
+            Mode.PRE   -> target.hurtResistantTime <= 10
+            Mode.EQUAL -> target.hurtResistantTime == maxHurtTime
         }
         if (!hurtOk) return EvalResult(false, hitCounter, hitThreshold)
 

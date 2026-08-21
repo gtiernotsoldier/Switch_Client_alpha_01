@@ -158,6 +158,7 @@ object ForgeStateExtractor : IStateExtractor {
         val motionZ = MappingContext.getFieldValue(entity, "forge:entity_motionZ") as? Double ?: 0.0
         val health = MappingContext.invokeMethod(entity, "forge:entity_health") as? Float ?: 0f
         val hurtTime = MappingContext.getFieldValue(entity, "forge:entity_hurtTime") as? Int ?: 0
+        val hurtResistantTime = MappingContext.getFieldValue(entity, "forge:entity_hurtResistantTime") as? Int ?: hurtTime
 
         val bb = MappingContext.getFieldValue(entity, "forge:entity_boundingBox")
         val hitbox = if (bb != null) {
@@ -208,6 +209,7 @@ object ForgeStateExtractor : IStateExtractor {
             motionZ = motionZ,
             health = health,
             hurtTime = hurtTime,
+            hurtResistantTime = hurtResistantTime,
             isMovingBackward = isMovingBackward,
             isGoingBack = isMovingBackward,
             isMovingTowardsPlayer = isMovingTowardsPlayer,

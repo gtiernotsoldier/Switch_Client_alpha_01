@@ -233,6 +233,15 @@
     ],
     "mcp": "hurtTime"
   },
+  "forge:entity_hurtResistantTime": {
+    "class": "net.minecraft.entity.Entity",
+    "field": "field_70173_aa",
+    "aliases": [
+      "entity_hurtResistantTime",
+      "hurtResistantTime"
+    ],
+    "mcp": "hurtResistantTime"
+  },
   "forge:entity_isDead": {
     "class": "net.minecraft.entity.Entity",
     "aliases": [

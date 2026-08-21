@@ -15,6 +15,9 @@ data class TargetState(
     val motionZ: Double,
     val health: Float,
     val hurtTime: Int,
+    /** Entity invulnerability (i-frames) counter — Raven uses this for BlockHit PRE/POST.
+     *  &gt;0 means the target was just hit (in the hurt window). */
+    val hurtResistantTime: Int,
     val isMovingBackward: Boolean,
     val isGoingBack: Boolean,
     val isMovingTowardsPlayer: Boolean,
@@ -34,6 +37,7 @@ data class TargetState(
         motionX = motionX, motionY = motionY, motionZ = motionZ,
         health = health,
         hurtTime = hurtTime,
+        hurtResistantTime = hurtTime,
         isMovingBackward = false,
         isGoingBack = false,
         isMovingTowardsPlayer = false,
@@ -50,6 +54,7 @@ data class TargetState(
             motionX = 0.0, motionY = 0.0, motionZ = 0.0,
             health = 0f,
             hurtTime = 0,
+            hurtResistantTime = 0,
             isMovingBackward = false,
             isGoingBack = false,
             isMovingTowardsPlayer = false,

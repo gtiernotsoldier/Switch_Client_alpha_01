@@ -98,9 +98,13 @@ abstract class Module(
 
     // ── Config caching ──
 
-    private var configDirty: Boolean = true
+    // configDirty must be @Volatile: it is written by the WebUI thread (markConfigDirty)
+    // and read by the background tick thread (cachedConfig). Without volatility the write
+    // may not be visible, so the tick thread keeps returning the stale cached config and
+    // WebUI changes only appear after the module is re-enabled (which bypasses the cache).
+    @Volatile private var configDirty: Boolean = true
     @Volatile private var configCache: Any? = null
-    private var taggedCaches: MutableMap<String, Any?>? = null
+    @Volatile private var taggedCaches: MutableMap<String, Any?>? = null
 
     /**
      * Call this from the GUI whenever any option value changes.

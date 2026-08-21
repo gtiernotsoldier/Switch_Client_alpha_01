@@ -128,6 +128,22 @@ object EventBridge {
         keyListeners.forEach { it(keyCode, pressed) }
     }
 
+    // ========== Main-Thread Synthetic Input State ==========
+    // Combat actions must be applied on the MC render thread, NOT the 20Hz
+    // SwitchLite-Tick background thread. Modules (background thread) only write
+    // these *desired* states; the platform adapter reads them on the render thread
+    // (in ForgeBootstrap.render / FabricBootstrap render) and writes the real
+    // KeyBinding fields there. This removes the race where a background-thread
+    // key press is cleared before MC's render thread ever reads it.
+    @Volatile var syntheticAttack: Boolean = false
+    @Volatile var syntheticUse: Boolean = false
+
+    /** Set the desired synthetic attack-key state (background thread). */
+    fun setSyntheticAttack(desired: Boolean) { syntheticAttack = desired }
+
+    /** Set the desired synthetic use-item (right-click) state (background thread). */
+    fun setSyntheticUse(desired: Boolean) { syntheticUse = desired }
+
     // ========== Attack (Left Click) ==========
     private var attackTrigger: (() -> Unit)? = null
 
@@ -455,6 +471,8 @@ object EventBridge {
         reachSetter = null
         attackTrigger = null
         cancelAttackHandler = null
+        syntheticAttack = false
+        syntheticUse = false
         switchSlotHandler = null
         getBestSlotHandler = null
         pressSneakHandler = null

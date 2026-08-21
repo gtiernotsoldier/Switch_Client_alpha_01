@@ -42,6 +42,8 @@ object FabricBootstrap : ClientModInitializer {
 
         // Register tick event via Fabric API
         ClientTickEvents.END_CLIENT_TICK.register { client ->
+            // Apply synthetic combat input (attack/use-item) on the main thread.
+            FabricEventBridge.applySyntheticInput()
             FabricEventBridge.onTick()
             setupKeyCallback(client)
         }

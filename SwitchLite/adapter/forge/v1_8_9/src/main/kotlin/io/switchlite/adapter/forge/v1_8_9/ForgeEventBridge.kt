@@ -470,17 +470,6 @@ object ForgeEventBridge : IEventBridge {
     }
 
     fun onTick() {
-        // Release synthetic attack key if physical mouse not held
-        try {
-            val mc = getMc() ?: return
-            val gs = MappingContext.getFieldValue(mc, "forge:mc_gameSettings") ?: return
-            val keyBindAttack = MappingContext.getFieldValue(gs, "forge:gs_keyBindAttack") ?: return
-            val pressed = keybindingPressedField?.getBoolean(keyBindAttack) ?: false
-            if (pressed && !isMouseButtonDown(0)) {
-                keybindingPressedField?.setBoolean(keyBindAttack, false)
-            }
-        } catch (_: Exception) {}
-
         // Apply pending motion override
         // Guard: only clear pendingMotion if the player is available to apply it.
         // If the player is null (e.g., just disconnected), preserve pendingMotion
@@ -498,5 +487,36 @@ object ForgeEventBridge : IEventBridge {
         val target = if (targetId != null) ForgeStateExtractor.extractTargetState(targetId) else null
 
         EventBridge.onTick(player, target)
+    }
+
+    /**
+     * Apply synthetic input (attack / use-item) on the MC RENDER thread.
+     *
+     * Called from ForgeBootstrap.render() (which runs inside the Display.update()
+     * Javassist hook — i.e. the MC main thread). Combat modules set their desired
+     * state on the 20Hz background thread via [EventBridge.setSyntheticAttack] /
+     * [EventBridge.setSyntheticUse]; this method is the only place that writes the
+     * real KeyBinding.pressed fields, so there is no cross-thread race and MC's
+     * main-thread input loop actually sees the press.
+     *
+     * The OR with the physical mouse button is essential: it preserves the player's
+     * own clicks (never releases a manually-held attack) while still driving the
+     * synthetic press from the main thread.
+     */
+    fun applySyntheticInput() {
+        try {
+            val mc = getMc() ?: return
+            val gs = MappingContext.getFieldValue(mc, "forge:mc_gameSettings") ?: return
+            val keyBindAttack = MappingContext.getFieldValue(gs, "forge:gs_keyBindAttack") ?: return
+            keybindingPressedField?.setBoolean(
+                keyBindAttack,
+                EventBridge.syntheticAttack || isMouseButtonDown(0)
+            )
+            val keyBindUse = MappingContext.getFieldValue(gs, "forge:gs_keyBindUseItem") ?: return
+            keybindingPressedField?.setBoolean(
+                keyBindUse,
+                EventBridge.syntheticUse || isMouseButtonDown(1)
+            )
+        } catch (_: Exception) {}
     }
 }

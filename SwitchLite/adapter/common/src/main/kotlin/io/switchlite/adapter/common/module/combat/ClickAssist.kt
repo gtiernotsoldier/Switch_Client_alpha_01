@@ -93,7 +93,7 @@ object ClickAssist : Module("ClickAssist", Category.COMBAT) {
         // ---- Process scheduled extra clicks ----
         // Phase 1: release pending right-click from previous tick
         if (rightExtraPressed) {
-            EventBridge.releaseUsingItem()
+            EventBridge.setSyntheticUse(false)
             rightExtraPressed = false
             // If there are more scheduled clicks, the next one fires immediately
             if (scheduledClicks > 0) {
@@ -185,10 +185,10 @@ object ClickAssist : Module("ClickAssist", Category.COMBAT) {
     /** Fire one extra click (left or right). Right-click spans two ticks. */
     private fun fireExtraClick() {
         if (nextIsRightClick) {
-            EventBridge.pressUseItem()
+            EventBridge.setSyntheticUse(true)
             rightExtraPressed = true  // release happens next tick
         } else {
-            EventBridge.triggerAttack()
+            EventBridge.setSyntheticAttack(true)
         }
     }
 
@@ -241,7 +241,7 @@ object ClickAssist : Module("ClickAssist", Category.COMBAT) {
 
     private fun cleanup() {
         if (rightExtraPressed) {
-            EventBridge.releaseUsingItem()
+            EventBridge.setSyntheticUse(false)
             rightExtraPressed = false
         }
         scheduledClicks = 0

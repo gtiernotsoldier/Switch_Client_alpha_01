@@ -79,7 +79,7 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
         // ---------- Switch re-block timer ----------
         if (reblockPending) {
             if (elapsedNs(reblockStartNano) >= delayMs * 1_000_000L) {
-                EventBridge.pressUseItem()
+                EventBridge.setSyntheticUse(true)
                 blockHeld = true
                 reblockPending = false
             }
@@ -117,7 +117,7 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
         // ---------- Mode-specific behaviour ----------
         when (mode) {
             "Normal" -> {
-                EventBridge.pressUseItem()
+                EventBridge.setSyntheticUse(true)
                 blockHeld = true
                 blockStartNano = System.nanoTime()
             }
@@ -129,7 +129,7 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
                     reblockStartNano = System.nanoTime()
                 } else {
                     // Not blocking → start blocking now
-                    EventBridge.pressUseItem()
+                    EventBridge.setSyntheticUse(true)
                     blockHeld = true
                 }
             }
@@ -146,7 +146,7 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
     private fun releaseBlock() {
         if (!blockHeld) return
         if (EventBridge.isRightMousePhysicallyDown) return  // player is manually holding
-        EventBridge.releaseUsingItem()
+        EventBridge.setSyntheticUse(false)
         blockHeld = false
     }
 
@@ -162,6 +162,7 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
     override fun onDisable() {
         EventBridge.unregisterTickListener(tickListener)
         releaseBlock()
+        EventBridge.setSyntheticUse(false)
         reblockPending = false
         wasAttacking = false
     }

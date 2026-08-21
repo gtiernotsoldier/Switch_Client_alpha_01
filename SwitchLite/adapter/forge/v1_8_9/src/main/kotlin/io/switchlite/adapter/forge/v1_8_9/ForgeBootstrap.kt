@@ -231,6 +231,11 @@ object ForgeBootstrap {
                 CoreLogger.info("[ForgeBootstrap.render] hook alive. HUD.enabled=${io.switchlite.adapter.common.module.render.HUD.enabled}, entries=${io.switchlite.adapter.common.module.render.HUD.hudEntries.size}")
             }
 
+            // Apply combat synthetic input (attack/use-item) on the MC main thread.
+            // Modules write desired state on the background tick thread; this is the
+            // only place that writes the real KeyBinding fields (race-free).
+            try { ForgeEventBridge.applySyntheticInput() } catch (_: Exception) {}
+
             // Module keybinds — poll keyboard state on the render thread, throttled.
             if (++keybindFrame % 4 == 0) {
                 try { pollModuleKeybinds() } catch (_: Exception) {}

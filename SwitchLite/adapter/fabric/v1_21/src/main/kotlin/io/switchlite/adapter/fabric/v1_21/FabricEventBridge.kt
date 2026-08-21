@@ -230,6 +230,23 @@ object FabricEventBridge : IEventBridge {
     }
 
     /**
+     * Apply synthetic combat input (attack / use-item) on the client main thread.
+     * Fabric's END_CLIENT_TICK event already runs on the main thread, so this is
+     * called there (not on a background thread), matching the Forge behavior and
+     * avoiding the cross-thread key race. The OR with the physical mouse button
+     * preserves the player's own clicks.
+     */
+    fun applySyntheticInput() {
+        try {
+            val player = mc.player ?: return
+            mc.options.attackKey.isPressed =
+                EventBridge.syntheticAttack || GLFW.glfwGetMouseButton(mc.window.handle, GLFW.GLFW_MOUSE_BUTTON_LEFT) == GLFW.GLFW_PRESS
+            mc.options.useKey.isPressed =
+                EventBridge.syntheticUse || GLFW.glfwGetMouseButton(mc.window.handle, GLFW.GLFW_MOUSE_BUTTON_RIGHT) == GLFW.GLFW_PRESS
+        } catch (_: Exception) {}
+    }
+
+    /**
      * Unregister Fabric event listeners.
      */
     override fun unregisterListeners() {

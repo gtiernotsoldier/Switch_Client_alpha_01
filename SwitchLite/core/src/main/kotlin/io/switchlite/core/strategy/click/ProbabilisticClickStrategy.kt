@@ -12,7 +12,8 @@ import io.switchlite.core.option.ClickMode
  * Processing pipeline per tick:
  * 1. Block-hit prevention → Skip if mining and [ClickConfig.disableOnBlock] is set.
  * 2. Pending second click (DOUBLE mode) → Click immediately.
- * 3. Null-target or condition fail → Skip.
+ * 3. Condition fail → Skip (blind: target may be null, ConditionChecker skips
+ *    target-based conditions when null, matching CooldownClickStrategy).
  * 4. Target change detection → update [ClickStrategy.State.lastTargetId].
  * 5. Compute effective CPS based on operating mode.
  * 6. Convert CPS to per-tick probability and roll.
@@ -48,13 +49,14 @@ class ProbabilisticClickStrategy : ClickStrategy<ClickConfig, ClickStrategy.Stat
             return ClickResult.Click
         }
 
-        // 3. Target + condition check
-        if (target == null || !ConditionChecker.check(config.triggerOptions, player, target)) {
+        // 3. Condition check (blind: target may be null — ConditionChecker skips
+        //    target-based conditions when null, matching CooldownClickStrategy)
+        if (!ConditionChecker.check(config.triggerOptions, player, target)) {
             return ClickResult.Skip
         }
 
         // 4. Target change detection
-        if (target.entityId != state.lastTargetId) {
+        if (target != null && target.entityId != state.lastTargetId) {
             state.lastTargetId = target.entityId
         }
 
@@ -65,7 +67,8 @@ class ProbabilisticClickStrategy : ClickStrategy<ClickConfig, ClickStrategy.Stat
             ClickOperatingMode.NORMAL -> sampleCpsInRange(lo, hi)
             ClickOperatingMode.LEGIT -> {
                 val base = sampleCpsInRange(lo, hi)
-                adjustCpsByDistance(base, lo, hi, target.distance)
+                // Blind mode: when there's no target there is no distance to adjust by.
+                if (target != null) adjustCpsByDistance(base, lo, hi, target.distance) else base
             }
         }.coerceAtLeast(1)
 

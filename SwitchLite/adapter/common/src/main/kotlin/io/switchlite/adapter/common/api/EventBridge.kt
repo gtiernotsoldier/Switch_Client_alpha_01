@@ -138,6 +138,18 @@ object EventBridge {
     @Volatile var syntheticAttack: Boolean = false
     @Volatile var syntheticUse: Boolean = false
 
+    /**
+     * Synthetic forward/back key states, written by WTap/STap on the background tick
+     * thread and applied to the real W/S KeyBinding on the render thread (in
+     * ForgeEventBridge.applySyntheticInput). This puts WTap/STap's tap on the main
+     * thread and lets the Keystrokes HUD flash the W/S keys. When the override flag is
+     * true the adapter drives the key fully from this state.
+     */
+    @Volatile var syntheticForward: Boolean = false
+    @Volatile var syntheticBack: Boolean = false
+    @Volatile var syntheticForwardOverride: Boolean = false
+    @Volatile var syntheticBackOverride: Boolean = false
+
     // ── Click CPS counters (Raven's mouseManager equivalent) ──
     // Recorded by the adapter on every press (synthetic or physical); read by the
     // Keystrokes HUD to display "N CPS". A 1-second sliding window.
@@ -543,6 +555,10 @@ object EventBridge {
         syntheticUse = false
         syntheticAttackOverride = false
         syntheticUseOverride = false
+        syntheticForward = false
+        syntheticBack = false
+        syntheticForwardOverride = false
+        syntheticBackOverride = false
         switchSlotHandler = null
         getBestSlotHandler = null
         pressSneakHandler = null

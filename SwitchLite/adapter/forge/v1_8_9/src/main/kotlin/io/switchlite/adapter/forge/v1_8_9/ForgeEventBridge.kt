@@ -110,6 +110,14 @@ object ForgeEventBridge : IEventBridge {
         } catch (_: Exception) {}
     }
 
+    /** Read the current pressed state of a game-settings key binding. */
+    private fun readKeyPressed(gsKey: String): Boolean = try {
+        val mc = getMc() ?: return false
+        val gs = MappingContext.getFieldValue(mc, "forge:mc_gameSettings") ?: return false
+        val keyBind = MappingContext.getFieldValue(gs, gsKey) ?: return false
+        keybindingPressedField?.getBoolean(keyBind) ?: false
+    } catch (_: Exception) { false }
+
     private fun sendPacket(packet: Any?) {
         try {
             val player = getPlayer() ?: return
@@ -535,6 +543,25 @@ object ForgeEventBridge : IEventBridge {
                 // Assist modules (ClickAssist/BlockHit/AutoBlock): augment the player's
                 // own input — OR with the physical button so their press is not stolen.
                 keybindingPressedField?.setBoolean(keyBindAttack, EventBridge.syntheticAttack || isMouseButtonDown(0))
+            }
+            // Forward/back keys (WTap/STap) — applied on the main thread so the tap lands
+            // in MC's input and the Keystrokes W/S keys flash. When a tap module overrides,
+            // drive the key fully from the synthetic state.
+            val keyBindForward = MappingContext.getFieldValue(gs, "forge:gs_keyBindForward")
+            if (keyBindForward != null) {
+                keybindingPressedField?.setBoolean(
+                    keyBindForward,
+                    if (EventBridge.syntheticForwardOverride) EventBridge.syntheticForward
+                    else EventBridge.syntheticForward || readKeyPressed("forge:gs_keyBindForward")
+                )
+            }
+            val keyBindBack = MappingContext.getFieldValue(gs, "forge:gs_keyBindBack")
+            if (keyBindBack != null) {
+                keybindingPressedField?.setBoolean(
+                    keyBindBack,
+                    if (EventBridge.syntheticBackOverride) EventBridge.syntheticBack
+                    else EventBridge.syntheticBack || readKeyPressed("forge:gs_keyBindBack")
+                )
             }
             val keyBindUse = MappingContext.getFieldValue(gs, "forge:gs_keyBindUseItem") ?: return
             if (EventBridge.syntheticUseOverride) {

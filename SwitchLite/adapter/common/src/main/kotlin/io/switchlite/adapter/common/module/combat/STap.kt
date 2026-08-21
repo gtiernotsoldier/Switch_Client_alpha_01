@@ -81,7 +81,7 @@ object STap : Module("STap", Category.COMBAT) {
 
         // ---- State machine events ----
         when (machine.tick(now)) {
-            TapStateMachine.Event.END_TAP -> EventBridge.releaseBack()
+            TapStateMachine.Event.END_TAP -> EventBridge.syntheticBack = false
             TapStateMachine.Event.SHOULD_START_TAP -> startTap(now)
             TapStateMachine.Event.NONE -> {}
         }
@@ -152,7 +152,7 @@ object STap : Module("STap", Category.COMBAT) {
     // Execution
     // ================================================================
     private fun startTap(nowNs: Long) {
-        EventBridge.pressBack()
+        EventBridge.syntheticBack = true  // press S for the tap
         val ms = when (combatVersion) {
             "1.8" -> Random.nextInt(actionMin18, actionMax18 + 1)
             "1.9+" -> Random.nextInt(actionMin19, actionMax19 + 1)
@@ -169,14 +169,14 @@ object STap : Module("STap", Category.COMBAT) {
             "1.9+" -> Random.nextInt(onceEvery19Min, onceEvery19Max + 1).coerceAtLeast(1)
             else -> 1
         }
+        EventBridge.syntheticBackOverride = true
         EventBridge.registerTickListener(tickListener)
     }
 
     override fun onDisable() {
         EventBridge.unregisterTickListener(tickListener)
-        if (machine.phase == TapStateMachine.Phase.TAPPING) {
-            EventBridge.releaseBack()
-        }
+        EventBridge.syntheticBack = false
+        EventBridge.syntheticBackOverride = false
         machine.reset()
         hitCounter = 0
     }

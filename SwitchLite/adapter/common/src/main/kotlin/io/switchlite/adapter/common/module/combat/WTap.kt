@@ -80,7 +80,7 @@ object WTap : Module("WTap", Category.COMBAT) {
 
         // ---- State machine events ----
         when (machine.tick(now)) {
-            TapStateMachine.Event.END_TAP -> EventBridge.pressForward()
+            TapStateMachine.Event.END_TAP -> EventBridge.syntheticForward = true
             TapStateMachine.Event.SHOULD_START_TAP -> startTap(now)
             TapStateMachine.Event.NONE -> {}
         }
@@ -151,7 +151,7 @@ object WTap : Module("WTap", Category.COMBAT) {
     // Execution
     // ================================================================
     private fun startTap(nowNs: Long) {
-        EventBridge.releaseForward()
+        EventBridge.syntheticForward = false  // release W for the tap
         val ms = when (combatVersion) {
             "1.8" -> Random.nextInt(actionMin18, actionMax18 + 1)
             "1.9+" -> Random.nextInt(actionMin19, actionMax19 + 1)
@@ -164,14 +164,14 @@ object WTap : Module("WTap", Category.COMBAT) {
     override fun onEnable() {
         hitCounter = 0
         hitThreshold = Random.nextInt(onceEveryMin, onceEveryMax + 1).coerceAtLeast(1)
+        EventBridge.syntheticForwardOverride = true
         EventBridge.registerTickListener(tickListener)
     }
 
     override fun onDisable() {
         EventBridge.unregisterTickListener(tickListener)
-        if (machine.phase == TapStateMachine.Phase.TAPPING) {
-            EventBridge.pressForward()
-        }
+        EventBridge.syntheticForward = false
+        EventBridge.syntheticForwardOverride = false
         machine.reset()
         hitCounter = 0
     }

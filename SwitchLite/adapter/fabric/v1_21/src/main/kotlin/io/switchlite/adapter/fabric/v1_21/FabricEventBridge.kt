@@ -239,10 +239,14 @@ object FabricEventBridge : IEventBridge {
     fun applySyntheticInput() {
         try {
             val player = mc.player ?: return
+            val physicalLeft = GLFW.glfwGetMouseButton(mc.window.handle, GLFW.GLFW_MOUSE_BUTTON_LEFT) == GLFW.GLFW_PRESS
+            val physicalRight = GLFW.glfwGetMouseButton(mc.window.handle, GLFW.GLFW_MOUSE_BUTTON_RIGHT) == GLFW.GLFW_PRESS
             mc.options.attackKey.isPressed =
-                EventBridge.syntheticAttack || GLFW.glfwGetMouseButton(mc.window.handle, GLFW.GLFW_MOUSE_BUTTON_LEFT) == GLFW.GLFW_PRESS
+                if (EventBridge.syntheticAttackOverride) EventBridge.syntheticAttack
+                else EventBridge.syntheticAttack || physicalLeft
             mc.options.useKey.isPressed =
-                EventBridge.syntheticUse || GLFW.glfwGetMouseButton(mc.window.handle, GLFW.GLFW_MOUSE_BUTTON_RIGHT) == GLFW.GLFW_PRESS
+                if (EventBridge.syntheticUseOverride) EventBridge.syntheticUse
+                else EventBridge.syntheticUse || physicalRight
         } catch (_: Exception) {}
     }
 

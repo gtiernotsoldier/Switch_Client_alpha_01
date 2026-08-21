@@ -508,15 +508,15 @@ object ForgeEventBridge : IEventBridge {
             val mc = getMc() ?: return
             val gs = MappingContext.getFieldValue(mc, "forge:mc_gameSettings") ?: return
             val keyBindAttack = MappingContext.getFieldValue(gs, "forge:gs_keyBindAttack") ?: return
-            keybindingPressedField?.setBoolean(
-                keyBindAttack,
-                EventBridge.syntheticAttack || isMouseButtonDown(0)
-            )
+            val attackPressed =
+                if (EventBridge.syntheticAttackOverride) EventBridge.syntheticAttack
+                else EventBridge.syntheticAttack || isMouseButtonDown(0)
+            keybindingPressedField?.setBoolean(keyBindAttack, attackPressed)
             val keyBindUse = MappingContext.getFieldValue(gs, "forge:gs_keyBindUseItem") ?: return
-            keybindingPressedField?.setBoolean(
-                keyBindUse,
-                EventBridge.syntheticUse || isMouseButtonDown(1)
-            )
+            val usePressed =
+                if (EventBridge.syntheticUseOverride) EventBridge.syntheticUse
+                else EventBridge.syntheticUse || isMouseButtonDown(1)
+            keybindingPressedField?.setBoolean(keyBindUse, usePressed)
         } catch (_: Exception) {}
     }
 }

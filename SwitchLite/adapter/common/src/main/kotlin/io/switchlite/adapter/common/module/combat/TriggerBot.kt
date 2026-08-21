@@ -105,12 +105,14 @@ object TriggerBot : Module("TriggerBot", Category.COMBAT) {
         state18.reset()
         state19.reset()
         strategy19.reset()
+        EventBridge.syntheticAttackOverride = true
         EventBridge.registerTickListener(tickListener)
     }
 
     override fun onDisable() {
         EventBridge.unregisterTickListener(tickListener)
         EventBridge.syntheticAttack = false
+        EventBridge.syntheticAttackOverride = false
         state18.reset()
         state19.reset()
     }

@@ -216,6 +216,7 @@ object AutoClicker : Module("AutoClicker", Category.COMBAT), HudLineProvider {
         state18.reset()
         state19.reset()
         strategy19.reset()
+        EventBridge.syntheticAttackOverride = true
 
         tickListener = { player, target ->
             if (enabled) onClientTick(player, target)
@@ -227,6 +228,7 @@ object AutoClicker : Module("AutoClicker", Category.COMBAT), HudLineProvider {
         tickListener?.let { EventBridge.unregisterTickListener(it) }
         tickListener = null
         EventBridge.syntheticAttack = false
+        EventBridge.syntheticAttackOverride = false
         state18.reset()
         state19.reset()
     }

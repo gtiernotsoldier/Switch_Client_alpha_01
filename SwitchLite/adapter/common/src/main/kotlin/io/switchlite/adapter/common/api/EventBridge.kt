@@ -138,6 +138,19 @@ object EventBridge {
     @Volatile var syntheticAttack: Boolean = false
     @Volatile var syntheticUse: Boolean = false
 
+    /**
+     * Whether a fully-automatic clicker (AutoClicker/TriggerBot) is active.
+     * When true, the attack key is fully driven by [syntheticAttack] (creating the
+     * CPS press/release rhythm) and is NOT OR-ed with the physical mouse button —
+     * otherwise the physical button being held would keep `pressed` stuck true and
+     * swallow the cadence. Assist modules (ClickAssist/BlockHit/AutoBlock) leave
+     * this false so they augment the player's own input via the OR path.
+     */
+    @Volatile var syntheticAttackOverride: Boolean = false
+
+    /** Same as [syntheticAttackOverride] but for the use-item (right-click) key. */
+    @Volatile var syntheticUseOverride: Boolean = false
+
     // ========== Attack (Left Click) ==========
     private var attackTrigger: (() -> Unit)? = null
 
@@ -467,6 +480,8 @@ object EventBridge {
         cancelAttackHandler = null
         syntheticAttack = false
         syntheticUse = false
+        syntheticAttackOverride = false
+        syntheticUseOverride = false
         switchSlotHandler = null
         getBestSlotHandler = null
         pressSneakHandler = null

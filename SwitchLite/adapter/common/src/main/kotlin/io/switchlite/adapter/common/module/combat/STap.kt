@@ -88,10 +88,11 @@ object STap : Module("STap", Category.COMBAT) {
 
         if (machine.phase != TapStateMachine.Phase.IDLE) return
 
-        // In IDLE, mirror the physical back key so the override doesn't block the player
-        // from voluntarily walking backward (S). STap only presses S for its own tap; when
-        // idle it must follow the player's actual S state.
-        EventBridge.syntheticBack = EventBridge.isKeyBackDown
+        // In IDLE, mirror the TRUE physical back key (LWJGL Keyboard.isKeyDown) so the
+        // override doesn't block the player from voluntarily walking backward (S). STap only
+        // presses S for its own tap. isKeyBackDown is rewritten by the override (self-loop);
+        // physicalBackDown is the raw physical key, unaffected.
+        EventBridge.syntheticBack = EventBridge.physicalBackDown
 
         // Guard: W must be physically held (Raven: Keyboard.isKeyDown(keyBindForward)).
         // Use the TRUE physical key state (LWJGL), not isMovingForward (velocity lag) and

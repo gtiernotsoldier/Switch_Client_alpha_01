@@ -87,54 +87,37 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
             return
         }
 
-        // ---------- Normal mode block-release timer ----------
-        if (blockHeld && mode == "Normal") {
-            if (elapsedNs(blockStartNano) >= delayMs * 1_000_000L) {
-                releaseBlock()
-            }
-            return
+        // ---------- Attack detection ----------
+        // Block while actively attacking: AutoClicker running (mouseButton0 reflects its
+        // cadence pulses on the render thread) OR the physical left button held. When not
+        // attacking, stop blocking. This makes AutoBlock hold the block for as long as the
+        // player/AutoClicker keeps attacking (the requested linkage).
+        val isAttacking = EventBridge.mouseButton0 || player.isAttackKeyDown
+
+        // Condition checks (only gate while attacking; otherwise just release).
+        var shouldBlock = isAttacking
+        if (isAttacking) {
+            if (target == null) shouldBlock = false
+            else if (target.distance < minDistance || target.distance > maxDistance) shouldBlock = false
+            else if (onlyCurrentView && !player.isLookingAtTarget) shouldBlock = false
+            else if (probability < 100 && Random.nextInt(100) >= probability) shouldBlock = false
         }
 
-        // ---------- Attack detection (rising edge) ----------
-        // Use the EFFECTIVE attack state (physical OR synthetic) so AutoBlock follows
-        // AutoClicker's synthetic clicks too, not just the player's physical left click.
-        val isAttacking = EventBridge.syntheticAttack || player.isAttackKeyDown
-        val attackJustStarted = isAttacking && !wasAttacking
-        wasAttacking = isAttacking
-
-        if (!attackJustStarted) return
-
-        // ---------- Condition checks ----------
-        if (target == null) return
-
-        // Distance range
-        if (target.distance < minDistance || target.distance > maxDistance) return
-
-        // Only current view
-        if (onlyCurrentView && !player.isLookingAtTarget) return
-
-        // Probability roll
-        if (probability < 100 && Random.nextInt(100) >= probability) return
-
-        // ---------- Mode-specific behaviour ----------
-        when (mode) {
-            "Normal" -> {
-                EventBridge.syntheticUse = true
-                blockHeld = true
+        if (shouldBlock && !blockHeld) {
+            // Start blocking now.
+            EventBridge.syntheticUse = true
+            blockHeld = true
+            if (mode == "Normal") {
+                // In Normal mode we keep blocking while attacking; Switch re-blocks after a hit.
                 blockStartNano = System.nanoTime()
             }
-            "Switch" -> {
-                if (blockHeld) {
-                    // Currently blocking → release for attack, then re-block
-                    releaseBlock()
-                    reblockPending = true
-                    reblockStartNano = System.nanoTime()
-                } else {
-                    // Not blocking → start blocking now
-                    EventBridge.syntheticUse = true
-                    blockHeld = true
-                }
-            }
+        } else if (!shouldBlock && blockHeld && mode != "Switch") {
+            // No longer attacking → stop blocking (Normal mode).
+            releaseBlock()
+        } else if (!shouldBlock && blockHeld && mode == "Switch") {
+            // Switch mode: release only if we started the block; but here we keep it simple
+            // and release when no longer attacking.
+            releaseBlock()
         }
     }
 

@@ -1,6 +1,7 @@
 package io.switchlite.adapter.common.module.combat
 
 import io.switchlite.core.condition.ConditionChecker
+import io.switchlite.core.logging.CoreLogger
 import io.switchlite.core.model.PlayerState
 import io.switchlite.core.model.TargetState
 import io.switchlite.core.strategy.click.WeaponType
@@ -96,12 +97,24 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
     /** Previous tick's attack key state (for rising-edge detection). */
     private var wasAttacking: Boolean = false
 
+    /** Throttle counter for diagnostic logging (every ~40 ticks ≈ 2s). */
+    private var diagCount: Int = 0
+
     // ========== Tick Listener ==========
     private val tickListener: (PlayerState, TargetState?) -> Unit = { p, _ ->
         if (enabled) onTick(p, EventBridge.crosshairTarget)
     }
 
     private fun onTick(player: PlayerState, target: TargetState?) {
+        // Throttled heartbeat — logs even when the sword guard below early-returns, so we can
+        // tell "module running but not holding a sword" apart from "tick not reaching here".
+        if (++diagCount % 60 == 0) {
+            CoreLogger.info(
+                "[AutoBlock] heart mode=$mode enabled=$enabled sword=${player.weaponType} " +
+                "onGround=${player.onGround} m0=${EventBridge.mouseButton0} physL=${player.isAttackKeyDown} " +
+                "rightHeld=${EventBridge.isRightMousePhysicallyDown} target=${target?.distance ?: "null"}")
+        }
+
         // ---------- Platform-level guards ----------
         // 1.8 exclusive: only SWORD matters (1.9+ has shields, no sword block)
         if (player.weaponType != WeaponType.SWORD) return
@@ -135,6 +148,26 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
                 shouldBlock = false
             }
             if (shouldBlock && probability < 100 && Random.nextInt(100) >= probability) shouldBlock = false
+        }
+
+        if (++diagCount % 40 == 0) {
+            CoreLogger.info(
+                "[AutoBlock] diag mode=$mode sword=${player.weaponType == WeaponType.SWORD} " +
+                "onGround=${player.onGround} moving=${player.isMoving} m0=${EventBridge.mouseButton0} " +
+                "physL=${player.isAttackKeyDown} cond=$conditionsMet (Plane=$onlyPlane Target=$onlyTargeting " +
+                "Move=$onlyMove MoveF=$onlyMoveForward GoesBack=$onlyWhenTargetGoesBack) " +
+                "shouldBlock=$shouldBlock blockHeld=$blockHeld reblock=$reblockPending rightHeld=${EventBridge.isRightMousePhysicallyDown} " +
+                "target=${target?.distance ?: "null"}")
+        }
+
+        if (++diagCount % 40 == 0) {
+            CoreLogger.info(
+                "[AutoBlock] diag mode=$mode sword=${player.weaponType == WeaponType.SWORD} " +
+                "onGround=${player.onGround} moving=${player.isMoving} m0=${EventBridge.mouseButton0} " +
+                "physL=${player.isAttackKeyDown} cond=$conditionsMet (Plane=$onlyPlane Target=$onlyTargeting " +
+                "Move=$onlyMove MoveF=$onlyMoveForward GoesBack=$onlyWhenTargetGoesBack) " +
+                "shouldBlock=$shouldBlock blockHeld=$blockHeld reblock=$reblockPending rightHeld=${EventBridge.isRightMousePhysicallyDown} " +
+                "target=${target?.distance ?: "null"}")
         }
 
         when (mode) {

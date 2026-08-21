@@ -125,6 +125,7 @@ object Keystrokes : Module("Keystrokes", Category.RENDER) {
      * Text is centered via the vanilla font's measured width. [wide] spans the full row.
      */
     private fun drawKey(ctx: RenderContext, label: String, x: Int, y: Int, size: Int, down: Boolean, wide: Boolean = false) {
+        val font = ctx.fontRenderer
         val w = if (wide) size * 2 + 2 else size
         val h = size
 

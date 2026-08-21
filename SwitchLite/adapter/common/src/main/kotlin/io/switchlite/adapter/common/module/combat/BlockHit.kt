@@ -129,13 +129,14 @@ object BlockHit : Module("BlockHit", Category.COMBAT) {
             if (wt != WeaponType.SWORD && wt != WeaponType.AXE) { resetState(); return }
         }
 
-        // onRightMBHold: require physical right-click held
-        if (onRightMBHold && !EventBridge.isRightMousePhysicallyDown) {
+        // onRightMBHold: require effective right-click (physical OR synthetic)
+        if (onRightMBHold && !(EventBridge.syntheticUse || EventBridge.isRightMousePhysicallyDown)) {
             resetState()
             return
         }
-        // Always require physical left-click held (attack key)
-        if (!EventBridge.isLeftMousePhysicallyDown) {
+        // Require the effective left-click (physical OR synthetic) so BlockHit also fires
+        // with AutoClicker, not only the player's physical left click.
+        if (!(EventBridge.syntheticAttack || EventBridge.isLeftMousePhysicallyDown)) {
             resetState()
             return
         }

@@ -626,6 +626,7 @@ object ForgeEventBridge : IEventBridge {
             MappingContext.invokeMethod(null, "forge:keybinding_onTick", keyCode)
         } catch (_: Exception) {}
         setMouseButtonPhysical(if (leftClick) 0 else 1, true)
+        EventBridge.recordClick(if (leftClick) 0 else 1)
     }
 
     private fun releaseKey(keyCode: Int, leftClick: Boolean) {

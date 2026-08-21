@@ -138,6 +138,37 @@ object EventBridge {
     @Volatile var syntheticAttack: Boolean = false
     @Volatile var syntheticUse: Boolean = false
 
+    // ── Click CPS counters (Raven's mouseManager equivalent) ──
+    // Recorded by the adapter on every press (synthetic or physical); read by the
+    // Keystrokes HUD to display "N CPS". A 1-second sliding window.
+    private val leftClickTimes = java.util.ArrayDeque<Long>()
+    private val rightClickTimes = java.util.ArrayDeque<Long>()
+
+    /** Record a left (0) or right (1) click for the CPS counter. */
+    fun recordClick(button: Int) {
+        val now = System.currentTimeMillis()
+        val q = if (button == 0) leftClickTimes else rightClickTimes
+        synchronized(q) {
+            q.addLast(now)
+            while (q.isNotEmpty() && q.first() < now - 1000L) q.removeFirst()
+            if (q.size > 64) q.removeFirst()
+        }
+    }
+
+    /** Clicks in the last second for the left button (0..n). */
+    fun leftCps(): Int = synchronized(leftClickTimes) {
+        val now = System.currentTimeMillis()
+        while (leftClickTimes.isNotEmpty() && leftClickTimes.first() < now - 1000L) leftClickTimes.removeFirst()
+        leftClickTimes.size
+    }
+
+    /** Clicks in the last second for the right button (0..n). */
+    fun rightCps(): Int = synchronized(rightClickTimes) {
+        val now = System.currentTimeMillis()
+        while (rightClickTimes.isNotEmpty() && rightClickTimes.first() < now - 1000L) rightClickTimes.removeFirst()
+        rightClickTimes.size
+    }
+
     /**
      * CPS range the active full clicker wants. Written by AutoClicker on enable so
      * the platform adapter can generate a smooth press/release cadence (Raven-style

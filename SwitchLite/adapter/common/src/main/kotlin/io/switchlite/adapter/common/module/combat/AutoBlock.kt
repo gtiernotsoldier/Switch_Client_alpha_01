@@ -53,6 +53,9 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
     // ========== Conditions ==========
     private val onlyCurrentView by boolean("OnlyCurrentView", false)
 
+    /** Switch mode: only perform the block-hit switch while the player holds right-click. */
+    private val switchOnRightHold by boolean("SwitchOnRightHold", true)
+
     // ========== Internal State ==========
 
     /** Whether AutoBlock pressed the right-click (not the player). */
@@ -120,9 +123,14 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
             }
 
             // ── Switch: if already blocking when a fresh attack fires, release briefly so the
-            // attack animation plays out, then re-block after delayMs.
+            // attack animation plays out, then re-block after delayMs. Only performs the switch
+            // while the player holds right-click (SwitchOnRightHold), matching the block-hit
+            // technique where the player keeps right-click held.
             "Switch" -> {
-                if (blockHeld) {
+                val rightHeld = !switchOnRightHold || EventBridge.isRightMousePhysicallyDown
+                if (!rightHeld) {
+                    if (blockHeld) releaseBlock()
+                } else if (blockHeld) {
                     if (attackJustStarted && shouldBlock) {
                         // Fresh attack while blocking → release now, re-block shortly.
                         releaseBlock()
@@ -137,13 +145,14 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
                 }
             }
 
-            // ── Normal: click-style — on a fresh attack, block for [delayMs] then release.
+            // ── Normal: click-style — block once the player's attack SWING animation is in
+            // progress (so the block times with the actual hit), hold for [delayMs], release.
             else -> {
                 if (blockHeld) {
                     if (elapsedNs(blockStartNano) >= delayMs * 1_000_000L) {
                         releaseBlock()
                     }
-                } else if (attackJustStarted && shouldBlock) {
+                } else if (shouldBlock && player.isSwinging) {
                     EventBridge.syntheticUse = true
                     blockHeld = true
                     blockStartNano = System.nanoTime()

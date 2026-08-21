@@ -26,6 +26,8 @@ data class PlayerState(
     val attackCooldownProgress: Float = 1.0f,
     val isBlocking: Boolean,
     val isUsingItem: Boolean,
+    /** Whether the player is in a swing/attack animation (swingProgressInt > 0). */
+    val isSwinging: Boolean = false,
     val isLookingAtTarget: Boolean,
     val isMining: Boolean,
     val isSneaking: Boolean,

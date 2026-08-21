@@ -233,6 +233,15 @@
     ],
     "mcp": "hurtTime"
   },
+  "forge:entityLivingBase_swingProgressInt": {
+    "class": "net.minecraft.entity.EntityLivingBase",
+    "field": "field_70740_aW",
+    "aliases": [
+      "entityLivingBase_swingProgressInt",
+      "swingProgressInt"
+    ],
+    "mcp": "swingProgressInt"
+  },
   "forge:entity_hurtResistantTime": {
     "class": "net.minecraft.entity.Entity",
     "field": "field_70173_aa",

@@ -99,6 +99,8 @@ object ForgeStateExtractor : IStateExtractor {
 
         val isBlocking = MappingContext.invokeMethod(player, "forge:player_isBlocking") as? Boolean ?: false
         val isSneaking = MappingContext.invokeMethod(player, "forge:player_isSneaking") as? Boolean ?: false
+        // Player is in a swing/attack animation when swingProgressInt > 0.
+        val isSwinging = (MappingContext.getFieldValue(player, "forge:entityLivingBase_swingProgressInt") as? Int ?: 0) > 0
         val selectedSlot = try {
             val inventory = MappingContext.getFieldValue(player, "forge:mc_thePlayer")
                 ?.let { MappingContext.getFieldValue(it, "forge:inventory_currentItem") } as? Int
@@ -138,6 +140,7 @@ object ForgeStateExtractor : IStateExtractor {
             isUsingItem = false,
             // Whether the crosshair is currently on a viable entity (Raven: objectMouseOver.entityHit).
             isLookingAtTarget = getCrosshairTargetId() != null,
+            isSwinging = isSwinging,
             isMining = isMining,
             isSneaking = isSneaking,
             selectedSlot = selectedSlot,

@@ -88,6 +88,11 @@ object STap : Module("STap", Category.COMBAT) {
 
         if (machine.phase != TapStateMachine.Phase.IDLE) return
 
+        // In IDLE, mirror the physical back key so the override doesn't block the player
+        // from voluntarily walking backward (S). STap only presses S for its own tap; when
+        // idle it must follow the player's actual S state.
+        EventBridge.syntheticBack = EventBridge.isKeyBackDown
+
         // Guard: W must be held
         if (!player.isMovingForward) { hitCounter = 0; return }
 

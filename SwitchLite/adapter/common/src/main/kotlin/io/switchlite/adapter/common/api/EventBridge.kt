@@ -89,6 +89,14 @@ object EventBridge {
         simpleTickListeners.forEach { it(tickCounter) }
     }
 
+    /**
+     * The entity currently under the player's crosshair (objectMouseOver.entityHit), filled
+     * by the adapter each tick alongside [onTick]. No nearest-entity fallback. Modules that
+     * act on the target the player is actually hitting (WTap/STap/AutoBlock/BlockHit/
+     * SuperKnockback) read this instead of the generic `target`, matching Raven.
+     */
+    @Volatile var crosshairTarget: TargetState? = null
+
     fun getCurrentTick(): Int = tickCounter
 
     // ========== Rotation ==========
@@ -583,6 +591,7 @@ object EventBridge {
         synchronized(notificationQueue) { notificationQueue.clear() }
         keyListeners.clear()
         tickCounter = 0
+        crosshairTarget = null
         mouseDeltaX = 0f
         mouseDeltaY = 0f
         mouseSensitivity = 1.0f

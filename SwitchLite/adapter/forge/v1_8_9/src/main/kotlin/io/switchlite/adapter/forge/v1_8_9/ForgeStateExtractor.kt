@@ -136,7 +136,8 @@ object ForgeStateExtractor : IStateExtractor {
             attackCooldownProgress = 1.0f,
             isBlocking = isBlocking,
             isUsingItem = false,
-            isLookingAtTarget = false,
+            // Whether the crosshair is currently on a viable entity (Raven: objectMouseOver.entityHit).
+            isLookingAtTarget = getCrosshairTargetId() != null,
             isMining = isMining,
             isSneaking = isSneaking,
             selectedSlot = selectedSlot,
@@ -286,6 +287,27 @@ object ForgeStateExtractor : IStateExtractor {
 
         val result = MappingContext.invokeMethod(world, "forge:world_rayTraceBlocks", eyeVec, targetVec, false, true, false)
         return result == null
+    }
+
+    /**
+     * The entity under the crosshair (objectMouseOver.entityHit) only, no fallback.
+     * Mirrors Raven's `mc.objectMouseOver.entityHit` for modules acting on the hit target.
+     */
+    override fun getCrosshairTargetId(): Int? {
+        val player = getPlayer() ?: return null
+        val mc = getMc()
+
+        val objMouseOver = try { MappingContext.getFieldValue(mc, "forge:mc_objectMouseOver") } catch (_: Exception) { null }
+        if (objMouseOver != null) {
+            val typeOfHit = try { MappingContext.getFieldValue(objMouseOver, "forge:movingObjectPosition_typeOfHit") } catch (_: Exception) { null }
+            if (typeOfHit === movingObjectTypeEntity) {
+                val entityHit = try { MappingContext.getFieldValue(objMouseOver, "forge:movingObjectPosition_entityHit") } catch (_: Exception) { null }
+                if (entityHit != null && isViableTarget(entityHit, player)) {
+                    return MappingContext.getFieldValue(entityHit, "forge:entity_entityId") as? Int
+                }
+            }
+        }
+        return null
     }
 
     override fun getCurrentTargetId(): Int? {

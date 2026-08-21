@@ -354,6 +354,10 @@ object FabricEventBridge : IEventBridge {
         val targetId = FabricStateExtractor.getCurrentTargetId()
         val target = if (targetId != null) FabricStateExtractor.extractTargetState(targetId) else null
 
+        // Crosshair-only target (no nearest fallback) — for modules acting on the hit target.
+        val crosshairId = FabricStateExtractor.getCrosshairTargetId()
+        EventBridge.crosshairTarget = if (crosshairId != null) FabricStateExtractor.extractTargetState(crosshairId) else null
+
         EventBridge.onTick(player, target)
     }
 }

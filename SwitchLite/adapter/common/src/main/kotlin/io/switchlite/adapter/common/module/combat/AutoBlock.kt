@@ -67,8 +67,8 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
     private var wasAttacking: Boolean = false
 
     // ========== Tick Listener ==========
-    private val tickListener: (PlayerState, TargetState?) -> Unit = { p, t ->
-        if (enabled) onTick(p, t)
+    private val tickListener: (PlayerState, TargetState?) -> Unit = { p, _ ->
+        if (enabled) onTick(p, EventBridge.crosshairTarget)
     }
 
     private fun onTick(player: PlayerState, target: TargetState?) {

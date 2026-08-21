@@ -80,7 +80,7 @@ object FabricStateExtractor : IStateExtractor {
             attackCooldownProgress = player.getAttackCooldownProgress(0.0f),
             isBlocking = player.isBlocking, // kept for 1.8 backward compat
             isUsingItem = player.isUsingItem,
-            isLookingAtTarget = false, // handled by ConditionChecker angle calc (method B)
+            isLookingAtTarget = getCrosshairTargetId() != null,
             isMining = MappingContext.getFieldValue(mc.interactionManager, "fabric:interactionManager_isBreakingBlock") as? Boolean ?: false,
             isSneaking = player.isSneaking,
             selectedSlot = player.inventory.selectedSlot,
@@ -250,6 +250,19 @@ object FabricStateExtractor : IStateExtractor {
             )
         )
         return result.type == net.minecraft.util.hit.HitResult.Type.MISS
+    }
+
+    /**
+     * The entity under the crosshair only, no nearest-entity fallback. Mirrors Raven's
+     * `objectMouseOver.entityHit` for modules that act on the target actually being hit.
+     */
+    override fun getCrosshairTargetId(): Int? {
+        val player = mc.player ?: return null
+        val crosshair = mc.crosshairTarget ?: return null
+        if (crosshair.type != HitResult.Type.ENTITY) return null
+        val entity = (crosshair as? EntityHitResult)?.entity ?: return null
+        if (!isViableTarget(entity, player)) return null
+        return entity.id
     }
 
     override fun getCurrentTargetId(): Int? {

@@ -502,6 +502,10 @@ object ForgeEventBridge : IEventBridge {
         val targetId = ForgeStateExtractor.getCurrentTargetId()
         val target = if (targetId != null) ForgeStateExtractor.extractTargetState(targetId) else null
 
+        // Crosshair-only target (no nearest fallback) — for modules acting on the hit target.
+        val crosshairId = ForgeStateExtractor.getCrosshairTargetId()
+        EventBridge.crosshairTarget = if (crosshairId != null) ForgeStateExtractor.extractTargetState(crosshairId) else null
+
         EventBridge.onTick(player, target)
     }
 

@@ -59,8 +59,8 @@ object SuperKnockback : Module("SuperKnockback", Category.COMBAT) {
     private var phaseTicksRemaining: Int = 0
 
     // ========== Tick Listener ==========
-    private val tickListener: (PlayerState, TargetState?) -> Unit = { p, t ->
-        if (enabled) onTick(p, t)
+    private val tickListener: (PlayerState, TargetState?) -> Unit = { p, _ ->
+        if (enabled) onTick(p, EventBridge.crosshairTarget)
     }
 
     private fun onTick(player: PlayerState, target: TargetState?) {

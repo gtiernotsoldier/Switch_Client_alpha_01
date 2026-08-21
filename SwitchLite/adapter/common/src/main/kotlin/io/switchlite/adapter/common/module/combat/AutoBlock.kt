@@ -34,9 +34,11 @@ import kotlin.random.Random
 object AutoBlock : Module("AutoBlock", Category.COMBAT) {
 
     // ========== Mode ==========
-    // Normal = click-style: block for [delayMs] after each attack, then release.
+    // Normal = click-style: on a fresh attack, block for [delayMs] then release.
+    // Switch = if already blocking when a fresh attack fires, release briefly (so the
+    //          attack animation plays out), wait [delayMs], then re-block.
     // Srg    = hold-style: block for as long as the player keeps attacking / holding.
-    private val mode by choices("Mode", arrayOf("Normal", "Srg"))
+    private val mode by choices("Mode", arrayOf("Normal", "Switch", "Srg"))
 
     // ========== Distance Range ==========
     private val maxDistance by float("MaxDistance", 3.0f, 0.0f..6.0f, "blocks")
@@ -78,6 +80,17 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
         // 1.8 exclusive: only SWORD matters (1.9+ has shields, no sword block)
         if (player.weaponType != WeaponType.SWORD) return
 
+        // Switch-mode re-block timer: if we're waiting to re-block, finish it now.
+        if (reblockPending) {
+            if (elapsedNs(reblockStartNano) >= delayMs * 1_000_000L) {
+                EventBridge.syntheticUse = true
+                blockHeld = true
+                reblockPending = false
+            }
+            // While waiting to re-block, don't process new attack logic.
+            return
+        }
+
         // ---------- Attack detection ----------
         // Effective attack: AutoClicker running (mouseButton0 reflects its cadence pulses on
         // the render thread) OR the physical left button held.
@@ -97,7 +110,6 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
 
         when (mode) {
             // ── Srg: hold-style — block for as long as the player keeps attacking/holding.
-            // Long-press / AutoClicker => sustained block; stop attacking => release.
             "Srg" -> {
                 if (shouldBlock && !blockHeld) {
                     EventBridge.syntheticUse = true
@@ -106,11 +118,28 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
                     releaseBlock()
                 }
             }
+
+            // ── Switch: if already blocking when a fresh attack fires, release briefly so the
+            // attack animation plays out, then re-block after delayMs.
+            "Switch" -> {
+                if (blockHeld) {
+                    if (attackJustStarted && shouldBlock) {
+                        // Fresh attack while blocking → release now, re-block shortly.
+                        releaseBlock()
+                        reblockPending = true
+                        reblockStartNano = System.nanoTime()
+                    }
+                    // Otherwise keep blocking.
+                } else if (attackJustStarted && shouldBlock) {
+                    // Not blocking → start blocking.
+                    EventBridge.syntheticUse = true
+                    blockHeld = true
+                }
+            }
+
             // ── Normal: click-style — on a fresh attack, block for [delayMs] then release.
-            // Each click => one block pulse; long-press does not hold forever.
             else -> {
                 if (blockHeld) {
-                    // Releasing timer for Normal mode.
                     if (elapsedNs(blockStartNano) >= delayMs * 1_000_000L) {
                         releaseBlock()
                     }

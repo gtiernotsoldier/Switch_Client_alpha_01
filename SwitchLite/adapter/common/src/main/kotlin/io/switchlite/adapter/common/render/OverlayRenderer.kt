@@ -59,6 +59,7 @@ object OverlayRenderer {
             g.glDisable(GLConstants.GL_DEPTH_TEST)
 
             drawHudCard(ctx)
+            drawKeystrokes(ctx)
             drawToasts(ctx)
 
         } finally {
@@ -137,6 +138,14 @@ object OverlayRenderer {
             }
             y += lineHeight
         }
+    }
+
+    // ── Keystrokes (in-game key press indicator) ──
+
+    private fun drawKeystrokes(ctx: RenderContext) {
+        try {
+            io.switchlite.adapter.common.module.render.Keystrokes.render(ctx)
+        } catch (_: Exception) {}
     }
 
     // ── Toasts ──

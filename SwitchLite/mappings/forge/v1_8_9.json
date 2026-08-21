@@ -503,6 +503,24 @@
     ],
     "mcp": "keyBindUseItem"
   },
+  "forge:gs_keyBindJump": {
+    "class": "net.minecraft.client.settings.GameSettings",
+    "field": "field_74314_A",
+    "aliases": [
+      "gs_keyBindJump",
+      "keyBindJump"
+    ],
+    "mcp": "keyBindJump"
+  },
+  "forge:keybinding_isKeyDown": {
+    "class": "net.minecraft.client.settings.KeyBinding",
+    "method": "func_151468_f",
+    "aliases": [
+      "keybinding_isKeyDown",
+      "isKeyDown"
+    ],
+    "mcp": "isKeyDown"
+  },
   "forge:gs_mouseSensitivity": {
     "class": "net.minecraft.client.settings.GameSettings",
     "field": "field_74341_c",

@@ -8,6 +8,7 @@ import io.switchlite.adapter.common.module.movement.*
 import io.switchlite.adapter.common.module.player.*
 import io.switchlite.adapter.common.module.render.Fullbright
 import io.switchlite.adapter.common.module.render.HUD
+import io.switchlite.adapter.common.module.render.Keystrokes
 import io.switchlite.adapter.common.module.render.NoFOV
 import io.switchlite.adapter.common.module.render.NoHurtCam
 import io.switchlite.adapter.common.module.render.WebUI
@@ -110,7 +111,7 @@ object ForgeBootstrap {
             SprintReset, STap, SuperKnockback, TriggerBot, Velocity, WTap,
             NoJumpDelay, NoKeyboardFix, NoMouseFix, Sprint, Strafe, StrafeFix,
             AntiBot, AutoTool, BridgeAssist, Eagle, ParallaxStrike, Teams,
-            Fullbright, HUD, NoFOV, NoHurtCam,
+            Fullbright, HUD, NoFOV, NoHurtCam, Keystrokes,
             WebUI,
             FastPlace
         )
@@ -185,6 +186,7 @@ object ForgeBootstrap {
                             EventBridge.isKeyBackDown = readPressed("forge:gs_keyBindBack")
                             EventBridge.isKeyLeftDown = readPressed("forge:gs_keyBindLeft")
                             EventBridge.isKeyRightDown = readPressed("forge:gs_keyBindRight")
+                            EventBridge.isKeyJumpDown = readPressed("forge:gs_keyBindJump")
                         }
                     } catch (_: Exception) {}
 

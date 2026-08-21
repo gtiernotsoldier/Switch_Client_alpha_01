@@ -385,6 +385,9 @@ object EventBridge {
     @Volatile var isKeyLeftDown: Boolean = false
     @Volatile var isKeyRightDown: Boolean = false
 
+    /** Jump (space) key state — used by the Keystrokes HUD. */
+    @Volatile var isKeyJumpDown: Boolean = false
+
     // ========== Input Snapshots (NoMouseFix, NoKeyboardFix) ==========
     @Volatile var snapMouseDeltaX: Float = 0f
     @Volatile var snapMouseDeltaY: Float = 0f
@@ -526,6 +529,7 @@ object EventBridge {
         isKeyBackDown = false
         isKeyLeftDown = false
         isKeyRightDown = false
+        isKeyJumpDown = false
         velocityPacketReceivedThisTick = false
         renderOffsetX = 0f
         renderOffsetY = 0f

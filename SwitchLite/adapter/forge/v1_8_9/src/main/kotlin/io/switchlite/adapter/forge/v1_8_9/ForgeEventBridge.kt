@@ -111,12 +111,14 @@ object ForgeEventBridge : IEventBridge {
     }
 
     /** Read the current pressed state of a game-settings key binding. */
-    private fun readKeyPressed(gsKey: String): Boolean = try {
-        val mc = getMc() ?: return false
-        val gs = MappingContext.getFieldValue(mc, "forge:mc_gameSettings") ?: return false
-        val keyBind = MappingContext.getFieldValue(gs, gsKey) ?: return false
-        keybindingPressedField?.getBoolean(keyBind) ?: false
-    } catch (_: Exception) { false }
+    private fun readKeyPressed(gsKey: String): Boolean {
+        return try {
+            val mc = getMc() ?: return false
+            val gs = MappingContext.getFieldValue(mc, "forge:mc_gameSettings") ?: return false
+            val keyBind = MappingContext.getFieldValue(gs, gsKey) ?: return false
+            keybindingPressedField?.getBoolean(keyBind) ?: false
+        } catch (_: Exception) { false }
+    }
 
     private fun sendPacket(packet: Any?) {
         try {

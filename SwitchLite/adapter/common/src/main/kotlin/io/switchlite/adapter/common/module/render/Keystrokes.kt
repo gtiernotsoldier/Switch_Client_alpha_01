@@ -81,14 +81,13 @@ object Keystrokes : Module("Keystrokes", Category.RENDER) {
     private val KEY_H = 22f
     private val MOUSE_W = 34f
     private val MOUSE_H = 22f
-    private val SPACE_W = 70f
     private val SPACE_H = 22f
 
     private fun k(v: Int): Float = v * scale
 
     /** Total widget size in scaled px. */
-    private fun widgetWidth(): Int = (k(74)).toInt()
-    private fun widgetHeight(): Int = (k(if (showMouse) 96 else 72)).toInt()
+    private fun widgetWidth(): Int = (k(76)).toInt()
+    private fun widgetHeight(): Int = (k(if (showMouse) 100 else 76)).toInt()
 
     /**
      * Render the keystrokes widget. Called from OverlayRenderer on the MC render
@@ -160,27 +159,30 @@ object Keystrokes : Module("Keystrokes", Category.RENDER) {
             else -> THEME_COLORS[0]
         }
 
-        // WASD cluster — 22x22 keys, Raven coords, text at +8,+8.
-        drawKey(ctx, font, "W", x + k(26), y + k(2), KEY_W, KEY_H, EventBridge.isKeyForwardDown, theme, textY = k(8))
-        drawKey(ctx, font, "A", x + k(2), y + k(26), KEY_W, KEY_H, EventBridge.isKeyLeftDown, theme, textY = k(8))
-        drawKey(ctx, font, "S", x + k(26), y + k(26), KEY_W, KEY_H, EventBridge.isKeyBackDown, theme, textY = k(8))
-        drawKey(ctx, font, "D", x + k(50), y + k(26), KEY_W, KEY_H, EventBridge.isKeyRightDown, theme, textY = k(8))
+        // WASD cluster — 22x22 keys, generous spacing, text at +8,+8.
+        // Grid: W on top-center; A/S/D below. Pitch 26 (4px gap between keys).
+        drawKey(ctx, font, "W", x + k(28), y + k(2), KEY_W, KEY_H, EventBridge.isKeyForwardDown, theme, textY = k(8))
+        drawKey(ctx, font, "A", x + k(2), y + k(28), KEY_W, KEY_H, EventBridge.isKeyLeftDown, theme, textY = k(8))
+        drawKey(ctx, font, "S", x + k(28), y + k(28), KEY_W, KEY_H, EventBridge.isKeyBackDown, theme, textY = k(8))
+        drawKey(ctx, font, "D", x + k(54), y + k(28), KEY_W, KEY_H, EventBridge.isKeyRightDown, theme, textY = k(8))
 
         if (showMouse) {
-            val mouseY = y + k(50)
-            // Mouse buttons — 34x22, text at +8,+4 (Raven KeyStrokeMouse).
-            drawKey(ctx, font, "LMB", x + k(2), mouseY, MOUSE_W, MOUSE_H, EventBridge.isLeftMousePhysicallyDown, theme, textY = k(4))
-            drawKey(ctx, font, "RMB", x + k(38), mouseY, MOUSE_W, MOUSE_H, EventBridge.isRightMousePhysicallyDown, theme, textY = k(4))
+            val mouseY = y + k(54)
+            // Mouse buttons — 34x22, text at +8,+4 (Raven KeyStrokeMouse). State uses the
+            // effective button (physical OR synthetic) so the keys flash with AutoClicker's
+            // CPS rhythm, exactly like Raven reading Mouse.isButtonDown.
+            drawKey(ctx, font, "LMB", x + k(2), mouseY, MOUSE_W, MOUSE_H, EventBridge.mouseButton0, theme, textY = k(4))
+            drawKey(ctx, font, "RMB", x + k(38), mouseY, MOUSE_W, MOUSE_H, EventBridge.mouseButton1, theme, textY = k(4))
 
             // CPS counters under each mouse button (Raven: 0.5x scale, white, centered).
             drawCps(ctx, font, EventBridge.leftCps(), x + k(2), mouseY, theme)
             drawCps(ctx, font, EventBridge.rightCps(), x + k(38), mouseY, theme)
 
-            // Jump key (SPACE): full-width 70px (two mouse widths + gap), centered line.
-            drawSpace(ctx, font, x + k(2), y + k(74), SPACE_W, SPACE_H, EventBridge.isKeyJumpDown, theme)
+            // Jump key (SPACE): same width as A/S/D (22px), centered under the mouse row.
+            drawSpace(ctx, font, x + k(28), y + k(78), KEY_W, SPACE_H, EventBridge.isKeyJumpDown, theme)
         } else {
-            // No mouse row: spacebar sits right below WASD.
-            drawSpace(ctx, font, x + k(2), y + k(50), SPACE_W, SPACE_H, EventBridge.isKeyJumpDown, theme)
+            // No mouse row: spacebar sits right below WASD, same width as A/S/D.
+            drawSpace(ctx, font, x + k(28), y + k(54), KEY_W, SPACE_H, EventBridge.isKeyJumpDown, theme)
         }
     }
 

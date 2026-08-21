@@ -409,6 +409,16 @@ object EventBridge {
     /** Whether the physical left mouse button is currently held (not synthetic). */
     @Volatile var isLeftMousePhysicallyDown: Boolean = false
 
+    /**
+     * Effective left mouse button state as MC sees it — physical OR synthetic. Updated on
+     * the render thread. This reflects AutoClicker's click pulse (via the Mouse.buttons
+     * buffer), so the Keystrokes HUD's LMB/RMB keys flash with the CPS rhythm like Raven.
+     */
+    @Volatile var mouseButton0: Boolean = false
+
+    /** Effective right mouse button state (physical OR synthetic), render-thread updated. */
+    @Volatile var mouseButton1: Boolean = false
+
     /** Whether the player's crosshair is currently pointing at a block. */
     @Volatile var isLookingAtBlock: Boolean = false
 

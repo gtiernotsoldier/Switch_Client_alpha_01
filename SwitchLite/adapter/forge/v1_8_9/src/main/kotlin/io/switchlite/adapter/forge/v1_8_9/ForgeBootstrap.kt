@@ -44,6 +44,10 @@ object ForgeBootstrap {
     /** Diagnostic — log render-hook liveness once. */
     private var renderDiagLogged = false
 
+    /** Physical mouse button edge trackers — count real clicks for the CPS counter. */
+    private var physLeftPrev = false
+    private var physRightPrev = false
+
     // Lazy class references
     private val mouseClass by lazy { Class.forName("org.lwjgl.input.Mouse") }
     private val mouseGetDX by lazy { mouseClass.getMethod("getDX") }
@@ -258,6 +262,21 @@ object ForgeBootstrap {
                 EventBridge.guiLeftMouseDown = (mouseIsButtonDown.invoke(null, 0) as? Boolean) ?: false
                 // Drag widgets only while a GUI screen is open (paused) — never in combat.
                 EventBridge.isGuiOpen = MappingContext.getFieldValue(mc, "forge:mc_currentScreen") != null
+
+                // Effective mouse button states (physical OR synthetic) for the Keystrokes
+                // HUD — Mouse.isButtonDown reflects the Mouse.buttons buffer that AutoClicker
+                // pulses, so the keys flash with the CPS rhythm.
+                EventBridge.mouseButton0 = (mouseIsButtonDown.invoke(null, 0) as? Boolean) ?: false
+                EventBridge.mouseButton1 = (mouseIsButtonDown.invoke(null, 1) as? Boolean) ?: false
+
+                // Physical click edge detection → feed the CPS counter (like Raven's
+                // mouseManager, which counts every click, not just synthetic ones).
+                val physLeft = (mouseIsButtonDown.invoke(null, 0) as? Boolean) ?: false
+                val physRight = (mouseIsButtonDown.invoke(null, 1) as? Boolean) ?: false
+                if (physLeft && !physLeftPrev) EventBridge.recordClick(0)
+                if (physRight && !physRightPrev) EventBridge.recordClick(1)
+                physLeftPrev = physLeft
+                physRightPrev = physRight
             } catch (_: Exception) {}
 
             val fontRendererObj = MappingContext.getFieldValue(mc, "forge:mc_fontRendererObj")

@@ -102,6 +102,9 @@ object FabricStateExtractor : IStateExtractor {
         val motionZ = MappingContext.getFieldValue(entity, "fabric:entity_motionZ") as? Double ?: 0.0
         val health = MappingContext.getFieldValue(entity, "fabric:entity_health") as? Float ?: 0f
         val hurtTime = MappingContext.getFieldValue(entity, "fabric:entity_hurtTime") as? Int ?: 0
+        // 1.9+ has no Entity.hurtResistantTime; use the entity's regen counter if mapped,
+        // else fall back to hurtTime (Forge uses the dedicated i-frame counter).
+        val hurtResistantTime = MappingContext.getFieldValue(entity, "fabric:entity_hurtResistantTime") as? Int ?: hurtTime
 
         // Extract bounding box
         val bb = MappingContext.getFieldValue(entity, "fabric:entity_boundingBox")
@@ -156,6 +159,7 @@ object FabricStateExtractor : IStateExtractor {
             motionZ = motionZ,
             health = health,
             hurtTime = hurtTime,
+            hurtResistantTime = hurtResistantTime,
             isMovingBackward = isMovingBackward,
             isGoingBack = isMovingBackward,
             isMovingTowardsPlayer = isMovingTowardsPlayer,

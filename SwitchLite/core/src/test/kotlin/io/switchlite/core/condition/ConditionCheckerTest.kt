@@ -27,7 +27,7 @@ class ConditionCheckerTest {
     private fun targetAt(distance: Float = 3f) = TargetState(
         entityId = 1, name = "Target", position = Vec3(0.0, 64.0, distance.toDouble()),
         motionX = 0.0, motionY = 0.0, motionZ = 0.0,
-        health = 20f, hurtTime = 0,
+        health = 20f, hurtTime = 0, hurtResistantTime = 0,
         isMovingBackward = false, isGoingBack = false,
         isMovingTowardsPlayer = true, distance = distance,
         hitbox = Hitbox(-0.3, 63.2, distance - 0.3, 0.3, 65.0, distance + 0.3),

@@ -1,5 +1,6 @@
 package io.switchlite.adapter.common.module.combat
 
+import io.switchlite.core.condition.ConditionChecker
 import io.switchlite.core.model.PlayerState
 import io.switchlite.core.model.TargetState
 import io.switchlite.core.strategy.click.WeaponType
@@ -10,6 +11,7 @@ import io.switchlite.adapter.common.option.boolean
 import io.switchlite.adapter.common.option.choices
 import io.switchlite.adapter.common.option.float
 import io.switchlite.adapter.common.option.int
+import io.switchlite.adapter.common.option.triggerOptions
 import kotlin.random.Random
 
 /**
@@ -21,14 +23,15 @@ import kotlin.random.Random
  * **Normal**: While AutoClicker is working (or the player physically left-clicks), press
  * right-click to block for [delayMs], then release — re-engages each hit.
  *
- * **Switch**: If already blocking when a left-click attack fires, release right-click first
- * (allowing full attack animation), wait [delayMs], then re-press to resume blocking.
+ * **Switch**: Blocking engages on a left-click attack (AutoClick OR physical). When already
+ * blocking and a fresh attack fires, it briefly releases right-click (letting the attack land),
+ * waits [delayMs], then re-presses to resume blocking. SwitchOnRightHold gates that switch
+ * action on the player holding right-click.
  *
- * Conditions:
+ * Conditions (unified engine):
+ * - OnlyPlane / OnlyTargeting / OnlyMove / OnlyMoveForward / OnlyWhenTargetGoesBack.
+ * - Plus AutoBlock's own distance range and probability.
  * - Player must hold a sword ([WeaponType.SWORD]).
- * - Target within configured distance range.
- * - Optional "only current view" check.
- * - Probability-based activation.
  *
  * On disable: automatically releases right-click to prevent stuck key.
  */
@@ -52,8 +55,23 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
     // ========== Timing ==========
     private val delayMs by int("Delay", 50, 1..500, "ms")
 
-    // ========== Conditions ==========
-    private val onlyCurrentView by boolean("OnlyCurrentView", false)
+    // ========== Conditions (Unified Engine — shared with BlockHit/WTap/AimAssist/etc.) ==========
+    private val onlyPlane by boolean("OnlyPlane", true)
+    private val onlyTargeting by boolean("OnlyTargeting", false)
+    private val onlyMove by boolean("OnlyMove", false)
+    private val onlyMoveForward by boolean("OnlyMoveForward", false)
+    private val onlyWhenTargetGoesBack by boolean("OnlyWhenTargetGoesBack", false)
+
+    // Unified trigger engine — map individual toggles into TriggerOptions.
+    // minDistance/maxDistance/chance stay at their permissive defaults here; AutoBlock applies
+    // its own MaxDistance/MinDistance/Chance options below so the two don't double-gate.
+    private val triggerOptions by triggerOptions("Trigger") {
+        onlyGround = onlyPlane
+        onlyCurrentView = onlyTargeting
+        onlyMove = this@AutoBlock.onlyMove
+        onlyMoveForward = this@AutoBlock.onlyMoveForward
+        onlyWhenTargetGoesBack = this@AutoBlock.onlyWhenTargetGoesBack
+    }
 
     /** [Switch] mode only: only perform the block-hit switch while the player holds right-click. */
     private val switchOnRightHold by boolean("SwitchOnRightHold", true)
@@ -105,12 +123,14 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
         wasAttacking = isAttacking
 
         // Condition checks — gate blocking only while attacking; otherwise release.
-        var shouldBlock = isAttacking
-        if (isAttacking) {
+        // Unified engine first (OnlyPlane / OnlyTargeting / OnlyMove / OnlyMoveForward /
+        // OnlyWhenTargetGoesBack), then AutoBlock's own distance + probability options.
+        val conditionsMet = ConditionChecker.check(triggerOptions, player, target)
+        var shouldBlock = isAttacking && conditionsMet
+        if (shouldBlock) {
             if (target != null && (target.distance < minDistance || target.distance > maxDistance)) {
                 shouldBlock = false
             }
-            if (shouldBlock && onlyCurrentView && !player.isLookingAtTarget) shouldBlock = false
             if (shouldBlock && probability < 100 && Random.nextInt(100) >= probability) shouldBlock = false
         }
 
@@ -125,24 +145,27 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
                 }
             }
 
-            // ── Switch: if already blocking when a fresh attack fires, release briefly so the
-            // attack animation plays out, then re-block after delayMs. Only performs the switch
-            // while the player holds right-click (SwitchOnRightHold), matching the block-hit
-            // technique where the player keeps right-click held.
+            // ── Switch: block-hit style. Blocking always engages on a left-click attack
+            // (AutoClick working OR physical left-click), regardless of right-click state.
+            // SwitchOnRightHold only gates the *switch* action itself — the brief release +
+            // re-block that lets the attack animation play out — on the player holding
+            // right-click (the block-hit technique keeps right held).
             "Switch" -> {
                 val rightHeld = !switchOnRightHold || EventBridge.isRightMousePhysicallyDown
-                if (!rightHeld) {
-                    if (blockHeld) releaseBlock()
-                } else if (blockHeld) {
-                    if (attackJustStarted && shouldBlock) {
-                        // Fresh attack while blocking → release now, re-block shortly.
+                if (blockHeld) {
+                    if (shouldBlock) {
+                        if (rightHeld && attackJustStarted) {
+                            // Fresh attack while blocking → release now, re-block shortly.
+                            releaseBlock()
+                            reblockPending = true
+                            reblockStartNano = System.nanoTime()
+                        }
+                        // Otherwise keep blocking while attacking.
+                    } else {
                         releaseBlock()
-                        reblockPending = true
-                        reblockStartNano = System.nanoTime()
                     }
-                    // Otherwise keep blocking.
                 } else if (attackJustStarted && shouldBlock) {
-                    // Not blocking → start blocking.
+                    // Not blocking → start blocking on the fresh attack.
                     EventBridge.syntheticUse = true
                     blockHeld = true
                 }

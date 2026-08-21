@@ -78,11 +78,13 @@ object WebUIServer {
                     CoreLogger.info("[WebUI]  LAN:   http://${it.hostAddress}:$PORT")
                 }
                 // Mirror the address + token to the payload log so the Rust
-                // injector can surface it in the user's cmd window.
+                // injector can surface it in the user's cmd window. OVERWRITE (not append)
+                // so each inject/restart shows a single fresh line instead of accumulating
+                // duplicates every time a new build is loaded.
                 try {
                     val temp = System.getProperty("java.io.tmpdir") ?: ""
                     val pw = java.io.PrintWriter(
-                        java.io.FileWriter(java.io.File(temp, "switchlite-payload.log"), true), true)
+                        java.io.FileWriter(java.io.File(temp, "switchlite-payload.log")), true)
                     pw.println("[WebUI] Panel: ${accessUrls[0]}  LAN: ${LanHelper.lanAddress()?.hostAddress ?: "127.0.0.1"}:$PORT  Token: $token")
                     pw.close()
                 } catch (_: Exception) {}

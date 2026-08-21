@@ -104,6 +104,10 @@ object AutoClicker : Module("AutoClicker", Category.COMBAT), HudLineProvider {
     // ====================================================================
 
     fun onClientTick(player: PlayerState, target: TargetState?) {
+        // Keep the adapter's click cadence CPS in sync every tick so WebUI changes to
+        // Min/MaxCPS take effect immediately (not only after a re-enable).
+        EventBridge.clickMinCps = minCps
+        EventBridge.clickMaxCps = maxCps
         when (combatVersion) {
             "1.8" -> onTick18(player, target)
             "1.9+" -> onTick19(player, target)

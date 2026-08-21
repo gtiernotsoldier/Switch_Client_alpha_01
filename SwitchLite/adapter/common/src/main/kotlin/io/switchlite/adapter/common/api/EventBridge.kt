@@ -345,6 +345,14 @@ object EventBridge {
     /** Physical left mouse button state (for HUD click/drag detection). */
     @Volatile var guiLeftMouseDown: Boolean = false
 
+    /**
+     * Whether an MC GUI screen is currently open (pause menu, inventory, chat, etc.).
+     * Populated by the platform adapter on the render thread. Used by draggable HUD
+     * widgets (Keystrokes) so drag only engages while the game is paused/in a GUI —
+     * never while fighting with the mouse held.
+     */
+    @Volatile var isGuiOpen: Boolean = false
+
     // ========== GUI Notifications (Render — right-corner toast) ==========
 
     data class Notification(
@@ -545,6 +553,7 @@ object EventBridge {
         guiMouseX = 0
         guiMouseY = 0
         guiLeftMouseDown = false
+        isGuiOpen = false
         synchronized(notificationQueue) { notificationQueue.clear() }
         keyListeners.clear()
         tickCounter = 0

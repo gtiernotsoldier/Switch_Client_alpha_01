@@ -87,7 +87,7 @@ object Keystrokes : Module("Keystrokes", Category.RENDER) {
 
     /** Total widget size in scaled px. */
     private fun widgetWidth(): Int = (k(74)).toInt()
-    private fun widgetHeight(): Int = (k(if (showMouse) 98 else 74)).toInt()
+    private fun widgetHeight(): Int = (k(if (showMouse) 96 else 72)).toInt()
 
     /**
      * Render the keystrokes widget. Called from OverlayRenderer on the MC render
@@ -104,6 +104,13 @@ object Keystrokes : Module("Keystrokes", Category.RENDER) {
     // ═══════════════════════════════════════════
 
     private fun handleDrag(ctx: RenderContext) {
+        // Drag only while an MC GUI is open (paused) — never during combat. This
+        // prevents the widget from moving while the player holds left mouse and
+        // swings the view.
+        if (!EventBridge.isGuiOpen) {
+            dragging = false
+            return
+        }
         val mx = EventBridge.guiMouseX
         val my = EventBridge.guiMouseY
         val leftDown = EventBridge.guiLeftMouseDown
@@ -156,7 +163,7 @@ object Keystrokes : Module("Keystrokes", Category.RENDER) {
             else -> THEME_COLORS[0]
         }
 
-        // WASD cluster (Raven coords).
+        // WASD cluster (Raven coords + Raven text offsets +8,+8).
         drawKey(ctx, font, "W", x + k(26), y + k(2), s, EventBridge.isKeyForwardDown, theme)
         drawKey(ctx, font, "A", x + k(2), y + k(26), s, EventBridge.isKeyLeftDown, theme)
         drawKey(ctx, font, "S", x + k(26), y + k(26), s, EventBridge.isKeyBackDown, theme)
@@ -173,25 +180,75 @@ object Keystrokes : Module("Keystrokes", Category.RENDER) {
             if (lmbCps > 0) font.drawStringWithShadow("$lmbCps CPS", (x + k(2)).toInt(), (mouseY + s + 2).toInt(), theme)
             if (rmbCps > 0) font.drawStringWithShadow("$rmbCps CPS", (x + k(38)).toInt(), (mouseY + s + 2).toInt(), theme)
 
-            // Jump key (SPACE) full-width below mouse row.
-            drawKey(ctx, font, "SPACE", x + k(2), y + k(74), s * 2 + k(2), EventBridge.isKeyJumpDown, theme, wide = true)
+            // Jump key: a spacebar — full-width key with a centered horizontal line.
+            drawSpace(ctx, font, x + k(2), y + k(74), s * 2 + k(2), s, EventBridge.isKeyJumpDown, theme)
         } else {
-            // No mouse row: SPACE sits right below WASD.
-            drawKey(ctx, font, "SPACE", x + k(2), y + k(50), s * 2 + k(2), EventBridge.isKeyJumpDown, theme, wide = true)
+            // No mouse row: spacebar sits right below WASD.
+            drawSpace(ctx, font, x + k(2), y + k(50), s * 2 + k(2), s, EventBridge.isKeyJumpDown, theme)
         }
+    }
+
+    /**
+     * Draw the spacebar: a full-width key whose body is a single horizontal line,
+     * centered both horizontally and vertically inside the key (like a real SPACE
+     * keycap). Uses the same background/press animation as [drawKey].
+     */
+    private fun drawSpace(
+        ctx: RenderContext,
+        font: io.switchlite.adapter.common.render.FontRendererBridge,
+        x: Float, y: Float, w: Float, h: Float, down: Boolean, theme: Int
+    ) {
+        val a = anim("SPACE")
+        if (down != a.wasDown) {
+            a.wasDown = down
+            a.lastChange = System.currentTimeMillis()
+        }
+        val elapsed = System.currentTimeMillis() - a.lastChange
+
+        val g: Int
+        val f: Double
+        if (down) {
+            g = kotlin.math.min(255, (2 * elapsed).toInt())
+            f = kotlin.math.max(0.0, 1.0 - elapsed / 20.0)
+        } else {
+            g = kotlin.math.max(0, 255 - (2 * elapsed).toInt())
+            f = kotlin.math.min(1.0, elapsed / 20.0)
+        }
+
+        // Background (same Raven style as the other keys).
+        val bg = 0x78000000.toInt() or (g shl 16) or (g shl 8) or g
+        RenderUtils.rect(ctx, x, y, w, h, bg)
+        if (outline) {
+            RenderUtils.rect(ctx, x, y, w, 1f, theme)
+            RenderUtils.rect(ctx, x, y, 1f, h, theme)
+            RenderUtils.rect(ctx, x, y + h - 1f, w, 1f, theme)
+            RenderUtils.rect(ctx, x + w - 1f, y, 1f, h, theme)
+        }
+
+        // The spacebar line: centered horizontally and vertically, ~70% of key width,
+        // 2px tall (scaled). Brightness follows the theme color with the press factor.
+        val r = ((theme shr 16) and 0xFF)
+        val gg = ((theme shr 8) and 0xFF)
+        val b = (theme and 0xFF)
+        val lineColor = 0xFF000000.toInt() or ((r * f).toInt() shl 16) or ((gg * f).toInt() shl 8) or (b * f).toInt()
+        val lineW = w * 0.70f
+        val lineH = (2f * scale).coerceAtLeast(1f)
+        val lx = x + (w - lineW) / 2f
+        val ly = y + (h - lineH) / 2f
+        RenderUtils.rect(ctx, lx, ly, lineW, lineH, lineColor)
     }
 
     /**
      * Raven's key rendering: background lights up while held (g 0→255 over the
      * press), text color fades to the theme while held (h 1→0 then 0→1 on release).
+     * Text uses Raven's fixed offsets: WASD at +8,+8; LMB/RMB at +8,+4 (exact port).
      */
     private fun drawKey(
         ctx: RenderContext,
         font: io.switchlite.adapter.common.render.FontRendererBridge,
-        label: String, x: Float, y: Float, size: Float, down: Boolean, theme: Int,
-        wide: Boolean = false
+        label: String, x: Float, y: Float, size: Float, down: Boolean, theme: Int
     ) {
-        val w = if (wide) size * 2 + k(2) else size
+        val w = size
         val h = size
 
         val a = anim(label)
@@ -228,10 +285,9 @@ object Keystrokes : Module("Keystrokes", Category.RENDER) {
         val b = (theme and 0xFF)
         val textColor = 0xFF000000.toInt() or ((r * f).toInt() shl 16) or ((gg * f).toInt() shl 8) or (b * f).toInt()
 
-        val textW = font.getStringWidth(label)
-        val tx = (x + (w - textW) / 2f).toInt()
-        val ty = (y + (h - font.fontHeight) / 2f).toInt()
-        font.drawStringWithShadow(label, tx, ty, textColor)
+        // Raven fixed offsets: WASD text at (8,8); LMB/RMB text at (8,4).
+        val offsetY = if (label == "LMB" || label == "RMB") k(4) else k(8)
+        font.drawStringWithShadow(label, (x + k(8)).toInt(), (y + offsetY).toInt(), textColor)
     }
 
     private fun rainbowColor(): Int {

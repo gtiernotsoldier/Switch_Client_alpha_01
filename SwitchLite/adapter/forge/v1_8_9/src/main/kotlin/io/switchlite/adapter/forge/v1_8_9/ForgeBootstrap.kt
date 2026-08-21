@@ -256,6 +256,8 @@ object ForgeBootstrap {
                 EventBridge.guiMouseX = rawX / scale
                 EventBridge.guiMouseY = (displayHeight - rawY) / scale
                 EventBridge.guiLeftMouseDown = (mouseIsButtonDown.invoke(null, 0) as? Boolean) ?: false
+                // Drag widgets only while a GUI screen is open (paused) — never in combat.
+                EventBridge.isGuiOpen = MappingContext.getFieldValue(mc, "forge:mc_currentScreen") != null
             } catch (_: Exception) {}
 
             val fontRendererObj = MappingContext.getFieldValue(mc, "forge:mc_fontRendererObj")

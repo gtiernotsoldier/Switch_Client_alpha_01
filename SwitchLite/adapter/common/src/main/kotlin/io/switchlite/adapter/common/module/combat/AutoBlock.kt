@@ -156,6 +156,7 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
     // ========== Lifecycle ==========
 
     override fun onEnable() {
+        EventBridge.syntheticUseOverride = true
         EventBridge.registerTickListener(tickListener)
     }
 
@@ -163,6 +164,7 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
         EventBridge.unregisterTickListener(tickListener)
         releaseBlock()
         EventBridge.syntheticUse = false
+        EventBridge.syntheticUseOverride = false
         reblockPending = false
         wasAttacking = false
     }

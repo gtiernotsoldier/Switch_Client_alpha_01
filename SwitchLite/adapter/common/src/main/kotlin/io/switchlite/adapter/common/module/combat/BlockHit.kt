@@ -178,13 +178,13 @@ object BlockHit : Module("BlockHit", Category.COMBAT) {
     // ========== Helpers ==========
 
     private fun pressBlock(nowNs: Long) {
-        EventBridge.setSyntheticUse(true)
+        EventBridge.syntheticUse = true
         blockEndNano = nowNs + currentWaitMs * 1_000_000L
     }
 
     private fun releaseBlock() {
         if (EventBridge.isRightMousePhysicallyDown) return // player is manually holding
-        EventBridge.setSyntheticUse(false)
+        EventBridge.syntheticUse = false
     }
 
     /** Target validity: alive, onlyPlayers filter. */
@@ -213,7 +213,7 @@ object BlockHit : Module("BlockHit", Category.COMBAT) {
         if (phase == Phase.BLOCKING) {
             releaseBlock()
         }
-        EventBridge.setSyntheticUse(false)
+        EventBridge.syntheticUse = false
         phase = Phase.IDLE
         hitCounter = 0
     }

@@ -135,8 +135,8 @@ object AutoClicker : Module("AutoClicker", Category.COMBAT), HudLineProvider {
         val result = strategy18.execute(config, state18, input)
 
         when (result) {
-            is ClickResult.Click -> EventBridge.setSyntheticAttack(true)
-            is ClickResult.Skip -> EventBridge.setSyntheticAttack(false)
+            is ClickResult.Click -> EventBridge.syntheticAttack = true
+            is ClickResult.Skip -> EventBridge.syntheticAttack = false
             is ClickResult.StopSprint -> { /* not used in 1.8 path */ }
             is ClickResult.RestoreSprint -> { /* not used in 1.8 path */ }
         }
@@ -203,10 +203,10 @@ object AutoClicker : Module("AutoClicker", Category.COMBAT), HudLineProvider {
 
     private fun applyResult19(result: ClickResult) {
         when (result) {
-            is ClickResult.Click -> EventBridge.setSyntheticAttack(true)
+            is ClickResult.Click -> EventBridge.syntheticAttack = true
             is ClickResult.StopSprint -> EventBridge.setSprinting(false)
             is ClickResult.RestoreSprint -> EventBridge.setSprinting(result.wasSprinting)
-            is ClickResult.Skip -> EventBridge.setSyntheticAttack(false)
+            is ClickResult.Skip -> EventBridge.syntheticAttack = false
         }
     }
 
@@ -226,7 +226,7 @@ object AutoClicker : Module("AutoClicker", Category.COMBAT), HudLineProvider {
     override fun onDisable() {
         tickListener?.let { EventBridge.unregisterTickListener(it) }
         tickListener = null
-        EventBridge.setSyntheticAttack(false)
+        EventBridge.syntheticAttack = false
         state18.reset()
         state19.reset()
     }

@@ -138,12 +138,6 @@ object EventBridge {
     @Volatile var syntheticAttack: Boolean = false
     @Volatile var syntheticUse: Boolean = false
 
-    /** Set the desired synthetic attack-key state (background thread). */
-    fun setSyntheticAttack(desired: Boolean) { syntheticAttack = desired }
-
-    /** Set the desired synthetic use-item (right-click) state (background thread). */
-    fun setSyntheticUse(desired: Boolean) { syntheticUse = desired }
-
     // ========== Attack (Left Click) ==========
     private var attackTrigger: (() -> Unit)? = null
 

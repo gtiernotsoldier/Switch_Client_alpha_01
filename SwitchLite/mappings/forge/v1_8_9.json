@@ -611,6 +611,33 @@
     ],
     "mcp": "pressTime"
   },
+  "forge:keybinding_setKeyBindState": {
+    "class": "net.minecraft.client.settings.KeyBinding",
+    "method": "func_74510_a",
+    "aliases": [
+      "keybinding_setKeyBindState",
+      "setKeyBindState"
+    ],
+    "mcp": "setKeyBindState"
+  },
+  "forge:keybinding_onTick": {
+    "class": "net.minecraft.client.settings.KeyBinding",
+    "method": "func_74507_a",
+    "aliases": [
+      "keybinding_onTick",
+      "onTick"
+    ],
+    "mcp": "onTick"
+  },
+  "forge:keybinding_keyCode": {
+    "class": "net.minecraft.client.settings.KeyBinding",
+    "method": "func_151463_i",
+    "aliases": [
+      "keybinding_keyCode",
+      "keyCode"
+    ],
+    "mcp": "keyCode"
+  },
   "forge:mc_addScheduledTask": {
     "class": "net.minecraft.client.Minecraft",
     "method": "func_152343_a",

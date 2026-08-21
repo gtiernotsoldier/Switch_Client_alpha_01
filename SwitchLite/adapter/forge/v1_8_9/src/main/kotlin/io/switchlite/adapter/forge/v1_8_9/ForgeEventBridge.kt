@@ -510,14 +510,23 @@ object ForgeEventBridge : IEventBridge {
             val gs = MappingContext.getFieldValue(mc, "forge:mc_gameSettings") ?: return
             val keyBindAttack = MappingContext.getFieldValue(gs, "forge:gs_keyBindAttack") ?: return
             if (EventBridge.syntheticAttackOverride) {
-                // Full clicker active: drive the key fully from the synthetic state.
-                // MC 1.8.9 detects clicks via KeyBinding.isPressed(), which reads and
-                // decrements pressTime — setting only the `pressed` boolean never
-                // produces an attack. Set pressTime=1 so the next MC tick fires one
-                // click, and clear it when the strategy wants a pause. The `pressed`
-                // flag is kept in sync for the input-pipeline anti-cheat path.
-                keybindingPressedField?.setBoolean(keyBindAttack, EventBridge.syntheticAttack)
-                keybindingPressTimeField?.setInt(keyBindAttack, if (EventBridge.syntheticAttack) 1 else 0)
+                // Full clicker active: emit a real click through KeyBinding.setKeyBindState
+                // (the same method MC calls when processing physical mouse events). It takes
+                // the *key code* (int) and internally finds the KeyBinding, setting pressed=true
+                // and incrementing pressTime. This both fires an attack AND appears on keystrokes
+                // HUDs that watch key-binding state. We pulse on the rising edge of syntheticAttack
+                // so each strategy "Click" becomes one press (press+onTick) then one release.
+                val attackKeyCode = (MappingContext.invokeMethod(keyBindAttack, "forge:keybinding_keyCode") as? Int) ?: 0
+                val now = EventBridge.syntheticAttack
+                val rose = now && !prevSyntheticAttack
+                if (rose && attackKeyCode != 0) {
+                    MappingContext.invokeMethod(null, "forge:keybinding_setKeyBindState", attackKeyCode, true)
+                    MappingContext.invokeMethod(null, "forge:keybinding_onTick", attackKeyCode)
+                }
+                if (!now && attackKeyCode != 0) {
+                    MappingContext.invokeMethod(null, "forge:keybinding_setKeyBindState", attackKeyCode, false)
+                }
+                prevSyntheticAttack = now
             } else {
                 // Assist modules (ClickAssist/BlockHit/AutoBlock): augment the player's
                 // own input — OR with the physical button so their press is not stolen.
@@ -525,11 +534,24 @@ object ForgeEventBridge : IEventBridge {
             }
             val keyBindUse = MappingContext.getFieldValue(gs, "forge:gs_keyBindUseItem") ?: return
             if (EventBridge.syntheticUseOverride) {
-                keybindingPressedField?.setBoolean(keyBindUse, EventBridge.syntheticUse)
-                keybindingPressTimeField?.setInt(keyBindUse, if (EventBridge.syntheticUse) 1 else 0)
+                val useKeyCode = (MappingContext.invokeMethod(keyBindUse, "forge:keybinding_keyCode") as? Int) ?: 0
+                val nowUse = EventBridge.syntheticUse
+                val roseUse = nowUse && !prevSyntheticUse
+                if (roseUse && useKeyCode != 0) {
+                    MappingContext.invokeMethod(null, "forge:keybinding_setKeyBindState", useKeyCode, true)
+                    MappingContext.invokeMethod(null, "forge:keybinding_onTick", useKeyCode)
+                }
+                if (!nowUse && useKeyCode != 0) {
+                    MappingContext.invokeMethod(null, "forge:keybinding_setKeyBindState", useKeyCode, false)
+                }
+                prevSyntheticUse = nowUse
             } else {
                 keybindingPressedField?.setBoolean(keyBindUse, EventBridge.syntheticUse || isMouseButtonDown(1))
             }
         } catch (_: Exception) {}
     }
+
+    // Rising-edge trackers so a full clicker emits one press/release pulse per strategy click.
+    private var prevSyntheticAttack: Boolean = false
+    private var prevSyntheticUse: Boolean = false
 }

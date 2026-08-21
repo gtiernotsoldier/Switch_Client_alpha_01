@@ -34,7 +34,9 @@ import kotlin.random.Random
 object AutoBlock : Module("AutoBlock", Category.COMBAT) {
 
     // ========== Mode ==========
-    private val mode by choices("Mode", arrayOf("Normal", "Switch"))
+    // Normal = click-style: block for [delayMs] after each attack, then release.
+    // Srg    = hold-style: block for as long as the player keeps attacking / holding.
+    private val mode by choices("Mode", arrayOf("Normal", "Srg"))
 
     // ========== Distance Range ==========
     private val maxDistance by float("MaxDistance", 3.0f, 0.0f..6.0f, "blocks")
@@ -76,53 +78,48 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
         // 1.8 exclusive: only SWORD matters (1.9+ has shields, no sword block)
         if (player.weaponType != WeaponType.SWORD) return
 
-        // ---------- Switch re-block timer ----------
-        if (reblockPending) {
-            if (elapsedNs(reblockStartNano) >= delayMs * 1_000_000L) {
-                EventBridge.syntheticUse = true
-                blockHeld = true
-                reblockPending = false
-            }
-            // While waiting for re-block, don't process new attacks
-            return
-        }
-
         // ---------- Attack detection ----------
-        // Block while actively attacking: AutoClicker running (mouseButton0 reflects its
-        // cadence pulses on the render thread) OR the physical left button held. When not
-        // attacking, stop blocking. This makes AutoBlock hold the block for as long as the
-        // player/AutoClicker keeps attacking (the requested linkage).
+        // Effective attack: AutoClicker running (mouseButton0 reflects its cadence pulses on
+        // the render thread) OR the physical left button held.
         val isAttacking = EventBridge.mouseButton0 || player.isAttackKeyDown
+        val attackJustStarted = isAttacking && !wasAttacking
+        wasAttacking = isAttacking
 
-        // Condition checks (only gate while attacking; otherwise just release).
-        // AutoBlock is relaxed: it blocks whenever the player is attacking with a sword,
-        // regardless of whether the crosshair is on an entity (works in tight spaces / pits).
-        // target is only used as an OPTIONAL filter — distance range applies only when a
-        // target is present, and onlyCurrentView (if enabled) requires the crosshair to be on it.
+        // Condition checks — gate blocking only while attacking; otherwise release.
         var shouldBlock = isAttacking
         if (isAttacking) {
-            if (target != null) {
-                if (target.distance < minDistance || target.distance > maxDistance) shouldBlock = false
+            if (target != null && (target.distance < minDistance || target.distance > maxDistance)) {
+                shouldBlock = false
             }
             if (shouldBlock && onlyCurrentView && !player.isLookingAtTarget) shouldBlock = false
             if (shouldBlock && probability < 100 && Random.nextInt(100) >= probability) shouldBlock = false
         }
 
-        if (shouldBlock && !blockHeld) {
-            // Start blocking now.
-            EventBridge.syntheticUse = true
-            blockHeld = true
-            if (mode == "Normal") {
-                // In Normal mode we keep blocking while attacking; Switch re-blocks after a hit.
-                blockStartNano = System.nanoTime()
+        when (mode) {
+            // ── Srg: hold-style — block for as long as the player keeps attacking/holding.
+            // Long-press / AutoClicker => sustained block; stop attacking => release.
+            "Srg" -> {
+                if (shouldBlock && !blockHeld) {
+                    EventBridge.syntheticUse = true
+                    blockHeld = true
+                } else if (!shouldBlock && blockHeld) {
+                    releaseBlock()
+                }
             }
-        } else if (!shouldBlock && blockHeld && mode != "Switch") {
-            // No longer attacking → stop blocking (Normal mode).
-            releaseBlock()
-        } else if (!shouldBlock && blockHeld && mode == "Switch") {
-            // Switch mode: release only if we started the block; but here we keep it simple
-            // and release when no longer attacking.
-            releaseBlock()
+            // ── Normal: click-style — on a fresh attack, block for [delayMs] then release.
+            // Each click => one block pulse; long-press does not hold forever.
+            else -> {
+                if (blockHeld) {
+                    // Releasing timer for Normal mode.
+                    if (elapsedNs(blockStartNano) >= delayMs * 1_000_000L) {
+                        releaseBlock()
+                    }
+                } else if (attackJustStarted && shouldBlock) {
+                    EventBridge.syntheticUse = true
+                    blockHeld = true
+                    blockStartNano = System.nanoTime()
+                }
+            }
         }
     }
 

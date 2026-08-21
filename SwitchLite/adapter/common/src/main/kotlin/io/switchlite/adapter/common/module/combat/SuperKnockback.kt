@@ -84,7 +84,7 @@ object SuperKnockback : Module("SuperKnockback", Category.COMBAT) {
                 // Holding S — wait stopTicks
                 phaseTicksRemaining--
                 if (phaseTicksRemaining <= 0) {
-                    EventBridge.releaseBack()
+                    EventBridge.syntheticBack = false
                     phase = Phase.RECOVER
                     phaseTicksRemaining = unSprintTicks
                 }
@@ -137,7 +137,7 @@ object SuperKnockback : Module("SuperKnockback", Category.COMBAT) {
                 phase = Phase.SPRINT_OFF
             }
             "SprintTap2" -> {
-                EventBridge.pressBack()
+                EventBridge.syntheticBack = true
                 phase = Phase.STOP
                 phaseTicksRemaining = stopTicks
             }
@@ -146,6 +146,7 @@ object SuperKnockback : Module("SuperKnockback", Category.COMBAT) {
 
     // ========== Lifecycle ==========
     override fun onEnable() {
+        EventBridge.syntheticBackOverride = true
         EventBridge.registerTickListener(tickListener)
     }
 
@@ -153,11 +154,13 @@ object SuperKnockback : Module("SuperKnockback", Category.COMBAT) {
         EventBridge.unregisterTickListener(tickListener)
         // Clean up stuck keys
         if (phase == Phase.STOP) {
-            EventBridge.releaseBack()
+            EventBridge.syntheticBack = false
         }
         if (phase == Phase.SPRINT_OFF || phase == Phase.RECOVER) {
             EventBridge.setSprinting(true)
         }
+        EventBridge.syntheticBack = false
+        EventBridge.syntheticBackOverride = false
         phase = Phase.IDLE
     }
 }

@@ -88,8 +88,16 @@ object WTap : Module("WTap", Category.COMBAT) {
         // Only evaluate trigger in IDLE phase
         if (machine.phase != TapStateMachine.Phase.IDLE) return
 
-        // Guard: W must be held
-        if (!player.isMovingForward) { hitCounter = 0; return }
+        // Guard: W must be held. When the player releases W, sync the synthetic state
+        // back to false — otherwise the override keeps W pressed and the player cannot
+        // stop moving forward.
+        if (!player.isMovingForward) {
+            EventBridge.syntheticForward = false
+            hitCounter = 0
+            return
+        }
+        // Player is holding W and not tapping — ensure the key reads as pressed.
+        EventBridge.syntheticForward = true
 
         // Target guards
         if (target == null || target.distance < rangeMin || target.distance > rangeMax) { hitCounter = 0; return }

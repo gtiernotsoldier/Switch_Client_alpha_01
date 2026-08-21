@@ -65,6 +65,11 @@ object ForgeEventBridge : IEventBridge {
     // Cached field references for writes (avoid repeated getField lookups)
     private val keybindingPressedField by lazy { MappingContext.getField("forge:keybinding_pressed") }
     private val keybindingPressTimeField by lazy { MappingContext.getField("forge:keybinding_pressTime") }
+    // LWJGL Mouse.buttons static ByteBuffer — writing it makes Mouse.isButtonDown(0) return
+    // true, so keystrokes HUDs that read the physical mouse state see our synthetic click.
+    private val mouseButtonsField by lazy {
+        try { mouseClass.getDeclaredField("buttons").also { it.isAccessible = true } } catch (_: Exception) { null }
+    }
     private val playerRotationYawField by lazy { MappingContext.getField("forge:player_rotationYaw") }
     private val playerRotationPitchField by lazy { MappingContext.getField("forge:player_rotationPitch") }
     private val playerHurtTimeField by lazy { MappingContext.getField("forge:entity_hurtTime") }
@@ -510,23 +515,22 @@ object ForgeEventBridge : IEventBridge {
             val gs = MappingContext.getFieldValue(mc, "forge:mc_gameSettings") ?: return
             val keyBindAttack = MappingContext.getFieldValue(gs, "forge:gs_keyBindAttack") ?: return
             if (EventBridge.syntheticAttackOverride) {
-                // Full clicker active: emit a real click through KeyBinding.setKeyBindState
-                // (the same method MC calls when processing physical mouse events). It takes
-                // the *key code* (int) and internally finds the KeyBinding, setting pressed=true
-                // and incrementing pressTime. This both fires an attack AND appears on keystrokes
-                // HUDs that watch key-binding state. We pulse on the rising edge of syntheticAttack
-                // so each strategy "Click" becomes one press (press+onTick) then one release.
-                val attackKeyCode = (MappingContext.invokeMethod(keyBindAttack, "forge:keybinding_keyCode") as? Int) ?: 0
+                // Full clicker active: drive a smooth, time-based press/release cadence
+                // (Raven-style). Each click = press (hold ~delay/2) then release (at delay),
+                // regenerated per cycle at the requested CPS. This avoids the one-shot-pulse
+                // stutter from the 20Hz strategy. Also writes LWJGL Mouse.buttons so keystrokes
+                // HUDs that read physical mouse state see the click.
                 val now = EventBridge.syntheticAttack
-                val rose = now && !prevSyntheticAttack
-                if (rose && attackKeyCode != 0) {
-                    MappingContext.invokeMethod(null, "forge:keybinding_setKeyBindState", attackKeyCode, true)
-                    MappingContext.invokeMethod(null, "forge:keybinding_onTick", attackKeyCode)
+                val keyCode = (MappingContext.invokeMethod(keyBindAttack, "forge:keybinding_keyCode") as? Int) ?: 0
+                if (now && keyCode != 0) {
+                    driveClickCadence(keyCode, leftClick = true)
+                } else {
+                    releaseClick(keyCode, leftClick = true)
+                    attackCadenceActive = false
                 }
-                if (!now && attackKeyCode != 0) {
-                    MappingContext.invokeMethod(null, "forge:keybinding_setKeyBindState", attackKeyCode, false)
-                }
-                prevSyntheticAttack = now
+                // Preserve the physical button in the underlying mouse buffer so a manual
+                // click still reads as down (this path also ORs the physical state).
+                setMouseButtonPhysical(0, EventBridge.syntheticAttack || isMouseButtonDown(0))
             } else {
                 // Assist modules (ClickAssist/BlockHit/AutoBlock): augment the player's
                 // own input — OR with the physical button so their press is not stolen.
@@ -534,24 +538,125 @@ object ForgeEventBridge : IEventBridge {
             }
             val keyBindUse = MappingContext.getFieldValue(gs, "forge:gs_keyBindUseItem") ?: return
             if (EventBridge.syntheticUseOverride) {
-                val useKeyCode = (MappingContext.invokeMethod(keyBindUse, "forge:keybinding_keyCode") as? Int) ?: 0
                 val nowUse = EventBridge.syntheticUse
-                val roseUse = nowUse && !prevSyntheticUse
-                if (roseUse && useKeyCode != 0) {
-                    MappingContext.invokeMethod(null, "forge:keybinding_setKeyBindState", useKeyCode, true)
-                    MappingContext.invokeMethod(null, "forge:keybinding_onTick", useKeyCode)
+                val useKeyCode = (MappingContext.invokeMethod(keyBindUse, "forge:keybinding_keyCode") as? Int) ?: 0
+                if (nowUse && useKeyCode != 0) {
+                    driveClickCadence(useKeyCode, leftClick = false)
+                } else {
+                    releaseClick(useKeyCode, leftClick = false)
+                    useCadenceActive = false
                 }
-                if (!nowUse && useKeyCode != 0) {
-                    MappingContext.invokeMethod(null, "forge:keybinding_setKeyBindState", useKeyCode, false)
-                }
-                prevSyntheticUse = nowUse
+                setMouseButtonPhysical(1, EventBridge.syntheticUse || isMouseButtonDown(1))
             } else {
                 keybindingPressedField?.setBoolean(keyBindUse, EventBridge.syntheticUse || isMouseButtonDown(1))
             }
         } catch (_: Exception) {}
     }
 
-    // Rising-edge trackers so a full clicker emits one press/release pulse per strategy click.
-    private var prevSyntheticAttack: Boolean = false
-    private var prevSyntheticUse: Boolean = false
+    // ── Time-based click cadence (Raven-style) ──
+    // Each full clicker cadence: press on downTime, release on upTime, regenerated per cycle.
+    private var attackCadenceActive = false
+    private var attackDownTime = 0L
+    private var attackUpTime = 0L
+    private var attackPressed = false
+    private var useCadenceActive = false
+    private var useDownTime = 0L
+    private var useUpTime = 0L
+    private var usePressed = false
+    private val clickRandom = java.util.Random()
+
+    private fun sampleCps(): Int {
+        val lo = EventBridge.clickMinCps.coerceAtLeast(1)
+        val hi = EventBridge.clickMaxCps.coerceAtLeast(lo)
+        if (lo == hi) return lo
+        return lo + clickRandom.nextInt(hi - lo + 1)
+    }
+
+    /**
+     * Drive one press/release cadence while the clicker is active. Emits via
+     * KeyBinding.setKeyBindState + onTick (fires the attack AND shows on keystrokes
+     * HUDs) and keeps LWJGL Mouse.buttons in sync.
+     */
+    private fun driveClickCadence(keyCode: Int, leftClick: Boolean) {
+        val now = System.currentTimeMillis()
+        if (!cadenceActive(leftClick)) {
+            startCadence(leftClick, now)
+        }
+        val downTime = if (leftClick) attackDownTime else useDownTime
+        val upTime = if (leftClick) attackUpTime else useUpTime
+        val pressed = if (leftClick) attackPressed else usePressed
+
+        if (!pressed && now >= downTime) {
+            // Press now, hold until upTime.
+            pressKey(keyCode, leftClick)
+            setPressed(leftClick, true)
+        } else if (pressed && now >= upTime) {
+            // Cycle complete: release, then start the next cadence.
+            releaseKey(keyCode, leftClick)
+            setPressed(leftClick, false)
+            startCadence(leftClick, now)
+        }
+    }
+
+    private fun cadenceActive(leftClick: Boolean): Boolean =
+        if (leftClick) attackCadenceActive else useCadenceActive
+
+    private fun startCadence(leftClick: Boolean, now: Long) {
+        val cps = sampleCps().coerceAtLeast(1)
+        val delay = 1000L / cps
+        // Press ~half the cycle in, release at the full cycle (Raven timing).
+        val downTime = now + delay / 2 - clickRandom.nextInt(10)
+        val upTime = now + delay
+        if (leftClick) {
+            attackCadenceActive = true
+            attackDownTime = downTime
+            attackUpTime = upTime
+            attackPressed = false
+        } else {
+            useCadenceActive = true
+            useDownTime = downTime
+            useUpTime = upTime
+            usePressed = false
+        }
+    }
+
+    private fun pressKey(keyCode: Int, leftClick: Boolean) {
+        try {
+            MappingContext.invokeMethod(null, "forge:keybinding_setKeyBindState", keyCode, true)
+            MappingContext.invokeMethod(null, "forge:keybinding_onTick", keyCode)
+        } catch (_: Exception) {}
+        setMouseButtonPhysical(if (leftClick) 0 else 1, true)
+    }
+
+    private fun releaseKey(keyCode: Int, leftClick: Boolean) {
+        try {
+            MappingContext.invokeMethod(null, "forge:keybinding_setKeyBindState", keyCode, false)
+        } catch (_: Exception) {}
+        setMouseButtonPhysical(if (leftClick) 0 else 1, false)
+    }
+
+    private fun releaseClick(keyCode: Int, leftClick: Boolean) {
+        if (cadenceActive(leftClick) || (if (leftClick) attackPressed else usePressed)) {
+            releaseKey(keyCode, leftClick)
+            setPressed(leftClick, false)
+        }
+        if (leftClick) { attackCadenceActive = false; attackPressed = false }
+        else { useCadenceActive = false; usePressed = false }
+    }
+
+    private fun setPressed(leftClick: Boolean, value: Boolean) {
+        if (leftClick) attackPressed = value else usePressed = value
+    }
+
+    /**
+     * Write the physical mouse-button state into LWJGL's internal Mouse.buttons buffer so
+     * Mouse.isButtonDown(button) reflects our synthetic click (and the player's manual hold).
+     * Same technique as Raven's setMouseButtonState. Never throws.
+     */
+    private fun setMouseButtonPhysical(button: Int, down: Boolean) {
+        try {
+            val bf = mouseButtonsField?.get(null) as? java.nio.ByteBuffer ?: return
+            bf.put(button, (if (down) 1 else 0).toByte())
+        } catch (_: Exception) {}
+    }
 }

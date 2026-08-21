@@ -139,6 +139,15 @@ object EventBridge {
     @Volatile var syntheticUse: Boolean = false
 
     /**
+     * CPS range the active full clicker wants. Written by AutoClicker on enable so
+     * the platform adapter can generate a smooth press/release cadence (Raven-style
+     * time-based) instead of one-shot pulses, eliminating click stutter at low tick
+     * resolution. [minCps, maxCps]; ignored unless > 0.
+     */
+    @Volatile var clickMinCps: Int = 0
+    @Volatile var clickMaxCps: Int = 0
+
+    /**
      * Whether a fully-automatic clicker (AutoClicker/TriggerBot) is active.
      * When true, the attack key is fully driven by [syntheticAttack] (creating the
      * CPS press/release rhythm) and is NOT OR-ed with the physical mouse button —

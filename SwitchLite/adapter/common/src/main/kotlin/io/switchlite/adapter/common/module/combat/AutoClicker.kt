@@ -134,9 +134,19 @@ object AutoClicker : Module("AutoClicker", Category.COMBAT), HudLineProvider {
         val input = ClickInput(player = player, target = target)
         val result = strategy18.execute(config, state18, input)
 
+        // For 1.8 mode the strategy's per-tick probability is only a *gate*: while the
+        // trigger conditions pass we keep the clicker armed (syntheticAttack=true) and let
+        // the platform adapter's time-based cadence generate the smooth CPS press/release
+        // rhythm. The probability result is ignored for the output; a Skip means "stop".
         when (result) {
             is ClickResult.Click -> EventBridge.syntheticAttack = true
-            is ClickResult.Skip -> EventBridge.syntheticAttack = false
+            is ClickResult.Skip -> {
+                // Distinguish "probability miss" (keep clicking, cadence still runs) from
+                // "condition blocked" (stop). Re-check the gate directly.
+                val gate = !(config.disableOnBlock && player.isMining) &&
+                    io.switchlite.core.condition.ConditionChecker.check(config.triggerOptions, player, target)
+                EventBridge.syntheticAttack = gate
+            }
             is ClickResult.StopSprint -> { /* not used in 1.8 path */ }
             is ClickResult.RestoreSprint -> { /* not used in 1.8 path */ }
         }
@@ -217,6 +227,8 @@ object AutoClicker : Module("AutoClicker", Category.COMBAT), HudLineProvider {
         state19.reset()
         strategy19.reset()
         EventBridge.syntheticAttackOverride = true
+        EventBridge.clickMinCps = minCps
+        EventBridge.clickMaxCps = maxCps
 
         tickListener = { player, target ->
             if (enabled) onClientTick(player, target)
@@ -229,6 +241,8 @@ object AutoClicker : Module("AutoClicker", Category.COMBAT), HudLineProvider {
         tickListener = null
         EventBridge.syntheticAttack = false
         EventBridge.syntheticAttackOverride = false
+        EventBridge.clickMinCps = 0
+        EventBridge.clickMaxCps = 0
         state18.reset()
         state19.reset()
     }

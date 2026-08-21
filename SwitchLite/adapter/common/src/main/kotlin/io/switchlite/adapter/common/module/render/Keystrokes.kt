@@ -141,8 +141,8 @@ object Keystrokes : Module("Keystrokes", Category.RENDER) {
 
     private fun draw(ctx: RenderContext) {
         val font = ctx.fontRenderer
-        val x = posX
-        val y = posY
+        val x = posX.toFloat()
+        val y = posY.toFloat()
         val s = keySize()
 
         // Theme color (int) — Rainbow computed per frame.
@@ -188,9 +188,10 @@ object Keystrokes : Module("Keystrokes", Category.RENDER) {
     private fun drawKey(
         ctx: RenderContext,
         font: io.switchlite.adapter.common.render.FontRendererBridge,
-        label: String, x: Int, y: Int, size: Float, down: Boolean, theme: Int
+        label: String, x: Float, y: Float, size: Float, down: Boolean, theme: Int,
+        wide: Boolean = false
     ) {
-        val w = size
+        val w = if (wide) size * 2 + k(2) else size
         val h = size
 
         val a = anim(label)
@@ -212,13 +213,13 @@ object Keystrokes : Module("Keystrokes", Category.RENDER) {
 
         // Background: 0x78 (120/255 alpha) base + white level g (Raven 2013265920 + g).
         val bg = 0x78000000.toInt() or (g shl 16) or (g shl 8) or g
-        RenderUtils.rect(ctx, x.toFloat(), y.toFloat(), w, h, bg)
+        RenderUtils.rect(ctx, x, y, w, h, bg)
 
         if (outline) {
-            RenderUtils.rect(ctx, x.toFloat(), y.toFloat(), w, 1f, theme)
-            RenderUtils.rect(ctx, x.toFloat(), y.toFloat(), 1f, h, theme)
-            RenderUtils.rect(ctx, x.toFloat(), y.toFloat() + h - 1f, w, 1f, theme)
-            RenderUtils.rect(ctx, x.toFloat() + w - 1f, y.toFloat(), 1f, h, theme)
+            RenderUtils.rect(ctx, x, y, w, 1f, theme)
+            RenderUtils.rect(ctx, x, y, 1f, h, theme)
+            RenderUtils.rect(ctx, x, y + h - 1f, w, 1f, theme)
+            RenderUtils.rect(ctx, x + w - 1f, y, 1f, h, theme)
         }
 
         // Text color: alpha 0xFF + theme RGB scaled by f (Raven -16777216 + ...).
@@ -228,8 +229,8 @@ object Keystrokes : Module("Keystrokes", Category.RENDER) {
         val textColor = 0xFF000000.toInt() or ((r * f).toInt() shl 16) or ((gg * f).toInt() shl 8) or (b * f).toInt()
 
         val textW = font.getStringWidth(label)
-        val tx = x + ((w - textW) / 2f).toInt()
-        val ty = y + ((h - font.fontHeight) / 2f).toInt()
+        val tx = (x + (w - textW) / 2f).toInt()
+        val ty = (y + (h - font.fontHeight) / 2f).toInt()
         font.drawStringWithShadow(label, tx, ty, textColor)
     }
 

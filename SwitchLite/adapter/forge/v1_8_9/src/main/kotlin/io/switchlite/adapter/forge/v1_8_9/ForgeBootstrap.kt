@@ -263,11 +263,19 @@ object ForgeBootstrap {
                 // Drag widgets only while a GUI screen is open (paused) — never in combat.
                 EventBridge.isGuiOpen = MappingContext.getFieldValue(mc, "forge:mc_currentScreen") != null
 
-                // Effective mouse button states (physical OR synthetic) for the Keystrokes
-                // HUD — Mouse.isButtonDown reflects the Mouse.buttons buffer that AutoClicker
-                // pulses, so the keys flash with the CPS rhythm.
-                EventBridge.mouseButton0 = (mouseIsButtonDown.invoke(null, 0) as? Boolean) ?: false
-                EventBridge.mouseButton1 = (mouseIsButtonDown.invoke(null, 1) as? Boolean) ?: false
+                // Effective mouse button states for the Keystrokes HUD. When a full
+                // clicker (AutoClicker/TriggerBot) overrides the attack/use key, the
+                // state is driven by the cadence's press/release pulses (set in
+                // ForgeEventBridge.pressKey/releaseKey) so the keys flash with the CPS
+                // rhythm — do NOT overwrite with the physical hold (which is constant
+                // true while the player holds left mouse, and would swallow the pulse).
+                // When no clicker overrides, fall back to the physical mouse state.
+                if (!EventBridge.syntheticAttackOverride) {
+                    EventBridge.mouseButton0 = (mouseIsButtonDown.invoke(null, 0) as? Boolean) ?: false
+                }
+                if (!EventBridge.syntheticUseOverride) {
+                    EventBridge.mouseButton1 = (mouseIsButtonDown.invoke(null, 1) as? Boolean) ?: false
+                }
 
                 // Physical click edge detection → feed the CPS counter (like Raven's
                 // mouseManager, which counts every click, not just synthetic ones).

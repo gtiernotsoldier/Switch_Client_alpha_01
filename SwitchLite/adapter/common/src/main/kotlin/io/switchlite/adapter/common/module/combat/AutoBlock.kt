@@ -95,12 +95,17 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
         val isAttacking = EventBridge.mouseButton0 || player.isAttackKeyDown
 
         // Condition checks (only gate while attacking; otherwise just release).
+        // AutoBlock is relaxed: it blocks whenever the player is attacking with a sword,
+        // regardless of whether the crosshair is on an entity (works in tight spaces / pits).
+        // target is only used as an OPTIONAL filter — distance range applies only when a
+        // target is present, and onlyCurrentView (if enabled) requires the crosshair to be on it.
         var shouldBlock = isAttacking
         if (isAttacking) {
-            if (target == null) shouldBlock = false
-            else if (target.distance < minDistance || target.distance > maxDistance) shouldBlock = false
-            else if (onlyCurrentView && !player.isLookingAtTarget) shouldBlock = false
-            else if (probability < 100 && Random.nextInt(100) >= probability) shouldBlock = false
+            if (target != null) {
+                if (target.distance < minDistance || target.distance > maxDistance) shouldBlock = false
+            }
+            if (shouldBlock && onlyCurrentView && !player.isLookingAtTarget) shouldBlock = false
+            if (shouldBlock && probability < 100 && Random.nextInt(100) >= probability) shouldBlock = false
         }
 
         if (shouldBlock && !blockHeld) {

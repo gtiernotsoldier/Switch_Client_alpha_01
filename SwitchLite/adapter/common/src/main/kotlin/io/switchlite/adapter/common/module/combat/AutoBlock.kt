@@ -158,7 +158,9 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
     // ========== Lifecycle ==========
 
     override fun onEnable() {
-        EventBridge.syntheticUseOverride = true
+        // No syntheticUseOverride: AutoBlock ADDS its block on top of the player's own
+        // right-click (Raven style). Overriding the whole use key would swallow the
+        // player's manual blocking.
         EventBridge.registerTickListener(tickListener)
     }
 
@@ -166,7 +168,6 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
         EventBridge.unregisterTickListener(tickListener)
         releaseBlock()
         EventBridge.syntheticUse = false
-        EventBridge.syntheticUseOverride = false
         reblockPending = false
         wasAttacking = false
     }

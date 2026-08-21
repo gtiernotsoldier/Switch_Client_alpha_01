@@ -545,6 +545,9 @@ object ForgeEventBridge : IEventBridge {
                 // Assist modules (ClickAssist/BlockHit/AutoBlock): augment the player's
                 // own input — OR with the physical button so their press is not stolen.
                 keybindingPressedField?.setBoolean(keyBindAttack, EventBridge.syntheticAttack || isMouseButtonDown(0))
+                // Reflect the effective left-button state in the mouse buffer so the
+                // Keystrokes LMB key flashes (ClickAssist compensation).
+                setMouseButtonPhysical(0, EventBridge.syntheticAttack || isMouseButtonDown(0))
             }
             // Forward/back keys (WTap/STap) — applied on the main thread so the tap lands
             // in MC's input and the Keystrokes W/S keys flash. When a tap module overrides,
@@ -578,6 +581,9 @@ object ForgeEventBridge : IEventBridge {
                 setMouseButtonPhysical(1, EventBridge.syntheticUse || isMouseButtonDown(1))
             } else {
                 keybindingPressedField?.setBoolean(keyBindUse, EventBridge.syntheticUse || isMouseButtonDown(1))
+                // Reflect the effective right-button state (incl. AutoBlock/BlockHit
+                // synthetic use) in the mouse buffer so the Keystrokes RMB key flashes.
+                setMouseButtonPhysical(1, EventBridge.syntheticUse || isMouseButtonDown(1))
             }
         } catch (_: Exception) {}
     }

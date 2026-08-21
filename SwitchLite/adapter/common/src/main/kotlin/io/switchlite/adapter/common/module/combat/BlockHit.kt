@@ -206,7 +206,9 @@ object BlockHit : Module("BlockHit", Category.COMBAT) {
     override fun onEnable() {
         hitCounter = 0
         hitPerThreshold = Random.nextInt(hitPerMin, hitPerMax + 1).coerceAtLeast(1)
-        EventBridge.syntheticUseOverride = true
+        // No syntheticUseOverride: BlockHit ADDS its block on top of the player's own
+        // right-click (Raven style). Overriding the whole use key would swallow manual
+        // blocking and cause the occasional stuck/unnatural behavior reported.
         EventBridge.registerTickListener(tickListener)
     }
 
@@ -216,7 +218,6 @@ object BlockHit : Module("BlockHit", Category.COMBAT) {
             releaseBlock()
         }
         EventBridge.syntheticUse = false
-        EventBridge.syntheticUseOverride = false
         phase = Phase.IDLE
         hitCounter = 0
     }

@@ -373,7 +373,8 @@
                                                       'Legit':['MinReach','MaxReach','MinKeep','MaxKeep'] } },
             'SuperKnockback': { selector:'Mode', groups:{ 'SprintTap2':['StopTicks','UnSprintTicks'] } },
             'JumpReset': { selector:'CooldownMode', groups:{ 'Ticks':['TicksUntilJump'],
-                                                             'ReceivedHits':['HitsUntilJump'] } }
+                                                             'ReceivedHits':['HitsUntilJump'] } },
+            'AutoBlock': { selector:'Mode', groups:{ 'Switch':['SwitchOnRightHold'] } }
         };
         function modeOf(o, rule){
             for(const [mode, opts] of Object.entries(rule.groups)){

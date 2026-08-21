@@ -18,9 +18,10 @@ import kotlin.random.Random
  * Automates the sword block (right-click) timing during combat.
  * Two modes:
  *
- * **Normal**: On attack, press right-click to block for [delayMs], then release.
+ * **Normal**: While AutoClicker is working (or the player physically left-clicks), press
+ * right-click to block for [delayMs], then release — re-engages each hit.
  *
- * **Switch**: If already blocking when attack fires, release right-click first
+ * **Switch**: If already blocking when a left-click attack fires, release right-click first
  * (allowing full attack animation), wait [delayMs], then re-press to resume blocking.
  *
  * Conditions:
@@ -34,7 +35,8 @@ import kotlin.random.Random
 object AutoBlock : Module("AutoBlock", Category.COMBAT) {
 
     // ========== Mode ==========
-    // Normal = click-style: on a fresh attack, block for [delayMs] then release.
+    // Normal = click-style: while AutoClicker / physical left-click is working, block for
+    //          [delayMs] then release (re-engages each hit).
     // Switch = if already blocking when a fresh attack fires, release briefly (so the
     //          attack animation plays out), wait [delayMs], then re-block.
     // Srg    = hold-style: block for as long as the player keeps attacking / holding.
@@ -53,7 +55,7 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
     // ========== Conditions ==========
     private val onlyCurrentView by boolean("OnlyCurrentView", false)
 
-    /** Switch mode: only perform the block-hit switch while the player holds right-click. */
+    /** [Switch] mode only: only perform the block-hit switch while the player holds right-click. */
     private val switchOnRightHold by boolean("SwitchOnRightHold", true)
 
     // ========== Internal State ==========
@@ -94,9 +96,10 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
             return
         }
 
-        // ---------- Attack detection ----------
+        // ---------- Attack detection (AutoClick working + physical click) ----------
         // Effective attack: AutoClicker running (mouseButton0 reflects its cadence pulses on
-        // the render thread) OR the physical left button held.
+        // the render thread) OR the physical left button held. mouseButton0 already folds the
+        // synthetic clicks in, and isAttackKeyDown is the raw physical left button.
         val isAttacking = EventBridge.mouseButton0 || player.isAttackKeyDown
         val attackJustStarted = isAttacking && !wasAttacking
         wasAttacking = isAttacking
@@ -145,14 +148,15 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
                 }
             }
 
-            // ── Normal: click-style — block once the player's attack SWING animation is in
-            // progress (so the block times with the actual hit), hold for [delayMs], release.
+            // ── Normal: click-style — block while AutoClicker is working (mouseButton0 cadence)
+            // or the player is physically left-clicking. Hold the block for [delayMs], then
+            // release; re-engage on the next attack so it blocks each hit.
             else -> {
                 if (blockHeld) {
                     if (elapsedNs(blockStartNano) >= delayMs * 1_000_000L) {
                         releaseBlock()
                     }
-                } else if (shouldBlock && player.isSwinging) {
+                } else if (shouldBlock) {
                     EventBridge.syntheticUse = true
                     blockHeld = true
                     blockStartNano = System.nanoTime()

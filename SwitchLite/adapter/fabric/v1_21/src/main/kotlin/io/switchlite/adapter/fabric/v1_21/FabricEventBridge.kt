@@ -247,6 +247,14 @@ object FabricEventBridge : IEventBridge {
             mc.options.useKey.isPressed =
                 if (EventBridge.syntheticUseOverride) EventBridge.syntheticUse
                 else EventBridge.syntheticUse || physicalRight
+            // Forward/back (WTap/STap) — apply on the main thread so the tap lands and the
+            // Keystrokes W/S keys flash. Override drives them fully; otherwise OR physical.
+            mc.options.forwardKey.isPressed =
+                if (EventBridge.syntheticForwardOverride) EventBridge.syntheticForward
+                else EventBridge.syntheticForward || mc.options.forwardKey.isPressed
+            mc.options.backKey.isPressed =
+                if (EventBridge.syntheticBackOverride) EventBridge.syntheticBack
+                else EventBridge.syntheticBack || mc.options.backKey.isPressed
         } catch (_: Exception) {}
     }
 

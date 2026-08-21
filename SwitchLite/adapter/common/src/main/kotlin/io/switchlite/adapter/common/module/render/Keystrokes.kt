@@ -63,9 +63,12 @@ object Keystrokes : Module("Keystrokes", Category.RENDER) {
 
     private fun k(v: Int): Int = (v * scale).toInt()
 
+    /** SPACE key width = A/S/D combined (3x22=66) — the full WASD row width, no wider. */
+    private val SPACE_W = 66
+
     /** Total widget size in scaled px. */
     private fun widgetWidth(): Int = k(74)
-    private fun widgetHeight(): Int = k(if (showMouse) 96 else 74)
+    private fun widgetHeight(): Int = k(if (showMouse) 96 else 76)
 
     fun render(ctx: RenderContext) {
         if (!enabled) return
@@ -140,10 +143,10 @@ object Keystrokes : Module("Keystrokes", Category.RENDER) {
             // Mouse buttons — Raven KeyStrokeMouse coords, 34x22.
             renderMouse(ctx, "LMB", 0, x + k(2), y + k(50), theme)
             renderMouse(ctx, "RMB", 1, x + k(38), y + k(50), theme)
-            // SPACE — same width as A/S/D (22px), centered under the mouse row.
-            renderSpace(ctx, x + k(28), y + k(74), EventBridge.isKeyJumpDown, theme)
+            // SPACE — width = A/S/D combined (3x22=66, the full WASD row width), centered below.
+            renderSpace(ctx, x + k(4), y + k(74), EventBridge.isKeyJumpDown, theme)
         } else {
-            renderSpace(ctx, x + k(28), y + k(54), EventBridge.isKeyJumpDown, theme)
+            renderSpace(ctx, x + k(4), y + k(54), EventBridge.isKeyJumpDown, theme)
         }
     }
 
@@ -293,7 +296,7 @@ object Keystrokes : Module("Keystrokes", Category.RENDER) {
             h = kotlin.math.min(1.0, elapsed / 20.0)
         }
 
-        RenderUtils.rect(ctx, x.toFloat(), y.toFloat(), k(22).toFloat(), k(22).toFloat(),
+        RenderUtils.rect(ctx, x.toFloat(), y.toFloat(), k(SPACE_W).toFloat(), k(22).toFloat(),
             0x78000000.toInt() or (g shl 16) or (g shl 8) or g)
 
         val q = (color shr 16) and 255
@@ -301,17 +304,17 @@ object Keystrokes : Module("Keystrokes", Category.RENDER) {
         val s = color and 255
         if (outline) {
             val border = 0xFF000000.toInt() or (q shl 16) or (r shl 8) or s
-            RenderUtils.rect(ctx, x.toFloat(), y.toFloat(), k(22).toFloat(), 1f, border)
-            RenderUtils.rect(ctx, x.toFloat(), (y + k(21)).toFloat(), k(22).toFloat(), 1f, border)
+            RenderUtils.rect(ctx, x.toFloat(), y.toFloat(), k(SPACE_W).toFloat(), 1f, border)
+            RenderUtils.rect(ctx, x.toFloat(), (y + k(21)).toFloat(), k(SPACE_W).toFloat(), 1f, border)
             RenderUtils.rect(ctx, x.toFloat(), y.toFloat(), 1f, k(22).toFloat(), border)
-            RenderUtils.rect(ctx, (x + k(21)).toFloat(), y.toFloat(), 1f, k(22).toFloat(), border)
+            RenderUtils.rect(ctx, (x + k(SPACE_W) - 1).toFloat(), y.toFloat(), 1f, k(22).toFloat(), border)
         }
 
         // Centered horizontal line (spacebar), brightness follows h.
         val lineColor = 0xFF000000.toInt() or ((q * h).toInt() shl 16) or ((r * h).toInt() shl 8) or (s * h).toInt()
-        val lineW = (k(22) * 0.7f).coerceAtLeast(6f)
+        val lineW = (k(SPACE_W) * 0.7f).coerceAtLeast(6f)
         val lineH = (2f * scale).coerceAtLeast(1f)
-        val lx = x + (k(22) - lineW) / 2f
+        val lx = x + (k(SPACE_W) - lineW) / 2f
         val ly = y + (k(22) - lineH) / 2f
         RenderUtils.rect(ctx, lx, ly, lineW, lineH, lineColor)
     }

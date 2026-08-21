@@ -627,6 +627,9 @@ object ForgeEventBridge : IEventBridge {
         } catch (_: Exception) {}
         setMouseButtonPhysical(if (leftClick) 0 else 1, true)
         EventBridge.recordClick(if (leftClick) 0 else 1)
+        // Mirror the effective button state so the Keystrokes HUD flashes exactly on the
+        // click pulse (same as Raven reading Mouse.isButtonDown).
+        if (leftClick) EventBridge.mouseButton0 = true else EventBridge.mouseButton1 = true
     }
 
     private fun releaseKey(keyCode: Int, leftClick: Boolean) {
@@ -634,6 +637,7 @@ object ForgeEventBridge : IEventBridge {
             MappingContext.invokeMethod(null, "forge:keybinding_setKeyBindState", keyCode, false)
         } catch (_: Exception) {}
         setMouseButtonPhysical(if (leftClick) 0 else 1, false)
+        if (leftClick) EventBridge.mouseButton0 = false else EventBridge.mouseButton1 = false
     }
 
     private fun releaseClick(keyCode: Int, leftClick: Boolean) {

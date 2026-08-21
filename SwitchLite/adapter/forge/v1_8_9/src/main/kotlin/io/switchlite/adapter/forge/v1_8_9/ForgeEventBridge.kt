@@ -64,6 +64,7 @@ object ForgeEventBridge : IEventBridge {
 
     // Cached field references for writes (avoid repeated getField lookups)
     private val keybindingPressedField by lazy { MappingContext.getField("forge:keybinding_pressed") }
+    private val keybindingPressTimeField by lazy { MappingContext.getField("forge:keybinding_pressTime") }
     private val playerRotationYawField by lazy { MappingContext.getField("forge:player_rotationYaw") }
     private val playerRotationPitchField by lazy { MappingContext.getField("forge:player_rotationPitch") }
     private val playerHurtTimeField by lazy { MappingContext.getField("forge:entity_hurtTime") }
@@ -508,15 +509,27 @@ object ForgeEventBridge : IEventBridge {
             val mc = getMc() ?: return
             val gs = MappingContext.getFieldValue(mc, "forge:mc_gameSettings") ?: return
             val keyBindAttack = MappingContext.getFieldValue(gs, "forge:gs_keyBindAttack") ?: return
-            val attackPressed =
-                if (EventBridge.syntheticAttackOverride) EventBridge.syntheticAttack
-                else EventBridge.syntheticAttack || isMouseButtonDown(0)
-            keybindingPressedField?.setBoolean(keyBindAttack, attackPressed)
+            if (EventBridge.syntheticAttackOverride) {
+                // Full clicker active: drive the key fully from the synthetic state.
+                // MC 1.8.9 detects clicks via KeyBinding.isPressed(), which reads and
+                // decrements pressTime — setting only the `pressed` boolean never
+                // produces an attack. Set pressTime=1 so the next MC tick fires one
+                // click, and clear it when the strategy wants a pause. The `pressed`
+                // flag is kept in sync for the input-pipeline anti-cheat path.
+                keybindingPressedField?.setBoolean(keyBindAttack, EventBridge.syntheticAttack)
+                keybindingPressTimeField?.setInt(keyBindAttack, if (EventBridge.syntheticAttack) 1 else 0)
+            } else {
+                // Assist modules (ClickAssist/BlockHit/AutoBlock): augment the player's
+                // own input — OR with the physical button so their press is not stolen.
+                keybindingPressedField?.setBoolean(keyBindAttack, EventBridge.syntheticAttack || isMouseButtonDown(0))
+            }
             val keyBindUse = MappingContext.getFieldValue(gs, "forge:gs_keyBindUseItem") ?: return
-            val usePressed =
-                if (EventBridge.syntheticUseOverride) EventBridge.syntheticUse
-                else EventBridge.syntheticUse || isMouseButtonDown(1)
-            keybindingPressedField?.setBoolean(keyBindUse, usePressed)
+            if (EventBridge.syntheticUseOverride) {
+                keybindingPressedField?.setBoolean(keyBindUse, EventBridge.syntheticUse)
+                keybindingPressTimeField?.setInt(keyBindUse, if (EventBridge.syntheticUse) 1 else 0)
+            } else {
+                keybindingPressedField?.setBoolean(keyBindUse, EventBridge.syntheticUse || isMouseButtonDown(1))
+            }
         } catch (_: Exception) {}
     }
 }

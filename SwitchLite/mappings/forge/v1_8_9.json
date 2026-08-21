@@ -602,6 +602,15 @@
     ],
     "mcp": "pressed"
   },
+  "forge:keybinding_pressTime": {
+    "class": "net.minecraft.client.settings.KeyBinding",
+    "field": "field_151474_i",
+    "aliases": [
+      "keybinding_pressTime",
+      "pressTime"
+    ],
+    "mcp": "pressTime"
+  },
   "forge:mc_addScheduledTask": {
     "class": "net.minecraft.client.Minecraft",
     "method": "func_152343_a",

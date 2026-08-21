@@ -7,29 +7,25 @@ import io.switchlite.adapter.common.option.boolean
 import io.switchlite.adapter.common.option.choices
 import io.switchlite.adapter.common.option.float
 import io.switchlite.adapter.common.render.RenderContext
-import io.switchlite.adapter.common.render.GLConstants
 import io.switchlite.adapter.common.ui.RenderUtils
 
 /**
- * Keystrokes — in-game key/button press indicator. A faithful, pixel-exact port of
- * Raven-bPLUS's keystrokes display.
+ * Keystrokes — in-game key/button press indicator, a direct Kotlin port of Raven-bPLUS's
+ * keystrokes display (KeyStrokeKeyRenderer + KeyStrokeMouse), preserving the exact layout,
+ * dimensions, press animation and CPS counter.
  *
- * Layout (unscaled, from Raven's KeySrokeRenderer/KeyStrokeKeyRenderer/KeyStrokeMouse):
- *   W  at (26, 2);   A at (2, 26);  S at (26, 26);  D at (50, 26)   — each 22x22
- *   LMB at (2, 50) width 34;  RMB at (38, 50) width 34              — 34x22
- *   SPACE at (2, 74) width 70  (two mouse-button widths + gap)      — 70x22
+ * Layout (Raven, unscaled):
+ *   W at (26,2); A at (2,26); S at (26,26); D at (50,26)   — 22x22 keys, text at +8,+8
+ *   LMB at (2,50) width 34; RMB at (38,50) width 34        — 34x22, text at +8,+4
+ *   SPACE at (28,74) width 22 (same as A/S/D), centered line
  *
- * Press animation (Raven): on press the background lights up (g 0→255) and the text
- * shifts to black (h 1→0); on release it fades back. A CPS counter renders under each
- * mouse button at 0.5x scale (Raven's glScalef trick), white text.
- *
- * Configurable (WebUI): Scale, Text color (White/Red/Green/Blue/Yellow/Purple/Rainbow),
- * Show mouse buttons, Outline. Position is drag-adjustable in-game (only while a GUI
- * screen is open / paused).
+ * Press animation (Raven): background i = 2*elapsed (brighten on press, fade on release),
+ * text factor j = 1 - elapsed/20 on press (fade to dark), white CPS text whose brightness
+ * follows j. Exactly matches Raven's KeyStrokeKeyRenderer.renderKey / KeyStrokeMouse.n.
  */
 object Keystrokes : Module("Keystrokes", Category.RENDER) {
 
-    // ── Raven color palette (same order as Raven's KeyStrokeConfigGui) ──
+    // ── Raven color palette (KeyStrokeConfigGui order) ──
     private val THEME_COLORS = intArrayOf(
         0xFFFFFF,  // White
         0xFF0000,  // Red
@@ -39,8 +35,6 @@ object Keystrokes : Module("Keystrokes", Category.RENDER) {
         0xAA00AA,  // Purple
         -1         // Rainbow (computed per frame)
     )
-
-    // ── Position / size ──
 
     @Volatile
     var posX: Int = 8
@@ -67,32 +61,12 @@ object Keystrokes : Module("Keystrokes", Category.RENDER) {
     private var dragOffsetX = 0
     private var dragOffsetY = 0
 
-    // ── Per-key animation state (Raven: track state change time) ──
-    private class KeyAnim {
-        var wasDown = false
-        var lastChange = 0L
-    }
-    private val keyAnims = HashMap<String, KeyAnim>()
-
-    private fun anim(label: String): KeyAnim = keyAnims.getOrPut(label) { KeyAnim() }
-
-    // ── Raven dimensions (scaled by `scale`) ──
-    private val KEY_W = 22f
-    private val KEY_H = 22f
-    private val MOUSE_W = 34f
-    private val MOUSE_H = 22f
-    private val SPACE_H = 22f
-
-    private fun k(v: Int): Float = v * scale
+    private fun k(v: Int): Int = (v * scale).toInt()
 
     /** Total widget size in scaled px. */
-    private fun widgetWidth(): Int = (k(76)).toInt()
-    private fun widgetHeight(): Int = (k(if (showMouse) 100 else 76)).toInt()
+    private fun widgetWidth(): Int = k(74)
+    private fun widgetHeight(): Int = k(if (showMouse) 96 else 74)
 
-    /**
-     * Render the keystrokes widget. Called from OverlayRenderer on the MC render
-     * thread. Handles drag + draw.
-     */
     fun render(ctx: RenderContext) {
         if (!enabled) return
         handleDrag(ctx)
@@ -100,7 +74,7 @@ object Keystrokes : Module("Keystrokes", Category.RENDER) {
     }
 
     // ═══════════════════════════════════════════
-    //  Drag (free placement, only while paused / GUI open)
+    //  Drag (only while a GUI screen is open / paused)
     // ═══════════════════════════════════════════
 
     private fun handleDrag(ctx: RenderContext) {
@@ -111,7 +85,6 @@ object Keystrokes : Module("Keystrokes", Category.RENDER) {
         val mx = EventBridge.guiMouseX
         val my = EventBridge.guiMouseY
         val leftDown = EventBridge.guiLeftMouseDown
-
         val w = widgetWidth()
         val h = widgetHeight()
 
@@ -140,15 +113,13 @@ object Keystrokes : Module("Keystrokes", Category.RENDER) {
     }
 
     // ═══════════════════════════════════════════
-    //  Drawing (faithful Raven port)
+    //  Drawing
     // ═══════════════════════════════════════════
 
     private fun draw(ctx: RenderContext) {
-        val font = ctx.fontRenderer
-        val x = posX.toFloat()
-        val y = posY.toFloat()
+        val x = posX
+        val y = posY
 
-        // Theme color (int) — Rainbow computed per frame.
         val theme = when (colorIndex) {
             "Red" -> THEME_COLORS[1]
             "Green" -> THEME_COLORS[2]
@@ -159,158 +130,190 @@ object Keystrokes : Module("Keystrokes", Category.RENDER) {
             else -> THEME_COLORS[0]
         }
 
-        // WASD cluster — 22x22 keys, generous spacing, text at +8,+8.
-        // Grid: W on top-center; A/S/D below. Pitch 26 (4px gap between keys).
-        drawKey(ctx, font, "W", x + k(28), y + k(2), KEY_W, KEY_H, EventBridge.isKeyForwardDown, theme, textY = k(8))
-        drawKey(ctx, font, "A", x + k(2), y + k(28), KEY_W, KEY_H, EventBridge.isKeyLeftDown, theme, textY = k(8))
-        drawKey(ctx, font, "S", x + k(28), y + k(28), KEY_W, KEY_H, EventBridge.isKeyBackDown, theme, textY = k(8))
-        drawKey(ctx, font, "D", x + k(54), y + k(28), KEY_W, KEY_H, EventBridge.isKeyRightDown, theme, textY = k(8))
+        // WASD — Raven KeyStrokeKeyRenderer coords (26,2 / 2,26 / 26,26 / 50,26), 22x22.
+        renderKey(ctx, "W", x + k(26), y + k(2), EventBridge.isKeyForwardDown, theme)
+        renderKey(ctx, "A", x + k(2), y + k(26), EventBridge.isKeyLeftDown, theme)
+        renderKey(ctx, "S", x + k(26), y + k(26), EventBridge.isKeyBackDown, theme)
+        renderKey(ctx, "D", x + k(50), y + k(26), EventBridge.isKeyRightDown, theme)
 
         if (showMouse) {
-            val mouseY = y + k(54)
-            // Mouse buttons — 34x22, text at +8,+4 (Raven KeyStrokeMouse). State uses the
-            // effective button (physical OR synthetic) so the keys flash with AutoClicker's
-            // CPS rhythm, exactly like Raven reading Mouse.isButtonDown.
-            drawKey(ctx, font, "LMB", x + k(2), mouseY, MOUSE_W, MOUSE_H, EventBridge.mouseButton0, theme, textY = k(4))
-            drawKey(ctx, font, "RMB", x + k(38), mouseY, MOUSE_W, MOUSE_H, EventBridge.mouseButton1, theme, textY = k(4))
-
-            // CPS counters under each mouse button (Raven: 0.5x scale, white, centered).
-            drawCps(ctx, font, EventBridge.leftCps(), x + k(2), mouseY, theme)
-            drawCps(ctx, font, EventBridge.rightCps(), x + k(38), mouseY, theme)
-
-            // Jump key (SPACE): same width as A/S/D (22px), centered under the mouse row.
-            drawSpace(ctx, font, x + k(28), y + k(78), KEY_W, SPACE_H, EventBridge.isKeyJumpDown, theme)
+            // Mouse buttons — Raven KeyStrokeMouse coords, 34x22.
+            renderMouse(ctx, "LMB", 0, x + k(2), y + k(50), theme)
+            renderMouse(ctx, "RMB", 1, x + k(38), y + k(50), theme)
+            // SPACE — same width as A/S/D (22px), centered under the mouse row.
+            renderSpace(ctx, x + k(28), y + k(74), EventBridge.isKeyJumpDown, theme)
         } else {
-            // No mouse row: spacebar sits right below WASD, same width as A/S/D.
-            drawSpace(ctx, font, x + k(28), y + k(54), KEY_W, SPACE_H, EventBridge.isKeyJumpDown, theme)
+            renderSpace(ctx, x + k(28), y + k(54), EventBridge.isKeyJumpDown, theme)
         }
     }
 
-    /**
-     * Raven's key rendering: background lights up while held (g 0→255 over the press),
-     * text color fades to black while held (h 1→0 then 0→1 on release). The press uses
-     * g = 2*elapsed (128ms to full bright) and h = 1 - elapsed/20 (20ms to black text),
-     * giving the "clicked" feel that varies with CPS.
-     */
-    private fun drawKey(
-        ctx: RenderContext,
-        font: io.switchlite.adapter.common.render.FontRendererBridge,
-        label: String, x: Float, y: Float, w: Float, h: Float,
-        down: Boolean, theme: Int, textY: Float
-    ) {
-        val a = anim(label)
-        if (down != a.wasDown) {
-            a.wasDown = down
-            a.lastChange = System.currentTimeMillis()
-        }
-        val elapsed = System.currentTimeMillis() - a.lastChange
+    // ── KeyStrokeKeyRenderer port ──
 
+    /** Per-key animation state, exactly Raven's (e=wasDown, f=lastChange). */
+    private class KeyAnim {
+        var e = true
+        var f = 0L
+    }
+    private val keyAnims = HashMap<String, KeyAnim>()
+    private fun anim(label: String): KeyAnim = keyAnims.getOrPut(label) { KeyAnim() }
+
+    /**
+     * Port of KeyStrokeKeyRenderer.renderKey: 22x22 key, text at +8,+8.
+     * bg = 2013265920 + (g<<16)+(g<<8)+g; text = -16777216 + themeRGB*h.
+     */
+    private fun renderKey(ctx: RenderContext, label: String, x: Int, y: Int, down: Boolean, color: Int) {
+        val a = anim("k:$label")
+        if (down != a.e) {
+            a.e = down
+            a.f = System.currentTimeMillis()
+        }
+
+        val elapsed = System.currentTimeMillis() - a.f
         val g: Int
-        val f: Double  // text brightness factor (0 = black text)
+        val h: Double
         if (down) {
             g = kotlin.math.min(255, (2 * elapsed).toInt())
-            f = kotlin.math.max(0.0, 1.0 - elapsed / 20.0)
+            h = kotlin.math.max(0.0, 1.0 - elapsed / 20.0)
         } else {
             g = kotlin.math.max(0, 255 - (2 * elapsed).toInt())
-            f = kotlin.math.min(1.0, elapsed / 20.0)
+            h = kotlin.math.min(1.0, elapsed / 20.0)
         }
 
-        // Background: 0x78 (120/255 alpha) base + white level g (Raven 2013265920 + g).
-        val bg = 0x78000000.toInt() or (g shl 16) or (g shl 8) or g
-        RenderUtils.rect(ctx, x, y, w, h, bg)
+        val q = (color shr 16) and 255
+        val r = (color shr 8) and 255
+        val s = color and 255
+        val border = 0xFF000000.toInt() or (q shl 16) or (r shl 8) or s
+
+        // Background (2013265920 = 0x78000000).
+        RenderUtils.rect(ctx, x.toFloat(), y.toFloat(), k(22).toFloat(), k(22).toFloat(),
+            0x78000000.toInt() or (g shl 16) or (g shl 8) or g)
 
         if (outline) {
-            RenderUtils.rect(ctx, x, y, w, 1f, theme)
-            RenderUtils.rect(ctx, x, y, 1f, h, theme)
-            RenderUtils.rect(ctx, x, y + h - 1f, w, 1f, theme)
-            RenderUtils.rect(ctx, x + w - 1f, y, 1f, h, theme)
+            RenderUtils.rect(ctx, x.toFloat(), y.toFloat(), k(22).toFloat(), 1f, border)
+            RenderUtils.rect(ctx, x.toFloat(), (y + k(21)).toFloat(), k(22).toFloat(), 1f, border)
+            RenderUtils.rect(ctx, x.toFloat(), y.toFloat(), 1f, k(22).toFloat(), border)
+            RenderUtils.rect(ctx, (x + k(21)).toFloat(), y.toFloat(), 1f, k(22).toFloat(), border)
         }
 
-        // Text color: alpha 0xFF + theme RGB scaled by f. When f→0 the text becomes pure
-        // black (0xFF000000) — on the now-bright background that is the "pressed" look
-        // (black text on white-ish key), guaranteeing it stays visible.
-        val r = ((theme shr 16) and 0xFF)
-        val gg = ((theme shr 8) and 0xFF)
-        val b = (theme and 0xFF)
-        val textColor = 0xFF000000.toInt() or ((r * f).toInt() shl 16) or ((gg * f).toInt() shl 8) or (b * f).toInt()
-
-        // Raven fixed text offsets: key label at (x+8, y+textY).
-        font.drawStringWithShadow(label, (x + k(8)).toInt(), (y + textY).toInt(), textColor)
+        // Text at +8,+8; color = -16777216 + themeRGB * h.
+        val textColor = 0xFF000000.toInt() or ((q * h).toInt() shl 16) or ((r * h).toInt() shl 8) or (s * h).toInt()
+        ctx.fontRenderer.drawStringWithShadow(label, x + k(8), y + k(8), textColor)
     }
 
+    // ── KeyStrokeMouse port ──
+
+    private class MouseAnim {
+        var g = true
+        var h = 0L
+        var f = mutableListOf<Long>()
+    }
+    private val mouseAnims = HashMap<Int, MouseAnim>()
+    private fun mouseAnim(button: Int): MouseAnim = mouseAnims.getOrPut(button) { MouseAnim() }
+
     /**
-     * Draw the spacebar: a 70px-wide key whose body is a single horizontal line centered
-     * both horizontally and vertically (like a real SPACE keycap). Uses the same
-     * background/press animation as [drawKey].
+     * Port of KeyStrokeMouse.n: 34x22 key, text at +8,+4, CPS counter at 0.5x scale.
+     * The CPS uses glScalef(0.5) / glScalef(2.0) exactly like Raven.
      */
-    private fun drawSpace(
-        ctx: RenderContext,
-        font: io.switchlite.adapter.common.render.FontRendererBridge,
-        x: Float, y: Float, w: Float, h: Float, down: Boolean, theme: Int
-    ) {
+    private fun renderMouse(ctx: RenderContext, label: String, button: Int, x: Int, y: Int, color: Int) {
+        val a = mouseAnim(button)
+        val r = when (button) { 0 -> EventBridge.mouseButton0; 1 -> EventBridge.mouseButton1; else -> false }
+        if (r != a.g) {
+            a.g = r
+            a.h = System.currentTimeMillis()
+            if (r) a.f.add(a.h)
+        }
+
+        val elapsed = System.currentTimeMillis() - a.h
+        val i: Int
+        val j: Double
+        if (r) {
+            i = kotlin.math.min(255, (2 * elapsed).toInt())
+            j = kotlin.math.max(0.0, 1.0 - elapsed / 20.0)
+        } else {
+            i = kotlin.math.max(0, 255 - (2 * elapsed).toInt())
+            j = kotlin.math.min(1.0, elapsed / 20.0)
+        }
+
+        val t = (color shr 16) and 255
+        val u = (color shr 8) and 255
+        val v = color and 255
+        val border = 0xFF000000.toInt() or (t shl 16) or (u shl 8) or v
+
+        // Background 34x22.
+        RenderUtils.rect(ctx, x.toFloat(), y.toFloat(), k(34).toFloat(), k(22).toFloat(),
+            0x78000000.toInt() or (i shl 16) or (i shl 8) or i)
+
+        if (outline) {
+            RenderUtils.rect(ctx, x.toFloat(), y.toFloat(), k(34).toFloat(), 1f, border)
+            RenderUtils.rect(ctx, x.toFloat(), (y + k(21)).toFloat(), k(34).toFloat(), 1f, border)
+            RenderUtils.rect(ctx, x.toFloat(), y.toFloat(), 1f, k(22).toFloat(), border)
+            RenderUtils.rect(ctx, (x + k(33)).toFloat(), y.toFloat(), 1f, k(22).toFloat(), border)
+        }
+
+        // Text at +8,+4; color = -16777216 + themeRGB * j.
+        val textColor = 0xFF000000.toInt() or ((t * j).toInt() shl 16) or ((u * j).toInt() shl 8) or (v * j).toInt()
+        ctx.fontRenderer.drawStringWithShadow(label, x + k(8), y + k(4), textColor)
+
+        // CPS counter — Raven: 0.5x scale, white, brightness follows j.
+        val cps = when (button) { 0 -> EventBridge.leftCps(); 1 -> EventBridge.rightCps(); else -> 0 }
+        if (cps > 0) {
+            val text = "$cps CPS"
+            val textWidth = ctx.fontRenderer.getStringWidth(text)
+            val g = ctx.gl
+            g.glPushMatrix()
+            try {
+                g.glScalef(0.5f, 0.5f, 0.5f)
+                val cx = (x + k(17)) * 2 - textWidth / 2
+                val cy = (y + k(14)) * 2
+                val white = (255.0 * j).toInt()
+                val cpsColor = 0xFF000000.toInt() or (white shl 16) or (white shl 8) or white
+                ctx.fontRenderer.drawStringWithShadow(text, cx, cy, cpsColor)
+            } finally {
+                g.glPopMatrix()
+            }
+        }
+    }
+
+    // ── SPACE key (user extension) ──
+
+    private fun renderSpace(ctx: RenderContext, x: Int, y: Int, down: Boolean, color: Int) {
         val a = anim("SPACE")
-        if (down != a.wasDown) {
-            a.wasDown = down
-            a.lastChange = System.currentTimeMillis()
+        if (down != a.e) {
+            a.e = down
+            a.f = System.currentTimeMillis()
         }
-        val elapsed = System.currentTimeMillis() - a.lastChange
-
+        val elapsed = System.currentTimeMillis() - a.f
         val g: Int
-        val f: Double
+        val h: Double
         if (down) {
             g = kotlin.math.min(255, (2 * elapsed).toInt())
-            f = kotlin.math.max(0.0, 1.0 - elapsed / 20.0)
+            h = kotlin.math.max(0.0, 1.0 - elapsed / 20.0)
         } else {
             g = kotlin.math.max(0, 255 - (2 * elapsed).toInt())
-            f = kotlin.math.min(1.0, elapsed / 20.0)
+            h = kotlin.math.min(1.0, elapsed / 20.0)
         }
 
-        val bg = 0x78000000.toInt() or (g shl 16) or (g shl 8) or g
-        RenderUtils.rect(ctx, x, y, w, h, bg)
+        RenderUtils.rect(ctx, x.toFloat(), y.toFloat(), k(22).toFloat(), k(22).toFloat(),
+            0x78000000.toInt() or (g shl 16) or (g shl 8) or g)
+
+        val q = (color shr 16) and 255
+        val r = (color shr 8) and 255
+        val s = color and 255
         if (outline) {
-            RenderUtils.rect(ctx, x, y, w, 1f, theme)
-            RenderUtils.rect(ctx, x, y, 1f, h, theme)
-            RenderUtils.rect(ctx, x, y + h - 1f, w, 1f, theme)
-            RenderUtils.rect(ctx, x + w - 1f, y, 1f, h, theme)
+            val border = 0xFF000000.toInt() or (q shl 16) or (r shl 8) or s
+            RenderUtils.rect(ctx, x.toFloat(), y.toFloat(), k(22).toFloat(), 1f, border)
+            RenderUtils.rect(ctx, x.toFloat(), (y + k(21)).toFloat(), k(22).toFloat(), 1f, border)
+            RenderUtils.rect(ctx, x.toFloat(), y.toFloat(), 1f, k(22).toFloat(), border)
+            RenderUtils.rect(ctx, (x + k(21)).toFloat(), y.toFloat(), 1f, k(22).toFloat(), border)
         }
 
-        // The spacebar line: centered horizontally and vertically, ~70% of key width.
-        val r = ((theme shr 16) and 0xFF)
-        val gg = ((theme shr 8) and 0xFF)
-        val b = (theme and 0xFF)
-        val lineColor = 0xFF000000.toInt() or ((r * f).toInt() shl 16) or ((gg * f).toInt() shl 8) or (b * f).toInt()
-        val lineW = w * 0.70f
+        // Centered horizontal line (spacebar), brightness follows h.
+        val lineColor = 0xFF000000.toInt() or ((q * h).toInt() shl 16) or ((r * h).toInt() shl 8) or (s * h).toInt()
+        val lineW = (k(22) * 0.7f).coerceAtLeast(6f)
         val lineH = (2f * scale).coerceAtLeast(1f)
-        val lx = x + (w - lineW) / 2f
-        val ly = y + (h - lineH) / 2f
+        val lx = x + (k(22) - lineW) / 2f
+        val ly = y + (k(22) - lineH) / 2f
         RenderUtils.rect(ctx, lx, ly, lineW, lineH, lineColor)
-    }
-
-    /**
-     * Draw the CPS counter under a mouse button, Raven-style: scaled to 0.5x (small),
-     * horizontally centered on the button, bright white text. Only drawn when CPS > 0.
-     */
-    private fun drawCps(
-        ctx: RenderContext,
-        font: io.switchlite.adapter.common.render.FontRendererBridge,
-        cps: Int, x: Float, y: Float, theme: Int
-    ) {
-        if (cps <= 0) return
-        val text = "$cps CPS"
-        val textWidth = font.getStringWidth(text)
-
-        val g = ctx.gl
-        g.glPushMatrix()
-        try {
-            // Raven: glScalef(0.5) then draw at (buttonCenter*2 - textWidth/2, (y+14)*2).
-            g.glScalef(0.5f, 0.5f, 0.5f)
-            val centerX = x + k(17)          // button center (Raven uses +17 for 34-wide)
-            val tx = ((centerX) * 2f - textWidth / 2f).toInt()
-            val ty = ((y + k(14)) * 2f).toInt()
-            font.drawStringWithShadow(text, tx, ty, 0xFFFFFFFF.toInt())
-        } finally {
-            g.glPopMatrix()
-        }
     }
 
     private fun rainbowColor(): Int {

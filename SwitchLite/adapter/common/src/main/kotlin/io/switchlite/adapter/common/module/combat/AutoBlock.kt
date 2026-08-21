@@ -147,7 +147,10 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
      */
     private fun releaseBlock() {
         if (!blockHeld) return
-        if (EventBridge.isRightMousePhysicallyDown) return  // player is manually holding
+        // Always clear the synthetic use state. The assist path ORs it with the physical
+        // right button, so clearing syntheticUse never cancels the player's own manual
+        // block — it only stops our synthetic block. The old `if (isRightMousePhysicallyDown)
+        // return` kept syntheticUse=true and stuck the player blocking after release.
         EventBridge.syntheticUse = false
         blockHeld = false
     }

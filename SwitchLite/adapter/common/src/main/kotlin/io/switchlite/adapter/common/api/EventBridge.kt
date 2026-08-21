@@ -454,6 +454,15 @@ object EventBridge {
     @Volatile var isKeyLeftDown: Boolean = false
     @Volatile var isKeyRightDown: Boolean = false
 
+    /**
+     * TRUE physical forward/back key state read via LWJGL Keyboard.isKeyDown(keyCode),
+     * NOT from KeyBinding.pressed (which the tap modules' override can rewrite). Used by
+     * WTap/STap to decide whether the player is actually holding W, matching Raven's
+     * `Keyboard.isKeyDown(keyBindForward.getKeyCode())`. Unaffected by synthetic taps.
+     */
+    @Volatile var physicalForwardDown: Boolean = false
+    @Volatile var physicalBackDown: Boolean = false
+
     /** Jump (space) key state — used by the Keystrokes HUD. */
     @Volatile var isKeyJumpDown: Boolean = false
 

@@ -93,8 +93,10 @@ object STap : Module("STap", Category.COMBAT) {
         // idle it must follow the player's actual S state.
         EventBridge.syntheticBack = EventBridge.isKeyBackDown
 
-        // Guard: W must be held
-        if (!player.isMovingForward) { hitCounter = 0; return }
+        // Guard: W must be physically held (Raven: Keyboard.isKeyDown(keyBindForward)).
+        // Use the TRUE physical key state (LWJGL), not isMovingForward (velocity lag) and
+        // not isKeyForwardDown (rewritten by the override).
+        if (!EventBridge.physicalForwardDown) { hitCounter = 0; return }
 
         // Raven: only tap while attacking — require the effective left click (physical OR
         // synthetic) so it works both manually and with AutoClicker.

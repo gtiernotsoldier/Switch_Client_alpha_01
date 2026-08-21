@@ -191,6 +191,16 @@ object ForgeBootstrap {
                             EventBridge.isKeyLeftDown = readPressed("forge:gs_keyBindLeft")
                             EventBridge.isKeyRightDown = readPressed("forge:gs_keyBindRight")
                             EventBridge.isKeyJumpDown = readPressed("forge:gs_keyBindJump")
+
+                            // TRUE physical W/S via LWJGL Keyboard.isKeyDown(keyCode) — this is
+                            // NOT affected by the tap modules' KeyBinding override. Matches
+                            // Raven's Keyboard.isKeyDown(keyBindForward.getKeyCode()).
+                            val fwdKb = MappingContext.getFieldValue(gs, "forge:gs_keyBindForward")
+                            val backKb = MappingContext.getFieldValue(gs, "forge:gs_keyBindBack")
+                            val fwdKey = fwdKb?.let { MappingContext.invokeMethod(it, "forge:keybinding_keyCode") as? Int } ?: 0
+                            val backKey = backKb?.let { MappingContext.invokeMethod(it, "forge:keybinding_keyCode") as? Int } ?: 0
+                            EventBridge.physicalForwardDown = fwdKey != 0 && ((keyboardIsKeyDown.invoke(null, fwdKey) as? Boolean) ?: false)
+                            EventBridge.physicalBackDown = backKey != 0 && ((keyboardIsKeyDown.invoke(null, backKey) as? Boolean) ?: false)
                         }
                     } catch (_: Exception) {}
 

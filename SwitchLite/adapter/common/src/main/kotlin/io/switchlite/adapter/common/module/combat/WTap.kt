@@ -88,10 +88,11 @@ object WTap : Module("WTap", Category.COMBAT) {
         // Only evaluate trigger in IDLE phase
         if (machine.phase != TapStateMachine.Phase.IDLE) return
 
-        // Guard: W must be held. When the player releases W, sync the synthetic state
-        // back to false — otherwise the override keeps W pressed and the player cannot
-        // stop moving forward.
-        if (!player.isMovingForward) {
+        // Guard: W must be physically held. Use the TRUE physical key state (LWJGL
+        // Keyboard.isKeyDown), not player.isMovingForward (velocity-based, lags after the
+        // tap releases W) and not isKeyForwardDown (which the override rewrites). This is
+        // exactly Raven's Keyboard.isKeyDown(keyBindForward.getKeyCode()).
+        if (!EventBridge.physicalForwardDown) {
             EventBridge.syntheticForward = false
             hitCounter = 0
             return

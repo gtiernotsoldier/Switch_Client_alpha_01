@@ -184,7 +184,11 @@ object BlockHit : Module("BlockHit", Category.COMBAT) {
     }
 
     private fun releaseBlock() {
-        if (EventBridge.isRightMousePhysicallyDown) return // player is manually holding
+        // Always clear the synthetic use state. The assist path ORs it with the physical
+        // right button (syntheticUse || physicalRight), so clearing syntheticUse never
+        // cancels a player's own manual block — it only stops our synthetic block. The old
+        // `if (isRightMousePhysicallyDown) return` kept syntheticUse=true and stuck the
+        // player blocking after they released the button.
         EventBridge.syntheticUse = false
     }
 

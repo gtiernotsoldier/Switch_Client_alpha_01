@@ -56,7 +56,10 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
     private val delayMs by int("Delay", 50, 1..500, "ms")
 
     // ========== Conditions (Unified Engine — shared with BlockHit/WTap/AimAssist/etc.) ==========
-    private val onlyPlane by boolean("OnlyPlane", true)
+    // Defaults are all OFF so the base block behavior is unchanged (block wherever you attack).
+    // OnlyPlane (onlyGround) is off by default: 1.8 PvP keeps the player airborne most of the
+    // time (jump-reset / knockback), so gating blocking on ground by default broke Srg/Switch.
+    private val onlyPlane by boolean("OnlyPlane", false)
     private val onlyTargeting by boolean("OnlyTargeting", false)
     private val onlyMove by boolean("OnlyMove", false)
     private val onlyMoveForward by boolean("OnlyMoveForward", false)

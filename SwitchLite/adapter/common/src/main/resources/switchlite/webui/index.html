@@ -396,6 +396,8 @@
             const rule = MODE_RULES[m.name];
             const selOpt = rule ? m.options.find(o => o.name===rule.selector) : null;
             const sel = selOpt ? selOpt.value : null;
+            // SuperKnockback: HurtTime only applies when TriggerMode == HurtTimeExact.
+            const trigModeOpt = m.options.find(o => o.name==='TriggerMode');
             return m.options.filter(o => {
                 if(cvOpt && o.name==='CombatVersion') return true;
                 if(cv && versionOf(o)!=='' && !(versionOf(o)==='18' && cv==='1.8') && !(versionOf(o)==='19' && cv==='1.9+')) return false;
@@ -404,6 +406,7 @@
                     const m2 = modeOf(o, rule);
                     if(m2!=='' && m2!==sel) return false;   // 其它模式的专属项隐藏
                 }
+                if(trigModeOpt && o.name==='HurtTime') return trigModeOpt.value === 'HurtTimeExact';
                 return true;
             });
         }

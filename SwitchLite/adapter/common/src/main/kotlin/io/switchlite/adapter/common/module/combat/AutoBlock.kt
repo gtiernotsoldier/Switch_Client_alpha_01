@@ -97,6 +97,9 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
     /** Previous tick's attack key state (for rising-edge detection). */
     private var wasAttacking: Boolean = false
 
+    /** Last nanoTime an attack was detected (Srg debounce). */
+    private var lastAttackNano: Long = 0L
+
     /** Throttle counter for diagnostic logging (every ~40 ticks ≈ 2s). */
     private var diagCount: Int = 0
 
@@ -161,40 +164,48 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
                 "target=${target?.distance ?: "null"}")
         }
 
+        val nowNs = System.nanoTime()
+
         when (mode) {
-            // ── Srg: hold-style — block for as long as the player keeps attacking/holding.
+            // ── Srg: hold-style — block continuously while the player is attacking.
+            // Long-hold left-click (or AutoClicker working) keeps the block up. Debounced:
+            // the block only releases once attacking has been absent for ~250ms. Without this,
+            // a fast AutoClick cadence sampled on the 20Hz background thread flickers
+            // shouldBlock true/false → the block drops mid-combat (the "防砍" the user saw).
             "Srg" -> {
-                if (shouldBlock && !blockHeld) {
-                    EventBridge.syntheticUse = true
-                    blockHeld = true
-                } else if (!shouldBlock && blockHeld) {
+                if (shouldBlock) {
+                    lastAttackNano = nowNs
+                    if (!blockHeld) {
+                        EventBridge.syntheticUse = true
+                        blockHeld = true
+                    }
+                    // Keep blocking while attacking.
+                } else if (blockHeld && elapsedNs(lastAttackNano) >= 250_000_000L) {
                     releaseBlock()
                 }
             }
 
-            // ── Switch: block-hit style. Blocking always engages on a left-click attack
-            // (AutoClick working OR physical left-click), regardless of right-click state.
-            // SwitchOnRightHold only gates the *switch* action itself — the brief release +
-            // re-block that lets the attack animation play out — on the player holding
-            // right-click (the block-hit technique keeps right held).
+            // ── Switch: block-hit style. Blocking engages continuously while the player is
+            // attacking (AutoClick working OR physical left-click), so it responds reliably
+            // even though the 20Hz background tick can't catch every fast click pulse. The
+            // block-hit *switch* (brief release + re-block that lets the attack animation play
+            // out) fires on a fresh attack while the player holds right-click (SwitchOnRightHold).
             "Switch" -> {
                 val rightHeld = !switchOnRightHold || EventBridge.isRightMousePhysicallyDown
-                if (blockHeld) {
-                    if (shouldBlock) {
-                        if (rightHeld && attackJustStarted) {
-                            // Fresh attack while blocking → release now, re-block shortly.
-                            releaseBlock()
-                            reblockPending = true
-                            reblockStartNano = System.nanoTime()
-                        }
-                        // Otherwise keep blocking while attacking.
-                    } else {
+                if (shouldBlock) {
+                    if (!blockHeld) {
+                        // Attacking → keep blocking engaged (robust: no edge dependence).
+                        EventBridge.syntheticUse = true
+                        blockHeld = true
+                    } else if (rightHeld && attackJustStarted) {
+                        // Fresh attack while blocking → release now, re-block shortly.
                         releaseBlock()
+                        reblockPending = true
+                        reblockStartNano = nowNs
                     }
-                } else if (attackJustStarted && shouldBlock) {
-                    // Not blocking → start blocking on the fresh attack.
-                    EventBridge.syntheticUse = true
-                    blockHeld = true
+                    // Otherwise keep blocking while attacking.
+                } else if (blockHeld) {
+                    releaseBlock()
                 }
             }
 
@@ -209,7 +220,7 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
                 } else if (shouldBlock) {
                     EventBridge.syntheticUse = true
                     blockHeld = true
-                    blockStartNano = System.nanoTime()
+                    blockStartNano = nowNs
                 }
             }
         }
@@ -241,6 +252,7 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
         // No syntheticUseOverride: AutoBlock ADDS its block on top of the player's own
         // right-click (Raven style). Overriding the whole use key would swallow the
         // player's manual blocking.
+        lastAttackNano = 0L
         EventBridge.registerTickListener(tickListener)
     }
 
@@ -250,5 +262,6 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
         EventBridge.syntheticUse = false
         reblockPending = false
         wasAttacking = false
+        lastAttackNano = 0L
     }
 }

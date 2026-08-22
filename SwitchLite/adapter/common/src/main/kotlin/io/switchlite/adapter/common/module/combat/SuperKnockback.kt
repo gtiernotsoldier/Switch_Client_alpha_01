@@ -36,6 +36,14 @@ object SuperKnockback : Module("SuperKnockback", Category.COMBAT) {
     private val chance by int("Chance", 100, 0..100, "%")
     private val delay by int("Delay", 0, 0..500, "ms")
 
+    // ========== Trigger Mode (two detection styles, both preserved) ==========
+    //   RisingEdge: reliable 20Hz "just got hit" (hurtTime 0 -> >0). Never misses.
+    //   HurtTimeExact: fire when target.hurtTime equals the configured HurtTime value (default
+    //   10). Stronger, matches LB's exact-match semantics, can be tuned — but like the old
+    //   SuperKnockback/SprintReset bug, the exact ==N window can be missed under 20Hz sampling.
+    private val triggerMode by choices("TriggerMode", arrayOf("RisingEdge", "HurtTimeExact"))
+    private val hurtTime by int("HurtTime", 10, 0..10)
+
     // ========== Conditions (Unified Engine) ==========
     // Defaults follow LB: require moving forward to trigger (SprintTap needs forward motion).
     private val onlyGround by boolean("OnlyGround", false)
@@ -116,11 +124,22 @@ object SuperKnockback : Module("SuperKnockback", Category.COMBAT) {
             return
         }
 
-        // ---- Fresh hit pending -> evaluate trigger ----
-        if (!hitPending) return
-        hitPending = false
-
+        // ---- Trigger evaluation (both trigger styles preserved) ----
         val t = EventBridge.crosshairTarget ?: return
+
+        when (triggerMode) {
+            "RisingEdge" -> {
+                // Fire on the fresh-hit rising edge (set by the attack listener).
+                if (!hitPending) return
+                hitPending = false
+            }
+            else -> { // "HurtTimeExact"
+                // Fire when target.hurtTime equals the configured HurtTime value.
+                // We must sample each tick (not rely on the edge listener).
+                if (t.hurtTime != hurtTime) return
+            }
+        }
+
         if (!canTrigger(player, t)) return
         if (chance < 100 && Random.nextInt(100) >= chance) return
 

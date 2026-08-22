@@ -498,13 +498,21 @@ object ForgeEventBridge : IEventBridge {
             }
         }
 
-        val player = ForgeStateExtractor.extractPlayerState()
-        val targetId = ForgeStateExtractor.getCurrentTargetId()
-        val target = if (targetId != null) ForgeStateExtractor.extractTargetState(targetId) else null
-
-        // Crosshair-only target (no nearest fallback) — for modules acting on the hit target.
-        val crosshairId = ForgeStateExtractor.getCrosshairTargetId()
-        EventBridge.crosshairTarget = if (crosshairId != null) ForgeStateExtractor.extractTargetState(crosshairId) else null
+        // Hardened: a reflection/mapping failure anywhere in extraction must NEVER stop
+        // module dispatch. Each extractor already falls back safely internally; wrap the
+        // remaining calls so EventBridge.onTick is always reached. Previously an unguarded
+        // throw here (e.g. extractTargetState) silently killed every combat/player module's
+        // tick — which is exactly how AutoBlock's Srg/Switch stopped responding.
+        val player = runCatching { ForgeStateExtractor.extractPlayerState() }.getOrElse { PlayerState.EMPTY }
+        val target = runCatching {
+            val targetId = ForgeStateExtractor.getCurrentTargetId()
+            if (targetId != null) ForgeStateExtractor.extractTargetState(targetId) else null
+        }.getOrNull()
+        val crosshair = runCatching {
+            val crosshairId = ForgeStateExtractor.getCrosshairTargetId()
+            if (crosshairId != null) ForgeStateExtractor.extractTargetState(crosshairId) else null
+        }.getOrNull()
+        EventBridge.crosshairTarget = crosshair
 
         EventBridge.onTick(player, target)
     }

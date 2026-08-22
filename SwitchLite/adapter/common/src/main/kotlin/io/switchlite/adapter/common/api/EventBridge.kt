@@ -1,5 +1,6 @@
 package io.switchlite.adapter.common.api
 
+import io.switchlite.core.logging.CoreLogger
 import io.switchlite.core.model.PlayerState
 import io.switchlite.core.model.TargetState
 import io.switchlite.core.model.VelocityContext
@@ -66,6 +67,7 @@ object EventBridge {
     private val tickListeners = mutableListOf<(PlayerState, TargetState?) -> Unit>()
     private val simpleTickListeners = mutableListOf<(Int) -> Unit>()
     private var tickCounter = 0
+    private var tickDiagCount = 0
 
     fun registerTickListener(listener: (PlayerState, TargetState?) -> Unit) {
         tickListeners.add(listener)
@@ -85,6 +87,13 @@ object EventBridge {
 
     fun onTick(player: PlayerState, target: TargetState?) {
         tickCounter++
+        // Throttled dispatch heartbeat — tells us whether module tick dispatch actually runs
+        // on the user's machine and whether the player failed to extract (EMPTY).
+        if (++tickDiagCount % 60 == 0) {
+            CoreLogger.info(
+                "[EventBridge] dispatch #$tickCounter listeners=${tickListeners.size} " +
+                "playerEmpty=${player === PlayerState.EMPTY} sword=${player.weaponType}")
+        }
         tickListeners.forEach { it(player, target) }
         simpleTickListeners.forEach { it(tickCounter) }
     }

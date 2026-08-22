@@ -150,16 +150,7 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
             if (shouldBlock && probability < 100 && Random.nextInt(100) >= probability) shouldBlock = false
         }
 
-        if (++diagCount % 40 == 0) {
-            CoreLogger.info(
-                "[AutoBlock] diag mode=$mode sword=${player.weaponType == WeaponType.SWORD} " +
-                "onGround=${player.onGround} moving=${player.isMoving} m0=${EventBridge.mouseButton0} " +
-                "physL=${player.isAttackKeyDown} cond=$conditionsMet (Plane=$onlyPlane Target=$onlyTargeting " +
-                "Move=$onlyMove MoveF=$onlyMoveForward GoesBack=$onlyWhenTargetGoesBack) " +
-                "shouldBlock=$shouldBlock blockHeld=$blockHeld reblock=$reblockPending rightHeld=${EventBridge.isRightMousePhysicallyDown} " +
-                "target=${target?.distance ?: "null"}")
-        }
-
+        // shared with the diag block below on the same counter.
         if (++diagCount % 40 == 0) {
             CoreLogger.info(
                 "[AutoBlock] diag mode=$mode sword=${player.weaponType == WeaponType.SWORD} " +

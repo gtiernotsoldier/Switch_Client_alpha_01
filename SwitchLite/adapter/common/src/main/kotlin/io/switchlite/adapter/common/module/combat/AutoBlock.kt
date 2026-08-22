@@ -103,9 +103,6 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
     /** nanoTime when Switch release happened; re-block after [delayMs]. */
     private var reblockStartNano: Long = 0L
 
-    /** Previous tick's attack key state (for rising-edge detection). */
-    private var wasAttacking: Boolean = false
-
     /** Last nanoTime an attack was detected (Srg debounce). */
     private var lastAttackNano: Long = 0L
 
@@ -150,8 +147,6 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
         // the render thread) OR the physical left button held. mouseButton0 already folds the
         // synthetic clicks in, and isAttackKeyDown is the raw physical left button.
         val isAttacking = EventBridge.mouseButton0 || player.isAttackKeyDown
-        val attackJustStarted = isAttacking && !wasAttacking
-        wasAttacking = isAttacking
 
         // Unified condition engine (OnlyPlane / OnlyTargeting / OnlyMove / OnlyMoveForward /
         // OnlyWhenTargetGoesBack). Applies to ALL modes.
@@ -195,28 +190,28 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
             }
 
             // ── Switch: block-hit style. AutoBlock maintains the block while a target is in
-            // range (does NOT require actively attacking — "一直格挡"). On each fresh left-click
-            // attack (physical left OR AutoClick) it briefly CANCELS the block so the hit lands,
-            // then re-blocks after delayMs. SwitchOnRightHold: the cancel only happens while the
-            // player physically holds right-click.
+            // range. While the player is actively attacking (long-pressing left-click OR
+            // AutoClicker working), the block is CANCELLED so attacks land; when they stop
+            // attacking it re-blocks. SwitchOnRightHold: the cancel additionally requires the
+            // player to be holding (long-pressing) right-click. Uses a debounced attack state
+            // (not a rising edge) so both long-press left and AutoClick are detected reliably.
             "Switch" -> {
-                val baseBlock = conditionsMet && inRange && probPass
                 val cancelAllowed = !switchOnRightHold || EventBridge.isRightMousePhysicallyDown
-                if (baseBlock) {
-                    lastAttackNano = nowNs
+                val baseBlock = conditionsMet && inRange && probPass
+                if (isAttacking) lastAttackNano = nowNs
+                // "Actively attacking" within a ~200ms window (absorbs AutoClick pulse gaps).
+                val attackingActive = elapsedNs(lastAttackNano) < 200_000_000L
+
+                if (baseBlock && attackingActive && cancelAllowed) {
+                    // Attacking → cancel the block so the hit lands.
+                    if (blockHeld) releaseBlock()
+                } else if (baseBlock) {
+                    // Not attacking, or cancel not allowed → maintain the block.
                     if (!blockHeld) {
-                        // Maintain the block while a target is in range.
                         EventBridge.syntheticUse = true
                         blockHeld = true
-                    } else if (cancelAllowed && attackJustStarted) {
-                        // Fresh attack while blocking → cancel briefly so the hit lands,
-                        // then re-block after delayMs.
-                        releaseBlock()
-                        reblockPending = true
-                        reblockStartNano = nowNs
                     }
-                    // Keep blocking while in range.
-                } else if (blockHeld && elapsedNs(lastAttackNano) >= 250_000_000L) {
+                } else if (blockHeld) {
                     releaseBlock()
                 }
             }
@@ -298,7 +293,6 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
         releaseBlock()
         EventBridge.syntheticUse = false
         reblockPending = false
-        wasAttacking = false
         lastAttackNano = 0L
         rangeEngaged = false
     }

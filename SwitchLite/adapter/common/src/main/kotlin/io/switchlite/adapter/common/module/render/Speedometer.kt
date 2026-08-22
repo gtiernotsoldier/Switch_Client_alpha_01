@@ -45,12 +45,13 @@ object Speedometer : Module("Speedometer", Category.RENDER) {
     @Volatile private var sprinting = false
 
     private val tickListener: (io.switchlite.core.model.PlayerState, io.switchlite.core.model.TargetState?) -> Unit = { p, _ ->
-        if (!enabled) return@tickListener@Unit
-        val hSpeed = sqrt(p.motionX * p.motionX + p.motionZ * p.motionZ)
-        // motion is in blocks/tick (1.8); *20 = blocks/second.
-        speedBps = (hSpeed * 20f).toFloat()
-        retentionPct = if (SPRINT_BPS > 0f) ((speedBps / SPRINT_BPS) * 100f).coerceIn(0f, 300f) else 0f
-        sprinting = p.isSprinting
+        if (enabled) {
+            val hSpeed = sqrt(p.motionX * p.motionX + p.motionZ * p.motionZ)
+            // motion is in blocks/tick (1.8); *20 = blocks/second.
+            speedBps = (hSpeed * 20f).toFloat()
+            retentionPct = if (SPRINT_BPS > 0f) ((speedBps / SPRINT_BPS) * 100f).coerceIn(0f, 300f) else 0f
+            sprinting = p.isSprinting
+        }
     }
 
     fun render(ctx: RenderContext) {

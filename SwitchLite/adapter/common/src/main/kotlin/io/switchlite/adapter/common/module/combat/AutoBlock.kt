@@ -50,6 +50,12 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
     private val maxDistance by float("MaxDistance", 3.0f, 0.0f..6.0f, "blocks")
     private val minDistance by float("MinDistance", 0.0f, 0.0f..6.0f, "blocks")
 
+    // How the distance gate triggers blocking:
+    //  - "InRange" : maintain blocking while the target is inside [Min, Max] (continuous).
+    //  - "OnEnter" : engage blocking when the target ENTERS the range, then hold through
+    //                small distance fluctuations (hysteresis) instead of flickering at the edge.
+    private val rangeMode by choices("RangeMode", arrayOf("InRange", "OnEnter"))
+
     // ========== Probability ==========
     private val probability by int("Chance", 100, 0..100, "%")
 
@@ -100,6 +106,9 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
     /** Last nanoTime an attack was detected (Srg debounce). */
     private var lastAttackNano: Long = 0L
 
+    /** OnEnter range-mode latch: target has entered the attack range. */
+    private var rangeEngaged: Boolean = false
+
     /** Throttle counter for diagnostic logging (every ~40 ticks ≈ 2s). */
     private var diagCount: Int = 0
 
@@ -141,26 +150,23 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
         val attackJustStarted = isAttacking && !wasAttacking
         wasAttacking = isAttacking
 
-        // Condition checks — gate blocking only while attacking; otherwise release.
-        // Unified engine first (OnlyPlane / OnlyTargeting / OnlyMove / OnlyMoveForward /
-        // OnlyWhenTargetGoesBack), then AutoBlock's own distance + probability options.
+        // Unified condition engine (OnlyPlane / OnlyTargeting / OnlyMove / OnlyMoveForward /
+        // OnlyWhenTargetGoesBack). Applies to ALL modes.
         val conditionsMet = ConditionChecker.check(triggerOptions, player, target)
-        var shouldBlock = isAttacking && conditionsMet
-        if (shouldBlock) {
-            if (target != null && (target.distance < minDistance || target.distance > maxDistance)) {
-                shouldBlock = false
-            }
-            if (shouldBlock && probability < 100 && Random.nextInt(100) >= probability) shouldBlock = false
-        }
 
-        // shared with the diag block below on the same counter.
+        // Distance gate — behavior depends on RangeMode (InRange = continuous; OnEnter = latch
+        // on entry with hysteresis).
+        val inRange = computeInRange(target)
+        val probPass = probability >= 100 || Random.nextInt(100) < probability
+
         if (++diagCount % 40 == 0) {
             CoreLogger.info(
                 "[AutoBlock] diag mode=$mode sword=${player.weaponType == WeaponType.SWORD} " +
-                "onGround=${player.onGround} moving=${player.isMoving} m0=${EventBridge.mouseButton0} " +
-                "physL=${player.isAttackKeyDown} cond=$conditionsMet (Plane=$onlyPlane Target=$onlyTargeting " +
-                "Move=$onlyMove MoveF=$onlyMoveForward GoesBack=$onlyWhenTargetGoesBack) " +
-                "shouldBlock=$shouldBlock blockHeld=$blockHeld reblock=$reblockPending rightHeld=${EventBridge.isRightMousePhysicallyDown} " +
+                "m0=${EventBridge.mouseButton0} physL=${player.isAttackKeyDown} " +
+                "cond=$conditionsMet (Plane=$onlyPlane Target=$onlyTargeting Move=$onlyMove " +
+                "MoveF=$onlyMoveForward GoesBack=$onlyWhenTargetGoesBack) " +
+                "inRange=$inRange rangeMode=$rangeMode prob=$probPass blockHeld=$blockHeld " +
+                "reblock=$reblockPending rightHeld=${EventBridge.isRightMousePhysicallyDown} " +
                 "target=${target?.distance ?: "null"}")
         }
 
@@ -170,10 +176,10 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
             // ── Srg: hold-style — block continuously while the player is attacking.
             // Long-hold left-click (or AutoClicker working) keeps the block up. Debounced:
             // the block only releases once attacking has been absent for ~250ms. Without this,
-            // a fast AutoClick cadence sampled on the 20Hz background thread flickers
-            // shouldBlock true/false → the block drops mid-combat (the "防砍" the user saw).
+            // a fast AutoClick cadence sampled on the 20Hz background thread flickers the
+            // attack state true/false → the block drops mid-combat (the "防砍" the user saw).
             "Srg" -> {
-                if (shouldBlock) {
+                if (isAttacking && conditionsMet && inRange && probPass) {
                     lastAttackNano = nowNs
                     if (!blockHeld) {
                         EventBridge.syntheticUse = true
@@ -185,17 +191,18 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
                 }
             }
 
-            // ── Switch: block-hit style. AutoBlock maintains the block (syntheticUse). While
-            // in combat it keeps the shield up and, on each fresh left-click attack (physical
-            // left OR AutoClick), briefly CANCELS the block so the hit lands, then re-blocks
-            // after delayMs — the block-hit / anti-knockback rhythm. SwitchOnRightHold gates
-            // that cancel on the player physically holding right-click.
+            // ── Switch: block-hit style. AutoBlock maintains the block while a target is in
+            // range (does NOT require actively attacking — "一直格挡"). On each fresh left-click
+            // attack (physical left OR AutoClick) it briefly CANCELS the block so the hit lands,
+            // then re-blocks after delayMs. SwitchOnRightHold: the cancel only happens while the
+            // player physically holds right-click.
             "Switch" -> {
+                val baseBlock = conditionsMet && inRange && probPass
                 val cancelAllowed = !switchOnRightHold || EventBridge.isRightMousePhysicallyDown
-                if (shouldBlock) {
+                if (baseBlock) {
                     lastAttackNano = nowNs
                     if (!blockHeld) {
-                        // Restore / engage the block while fighting (debounced below).
+                        // Maintain the block while a target is in range.
                         EventBridge.syntheticUse = true
                         blockHeld = true
                     } else if (cancelAllowed && attackJustStarted) {
@@ -205,7 +212,7 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
                         reblockPending = true
                         reblockStartNano = nowNs
                     }
-                    // Keep blocking while in combat.
+                    // Keep blocking while in range.
                 } else if (blockHeld && elapsedNs(lastAttackNano) >= 250_000_000L) {
                     releaseBlock()
                 }
@@ -215,6 +222,7 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
             // or the player is physically left-clicking. Hold the block for [delayMs], then
             // release; re-engage on the next attack so it blocks each hit.
             else -> {
+                val shouldBlock = isAttacking && conditionsMet && inRange && probPass
                 if (blockHeld) {
                     if (elapsedNs(blockStartNano) >= delayMs * 1_000_000L) {
                         releaseBlock()
@@ -226,6 +234,34 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
                 }
             }
         }
+    }
+
+    /**
+     * Distance gate per [rangeMode].
+     *  - "InRange": target within [minDistance, maxDistance].
+     *  - "OnEnter": engage once the target enters [minDistance, maxDistance], then hold until it
+     *    leaves beyond maxDistance + [RANGE_HYSTERESIS] (no flicker at the boundary).
+     */
+    private fun computeInRange(target: TargetState?): Boolean {
+        if (target == null) {
+            rangeEngaged = false
+            return false
+        }
+        val d = target.distance
+        val within = d >= minDistance && d <= maxDistance
+        return when (rangeMode) {
+            "OnEnter" -> {
+                if (within) rangeEngaged = true
+                else if (d > maxDistance + RANGE_HYSTERESIS) rangeEngaged = false
+                rangeEngaged && d >= minDistance
+            }
+            else -> within
+        }
+    }
+
+    private companion object {
+        /** Hysteresis margin (blocks) for the OnEnter range mode. */
+        const val RANGE_HYSTERESIS = 1.5f
     }
 
     // ========== Helpers ==========
@@ -255,6 +291,7 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
         // right-click (Raven style). Overriding the whole use key would swallow the
         // player's manual blocking.
         lastAttackNano = 0L
+        rangeEngaged = false
         EventBridge.registerTickListener(tickListener)
     }
 
@@ -265,5 +302,6 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
         reblockPending = false
         wasAttacking = false
         lastAttackNano = 0L
+        rangeEngaged = false
     }
 }

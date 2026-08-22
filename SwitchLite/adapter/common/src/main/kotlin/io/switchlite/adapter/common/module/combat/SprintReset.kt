@@ -3,7 +3,6 @@ package io.switchlite.adapter.common.module.combat
 import io.switchlite.core.condition.ConditionChecker
 import io.switchlite.core.model.PlayerState
 import io.switchlite.core.model.TargetState
-import io.switchlite.core.strategy.combat.CombatTrigger
 import io.switchlite.adapter.common.api.EventBridge
 import io.switchlite.adapter.common.module.Module
 import io.switchlite.adapter.common.module.Category
@@ -19,13 +18,13 @@ import io.switchlite.adapter.common.option.triggerOptions
  *   **Nostop**: C0B stop sprinting + start sprinting (explicit server-side reset).
  *   **Silent**: C03 player position packet (implicit movement state refresh).
  *
- * Triggers on attack when target.hurtTime equals HurtTime threshold.
+ * Fires on the rising edge of the target's hurt animation (a fresh hit), so it triggers
+ * reliably under 20Hz sampling.
  */
 object SprintReset : Module("SprintReset", Category.COMBAT) {
 
     // ========== Core ==========
     private val mode by choices("Mode", arrayOf("Nostop", "Silent"))
-    private val hurtTime by int("HurtTime", 10, 1..10)
     private val chance by int("Chance", 100, 0..100, "%")
     private val delay by int("Delay", 0, 0..500, "ms")
     private val tick by int("Tick", 1, 1..20)
@@ -47,10 +46,17 @@ object SprintReset : Module("SprintReset", Category.COMBAT) {
 
     // ========== State ==========
     private var hitCounter: Int = 0
-    private var hitThreshold: Int = 1
     private var sending: Boolean = false
     private var pendingMode: String = ""
     private var sendTimeNano: Long = 0L
+
+    // Rising-edge "just hit" detection. The target's hurtTime (hurt animation) jumps > 0 the
+    // instant it's hit and stays > 0 for ~10 ticks; between hits (i-frame window) it returns to
+    // 0 for ~1s. So the 0 -> >0 transition reliably marks a fresh hit even under 20Hz sampling,
+    // unlike the old exact `hurtResistantTime == 10` match (a razor-thin 1-tick window that the
+    // background thread frequently misses).
+    private var prevHurt = false
+    private var lastTargetId: Int = -1
 
     // ========== Tick Listener ==========
     private val tickListener: (PlayerState, TargetState?) -> Unit = { p, t ->
@@ -67,7 +73,19 @@ object SprintReset : Module("SprintReset", Category.COMBAT) {
             return
         }
 
-        if (target == null) return
+        if (target == null) {
+            // No target — reset hit-edge state so a new target's first hit is caught.
+            prevHurt = false
+            lastTargetId = -1
+            return
+        }
+
+        // Reset edge state when switching targets.
+        if (lastTargetId != target.entityId) {
+            lastTargetId = target.entityId
+            prevHurt = false
+            hitCounter = 0
+        }
 
         // Built-in 3-block range
         if (target.distance > 3.0f) return
@@ -75,20 +93,19 @@ object SprintReset : Module("SprintReset", Category.COMBAT) {
         // Condition check
         if (!ConditionChecker.check(triggerOptions, player, target)) return
 
-        // CombatTrigger EQUAL mode + attack counting + probability
-        val eval = CombatTrigger.evaluate(
-            mode = CombatTrigger.Mode.EQUAL,
-            target = target,
-            maxHurtTime = hurtTime,
-            hitCounter = hitCounter,
-            hitThreshold = hitThreshold,
-            hitPerMin = tick,
-            hitPerMax = tick,
-            chance = chance
-        )
-        hitCounter = eval.hitCounter
-        hitThreshold = eval.hitThreshold
-        if (!eval.fire) return
+        // Rising-edge "just hit": hurtTime just became > 0 (fresh hit). Reliable at 20Hz.
+        val isHurt = target.hurtTime > 0
+        val justHit = isHurt && !prevHurt
+        prevHurt = isHurt
+        if (!justHit) return
+
+        // Tick throttle: fire once every `tick` hits.
+        hitCounter++
+        if (hitCounter < tick) return
+        hitCounter = 0
+
+        // Probability
+        if (chance < 100 && Random.nextInt(100) >= chance) return
 
         // Schedule send
         if (delay > 0) {
@@ -103,7 +120,8 @@ object SprintReset : Module("SprintReset", Category.COMBAT) {
     // ========== Lifecycle ==========
     override fun onEnable() {
         hitCounter = 0
-        hitThreshold = tick
+        prevHurt = false
+        lastTargetId = -1
         EventBridge.registerTickListener(tickListener)
     }
 
@@ -111,5 +129,7 @@ object SprintReset : Module("SprintReset", Category.COMBAT) {
         EventBridge.unregisterTickListener(tickListener)
         hitCounter = 0
         sending = false
+        prevHurt = false
+        lastTargetId = -1
     }
 }

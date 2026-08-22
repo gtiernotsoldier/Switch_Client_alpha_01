@@ -3,7 +3,6 @@ package io.switchlite.adapter.common.module.combat
 import io.switchlite.core.condition.ConditionChecker
 import io.switchlite.core.model.PlayerState
 import io.switchlite.core.model.TargetState
-import io.switchlite.core.strategy.combat.CombatTrigger
 import io.switchlite.adapter.common.api.EventBridge
 import io.switchlite.adapter.common.module.HudLineProvider
 import io.switchlite.adapter.common.module.Module
@@ -12,13 +11,14 @@ import io.switchlite.adapter.common.option.boolean
 import io.switchlite.adapter.common.option.float
 import io.switchlite.adapter.common.option.int
 import io.switchlite.adapter.common.option.triggerOptions
+import kotlin.random.Random
 
 /**
  * Reach — dynamically extend attack range on trigger.
  *
- * Uses CombatTrigger EQUAL mode: when target.hurtTime reaches maxHurt
- * (attack just landed), counts toward attack threshold. On fire, extends
- * reach via EventBridge.setReach(). Fabric and Forge both supported.
+ * Uses a rising-edge hit detector (target hurt animation), firing reliably under 20Hz
+ * sampling. On a fresh hit it extends reach via EventBridge.setReach(). Forge and Fabric
+ * both supported.
  */
 object Reach : Module("Reach", Category.COMBAT), HudLineProvider {
 
@@ -51,9 +51,14 @@ object Reach : Module("Reach", Category.COMBAT), HudLineProvider {
 
     // ========== State ==========
     private var hitCounter: Int = 0
-    private var hitThreshold: Int = 1
     private var delayNano: Long = 0L
     private var extending: Boolean = false
+
+    // Rising-edge "just hit" detection (same reliable pattern as SprintReset): the target's
+    // hurt animation jumps >0 on a fresh hit and is 0 between hits, so the 0 -> >0 transition
+    // is caught reliably under 20Hz sampling — unlike the old exact hurtResistantTime match.
+    private var prevHurt = false
+    private var lastTargetId: Int = -1
 
     // ========== Tick Listener ==========
     private val tickListener: (PlayerState, TargetState?) -> Unit = { p, t ->
@@ -70,7 +75,18 @@ object Reach : Module("Reach", Category.COMBAT), HudLineProvider {
         }
 
         // Target required
-        if (target == null) return
+        if (target == null) {
+            prevHurt = false
+            lastTargetId = -1
+            return
+        }
+
+        // Reset edge state when switching targets.
+        if (lastTargetId != target.entityId) {
+            lastTargetId = target.entityId
+            prevHurt = false
+            hitCounter = 0
+        }
 
         // OnlyPlayers
         if (onlyPlayers && target.name.isEmpty()) return
@@ -78,20 +94,19 @@ object Reach : Module("Reach", Category.COMBAT), HudLineProvider {
         // Condition check
         if (!ConditionChecker.check(triggerOptions, player, target)) return
 
-        // CombatTrigger EQUAL mode: hurtTime match + hit counting + probability
-        val eval = CombatTrigger.evaluate(
-            mode = CombatTrigger.Mode.EQUAL,
-            target = target,
-            maxHurtTime = player.maxHurtResistantTime,
-            hitCounter = hitCounter,
-            hitThreshold = hitThreshold,
-            hitPerMin = hitPer,
-            hitPerMax = hitPer,
-            chance = chance
-        )
-        hitCounter = eval.hitCounter
-        hitThreshold = eval.hitThreshold
-        if (!eval.fire) return
+        // Rising-edge "just hit": hurtTime just became > 0 (fresh hit). Reliable at 20Hz.
+        val isHurt = target.hurtTime > 0
+        val justHit = isHurt && !prevHurt
+        prevHurt = isHurt
+        if (!justHit) return
+
+        // Hit throttle: extend every `hitPer` hits.
+        hitCounter++
+        if (hitCounter < hitPer) return
+        hitCounter = 0
+
+        // Probability
+        if (chance < 100 && Random.nextInt(100) >= chance) return
 
         // Fire — extend reach for [delay] ms, then fall back to min
         EventBridge.setReach(reachMax)
@@ -107,12 +122,15 @@ object Reach : Module("Reach", Category.COMBAT), HudLineProvider {
     // ========== Lifecycle ==========
     override fun onEnable() {
         hitCounter = 0
-        hitThreshold = hitPer
+        prevHurt = false
+        lastTargetId = -1
         EventBridge.registerTickListener(tickListener)
     }
 
     override fun onDisable() {
         EventBridge.unregisterTickListener(tickListener)
         extending = false
+        prevHurt = false
+        lastTargetId = -1
     }
 }

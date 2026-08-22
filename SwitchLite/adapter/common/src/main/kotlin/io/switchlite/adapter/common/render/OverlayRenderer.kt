@@ -60,6 +60,7 @@ object OverlayRenderer {
 
             drawHudCard(ctx)
             drawKeystrokes(ctx)
+            drawSpeedometer(ctx)
             drawToasts(ctx)
 
         } finally {
@@ -145,6 +146,14 @@ object OverlayRenderer {
     private fun drawKeystrokes(ctx: RenderContext) {
         try {
             io.switchlite.adapter.common.module.render.Keystrokes.render(ctx)
+        } catch (_: Exception) {}
+    }
+
+    // ── Speedometer (plain-number speed HUD) ──
+
+    private fun drawSpeedometer(ctx: RenderContext) {
+        try {
+            io.switchlite.adapter.common.module.render.Speedometer.render(ctx)
         } catch (_: Exception) {}
     }
 

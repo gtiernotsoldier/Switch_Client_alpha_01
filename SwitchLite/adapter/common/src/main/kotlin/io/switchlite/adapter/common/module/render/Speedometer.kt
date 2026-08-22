@@ -1,0 +1,143 @@
+package io.switchlite.adapter.common.module.render
+
+import io.switchlite.adapter.common.api.EventBridge
+import io.switchlite.adapter.common.module.Category
+import io.switchlite.adapter.common.module.Module
+import io.switchlite.adapter.common.option.float
+import io.switchlite.adapter.common.render.RenderContext
+import kotlin.math.sqrt
+
+/**
+ * Speedometer — a lightweight plain-number HUD showing:
+ *   - current player horizontal speed (blocks/second)
+ *   - speed retention rate (%) vs a sprint baseline
+ *
+ * Purpose: visually confirm whether KeepSprint (or vanilla attack slowdown) is actually
+ * holding player speed during rapid attacks. Vanilla MC drops horizontal speed to ~60% while
+ * attacking; with KeepSprint the retention should read much higher.
+ *
+ * Rendered exactly like the Keystrokes HUD: draggable while a GUI is open, plain text with
+ * shadow, NO background box — just numbers.
+ */
+object Speedometer : Module("Speedometer", Category.RENDER) {
+
+    /** Sprint baseline (blocks/second) used for the 100% retention reference. ~5.6 b/s. */
+    private const val SPRINT_BPS = 5.6f
+
+    @Volatile
+    var posX: Int = 8
+        private set
+    @Volatile
+    var posY: Int = 200
+        private set
+
+    /** Widget scale factor. */
+    var scale by float("Scale", 1.0f, 0.5f..2.0f)
+
+    // Draggable state (same as Keystrokes).
+    private var dragging = false
+    private var dragOffsetX = 0
+    private var dragOffsetY = 0
+
+    // Latest captured values (updated on the background tick thread, read on render thread).
+    @Volatile private var speedBps: Float = 0f
+    @Volatile private var retentionPct: Float = 0f
+    @Volatile private var sprinting = false
+
+    private val tickListener: (io.switchlite.core.model.PlayerState, io.switchlite.core.model.TargetState?) -> Unit = { p, _ ->
+        if (!enabled) return@tickListener@Unit
+        val hSpeed = sqrt(p.motionX * p.motionX + p.motionZ * p.motionZ)
+        // motion is in blocks/tick (1.8); *20 = blocks/second.
+        speedBps = (hSpeed * 20f).toFloat()
+        retentionPct = if (SPRINT_BPS > 0f) ((speedBps / SPRINT_BPS) * 100f).coerceIn(0f, 300f) else 0f
+        sprinting = p.isSprinting
+    }
+
+    fun render(ctx: RenderContext) {
+        if (!enabled) return
+        handleDrag(ctx)
+        draw(ctx)
+    }
+
+    // ═══════════════════════════════════════════
+    //  Drag (only while a GUI screen is open / paused)
+    // ═══════════════════════════════════════════
+
+    private fun handleDrag(ctx: RenderContext) {
+        if (!EventBridge.isGuiOpen) {
+            dragging = false
+            return
+        }
+        val mx = EventBridge.guiMouseX
+        val my = EventBridge.guiMouseY
+        val leftDown = EventBridge.guiLeftMouseDown
+        val w = widgetWidth(ctx)
+        val h = widgetHeight(ctx)
+
+        if (leftDown) {
+            if (!dragging) {
+                if (mx in posX until (posX + w) && my in posY until (posY + h)) {
+                    dragging = true
+                    dragOffsetX = mx - posX
+                    dragOffsetY = my - posY
+                }
+            } else {
+                posX = mx - dragOffsetX
+                posY = my - dragOffsetY
+                clampToScreen(ctx)
+            }
+        } else {
+            dragging = false
+        }
+    }
+
+    private fun clampToScreen(ctx: RenderContext) {
+        if (posX < 0) posX = 0
+        if (posY < 0) posY = 0
+        if (posX + widgetWidth(ctx) > ctx.scaledWidth) posX = ctx.scaledWidth - widgetWidth(ctx)
+        if (posY + widgetHeight(ctx) > ctx.scaledHeight) posY = ctx.scaledHeight - widgetHeight(ctx)
+    }
+
+    // ═══════════════════════════════════════════
+    //  Drawing — plain text, no background
+    // ═══════════════════════════════════════════
+
+    private fun widgetWidth(ctx: RenderContext): Int {
+        val f = ctx.fontRenderer
+        val maxLine = listOf(speedText(), retentionText(), sprintText()).maxByOrNull { f.getStringWidth(it) }?.let { f.getStringWidth(it) } ?: 60
+        return (maxLine * scale).toInt() + 2
+    }
+
+    private fun widgetHeight(ctx: RenderContext): Int {
+        return ((ctx.fontRenderer.fontHeight * 3 + 4) * scale).toInt()
+    }
+
+    private fun speedText(): String = "Speed %.1f b/s".format(speedBps)
+    private fun retentionText(): String = "Retain %.0f%%".format(retentionPct)
+    private fun sprintText(): String = if (sprinting) "Sprint" else "Walk"
+
+    private fun draw(ctx: RenderContext) {
+        val f = ctx.fontRenderer
+        val x = posX
+        val y = posY
+        val lineH = f.fontHeight + 2
+
+        val color = if (sprinting) 0xFF7A00 else 0xFFFFFF
+
+        f.drawStringWithShadow(speedText(), x, y, color)
+        f.drawStringWithShadow(retentionText(), x, y + lineH, color)
+        f.drawStringWithShadow(sprintText(), x, y + lineH * 2, 0xC0C0C0)
+    }
+
+    // ========== Lifecycle ==========
+    override fun onEnable() {
+        EventBridge.registerTickListener(tickListener)
+    }
+
+    override fun onDisable() {
+        EventBridge.unregisterTickListener(tickListener)
+        speedBps = 0f
+        retentionPct = 0f
+        sprinting = false
+    }
+}

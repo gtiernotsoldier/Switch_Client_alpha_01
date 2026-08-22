@@ -15,32 +15,33 @@ import kotlin.random.Random
 /**
  * SuperKnockback Module — sprint manipulation to maximise knockback dealt.
  *
- * Two modes:
- *   **SprintTap**: briefly disable sprint on hit, then re-enable next tick.
- *   **SprintTap2**: press S (back) for [stopTicks] to force a movement stop,
- *     release, wait [unSprintTicks], then restore sprint.
+ * Ported toward LiquidBounce's SuperKnockback semantics. Attack-event driven: fires on a fresh
+ * hit of the crosshair target (hurtTime rising edge — our reliable 20Hz equivalent of LB's
+ * AttackEvent). Three modes:
+ *   **SprintTap**: on hit, briefly break sprint then re-engage (uses serverSprintState mirror,
+ *     like LB's PostSprintUpdate state machine).
+ *   **Old**: on hit, send STOP+START+STOP+START sprint packets and force local+server sprint on
+ *     (LB "Old" — reported best).
+ *   **SneakPacket**: on hit, interleave STOP_SPRINTING / START_SNEAKING / START_SPRINTING /
+ *     STOP_SNEAKING packets (LB "SneakPacket").
  *
- * Triggers when target.hurtTime equals the configured HurtTime value (default 10 = the instant the
- * target was hit), subject to ConditionChecker, probability, and built-in
- * 3-block range. Optional delay before execution.
+ * Trigger conditions via the unified engine + built-in 3-block range + probability + optional
+ * delay. `minEnemyRotDiffToIgnore` is omitted because our TargetState does not expose the
+ * enemy's yaw (default 180° is a no-op anyway).
  */
 object SuperKnockback : Module("SuperKnockback", Category.COMBAT) {
 
     // ========== Core ==========
-    private val mode by choices("Mode", arrayOf("SprintTap", "SprintTap2"))
-    private val hurtTime by int("HurtTime", 10, 0..10)
+    private val mode by choices("Mode", arrayOf("SprintTap", "Old", "SneakPacket"))
     private val chance by int("Chance", 100, 0..100, "%")
     private val delay by int("Delay", 0, 0..500, "ms")
 
-    // ========== SprintTap2 Config ==========
-    private val stopTicks by int("StopTicks", 1, 1..5, "ticks")
-    private val unSprintTicks by int("UnSprintTicks", 2, 1..5, "ticks")
-
     // ========== Conditions (Unified Engine) ==========
-    private val onlyGround by boolean("OnlyGround", true)
+    // Defaults follow LB: require moving forward to trigger (SprintTap needs forward motion).
+    private val onlyGround by boolean("OnlyGround", false)
     private val onlyTargeting by boolean("OnlyTargeting", false)
-    private val onlyMove by boolean("OnlyMove", false)
-    private val onlyMoveForward by boolean("OnlyMoveForward", false)
+    private val onlyMove by boolean("OnlyMove", true)
+    private val onlyMoveForward by boolean("OnlyMoveForward", true)
     private val onlyWhenTargetGoesBack by boolean("OnlyWhenTargetGoesBack", false)
 
     private val triggerOptions by triggerOptions("Trigger") {
@@ -51,116 +52,156 @@ object SuperKnockback : Module("SuperKnockback", Category.COMBAT) {
         onlyWhenTargetGoesBack = this@SuperKnockback.onlyWhenTargetGoesBack
     }
 
-    // ========== State Machine ==========
-    private enum class Phase { IDLE, DELAY, SPRINT_OFF, STOP, RECOVER }
+    // ========== State ==========
+    private enum class Phase { IDLE, DELAY, SPRINT_TAP }
 
     private var phase: Phase = Phase.IDLE
     private var delayEndNano: Long = 0L
-    private var phaseTicksRemaining: Int = 0
 
-    // ========== Tick Listener ==========
-    private val tickListener: (PlayerState, TargetState?) -> Unit = { p, _ ->
-        if (enabled) onTick(p, EventBridge.crosshairTarget)
+    /** A fresh hit was detected this tick (attack listener -> evaluated in tick listener). */
+    private var hitPending = false
+
+    // SprintTap force-sprint state machine (LB PostSprintUpdate).
+    private var sprintTicks = 0
+    private var forceSprintState = 0
+
+    /** One-tick offset countdown when coordinated with SprintReset. */
+    private var coordOffsetTicks = 0
+
+    private val attackListener: (TargetState?) -> Unit = {
+        // Coordination: when SprintReset is also active, SprintReset acts first and we offset
+        // our action by one tick so the two never fire a C0B burst in the same tick.
+        if (enabled) hitPending = true
     }
+    private val tickListener: (PlayerState, TargetState?) -> Unit = { p, t -> if (enabled) onTick(p, t) }
 
     private fun onTick(player: PlayerState, target: TargetState?) {
-        // ---- Active phases (non-IDLE) ----
-        when (phase) {
-            Phase.DELAY -> {
-                if (System.nanoTime() >= delayEndNano) {
-                    startAction()
+        // ---- SprintTap force-sprint state machine (runs each tick while active) ----
+        if (phase == Phase.SPRINT_TAP && mode == "SprintTap") {
+            when (sprintTicks) {
+                2 -> {
+                    EventBridge.setSprinting(false)
+                    forceSprintState = 2
+                    sprintTicks--
                 }
-                return
-            }
-            Phase.SPRINT_OFF -> {
-                // 1-tick sprint off → re-enable (if moving forward)
-                if (player.isMovingForward) {
-                    EventBridge.setSprinting(true)
-                }
-                phase = Phase.IDLE
-                return
-            }
-            Phase.STOP -> {
-                // Holding S — wait stopTicks
-                phaseTicksRemaining--
-                if (phaseTicksRemaining <= 0) {
-                    EventBridge.syntheticBack = false
-                    phase = Phase.RECOVER
-                    phaseTicksRemaining = unSprintTicks
-                }
-                return
-            }
-            Phase.RECOVER -> {
-                // Recovering — wait unSprintTicks, then re-sprint
-                phaseTicksRemaining--
-                if (phaseTicksRemaining <= 0) {
+                1 -> {
                     if (player.isMovingForward) {
                         EventBridge.setSprinting(true)
                     }
+                    forceSprintState = 1
+                    sprintTicks--
+                }
+                else -> {
+                    forceSprintState = 0
                     phase = Phase.IDLE
                 }
-                return
             }
-            Phase.IDLE -> { /* evaluate below */ }
         }
 
-        // ---- IDLE: evaluate trigger ----
+        // ---- Delay timer -> start action ----
+        if (phase == Phase.DELAY) {
+            if (System.nanoTime() >= delayEndNano) {
+                phase = Phase.IDLE
+                startAction(player)
+            }
+            return
+        }
 
-        // Target required
-        if (target == null) return
+        // ---- Coordination offset: fire the deferred action from the previous hit ----
+        if (coordOffsetTicks > 0) {
+            coordOffsetTicks--
+            if (coordOffsetTicks == 0) {
+                fireTrigger(player)
+            }
+            return
+        }
 
-        // Built-in: 3-block range
-        if (target.distance > 3.0f) return
+        // ---- Fresh hit pending -> evaluate trigger ----
+        if (!hitPending) return
+        hitPending = false
 
-        // HurtTime trigger
-        if (target.hurtTime != hurtTime) return
-
-        // Condition check
-        if (!ConditionChecker.check(triggerOptions, player, target)) return
-
-        // Probability
+        val t = EventBridge.crosshairTarget ?: return
+        if (!canTrigger(player, t)) return
         if (chance < 100 && Random.nextInt(100) >= chance) return
 
-        // Delay or immediate
+        // When SprintReset is also active it acts this tick; we offset one tick so our sprint
+        // packets land after its reset burst (SprintReset first, SuperKnockback second).
+        if (EventBridge.isSprintCoordinationActive()) {
+            coordOffsetTicks = 1
+            return
+        }
+
+        fireTrigger(player)
+    }
+
+    /** Perform the mode action (after condition/chance/delay/coordination gates). */
+    private fun fireTrigger(player: PlayerState) {
         if (delay > 0) {
             delayEndNano = System.nanoTime() + delay * 1_000_000L
             phase = Phase.DELAY
         } else {
-            startAction()
+            startAction(player)
         }
     }
 
-    private fun startAction() {
+    /** Trigger gates: range, unified conditions. */
+    private fun canTrigger(player: PlayerState, target: TargetState): Boolean {
+        if (target.distance > 3.0f) return false
+        return ConditionChecker.check(triggerOptions, player, target)
+    }
+
+    private fun startAction(player: PlayerState) {
         when (mode) {
             "SprintTap" -> {
-                EventBridge.setSprinting(false)
-                phase = Phase.SPRINT_OFF
+                // LB: only break sprint if the server actually believes we're sprinting.
+                if (player.isSprinting && EventBridge.serverSprintState) {
+                    sprintTicks = 2
+                    forceSprintState = 0
+                    phase = Phase.SPRINT_TAP
+                }
             }
-            "SprintTap2" -> {
-                EventBridge.syntheticBack = true
-                phase = Phase.STOP
-                phaseTicksRemaining = stopTicks
+            "Old" -> {
+                if (player.isSprinting) {
+                    EventBridge.sendEntityAction("STOP_SPRINTING")
+                }
+                EventBridge.sendEntityActions(
+                    "START_SPRINTING", "STOP_SPRINTING", "START_SPRINTING"
+                )
+                // Force local + server sprint on.
+                EventBridge.setSprinting(true)
+                EventBridge.serverSprintState = true
+            }
+            "SneakPacket" -> {
+                EventBridge.sendEntityActions(
+                    "STOP_SPRINTING", "START_SNEAKING", "START_SPRINTING", "STOP_SNEAKING"
+                )
             }
         }
     }
 
     // ========== Lifecycle ==========
     override fun onEnable() {
-        EventBridge.syntheticBackOverride = true
+        EventBridge.registerAttackListener(attackListener)
         EventBridge.registerTickListener(tickListener)
+        EventBridge.setSuperKnockbackActive(true)
+        phase = Phase.IDLE
+        hitPending = false
+        sprintTicks = 0
+        forceSprintState = 0
+        coordOffsetTicks = 0
     }
 
     override fun onDisable() {
+        EventBridge.unregisterAttackListener(attackListener)
         EventBridge.unregisterTickListener(tickListener)
-        // Clean up stuck keys
-        if (phase == Phase.STOP) {
-            EventBridge.syntheticBack = false
-        }
-        if (phase == Phase.SPRINT_OFF || phase == Phase.RECOVER) {
-            EventBridge.setSprinting(true)
-        }
-        EventBridge.syntheticBack = false
-        EventBridge.syntheticBackOverride = false
+        EventBridge.setSuperKnockbackActive(false)
+        // Clean up stuck state — restore sprint.
+        EventBridge.setSprinting(true)
+        EventBridge.serverSprintState = true
         phase = Phase.IDLE
+        hitPending = false
+        sprintTicks = 0
+        forceSprintState = 0
+        coordOffsetTicks = 0
     }
 }

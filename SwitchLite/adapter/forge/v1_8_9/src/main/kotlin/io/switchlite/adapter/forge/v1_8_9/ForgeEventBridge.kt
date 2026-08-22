@@ -38,12 +38,18 @@ object ForgeEventBridge : IEventBridge {
     private val c0bActionClass by lazy { Class.forName("net.minecraft.network.play.client.C0BPacketEntityAction\$Action") }
     private val stopSprintingAction by lazy { c0bActionClass.enumConstants.firstOrNull { it.toString() == "STOP_SPRINTING" } }
     private val startSprintingAction by lazy { c0bActionClass.enumConstants.firstOrNull { it.toString() == "START_SPRINTING" } }
+    private val startSneakingAction by lazy { c0bActionClass.enumConstants.firstOrNull { it.toString() == "START_SNEAKING" } }
+    private val stopSneakingAction by lazy { c0bActionClass.enumConstants.firstOrNull { it.toString() == "STOP_SNEAKING" } }
     private val c0bConstructor by lazy {
         c0bPacketClass.getConstructor(
             Class.forName("net.minecraft.entity.Entity"),
             c0bActionClass
         )
     }
+
+    /** Resolve a C0B action enum constant by name ("START_SPRINTING" etc.). */
+    private fun c0bAction(name: String): Any? =
+        c0bActionClass.enumConstants.firstOrNull { it.toString() == name }
 
     private val c04PacketClass by lazy { Class.forName("net.minecraft.network.play.client.C03PacketPlayer\$C04PacketPlayerPosition") }
     private val c04Constructor by lazy {
@@ -83,6 +89,9 @@ object ForgeEventBridge : IEventBridge {
 
     @Volatile
     var pendingMotion: Vec3? = null
+
+    /** Previous tick's crosshair-target hurt state (for attack rising-edge detection). */
+    private var prevTargetHurt = false
 
     // ========== Helpers ==========
     private fun getMc(): Any? = try {
@@ -128,6 +137,24 @@ object ForgeEventBridge : IEventBridge {
         } catch (_: Exception) {}
     }
 
+    /**
+     * Send a C0BPacketEntityAction for an arbitrary action name (e.g. "START_SPRINTING",
+     * "STOP_SPRINTING", "START_SNEAKING", "STOP_SNEAKING"). Keeps the server-side sprint
+     * mirror ([EventBridge.serverSprintState]) in sync for sprint actions.
+     */
+    private fun sendEntityAction(actionName: String) {
+        try {
+            val player = getPlayer() ?: return
+            val action = c0bAction(actionName) ?: return
+            sendPacket(c0bConstructor.newInstance(player, action))
+            when (actionName) {
+                "STOP_SPRINTING" -> EventBridge.serverSprintState = false
+                "START_SPRINTING" -> EventBridge.serverSprintState = true
+                else -> {}
+            }
+        } catch (_: Exception) {}
+    }
+
     // ========== Registration ==========
     /**
      * 1.8.8/1.8.9 display name of an entity (getDisplayName -> getFormattedText).
@@ -147,6 +174,13 @@ object ForgeEventBridge : IEventBridge {
         EventBridge.registerSprintSetter { sprinting ->
             val player = getPlayer() ?: return@registerSprintSetter
             MappingContext.invokeMethod(player, "forge:player_setSprinting", sprinting)
+            // Keep the server-side sprint mirror in sync with local sprint changes.
+            EventBridge.serverSprintState = sprinting
+        }
+
+        // Generic C0B entity-action sender (SuperKnockback Old/SneakPacket, ported from LB).
+        EventBridge.registerEntityActionHandler { actionName ->
+            sendEntityAction(actionName)
         }
 
         EventBridge.registerReleaseUsingItemHandler {
@@ -513,6 +547,19 @@ object ForgeEventBridge : IEventBridge {
             if (crosshairId != null) ForgeStateExtractor.extractTargetState(crosshairId) else null
         }.getOrNull()
         EventBridge.crosshairTarget = crosshair
+
+        // Fresh-hit attack notification (SuperKnockback). Reliable 20Hz "just got hit" signal:
+        // the crosshair target's hurtTime jumps >0 on a fresh hit and is 0 between hits, so the
+        // 0 -> >0 rising edge marks an attack. Mirrors LB's AttackEvent for modules that need it.
+        if (crosshair != null) {
+            val hurt = crosshair.hurtTime > 0
+            if (hurt && !prevTargetHurt) {
+                EventBridge.notifyAttack(crosshair)
+            }
+            prevTargetHurt = hurt
+        } else {
+            prevTargetHurt = false
+        }
 
         EventBridge.onTick(player, target)
     }

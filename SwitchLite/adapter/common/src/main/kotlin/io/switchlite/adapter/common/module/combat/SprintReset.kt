@@ -123,11 +123,13 @@ object SprintReset : Module("SprintReset", Category.COMBAT) {
         hitCounter = 0
         prevHurt = false
         lastTargetId = -1
+        EventBridge.setSprintResetActive(true)
         EventBridge.registerTickListener(tickListener)
     }
 
     override fun onDisable() {
         EventBridge.unregisterTickListener(tickListener)
+        EventBridge.setSprintResetActive(false)
         hitCounter = 0
         sending = false
         prevHurt = false

@@ -98,6 +98,44 @@ object EventBridge {
         simpleTickListeners.forEach { it(tickCounter) }
     }
 
+    // ========== Attack Event (SuperKnockback — ported LB semantics) ==========
+    // We don't hook PlayerControllerMP.attackEntity; instead the adapter feeds us a "fresh hit"
+    // notification via the target's hurtTime rising edge (same reliable signal SprintReset uses).
+    // Modules register here to act at attack time. The adapter calls notifyAttack(target) when it
+    // detects a fresh hit.
+    private val attackListeners = mutableListOf<(TargetState?) -> Unit>()
+
+    fun registerAttackListener(listener: (TargetState?) -> Unit) {
+        attackListeners.add(listener)
+    }
+
+    fun unregisterAttackListener(listener: (TargetState?) -> Unit) {
+        attackListeners.remove(listener)
+    }
+
+    // ========== Sprint Coordination (SuperKnockback + SprintReset) ==========
+    // Both modules send sprint packets on a hit. To keep max knockback advantage, SprintReset
+    // runs first and SuperKnockback offsets its action by one tick so the two never fire a C0B
+    // burst in the same tick. Modules set these flags on enable/disable.
+    @Volatile private var sprintResetActive: Boolean = false
+    @Volatile private var superKnockbackActive: Boolean = false
+
+    /** SprintReset calls this from onEnable/onDisable. */
+    fun setSprintResetActive(active: Boolean) { sprintResetActive = active }
+    /** SuperKnockback calls this from onEnable/onDisable. */
+    fun setSuperKnockbackActive(active: Boolean) { superKnockbackActive = active }
+
+    /** Whether both sprint modules are enabled (i.e. coordination is required). */
+    fun isSprintCoordinationActive(): Boolean = sprintResetActive && superKnockbackActive
+
+    /**
+     * Called by the adapter each tick when the crosshair target just got hit (hurtTime rising edge).
+     * Dispatches to registered attack listeners (SuperKnockback uses this).
+     */
+    fun notifyAttack(target: TargetState?) {
+        attackListeners.forEach { it(target) }
+    }
+
     /**
      * The entity currently under the player's crosshair (objectMouseOver.entityHit), filled
      * by the adapter each tick alongside [onTick]. No nearest-entity fallback. Modules that
@@ -269,6 +307,14 @@ object EventBridge {
     fun registerSprintSetter(setter: (Boolean) -> Unit) {
         sprintSetter = setter
     }
+
+    /**
+     * Server-side sprint state mirror (LiquidBounce's `serverSprintState`). Tracks what the
+     * server believes about the player's sprint state, kept in sync via the C0B entity-action
+     * packets (STOP_SPRINTING / START_SPRINTING). Modules like SuperKnockback (SprintTap) rely
+     * on this to decide whether a stop/start actually toggles anything.
+     */
+    @Volatile var serverSprintState: Boolean = false
 
     // ========== Click Delay Reset (DelayRemover — 1.8 exclusive) ==========
     private var resetClickDelayHandler: (() -> Unit)? = null
@@ -536,8 +582,43 @@ object EventBridge {
     // ========== Sprint Reset Packets (SprintReset — 1.8 exclusive) ==========
     private var sprintResetHandler: ((String) -> Unit)? = null
 
-    fun sendSprintReset(mode: String) { sprintResetHandler?.invoke(mode) }
+    /**
+     * Queued sprint-reset mode to send. The module (background 20Hz thread) sets this; the
+     * platform's render thread drains it (see [drainPendingSprintReset]) so the packet is sent
+     * on the MC main thread — NetworkManager.addToSendQueue is not strictly thread-safe, and
+     * sending from the main thread is safer / more compliant.
+     */
+    @Volatile private var pendingSprintResetMode: String? = null
+
+    /** Called by the module on the background thread: queue a sprint reset to send. */
+    fun sendSprintReset(mode: String) {
+        pendingSprintResetMode = mode
+    }
+
+    /** Called by the platform's MAIN (render) thread each frame: send the queued reset if any. */
+    fun drainPendingSprintReset() {
+        val mode = pendingSprintResetMode ?: return
+        pendingSprintResetMode = null
+        sprintResetHandler?.invoke(mode)
+    }
+
     fun registerSprintResetHandler(handler: (String) -> Unit) { sprintResetHandler = handler }
+
+    // ========== Generic C0B Entity-Action Packet (SuperKnockback — 1.8 exclusive) ==========
+    // Sends a C0BPacketEntityAction with an arbitrary action name (e.g. "START_SPRINTING",
+    // "STOP_SPRINTING", "START_SNEAKING", "STOP_SNEAKING"). Used by SuperKnockback's
+    // Old / SneakPacket modes (ported from LiquidBounce).
+    private var sendEntityActionHandler: ((String) -> Unit)? = null
+
+    /** Send a C0BPacketEntityAction for the given action name. */
+    fun sendEntityAction(action: String) { sendEntityActionHandler?.invoke(action) }
+
+    /** Send a burst of C0B actions in order (same packet behavior as LiquidBounce sendPackets). */
+    fun sendEntityActions(vararg actions: String) {
+        sendEntityActionHandler?.let { h -> actions.forEach { h(it) } }
+    }
+
+    fun registerEntityActionHandler(handler: (String) -> Unit) { sendEntityActionHandler = handler }
 
     // ========== Jump (JumpReset) ==========
     private var jumpHandler: (() -> Unit)? = null
@@ -561,6 +642,9 @@ object EventBridge {
         tickListeners.clear()
         simpleTickListeners.clear()
         startTickListeners.clear()
+        attackListeners.clear()
+        sprintResetActive = false
+        superKnockbackActive = false
         rotationSetter = null
         motionApplier = null
         sprintSetter = null
@@ -572,6 +656,8 @@ object EventBridge {
         releaseBackHandler = null
         jumpHandler = null
         sprintResetHandler = null
+        sendEntityActionHandler = null
+        serverSprintState = false
         resetClickDelayHandler = null
         resetJumpDelayHandler = null
         reachSetter = null

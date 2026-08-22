@@ -252,6 +252,10 @@ object ForgeBootstrap {
             // only place that writes the real KeyBinding fields (race-free).
             try { ForgeEventBridge.applySyntheticInput() } catch (_: Exception) {}
 
+            // Send queued SprintReset packets on the main thread (NetworkManager isn't
+            // strictly thread-safe; this keeps addToSendQueue on the MC thread).
+            try { EventBridge.drainPendingSprintReset() } catch (_: Exception) {}
+
             // Module keybinds — poll keyboard state on the render thread, throttled.
             if (++keybindFrame % 4 == 0) {
                 try { pollModuleKeybinds() } catch (_: Exception) {}

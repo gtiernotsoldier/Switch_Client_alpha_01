@@ -24,10 +24,10 @@ import kotlin.random.Random
  * **Normal**: While AutoClicker is working (or the player physically left-clicks), press
  * right-click to block for [delayMs], then release — re-engages each hit.
  *
- * **Switch**: Blocking engages on a left-click attack (AutoClick OR physical). When already
- * blocking and a fresh attack fires, it briefly releases right-click (letting the attack land),
- * waits [delayMs], then re-presses to resume blocking. SwitchOnRightHold gates that switch
- * action on the player holding right-click.
+ * **Switch**: AutoBlock maintains the block. On each fresh left-click attack (physical left
+ * OR AutoClick) it briefly cancels the block (so the hit lands), waits [delayMs], then
+ * re-blocks — the block-hit / anti-knockback rhythm. SwitchOnRightHold gates that cancel on
+ * the player physically holding right-click.
  *
  * Conditions (unified engine):
  * - OnlyPlane / OnlyTargeting / OnlyMove / OnlyMoveForward / OnlyWhenTargetGoesBack.
@@ -41,9 +41,9 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
     // ========== Mode ==========
     // Normal = click-style: while AutoClicker / physical left-click is working, block for
     //          [delayMs] then release (re-engages each hit).
-    // Switch = if already blocking when a fresh attack fires, release briefly (so the
-    //          attack animation plays out), wait [delayMs], then re-block.
-    // Srg    = hold-style: block for as long as the player keeps attacking / holding.
+    // Switch = AutoBlock maintains the block; each fresh left-click attack (physical or
+    //          AutoClick) briefly cancels the block, then re-blocks after [delayMs].
+    // Srg    = hold-style: block continuously while the player keeps attacking.
     private val mode by choices("Mode", arrayOf("Normal", "Switch", "Srg"))
 
     // ========== Distance Range ==========
@@ -185,26 +185,28 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
                 }
             }
 
-            // ── Switch: block-hit style. Blocking engages continuously while the player is
-            // attacking (AutoClick working OR physical left-click), so it responds reliably
-            // even though the 20Hz background tick can't catch every fast click pulse. The
-            // block-hit *switch* (brief release + re-block that lets the attack animation play
-            // out) fires on a fresh attack while the player holds right-click (SwitchOnRightHold).
+            // ── Switch: block-hit style. AutoBlock maintains the block (syntheticUse). While
+            // in combat it keeps the shield up and, on each fresh left-click attack (physical
+            // left OR AutoClick), briefly CANCELS the block so the hit lands, then re-blocks
+            // after delayMs — the block-hit / anti-knockback rhythm. SwitchOnRightHold gates
+            // that cancel on the player physically holding right-click.
             "Switch" -> {
-                val rightHeld = !switchOnRightHold || EventBridge.isRightMousePhysicallyDown
+                val cancelAllowed = !switchOnRightHold || EventBridge.isRightMousePhysicallyDown
                 if (shouldBlock) {
+                    lastAttackNano = nowNs
                     if (!blockHeld) {
-                        // Attacking → keep blocking engaged (robust: no edge dependence).
+                        // Restore / engage the block while fighting (debounced below).
                         EventBridge.syntheticUse = true
                         blockHeld = true
-                    } else if (rightHeld && attackJustStarted) {
-                        // Fresh attack while blocking → release now, re-block shortly.
+                    } else if (cancelAllowed && attackJustStarted) {
+                        // Fresh attack while blocking → cancel briefly so the hit lands,
+                        // then re-block after delayMs.
                         releaseBlock()
                         reblockPending = true
                         reblockStartNano = nowNs
                     }
-                    // Otherwise keep blocking while attacking.
-                } else if (blockHeld) {
+                    // Keep blocking while in combat.
+                } else if (blockHeld && elapsedNs(lastAttackNano) >= 250_000_000L) {
                     releaseBlock()
                 }
             }

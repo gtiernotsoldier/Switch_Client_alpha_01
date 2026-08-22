@@ -38,6 +38,9 @@ import kotlin.random.Random
  */
 object AutoBlock : Module("AutoBlock", Category.COMBAT) {
 
+    /** Hysteresis margin (blocks) for the OnEnter range mode. */
+    private const val RANGE_HYSTERESIS = 1.5f
+
     // ========== Mode ==========
     // Normal = click-style: while AutoClicker / physical left-click is working, block for
     //          [delayMs] then release (re-engages each hit).
@@ -257,11 +260,6 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
             }
             else -> within
         }
-    }
-
-    private companion object {
-        /** Hysteresis margin (blocks) for the OnEnter range mode. */
-        const val RANGE_HYSTERESIS = 1.5f
     }
 
     // ========== Helpers ==========

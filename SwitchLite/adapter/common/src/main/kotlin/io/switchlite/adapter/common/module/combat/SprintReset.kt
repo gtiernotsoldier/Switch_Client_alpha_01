@@ -10,6 +10,7 @@ import io.switchlite.adapter.common.option.boolean
 import io.switchlite.adapter.common.option.choices
 import io.switchlite.adapter.common.option.int
 import io.switchlite.adapter.common.option.triggerOptions
+import kotlin.random.Random
 
 /**
  * SprintReset Module — packet-level sprint state reset for max knockback.

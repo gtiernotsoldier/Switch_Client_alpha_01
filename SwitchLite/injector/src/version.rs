@@ -24,15 +24,18 @@ pub struct VersionInfo {
 pub fn parse_minecraft_version(mc_path: &str, window_title: &str) -> VersionInfo {
     let mut result = VersionInfo::default();
 
-    // 1. Fast path: extract version from window title
-    let title_version = parse_version_from_title(window_title);
-    if !title_version.is_empty() {
-        result.version = title_version;
-    }
-
-    // 2. Locate .minecraft directory
+    // 1. Locate .minecraft directory FIRST — the filesystem version is authoritative.
     let mc_dir = find_minecraft_dir(mc_path);
     result.mc_dir = mc_dir.clone();
+
+    // 2. Try the versions/ directory as the authoritative version source. It reflects the
+    //    REAL installed version, unlike window titles that third-party launchers
+    //    (FPSMaster etc.) can spoof/truncate (e.g. "Minecraft 1.8" for an 1.8.9 install).
+    let dir_version = if mc_dir.is_empty() {
+        String::new()
+    } else {
+        version_from_versions_dir(&mc_dir)
+    };
 
     // 3. Detect platform from filesystem
     result.platform = if mc_dir.is_empty() {
@@ -41,14 +44,62 @@ pub fn parse_minecraft_version(mc_path: &str, window_title: &str) -> VersionInfo
         detect_platform(&mc_dir)
     };
 
-    // 4. Fallback: try versions/ directory if title didn't give us one
-    if result.version.is_empty() && !mc_dir.is_empty() {
-        result.version = version_from_versions_dir(&mc_dir);
-    }
+    // 4. Resolve version: directory source wins; window title is only a fallback.
+    let raw = if !dir_version.is_empty() {
+        dir_version
+    } else {
+        parse_version_from_title(window_title)
+    };
+    result.version = normalize_version(&raw);
 
     // 5. Validation
     result.valid = !result.version.is_empty();
     result
+}
+
+/// Normalize any detected version token down to a canonical Minecraft version.
+///
+/// Third-party launchers (FPSMaster, custom title spoofers) frequently report a truncated or
+/// branded token where an 1.8.9 install is involved — e.g. a window title "Minecraft 1.8",
+/// or a version-id like "FPSMaster-Edge"/"Forge-1.8.9". Since every Forge 1.8-family runtime
+/// we target uses the 1.8.9 SRG layout, we collapse all 1.8.x tokens to "1.8.9" so mapping
+/// resources always resolve.
+fn normalize_version(raw: &str) -> String {
+    let s = raw.trim();
+    if s.is_empty() {
+        return String::new();
+    }
+    // Pull out the first dotted numeric core, e.g. "1.8", "1.8.9", "1.12.2".
+    let numeric = {
+        let mut out = String::new();
+        let mut started = false;
+        for c in s.chars() {
+            let is_num = c.is_ascii_digit() || c == '.';
+            if is_num {
+                out.push(c);
+                started = true;
+            } else if started {
+                break; // stop at the first non-numeric, non-dot char after the numeric core
+            }
+        }
+        out.trim_end_matches('.').to_string()
+    };
+
+    if numeric.is_empty() {
+        return String::new();
+    }
+
+    // Split into major / minor / patch.
+    let parts: Vec<&str> = numeric.split('.').collect();
+    let major = parts.get(0).map(|s| s.to_string()).unwrap_or_default();
+    let minor = parts.get(1).map(|s| s.to_string()).unwrap_or_default();
+
+    // Collapse the whole 1.8 family (1.8, 1.8.1..1.8.9) to 1.8.9 — same SRG layout.
+    if major == "1" && minor == "8" {
+        return "1.8.9".to_string();
+    }
+    // Otherwise return the numeric core as-is (e.g. 1.21.1).
+    numeric
 }
 
 // ── Window title version parser ──

@@ -62,8 +62,23 @@ public class MappingLoader {
 
             InputStream is = MappingLoader.class.getClassLoader().getResourceAsStream(resourcePath);
             if (is == null) {
-                System.err.println("[MappingLoader] Embedded mapping not found: " + resourcePath);
-                throw new FileNotFoundException("Base mapping not found (embedded): " + resourcePath);
+                // Fallback: tolerate version tokens that a launcher truncated/spoofed. The only
+                // 1.8-family SRG layout we ship is 1.8.9, and all Forge 1.8.x runtimes share it,
+                // so if the requested file is missing, try v1_8_9.json before giving up.
+                String fallback = "";
+                if (version.startsWith("1.8") && !version.equals("1.8.9")) {
+                    fallback = "mappings/" + platformDir + "/v1_8_9.json";
+                    System.out.println("[MappingLoader] '" + version + "' not found, falling back to: " + fallback);
+                    is = MappingLoader.class.getClassLoader().getResourceAsStream(fallback);
+                }
+
+                if (is == null) {
+                    System.err.println("[MappingLoader] Embedded mapping not found: " + resourcePath);
+                    throw new FileNotFoundException("Base mapping not found (embedded): " + resourcePath);
+                }
+
+                // Log which resource actually resolved.
+                System.out.println("[MappingLoader] Resolved from fallback resource: " + fallback);
             }
 
             try {

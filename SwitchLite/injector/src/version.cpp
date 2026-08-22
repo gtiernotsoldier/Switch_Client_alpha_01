@@ -230,28 +230,59 @@ VersionInfo parseMinecraftVersion(const std::string& mcPath) {
     return parseMinecraftVersion(mcPath, "");
 }
 
+static std::string normalizeVersion(const std::string& raw) {
+    std::string s = raw;
+    // trim
+    size_t b = s.find_first_not_of(" \t\r\n");
+    if (b == std::string::npos) return "";
+    size_t e = s.find_last_not_of(" \t\r\n");
+    s = s.substr(b, e - b + 1);
+    if (s.empty()) return "";
+
+    // Pull out the first dotted numeric core, e.g. "1.8", "1.8.9", "1.12.2".
+    std::string numeric;
+    bool started = false;
+    for (char c : s) {
+        if (isdigit((unsigned char)c) || c == '.') {
+            numeric += c;
+            started = true;
+        } else if (started) {
+            break; // stop at first non-numeric/non-dot after the numeric core
+        }
+    }
+    // trim trailing dots
+    while (!numeric.empty() && numeric.back() == '.') numeric.pop_back();
+    if (numeric.empty()) return "";
+
+    // Split into major/minor.
+    std::string major, minor;
+    size_t dot = numeric.find('.');
+    if (dot != std::string::npos) {
+        major = numeric.substr(0, dot);
+        minor = numeric.substr(dot + 1);
+        size_t dot2 = minor.find('.');
+        if (dot2 != std::string::npos) minor = minor.substr(0, dot2);
+    } else {
+        major = numeric;
+    }
+
+    // Collapse the whole 1.8 family (1.8, 1.8.1..1.8.9) to 1.8.9 — same SRG layout.
+    if (major == "1" && minor == "8") return "1.8.9";
+    return numeric;
+}
+
 VersionInfo parseMinecraftVersion(const std::string& mcPath, const std::string& windowTitle) {
     VersionInfo result;
 
-    // 1. Fast path: extract version from window title
-    std::string titleVersion = parseVersionFromTitle(windowTitle);
-    if (!titleVersion.empty()) {
-        result.version = titleVersion;
-    }
-
-    // 2. Locate .minecraft directory
+    // 1. Locate .minecraft directory FIRST — the filesystem version is authoritative.
     std::string mcDir = findMinecraftDir(mcPath);
     result.mcDir = mcDir;
 
-    // 3. Detect platform from filesystem
+    // 2. Try the versions/ directory as the authoritative version source. It reflects the
+    //    REAL installed version, unlike window titles that third-party launchers
+    //    (FPSMaster etc.) can spoof/truncate (e.g. "Minecraft 1.8" for an 1.8.9 install).
+    std::string dirVersion;
     if (!mcDir.empty()) {
-        result.platform = detectPlatform(mcDir);
-    } else {
-        result.platform = "Unknown";
-    }
-
-    // 4. Fallback: try versions/ directory if title didn't give us one
-    if (result.version.empty() && !mcDir.empty()) {
         std::string versionsDir = pathJoin(mcDir, "versions");
         auto versionDirs = listDirs(versionsDir);
 
@@ -265,24 +296,29 @@ VersionInfo parseMinecraftVersion(const std::string& mcPath, const std::string& 
                 std::string id = jsonGet(json, "id");
                 if (!id.empty()) {
                     if (id.find("forge") == std::string::npos && id.find("fabric") == std::string::npos) {
-                        result.version = id;
+                        dirVersion = id;
                         break;
                     }
-                    if (result.version.empty()) result.version = id;
+                    if (dirVersion.empty()) dirVersion = id;
                 }
             }
-            if (result.version.empty() && !dirName.empty()) {
-                result.version = dirName;
-            }
+            if (dirVersion.empty() && !dirName.empty()) dirVersion = dirName;
         }
     }
 
-    // 5. Validation: version from any source is enough
-    if (!result.version.empty()) {
-        result.valid = true;
+    // 3. Detect platform from filesystem
+    if (!mcDir.empty()) {
+        result.platform = detectPlatform(mcDir);
     } else {
-        result.valid = false;
+        result.platform = "Unknown";
     }
+
+    // 4. Resolve version: directory source wins; window title is only a fallback.
+    std::string raw = !dirVersion.empty() ? dirVersion : parseVersionFromTitle(windowTitle);
+    result.version = normalizeVersion(raw);
+
+    // 5. Validation: version from any source is enough
+    result.valid = !result.version.empty();
 
     return result;
 }

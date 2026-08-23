@@ -316,6 +316,30 @@ object EventBridge {
      */
     @Volatile var serverSprintState: Boolean = false
 
+    // ========== KeepSprint (main-thread speed keep) ==========
+    // KeepSprint must apply motion on the MC main thread at the moment/right after an attack,
+    // otherwise the background tick thread's writes are overwritten next frame (which is why it
+    // only "partially worked"). The module sets these on the background tick thread; the platform
+    // render thread reads them every frame and, while [keepSprintActive] is true, scales the
+    // player's horizontal motion by [keepSprintFactor]. The platform also clears
+    // [keepSprintActive] itself once it has consumed the keep (Raven applies once on the attack
+    // frame; we apply on the render frame right after the hit rising edge).
+    @Volatile var keepSprintActive: Boolean = false
+    @Volatile var keepSprintFactor: Float = 1.0f
+
+    /** KeepSprint module sets this on a fresh hit (backend tick). */
+    fun armKeepSprint(factor: Float) {
+        keepSprintFactor = factor
+        keepSprintActive = true
+    }
+
+    /** Platform render thread consumes one keep application. */
+    fun consumeKeepSprint(): Boolean {
+        val a = keepSprintActive
+        keepSprintActive = false
+        return a
+    }
+
     // ========== Click Delay Reset (DelayRemover — 1.8 exclusive) ==========
     private var resetClickDelayHandler: (() -> Unit)? = null
 
@@ -658,6 +682,8 @@ object EventBridge {
         sprintResetHandler = null
         sendEntityActionHandler = null
         serverSprintState = false
+        keepSprintActive = false
+        keepSprintFactor = 1.0f
         resetClickDelayHandler = null
         resetJumpDelayHandler = null
         reachSetter = null

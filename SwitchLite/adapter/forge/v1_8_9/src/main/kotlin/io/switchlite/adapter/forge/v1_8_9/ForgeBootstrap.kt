@@ -257,6 +257,25 @@ object ForgeBootstrap {
             // strictly thread-safe; this keeps addToSendQueue on the MC thread).
             try { EventBridge.drainPendingSprintReset() } catch (_: Exception) {}
 
+            // KeepSprint: apply the keep-speed motion on the MC main thread (the background
+            // tick thread's writes are overwritten next frame, so we must apply here on the
+            // render thread right after the hit rising edge arms it). Reads the player, scales
+            // motionX/Z by keepSprintFactor, and consumes the one-shot keep flag.
+            try {
+                val player = MappingContext.getFieldValue(mc, "forge:mc_thePlayer")
+                if (player != null && EventBridge.consumeKeepSprint()) {
+                    val factor = EventBridge.keepSprintFactor
+                    val mX = MappingContext.getField("forge:entity_motionX")?.getDouble(player) ?: 0.0
+                    val mY = MappingContext.getField("forge:entity_motionY")?.getDouble(player) ?: 0.0
+                    val mZ = MappingContext.getField("forge:entity_motionZ")?.getDouble(player) ?: 0.0
+                    val mag = kotlin.math.sqrt(mX * mX + mZ * mZ)
+                    if (mag > 0.001) {
+                        MappingContext.getField("forge:entity_motionX")?.setDouble(player, mX * factor)
+                        MappingContext.getField("forge:entity_motionZ")?.setDouble(player, mZ * factor)
+                    }
+                }
+            } catch (_: Exception) {}
+
             // Module keybinds — poll keyboard state on the render thread, throttled.
             if (++keybindFrame % 4 == 0) {
                 try { pollModuleKeybinds() } catch (_: Exception) {}

@@ -139,7 +139,9 @@ object KeepSprint : Module("KeepSprint", Category.COMBAT) {
         }
     }
 
-    /** Apply the keep factor to the player's horizontal motion. Algorithm lives in core. */
+    /** Arm the keep-speed application. The actual motion is applied on the MC main thread
+     *  (EventBridge.armKeepSprint + ForgeBootstrap.render drains it) so it isn't overwritten
+     *  next frame. Algorithm (keep factor) lives in core. */
     private fun applyKeep(player: PlayerState, target: TargetState?) {
         if (player === io.switchlite.core.model.PlayerState.EMPTY) return
         if (!ConditionChecker.check(triggerOptions, player, target)) return
@@ -162,10 +164,10 @@ object KeepSprint : Module("KeepSprint", Category.COMBAT) {
             config, mode, target?.distance,
             player.motionX, player.motionY, player.motionZ
         )
-        val motion = result.motion ?: return
-        EventBridge.applyMotion(motion)
+        // Arm the main-thread keep with the computed factor.
+        EventBridge.armKeepSprint(result.keepFactor)
         io.switchlite.core.logging.CoreLogger.debug(
-            "[KeepSprint] Kept speed at ${"%.0f".format(result.keepFactor * 100)}% (mode=$mode)"
+            "[KeepSprint] Armed keep at ${"%.0f".format(result.keepFactor * 100)}% (mode=$mode)"
         )
     }
 

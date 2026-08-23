@@ -7,27 +7,28 @@ import io.switchlite.adapter.common.option.*
 import io.switchlite.core.condition.ConditionChecker
 import io.switchlite.core.model.PlayerState
 import io.switchlite.core.model.TargetState
-import io.switchlite.core.strategy.keepsprint.KeepSprintConfig
-import io.switchlite.core.strategy.keepsprint.KeepSprintInput
-import io.switchlite.core.strategy.keepsprint.KeepSprintState
-import io.switchlite.core.strategy.keepsprint.KeepSprintStrategy
+import io.switchlite.core.util.Vec3
+import kotlin.math.sqrt
+import kotlin.random.Random
 
 /**
- * KeepSprint — maintains sprint speed when attacking.
+ * KeepSprint — keeps sprint speed while attacking.
  *
- * In vanilla Minecraft, attacking while sprinting reduces horizontal speed
- * to 60% and cancels the sprint state. This module detects post-attack
- * slowdown and restores sprint to a configurable percentage.
+ * Vanilla MC reduces horizontal speed when attacking (to ~60%). This module re-applies the
+ * desired keep percentage on every fresh hit so your speed doesn't drop — i.e. you "keep sprint
+ * speed" while fighting.
+ *
+ * Trigger: fresh hit of the crosshair target (hurtTime rising edge — our reliable 20Hz
+ * equivalent of Raven's attack event). On each hit we scale the player's horizontal motion by
+ * the keep factor. Unlike the old implementation this does NOT depend on detecting a sprint
+ * cancel (which 1.8.9 rarely produces), so it actually fires.
  *
  * Modes:
- * - Normal: always restore to the configured horizontal keep percentage.
- * - Legit: interpolate keep percentage based on distance to target —
- *   closer targets get less aggressive restoration (looks more natural).
+ * - Normal: always keep to [horizontalKeep] (1.0 = full sprint speed kept).
+ * - Legit: interpolate the keep factor by distance to target (closer = more conservative,
+ *   farther = higher keep), which also keeps a benefit while looking more natural.
  *
- * Constitution compliance:
- * - S1 Safety: only modifies sprint state, never sends packets or touches health.
- * - S2 Debuggability: logs every restore decision at DEBUG level.
- * - S3 Strategy: Normal/Legit selectable, all thresholds configurable.
+ * Chance lets the keep apply probabilistically (more covert).
  */
 object KeepSprint : Module("KeepSprint", Category.COMBAT) {
 
@@ -46,12 +47,7 @@ object KeepSprint : Module("KeepSprint", Category.COMBAT) {
     // ========== Probability ==========
     private val chance by probability("Chance", 100, 0..100)
 
-    // ========== Conditions ==========
-    private val hurtTimeMax by int("HurtTime", 10, 1..10)
-
     // ========== Unified Condition Engine ==========
-    // onlyGround default ON: sprint restore only triggers on ground.
-    // Disable if using KeepSprint with crits (in-air hits).
     private val onlyGround by boolean("OnlyGround", true)
     private val onlyMove by boolean("OnlyMove", false)
     private val onlyMoveForward by boolean("OnlyMoveForward", false)
@@ -64,105 +60,67 @@ object KeepSprint : Module("KeepSprint", Category.COMBAT) {
         onlyWhenTargetGoesBack = this@KeepSprint.onlyWhenTargetGoesBack
     }
 
-    // ========== Timing ==========
-    private val delayTicks by int("Delay", 1, 1..20, "ticks")
-    private val cooldownTicks by int("Cooldown", 1, 1..20, "ticks")
+    // ========== State ==========
+    // Track current player position/time to compute the sprint reference is not needed here;
+    // we just scale existing motion. But we keep the last player snapshot for distance checks.
+    @Volatile private var lastPlayer: PlayerState? = null
 
-    // ========== Internal State ==========
-    private val strategyState = KeepSprintState()
-    private var prevSprinting = false
-    private var sprintCancelledTick: Int? = null
-    private val tickListener: (PlayerState, TargetState?) -> Unit = { p, t -> onTick(p, t) }
-
-    // ========== Config Snapshot ==========
-    private fun buildConfig(): KeepSprintConfig {
-        return KeepSprintConfig(
-            mode = mode,
-            horizontalKeep = horizontalKeep,
-            minReach = minReach,
-            maxReach = maxReach,
-            minKeep = minKeep,
-            maxKeep = maxKeep,
-            chance = chance.current,
-            hurtTimeMax = hurtTimeMax,
-            delayTicks = delayTicks,
-            cooldownTicks = cooldownTicks
-        )
+    private val attackListener: (TargetState?) -> Unit = { t ->
+        if (enabled) onHit(t)
+    }
+    private val tickListener: (PlayerState, TargetState?) -> Unit = { p, _ ->
+        if (enabled) lastPlayer = p
     }
 
     /**
-     * Build strategy input from current player/target state.
+     * Called on a fresh hit (hurtTime rising edge via EventBridge.notifyAttack).
+     * Applies the keep factor to the player's horizontal motion.
      */
-    private fun buildInput(player: PlayerState, target: TargetState?): KeepSprintInput {
-        val now = EventBridge.getCurrentTick()
-        if (prevSprinting && !player.isSprinting && player.isAttackKeyDown) {
-            sprintCancelledTick = now
-        }
-        // Expire window if older than 10 ticks
-        if (sprintCancelledTick != null && now - sprintCancelledTick!! > 10) {
-            sprintCancelledTick = null
-        }
-        prevSprinting = player.isSprinting
-        return KeepSprintInput(
-            sprintCancelledTick = sprintCancelledTick,
-            targetHurtTime = target?.hurtTime,
-            targetDistance = target?.distance,
-            currentTick = now,
-            motionX = player.motionX,
-            motionY = player.motionY,
-            motionZ = player.motionZ
-        )
-    }
-
-    /**
-     * Apply restore: set sprint flag and apply motion computed by core strategy.
-     */
-    private fun applyRestore(result: io.switchlite.core.strategy.keepsprint.KeepSprintResult.Restore) {
-        EventBridge.setSprinting(true)
-        result.motion?.let { EventBridge.applyMotion(it) }
-    }
-
-    // ========== Tick Entry ==========
-    fun onTick(player: PlayerState, target: TargetState?) {
-        if (!enabled) return
-
-        // Track sprint state FIRST (before condition gate) — must update
-        // prevSprinting and sprintCancelledTick every tick regardless of
-        // conditions, otherwise a jump/crit scenario leaves stale state.
-        val config = cachedConfig { buildConfig() }
-        val input = buildInput(player, target)
-
-        // Unified condition check
+    private fun onHit(target: TargetState?) {
+        val player = lastPlayer ?: return
         if (!ConditionChecker.check(triggerOptions, player, target)) return
+        if (chance.current < 100 && Random.nextInt(100) >= chance.current) return
 
-        val result = KeepSprintStrategy.execute(config, strategyState, input)
-
-        when (result) {
-            is io.switchlite.core.strategy.keepsprint.KeepSprintResult.Restore -> {
-                applyRestore(result)
-                io.switchlite.core.logging.CoreLogger.debug(
-                    "[KeepSprint] Restored sprint at ${"%.0f".format(result.keepPercentage * 100)}%"
-                )
-            }
-            is io.switchlite.core.strategy.keepsprint.KeepSprintResult.DelayedRestore -> {
-                io.switchlite.core.logging.CoreLogger.debug(
-                    "[KeepSprint] Delayed restore queued: ${"%.0f".format(result.keepPercentage * 100)}% in ${result.releaseTick - input.currentTick} ticks"
-                )
-            }
-            is io.switchlite.core.strategy.keepsprint.KeepSprintResult.Pass -> { /* no-op */ }
+        // Sprinting is not strictly required; if not sprinting there's little to keep, but we
+        // still allow a light keep so the benefit applies in both modes. Compute the keep factor.
+        val keepFactor = when (mode) {
+            "Legit" -> computeLegitKeep(target)
+            else -> horizontalKeep
         }
+
+        val currentSpeed = sqrt(player.motionX * player.motionX + player.motionZ * player.motionZ)
+        if (currentSpeed < 0.001) return
+
+        // Scale current horizontal motion toward keepFactor (1.0 = keep full speed).
+        EventBridge.applyMotion(
+            Vec3(player.motionX * keepFactor, player.motionY, player.motionZ * keepFactor)
+        )
+        io.switchlite.core.logging.CoreLogger.debug(
+            "[KeepSprint] Kept speed at ${"%.0f".format(keepFactor * 100)}% (mode=$mode)"
+        )
+    }
+
+    /** Legit: interpolate keep factor by target distance (closer = more conservative). */
+    private fun computeLegitKeep(target: TargetState?): Float {
+        val dist = target?.distance ?: return horizontalKeep
+        val minR = minReach
+        val maxR = maxReach
+        if (dist <= minR) return minKeep
+        if (dist >= maxR) return maxKeep
+        val t = (dist - minR) / (maxR - minR)
+        return minKeep + (maxKeep - minKeep) * t
     }
 
     // ========== Lifecycle ==========
     override fun onEnable() {
-        strategyState.reset()
+        EventBridge.registerAttackListener(attackListener)
         EventBridge.registerTickListener(tickListener)
+        lastPlayer = null
     }
 
     override fun onDisable() {
-        strategyState.reset()
-        prevSprinting = false
-        sprintCancelledTick = null
+        EventBridge.unregisterAttackListener(attackListener)
         EventBridge.unregisterTickListener(tickListener)
+        lastPlayer = null
     }
 }

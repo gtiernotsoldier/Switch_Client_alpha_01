@@ -62,6 +62,7 @@ object OverlayRenderer {
             drawKeystrokes(ctx)
             drawSpeedometer(ctx)
             drawVelocityDisplay(ctx)
+            drawJumpStatus(ctx)
             drawToasts(ctx)
 
         } finally {
@@ -163,6 +164,14 @@ object OverlayRenderer {
     private fun drawVelocityDisplay(ctx: RenderContext) {
         try {
             io.switchlite.adapter.common.module.render.VelocityDisplay.render(ctx)
+        } catch (_: Exception) {}
+    }
+
+    // ── JumpStatus (jump key state readout) ──
+
+    private fun drawJumpStatus(ctx: RenderContext) {
+        try {
+            io.switchlite.adapter.common.module.render.JumpStatus.render(ctx)
         } catch (_: Exception) {}
     }
 

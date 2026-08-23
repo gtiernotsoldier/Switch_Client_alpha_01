@@ -12,6 +12,8 @@ import io.switchlite.adapter.common.module.render.Keystrokes
 import io.switchlite.adapter.common.module.render.NoFOV
 import io.switchlite.adapter.common.module.render.NoHurtCam
 import io.switchlite.adapter.common.module.render.Speedometer
+import io.switchlite.adapter.common.module.render.VelocityDisplay
+import io.switchlite.adapter.common.module.render.JumpStatus
 import io.switchlite.adapter.common.module.render.WebUI
 import io.switchlite.adapter.common.module.world.FastPlace
 import io.switchlite.adapter.common.render.OverlayRenderer
@@ -116,7 +118,7 @@ object ForgeBootstrap {
             SprintReset, STap, SuperKnockback, TriggerBot, Velocity, WTap,
             NoJumpDelay, NoKeyboardFix, NoMouseFix, Sprint, Strafe, StrafeFix,
             AntiBot, AutoTool, BridgeAssist, Eagle, ParallaxStrike, Teams,
-            Fullbright, HUD, NoFOV, NoHurtCam, Keystrokes, Speedometer,
+            Fullbright, HUD, NoFOV, NoHurtCam, Keystrokes, Speedometer, VelocityDisplay, JumpStatus,
             WebUI,
             FastPlace
         )

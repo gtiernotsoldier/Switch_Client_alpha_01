@@ -61,6 +61,7 @@ object OverlayRenderer {
             drawHudCard(ctx)
             drawKeystrokes(ctx)
             drawSpeedometer(ctx)
+            drawVelocityDisplay(ctx)
             drawToasts(ctx)
 
         } finally {
@@ -154,6 +155,14 @@ object OverlayRenderer {
     private fun drawSpeedometer(ctx: RenderContext) {
         try {
             io.switchlite.adapter.common.module.render.Speedometer.render(ctx)
+        } catch (_: Exception) {}
+    }
+
+    // ── VelocityDisplay (3D motion readout, colors when velocity was modified) ──
+
+    private fun drawVelocityDisplay(ctx: RenderContext) {
+        try {
+            io.switchlite.adapter.common.module.render.VelocityDisplay.render(ctx)
         } catch (_: Exception) {}
     }
 

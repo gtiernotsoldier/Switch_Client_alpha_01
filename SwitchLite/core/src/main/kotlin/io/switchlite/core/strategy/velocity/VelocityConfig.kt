@@ -18,6 +18,8 @@ import io.switchlite.core.option.TriggerOptions
  * @property delayMs extra delay in milliseconds before releasing the packet.
  * @property delayTicks extra delay in server ticks before releasing the packet.
  * @property triggerOptions unified condition engine settings.
+ * @property onlyOnHitFrame (Legit) only reduce velocity on the exact frame the player was just hit
+ *                            (hurtTime == maxHurtResistantTime), ported from LiquidBounce's velocity.
  * @property clickBurstMin minimum clicks to burst in CLICK mode.
  * @property clickBurstMax maximum clicks to burst in CLICK mode.
  * @property hurtTimeToClick exact hurtTime value that triggers CLICK mode.
@@ -35,6 +37,7 @@ data class VelocityConfig(
     val delayMs: Int = 0,
     val delayTicks: Int = 0,
     val triggerOptions: TriggerOptions = TriggerOptions(),
+    val onlyOnHitFrame: Boolean = false,
     val clickBurstMin: Int = 2,
     val clickBurstMax: Int = 5,
     val hurtTimeToClick: Int = 8,

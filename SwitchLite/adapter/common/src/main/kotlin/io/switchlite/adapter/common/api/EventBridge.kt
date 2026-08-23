@@ -44,6 +44,13 @@ object EventBridge {
     /** Set true by notifyVelocityPacket, cleared each tick by modules. */
     @Volatile var velocityPacketReceivedThisTick: Boolean = false
 
+    /**
+     * Whether the last velocity packet was modified or cancelled by the Velocity module. Set by the
+     * module on each packet; read by the VelocityDisplay HUD to color the readout (modified → accent,
+     * untouched → vanilla). False when Velocity is disabled or the packet passed through unchanged.
+     */
+    @Volatile var velocityModified: Boolean = false
+
     // ========== PreTick (START phase, before game processes input) ==========
     private val startTickListeners = mutableListOf<(PlayerState, TargetState?) -> Unit>()
 
@@ -763,6 +770,7 @@ object EventBridge {
         isKeyRightDown = false
         isKeyJumpDown = false
         velocityPacketReceivedThisTick = false
+        velocityModified = false
         renderOffsetX = 0f
         renderOffsetY = 0f
         renderOffsetZ = 0f

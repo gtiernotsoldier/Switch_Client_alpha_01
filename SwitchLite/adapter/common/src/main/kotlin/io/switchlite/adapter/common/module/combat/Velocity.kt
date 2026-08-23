@@ -52,6 +52,9 @@ object Velocity : Module("Velocity", Category.COMBAT), HudLineProvider {
     // ========== Probability ==========
     private val probability by int("Chance", 100, 0..100, "%")
 
+    // ========== Legit: only reduce on the frame the player is hit (LB port) ==========
+    private val onlyOnHitFrame by boolean("OnlyOnHitFrame", false)
+
     // ========== Delay ==========
     private val delayMs by int("DelayMs", 0, 0..500, "ms")
     private val delayTicks by int("DelayTicks", 0, 0..20, "ticks")
@@ -104,6 +107,7 @@ object Velocity : Module("Velocity", Category.COMBAT), HudLineProvider {
         delayMs = delayMs,
         delayTicks = delayTicks,
         triggerOptions = triggerOptions,
+        onlyOnHitFrame = onlyOnHitFrame,
         clickBurstMin = clicksMin,
         clickBurstMax = clicksMax,
         hurtTimeToClick = hurtTimeToClick,
@@ -125,6 +129,8 @@ object Velocity : Module("Velocity", Category.COMBAT), HudLineProvider {
     fun onVelocityPacket(ctx: VelocityContext): PlatformCommand {
         val config = cachedConfig { buildConfig() }
         val result = currentStrategy().execute(config, strategyState, ctx)
+        // Expose whether velocity was actually modified/cancelled (for the VelocityDisplay HUD).
+        EventBridge.velocityModified = result is VelocityResult.Modify || result is VelocityResult.Cancel
         return mapResultToCommand(result)
     }
 

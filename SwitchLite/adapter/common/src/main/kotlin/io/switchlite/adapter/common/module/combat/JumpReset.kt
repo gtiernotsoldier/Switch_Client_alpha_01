@@ -190,19 +190,26 @@ object JumpReset : Module("JumpReset", Category.COMBAT) {
     }
 
     // ========== Angle Check ==========
+    /**
+     * Knockback must come from roughly the FRONT of where the player is FACING (the attacker is in
+     * front of the crosshair). The knockback SOURCE direction is the reverse of the motion vector
+     * (-motion): when the attacker is in front, the player is knocked BACKWARD, so motion points away
+     * from facing and the source (-motion) points toward facing. Accept dot(facing, -motionUnit) >=
+     * -0.5 (a 120° cone centered on the facing direction).
+     *
+     * Rationale (user's call): the LiquidBounce "jump" mode check (knockback vs MOVEMENT direction,
+     * 180° cone) is a downside in practice — it misfires during strafe/off-axis movement. Facing the
+     * attacker (crosshair on target) is the real advantage case: facing the hit source should jump.
+     */
     private fun isKnockbackFromFront(player: PlayerState, motion: Vec3): Boolean {
         val hSpeed = sqrt(motion.x * motion.x + motion.z * motion.z)
         if (hSpeed < 0.001) return false
 
-        // Player facing direction from yaw (via Core RotationCalculator)
         val facing = RotationCalculator.yawToDirection(player.rotation.yaw)
-
-        // Knockback direction unit vector
-        val kbX = motion.x / hSpeed
-        val kbZ = motion.z / hSpeed
-
-        // Dot product ≥ cos(120°) = -0.5 → angle ≤ 120°
-        return (facing.x * kbX + facing.z * kbZ) >= -0.5
+        // Knockback SOURCE = reverse of motion (attacker direction).
+        val srcX = -motion.x / hSpeed
+        val srcZ = -motion.z / hSpeed
+        return (facing.x * srcX + facing.z * srcZ) >= -0.5
     }
 
     // ========== Lifecycle ==========

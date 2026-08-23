@@ -125,48 +125,6 @@ object KeepSprintStrategy : Strategy<KeepSprintConfig, KeepSprintState, KeepSpri
         }
 
     /**
-     * The multiplier to apply to the player's horizontal motion immediately after an attack so the
-     * vanilla slowdown doesn't reduce his speed. `horizontalKeep` is the target fraction of the
-     * pre-attack speed to preserve (1.0 = keep full speed), so we divide by the slowdown.
-     * Pure math — zero platform dependencies.
-     */
-    fun compensateFactor(config: KeepSprintConfig): Float =
-        config.horizontalKeep / VANILLA_ATTACK_SLOWDOWN
-
-    /**
-     * The compounding-proof speed restore ceiling.
-     *
-     * [fixedBase] is the vanilla sprint floor (1.8.9 ≈ 0.28 m/tick) so the very first attack after
-     * a standing sprint works even before a running-max baseline is measured. [measuredMax] is the
-     * running maximum horizontal speed seen while sprinting+moving — it naturally absorbs speed
-     * boosts (potion/effect), raising the ceiling dynamically without ever needing to hardcode a
-     * boosted value. The cap is simply the higher of the two. Restoring only ever raises motion up
-     * to this cap, so it can never accelerate past the player's real sprint speed.
-     */
-    fun effectiveCap(fixedBase: Double, measuredMax: Double): Double =
-        if (measuredMax > fixedBase) measuredMax else fixedBase
-
-    /**
-     * Compounding-proof restore: scale the player's current horizontal motion so its magnitude
-     * equals [targetHorizontalSpeed] (e.g. sprintBaseSpeed * keepFactor), preserving direction.
-     * Returns null when the player is already at/above target (nothing to restore) or essentially
-     * stationary — so calling this every frame while attacking can never overshoot, unlike a raw
-     * `motion * factor` multiply which compounds across frames with no swing.
-     */
-    fun restoreToTargetSpeed(
-        motionX: Double,
-        motionY: Double,
-        motionZ: Double,
-        targetHorizontalSpeed: Double
-    ): Vec3? {
-        val current = sqrt(motionX * motionX + motionZ * motionZ)
-        if (current < 0.001) return null
-        if (current >= targetHorizontalSpeed) return null // already at/above target — nothing to restore
-        val scale = targetHorizontalSpeed / current
-        return Vec3(motionX * scale, motionY, motionZ * scale)
-    }
-
-    /**
      * Pure algorithm: compute the keep-factor and the resulting scaled horizontal motion vector,
      * given the mode, target distance, and current player motion. Zero platform dependencies.
      *

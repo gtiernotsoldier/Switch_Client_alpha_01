@@ -9,25 +9,28 @@ import io.switchlite.core.strategy.keepsprint.KeepSprintStrategy
 import io.switchlite.agent.MappingContext
 
 /**
- * KeepSprint — no speed drop when attacking.
+ * KeepSprint — keep sprinting through an attack (no speed drop).
  *
- * Essence: when the player is sprinting + attacking + moving, vanilla MC multiplies horizontal
- * motion (motionX/Z) by ~0.6 on a swing. This module restores the lost speed back toward the
- * player's natural sprint speed so the attack doesn't slow him down. It only ever restores up to
- * the natural sprint baseline (capped) — it never accelerates past it.
+ * Essence (as the user clarified): the vanilla attack drops speed because MC internally switches
+ * the sprinting state away (sprinting → walking) on attack. KeepSprint is literally about KEEPING
+ * that sprinting state. So we don't hand-compute motion — we simply re-assert sprint on the MC
+ * main thread every frame while attacking + moving. Holding sprint true means the vanilla switch
+ * away is undone, so speed naturally stays at sprint (no 60% drop), and since it's only re-asserting
+ * an already-desired state it never accelerates.
  *
  * Per-swing model:
  *   - An "attack action" = physical left mouse press, or AutoClicker's synthetic attack pulse
  *     (rising edge of EventBridge.syntheticAttack). Each swing rolls [Chance] once.
- *   - If the roll passes, this swing's keep percentage is decided:
- *       * Normal → fixed [HorizontalKeep] (1.0 = keep full sprint speed).
- *       * Legit → a *simulated* random distance in [MinReach, MaxReach] is interpolated to a keep
- *         percentage in [MinKeep, MaxKeep]. No target/entity is required.
- *   - While the attack is held + moving, motion is restored toward (natural sprint baseline × keep%).
+ *   - If the roll passes, this swing's keep fraction is decided:
+ *       * Normal → fixed [HorizontalKeep].
+ *       * Legit → a *simulated* random distance in [MinReach, MaxReach] interpolated to a keep
+ *         fraction in [MinKeep, MaxKeep]. No target/entity required.
+ *   - HorizontalKeep acts as a THRESHOLD on that fraction: at/above KEEP_THRESHOLD (0.9) we fully
+ *     keep sprint (never switch away); below, we leave vanilla alone (allows the 60% drop). This
+ *     matches the user's "100% = don't switch, 60% = vanilla" semantics.
  *
- * Algorithm (keep percentage, chance, compounding-proof clamp) lives in core
- * (KeepSprintStrategy). This module is orchestration + platform landing, and it measures the
- * natural sprint baseline so the restore ceiling is the player's real sprint speed, not a constant.
+ * Algorithm (keep fraction, chance) lives in core (KeepSprintStrategy); this module is orchestration
+ * + platform landing. Everything runs on the MC main thread render loop (no packets needed).
  */
 object KeepSprint : Module("KeepSprint", Category.COMBAT) {
 
@@ -47,19 +50,13 @@ object KeepSprint : Module("KeepSprint", Category.COMBAT) {
     private val chance by probability("Chance", 100, 0..100)
 
     // ========== Per-swing / runtime state ==========
-    /** Natural sprint speed (m/tick), measured while sprinting & moving & not attacking. */
-    @Volatile private var sprintBaseline: Double = 0.0
-
     /** Previous frame's attacking state — to detect the attack rising edge. */
     @Volatile private var prevAttacking: Boolean = false
 
     /** Whether the current attack action passed the chance roll (i.e. we keep this swing). */
     @Volatile private var keepThisSwing: Boolean = false
 
-    /** Target horizontal speed (m/tick) for the current swing = sprintBaseline × keep%. */
-    @Volatile private var swingTargetSpeed: Double = 0.0
-
-    /** Current keep factor, exposed for diagnostics. */
+    /** Current keep fraction for this swing, exposed for diagnostics. */
     @Volatile
     var activeKeepFactor: Float = 1.0f
         private set
@@ -71,10 +68,8 @@ object KeepSprint : Module("KeepSprint", Category.COMBAT) {
 
     private fun reset() {
         activeKeepFactor = 1.0f
-        sprintBaseline = 0.0
         keepThisSwing = false
         prevAttacking = false
-        swingTargetSpeed = 0.0
     }
 
     private fun buildConfig(): KeepSprintConfig {
@@ -95,7 +90,6 @@ object KeepSprint : Module("KeepSprint", Category.COMBAT) {
             if (!enabled) { reset(); return }
 
             val player = MappingContext.getFieldValue(mc, "forge:mc_thePlayer") ?: return
-            val sprinting = MappingContext.invokeMethod(player, "forge:player_isSprinting") as? Boolean ?: false
 
             val motionX = MappingContext.getFieldValue(player, "forge:entity_motionX") as? Double ?: 0.0
             val motionZ = MappingContext.getFieldValue(player, "forge:entity_motionZ") as? Double ?: 0.0
@@ -105,48 +99,37 @@ object KeepSprint : Module("KeepSprint", Category.COMBAT) {
             // "Attacking now" — physical left mouse OR AutoClicker synthetic attack.
             val attacking = EventBridge.isLeftMousePhysicallyDown || EventBridge.syntheticAttack
 
-            // Track the natural sprint ceiling as a running max while sprinting + moving. This runs
-            // even during an attack (the max absorbs the pre-slowdown speed), so the restore target
-            // is a stable, real value — it never resets to 0 the instant you start attacking and
-            // never depends on a stale pre-attack sample. This is what kills the "hit-or-miss"
-            // speed: every attack restores toward the same sprint cap.
-            if (sprinting && moving) {
-                if (currentSpeed > sprintBaseline) sprintBaseline = currentSpeed
-            }
-
-            // Rising edge of an attack action → roll chance and decide this swing's keep target.
+            // Rising edge of an attack action → roll chance and decide this swing's keep fraction.
             val attackEdge = attacking && !prevAttacking
             prevAttacking = attacking
             if (attackEdge) {
                 val config = buildConfig()
                 keepThisSwing = KeepSprintStrategy.shouldActivate(config)
                 if (keepThisSwing) {
-                    // Simulated distance (no target needed) → keep % → target speed.
+                    // Simulated distance (no target needed) → keep fraction.
                     val simDist = if (config.maxReach > config.minReach) {
                         minReach + kotlin.random.Random.nextFloat() * (maxReach - minReach)
                     } else maxReach
-                    val keepPct = KeepSprintStrategy.keepPercentage(config, mode, simDist)
-                    // Cap = max(vanilla sprint floor, running-max baseline). The floor (0.28) makes
-                    // the FIRST attack work immediately; the running max absorbs speed boosts so the
-                    // ceiling raises dynamically. Never falls back to a stale hardcode.
-                    val cap = KeepSprintStrategy.effectiveCap(config.sprintBaseSpeed, sprintBaseline)
-                    swingTargetSpeed = cap * keepPct
-                    activeKeepFactor = keepPct / KeepSprintStrategy.VANILLA_ATTACK_SLOWDOWN
+                    activeKeepFactor = KeepSprintStrategy.keepPercentage(config, mode, simDist)
                 }
             }
 
             if (!attacking || !moving || !keepThisSwing) return
 
-            // Restore toward the swing target (clamped, never overshoots the baseline).
-            val motionY = MappingContext.getFieldValue(player, "forge:entity_motionY") as? Double ?: 0.0
-            val restored = KeepSprintStrategy.restoreToTargetSpeed(
-                motionX, motionY, motionZ, swingTargetSpeed
-            ) ?: return
-
-            MappingContext.getField("forge:entity_motionX")?.setDouble(player, restored.x)
-            MappingContext.getField("forge:entity_motionZ")?.setDouble(player, restored.z)
+            // The essence: keep the SPRINTING state from being switched away on attack. MC flips
+            // sprinting→walking when you attack; we re-assert sprint on the main thread every frame.
+            // HorizontalKeep is a threshold: at/above KEEP_THRESHOLD we fully keep sprint; below we
+            // leave vanilla alone. Re-asserting an already-desired sprint never accelerates.
+            if (activeKeepFactor >= KEEP_THRESHOLD) {
+                EventBridge.setSprinting(true)
+            }
         } catch (_: Exception) {
             // Never crash the render loop.
         }
+    }
+
+    companion object {
+        /** Keep fraction at/above which we re-assert sprint every frame (below = vanilla). */
+        const val KEEP_THRESHOLD = 0.9f
     }
 }

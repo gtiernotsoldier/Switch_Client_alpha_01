@@ -45,9 +45,6 @@ object ForgeBootstrap {
     /** Diagnostic — log render-hook liveness once. */
     private var renderDiagLogged = false
 
-    /** Throttle counter for the KeepSprint main-thread diagnostic. */
-    private var ksKeepDiag = 0
-
     /** Physical mouse button edge trackers — count real clicks for the CPS counter. */
     private var physLeftPrev = false
     private var physRightPrev = false
@@ -260,31 +257,9 @@ object ForgeBootstrap {
             // strictly thread-safe; this keeps addToSendQueue on the MC thread).
             try { EventBridge.drainPendingSprintReset() } catch (_: Exception) {}
 
-            // KeepSprint: brute-force apply on the MC main thread. While KeepSprint is active
-            // (player attacking & moving), multiply motionX/Z by the factor EVERY frame so the
-            // background thread's writes can't be overwritten and the speed is held continuously.
-            try {
-                val player = MappingContext.getFieldValue(mc, "forge:mc_thePlayer")
-                val keepActive = EventBridge.isKeepSprintActive()
-                // Always-log (throttled) to confirm the main thread reaches this block and what it
-                // reads — regardless of keepActive, so we can tell whether the flag isn't set or
-                // the block isn't reached.
-                if (++ksKeepDiag % 60 == 0) {
-                    io.switchlite.core.logging.CoreLogger.info(
-                        "[KeepSprint] main-thread keepActive=$keepActive playerNull=${player == null} factor=${EventBridge.keepSprintFactor}"
-                    )
-                }
-                if (keepActive && player != null) {
-                    val factor = EventBridge.keepSprintFactor
-                    val mX = MappingContext.getField("forge:entity_motionX")?.getDouble(player) ?: 0.0
-                    val mZ = MappingContext.getField("forge:entity_motionZ")?.getDouble(player) ?: 0.0
-                    val mag = kotlin.math.sqrt(mX * mX + mZ * mZ)
-                    if (mag > 0.001) {
-                        MappingContext.getField("forge:entity_motionX")?.setDouble(player, mX * factor)
-                        MappingContext.getField("forge:entity_motionZ")?.setDouble(player, mZ * factor)
-                    }
-                }
-            } catch (_: Exception) {}
+            // KeepSprint — pure module-layer, main thread. When the player is attacking + moving,
+            // scale motionX/Z back up so the attack slowdown doesn't reduce speed (no inject needed).
+            try { KeepSprint.onRenderFrame(mc) } catch (_: Exception) {}
 
             // Module keybinds — poll keyboard state on the render thread, throttled.
             if (++keybindFrame % 4 == 0) {

@@ -316,29 +316,6 @@ object EventBridge {
      */
     @Volatile var serverSprintState: Boolean = false
 
-    // ========== KeepSprint (main-thread speed keep) ==========
-    // KeepSprint applies motion on the MC main thread (background-thread writes get overwritten
-    // next frame). The module sets [keepSprintActive] true while it wants the speed kept (player
-    // attacking & moving) and [keepSprintFactor]; the platform render thread multiplies the
-    // player's horizontal motion by the factor EVERY frame while active (brute-force Raven model:
-    // hold the speed continuously, not a one-shot).
-    @Volatile var keepSprintActive: Boolean = false
-    @Volatile var keepSprintFactor: Float = 1.0f
-
-    /** KeepSprint module sets this each tick while it wants the speed kept. */
-    fun setKeepSprint(factor: Float) {
-        keepSprintFactor = factor
-        keepSprintActive = true
-    }
-
-    /** KeepSprint module clears this when it no longer wants to keep speed. */
-    fun clearKeepSprint() {
-        keepSprintActive = false
-    }
-
-    /** Platform render thread reads whether to keep speed this frame. */
-    fun isKeepSprintActive(): Boolean = keepSprintActive
-
     // ========== Click Delay Reset (DelayRemover — 1.8 exclusive) ==========
     private var resetClickDelayHandler: (() -> Unit)? = null
 
@@ -681,8 +658,6 @@ object EventBridge {
         sprintResetHandler = null
         sendEntityActionHandler = null
         serverSprintState = false
-        keepSprintActive = false
-        keepSprintFactor = 1.0f
         resetClickDelayHandler = null
         resetJumpDelayHandler = null
         reachSetter = null

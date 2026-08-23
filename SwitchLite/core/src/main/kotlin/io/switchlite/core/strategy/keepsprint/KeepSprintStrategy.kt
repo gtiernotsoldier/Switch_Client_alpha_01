@@ -94,7 +94,43 @@ data class KeepSprintInput(
  */
 object KeepSprintStrategy : Strategy<KeepSprintConfig, KeepSprintState, KeepSprintResult> {
 
+    /**
+     * Vanilla 1.8.9 attack slowdown: attacking multiplies horizontal motion by this amount.
+     * The constant we must compensate for to "keep sprint" (Raven's onAttackTargetEntityWithCurrentItem
+     * inserts a factor here; the default Slow% of 40 equals this 0.6).
+     */
+    const val VANILLA_ATTACK_SLOWDOWN = 0.6
+
     override val name: String = "KeepSprint"
+
+    /**
+     * The multiplier to apply to the player's horizontal motion immediately after an attack so the
+     * vanilla slowdown doesn't reduce his speed. `horizontalKeep` is the target fraction of the
+     * pre-attack speed to preserve (1.0 = keep full speed), so we divide by the slowdown.
+     * Pure math — zero platform dependencies.
+     */
+    fun compensateFactor(config: KeepSprintConfig): Float =
+        config.horizontalKeep / VANILLA_ATTACK_SLOWDOWN
+
+    /**
+     * Compounding-proof restore: scale the player's current horizontal motion so its magnitude
+     * equals [targetHorizontalSpeed] (e.g. sprintBaseSpeed * keepFactor), preserving direction.
+     * Returns null when the player is already at/above target (nothing to restore) or essentially
+     * stationary — so calling this every frame while attacking can never overshoot, unlike a raw
+     * `motion * factor` multiply which compounds across frames with no swing.
+     */
+    fun restoreToTargetSpeed(
+        motionX: Double,
+        motionY: Double,
+        motionZ: Double,
+        targetHorizontalSpeed: Double
+    ): Vec3? {
+        val current = sqrt(motionX * motionX + motionZ * motionZ)
+        if (current < 0.001) return null
+        if (current >= targetHorizontalSpeed) return null // already at/above target — nothing to restore
+        val scale = targetHorizontalSpeed / current
+        return Vec3(motionX * scale, motionY, motionZ * scale)
+    }
 
     /**
      * Pure algorithm: compute the keep-factor and the resulting scaled horizontal motion vector,

@@ -35,7 +35,6 @@ import javassist.CtMethod;
 public class Transformer implements ClassFileTransformer {
 
     private static boolean hooked = false;
-    private static boolean attackHooked = false;
     private static volatile boolean installed = false;
 
     /**
@@ -91,21 +90,6 @@ public class Transformer implements ClassFileTransformer {
                     // addURL) — no bootstrap CL involvement needed anywhere.
                     inst.addTransformer(new Transformer(), true);
                     inst.retransformClasses(displayClass);
-
-                    // Also hook EntityPlayer for KeepSprint. If it's not loaded yet, the
-                    // registered transformer will fire when it first loads (addTransformer with
-                    // canRetransform=true also transforms on initial load). Try retransform now in
-                    // case it's already loaded.
-                    try {
-                        Class<?> playerClass = Class.forName(
-                            "net.minecraft.entity.player.EntityPlayer", true,
-                            Thread.currentThread().getContextClassLoader());
-                        if (inst.isModifiableClass(playerClass)) {
-                            inst.retransformClasses(playerClass);
-                        }
-                    } catch (Throwable e) {
-                        Agent.log("[Transformer] EntityPlayer retransform skipped (may load later): " + e.getMessage());
-                    }
 
                     // CRITICAL: retransformClasses() does NOT throw if transform() returns null.
                     // We must check the 'hooked' flag to know if the bytecode was actually modified.
@@ -184,13 +168,12 @@ public class Transformer implements ClassFileTransformer {
     public byte[] transform(ClassLoader loader, String className,
                            Class<?> classBeingRedefined, ProtectionDomain protectionDomain,
                            byte[] classfileBuffer) {
-        // Handle both the render hook (Display) and the KeepSprint attack hook (EntityPlayer).
-        if (!"org/lwjgl/opengl/Display".equals(className) &&
-            !"net/minecraft/entity/player/EntityPlayer".equals(className)) {
+        // Handle the render hook (Display) only. KeepSprint was moved to a module-layer
+        // implementation (adapter/common KeepSprint.onRenderFrame) — no attack-method injection.
+        if (!"org/lwjgl/opengl/Display".equals(className)) {
             return null;
         }
-        if ("org/lwjgl/opengl/Display".equals(className) && hooked) return null;
-        if ("net/minecraft/entity/player/EntityPlayer".equals(className) && attackHooked) return null;
+        if (hooked) return null;
 
         try {
             ClassPool pool = ClassPool.getDefault();
@@ -250,44 +233,21 @@ public class Transformer implements ClassFileTransformer {
 
             CtClass ctClass = pool.makeClass(new ByteArrayInputStream(classfileBuffer));
 
-            // ── Branch by class: Display → render hook; EntityPlayer → KeepSprint attack hook ──
-            boolean isDisplay = "org/lwjgl/opengl/Display".equals(className);
-            if (isDisplay) {
-                CtMethod updateMethod = ctClass.getDeclaredMethod("update");
-
-                // Insert RenderBridge.onFrame() at the very beginning of Display.update().
-                // Same anti-constant-folding pattern as before (see comments): wrap the right
-                // operand in new String(...) so javassist cannot fold it into a class reference.
-                updateMethod.insertBefore(
-                    "try { Class.forName(\"io.switchlite.agent.\" + new String(\"RenderBridge\"), true, " +
-                    "Thread.currentThread().getContextClassLoader())" +
-                    ".getMethod(\"onFrame\", new java.lang.Class[0])" +
-                    ".invoke(null, new java.lang.Object[0]); } catch (Throwable t) {}"
-                );
-            } else {
-                // EntityPlayer.attackTargetEntityWithCurrentItem = func_71061_d_ (no-arg void).
-                // Insert KeepSprintBridge.onAttack() at the END of the method so the keep factor
-                // is applied after MC applies the vanilla ~60% slowdown — Raven's model.
-                // KeepSprintBridge is a no-arg static call, so javassist only compiles a simple
-                // invocation (no complex expressions, low failure risk).
-                CtMethod attackMethod = ctClass.getDeclaredMethod("func_71061_d_");
-                attackMethod.insertAfter(
-                    "try { Class.forName(\"io.switchlite.agent.\" + new String(\"KeepSprintBridge\"), true, " +
-                    "Thread.currentThread().getContextClassLoader())" +
-                    ".getMethod(\"onAttack\", new java.lang.Class[0])" +
-                    ".invoke(null, new java.lang.Object[0]); } catch (Throwable t) {}"
-                );
-            }
+            // Display.update() → insert RenderBridge.onFrame() at the very beginning.
+            // Same anti-constant-folding pattern as before (see comments): wrap the right
+            // operand in new String(...) so javassist cannot fold it into a class reference.
+            CtMethod updateMethod = ctClass.getDeclaredMethod("update");
+            updateMethod.insertBefore(
+                "try { Class.forName(\"io.switchlite.agent.\" + new String(\"RenderBridge\"), true, " +
+                "Thread.currentThread().getContextClassLoader())" +
+                ".getMethod(\"onFrame\", new java.lang.Class[0])" +
+                ".invoke(null, new java.lang.Object[0]); } catch (Throwable t) {}"
+            );
 
             byte[] result = ctClass.toBytecode();
             ctClass.defrost();
-            if (isDisplay) {
-                hooked = true;
-                Agent.log("[Transformer] Display.update() bytecode injected — RenderBridge.onFrame() will be called every frame");
-            } else {
-                attackHooked = true;
-                Agent.log("[Transformer] EntityPlayer.func_71061_d_ bytecode injected — KeepSprintBridge.onAttack() on attack");
-            }
+            hooked = true;
+            Agent.log("[Transformer] Display.update() bytecode injected — RenderBridge.onFrame() will be called every frame");
             return result;
         } catch (Throwable e) {
             // NOTE: catch(Throwable) — must catch Errors too. NoClassDefFoundError

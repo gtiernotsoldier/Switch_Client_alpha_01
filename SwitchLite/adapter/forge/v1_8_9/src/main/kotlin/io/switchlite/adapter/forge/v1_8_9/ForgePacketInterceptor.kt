@@ -66,9 +66,26 @@ object ForgePacketInterceptor : ChannelDuplexHandler() {
             return
         }
 
-        pipeline.addBefore("packet_handler", HANDLER_NAME, this)
-        injected = true
-        CoreLogger.info("[ForgePacketInterceptor] Injected into network pipeline")
+        // CRITICAL: pipeline mutation must run on the Netty event-loop thread. Calling
+        // pipeline.addBefore() from the Agent background thread throws IllegalStateException
+        // ("event executor terminated" / not the event loop), which the tick loop's catch
+        // silently swallows — the interceptor silently never installs. Dispatch to the event loop.
+        try {
+            channel.eventLoop().execute {
+                try {
+                    val p = channel.pipeline()
+                    if (p.get(HANDLER_NAME) == null) {
+                        p.addBefore("packet_handler", HANDLER_NAME, this)
+                    }
+                    injected = true
+                    CoreLogger.info("[ForgePacketInterceptor] Injected into network pipeline (event loop)")
+                } catch (e: Exception) {
+                    CoreLogger.error("[ForgePacketInterceptor] event-loop inject failed: ${e.message}")
+                }
+            }
+        } catch (e: Exception) {
+            CoreLogger.error("[ForgePacketInterceptor] eventLoop().execute failed: ${e.message}")
+        }
     }
 
     fun eject() {

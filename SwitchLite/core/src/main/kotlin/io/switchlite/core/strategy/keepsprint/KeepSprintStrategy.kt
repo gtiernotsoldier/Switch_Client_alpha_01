@@ -99,7 +99,7 @@ object KeepSprintStrategy : Strategy<KeepSprintConfig, KeepSprintState, KeepSpri
      * The constant we must compensate for to "keep sprint" (Raven's onAttackTargetEntityWithCurrentItem
      * inserts a factor here; the default Slow% of 40 equals this 0.6).
      */
-    const val VANILLA_ATTACK_SLOWDOWN = 0.6
+    const val VANILLA_ATTACK_SLOWDOWN = 0.6f
 
     override val name: String = "KeepSprint"
 

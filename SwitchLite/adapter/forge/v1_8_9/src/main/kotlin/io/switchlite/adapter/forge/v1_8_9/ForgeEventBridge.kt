@@ -255,10 +255,13 @@ object ForgeEventBridge : IEventBridge {
         EventBridge.registerReleaseBackHandler { setKeyBindPressed("forge:gs_keyBindBack", false) }
 
         EventBridge.registerJumpHandler {
-            try {
-                val player = getPlayer() ?: return@registerJumpHandler
-                MappingContext.invokeMethod(player, "forge:player_jump")
-            } catch (_: Exception) {}
+            // Press the jump key (KeyBinding) on the main thread so MC's own tick performs the jump
+            // and the Keystrokes HUD reflects it. No direct player.jump() — that would mutate the
+            // entity from a background thread and skip the key display.
+            setKeyBindPressed("forge:gs_keyBindJump", true)
+        }
+        EventBridge.registerReleaseJumpHandler {
+            setKeyBindPressed("forge:gs_keyBindJump", false)
         }
 
         EventBridge.registerSprintResetHandler { mode ->

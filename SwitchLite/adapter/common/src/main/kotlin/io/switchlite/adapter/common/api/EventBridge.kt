@@ -634,8 +634,46 @@ object EventBridge {
     // ========== Jump (JumpReset) ==========
     private var jumpHandler: (() -> Unit)? = null
 
-    fun jump() { jumpHandler?.invoke() }
+    /**
+     * Queued jump pulse. The module (background 20Hz thread) calls [queueJump]; the platform's
+     * MAIN thread drains it via [drainPendingJump] and presses the jump key (KeyBinding) so MC's
+     * own tick sees it and performs the jump. This keeps the real jump key write on the main thread
+     * (no cross-thread entity mutation) and makes the Keystrokes HUD reflect it (it reads the same
+     * key state). The pulse auto-releases after [JUMP_PRESS_MS] on the main thread.
+     */
+    @Volatile private var pendingJump: Boolean = false
+    @Volatile private var jumpPressedSince: Long = 0L
+
+    /** How long the jump key stays pressed per pulse (ms). */
+    private const val JUMP_PRESS_MS = 80L
+
+    /** Called by the module on the background thread: queue a jump to fire. */
+    fun queueJump() {
+        pendingJump = true
+    }
+
+    /**
+     * Called by the platform's MAIN (render) thread each frame: apply a queued jump press, and
+     * auto-release it after the pulse window. Returns whether the jump key is currently pressed.
+     */
+    fun drainPendingJump(): Boolean {
+        val now = System.currentTimeMillis()
+        if (pendingJump) {
+            pendingJump = false
+            jumpPressedSince = now
+            jumpHandler?.invoke() // press jump key (main thread)
+            return true
+        }
+        if (jumpPressedSince != 0L && now - jumpPressedSince >= JUMP_PRESS_MS) {
+            jumpPressedSince = 0L
+            releaseJumpHandler?.invoke() // release jump key (main thread)
+        }
+        return jumpPressedSince != 0L
+    }
+
+    private var releaseJumpHandler: (() -> Unit)? = null
     fun registerJumpHandler(handler: () -> Unit) { jumpHandler = handler }
+    fun registerReleaseJumpHandler(handler: () -> Unit) { releaseJumpHandler = handler }
 
     // ========== Platform Registration ==========
     // Called by ForgeBootstrap / FabricBootstrap to wire up platform-specific handlers
@@ -666,6 +704,9 @@ object EventBridge {
         pressBackHandler = null
         releaseBackHandler = null
         jumpHandler = null
+        releaseJumpHandler = null
+        pendingJump = false
+        jumpPressedSince = 0L
         sprintResetHandler = null
         sendEntityActionHandler = null
         serverSprintState = false

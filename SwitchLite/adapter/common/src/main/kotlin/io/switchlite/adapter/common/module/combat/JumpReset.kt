@@ -26,7 +26,8 @@ import kotlin.random.Random
  * 2. Checks configurable conditions via [ConditionChecker].
  * 3. Probability roll + cooldown check.
  * 4. Optional delay timer (resets on new knockback).
- * 5. Executes jump via [EventBridge.jump].
+ * 5. Queues a jump via [EventBridge.queueJump] — the main thread presses the jump key, so MC's own
+ *    tick performs the jump and the Keystrokes HUD reflects it.
  *
  * Cooldown modes:
  * - Ticks: wait N server ticks between jumps (ticksUntilJump, default 4).
@@ -158,7 +159,7 @@ object JumpReset : Module("JumpReset", Category.COMBAT) {
             return
         }
 
-        EventBridge.jump()
+        EventBridge.queueJump()
 
         // Reset after execution — cooldownCounter must be reset here because
         // ticks continue incrementing it during the delay period.

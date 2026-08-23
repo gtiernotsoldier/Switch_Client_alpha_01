@@ -64,9 +64,13 @@ object FabricEventBridge : IEventBridge {
             mc.options.backKey.isPressed = false
         }
 
-        // Register jump handler (JumpReset)
+        // Register jump handler (JumpReset) — press the jump key so MC's own tick jumps and the
+        // Keystrokes HUD reflects it; drainPendingJump auto-releases via the release handler.
         EventBridge.registerJumpHandler {
-            mc.player?.jump()
+            mc.options.jumpKey.isPressed = true
+        }
+        EventBridge.registerReleaseJumpHandler {
+            mc.options.jumpKey.isPressed = false
         }
 
         // Register sprint reset handler (SprintReset)

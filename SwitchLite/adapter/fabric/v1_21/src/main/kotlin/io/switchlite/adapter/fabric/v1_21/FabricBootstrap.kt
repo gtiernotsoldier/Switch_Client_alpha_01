@@ -44,6 +44,8 @@ object FabricBootstrap : ClientModInitializer {
         ClientTickEvents.END_CLIENT_TICK.register { client ->
             // Apply synthetic combat input (attack/use-item) on the main thread.
             FabricEventBridge.applySyntheticInput()
+            // Apply queued JumpReset jump pulses on the main thread (press/release jump key).
+            EventBridge.drainPendingJump()
             FabricEventBridge.onTick()
             setupKeyCallback(client)
         }

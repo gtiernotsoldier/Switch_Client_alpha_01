@@ -257,6 +257,10 @@ object ForgeBootstrap {
             // strictly thread-safe; this keeps addToSendQueue on the MC thread).
             try { EventBridge.drainPendingSprintReset() } catch (_: Exception) {}
 
+            // Apply queued JumpReset jump pulses on the main thread (press/release the jump key so
+            // MC's own tick performs the jump and the Keystrokes HUD reflects it).
+            try { EventBridge.drainPendingJump() } catch (_: Exception) {}
+
             // KeepSprint — pure module-layer, main thread. When the player is attacking + moving,
             // scale motionX/Z back up so the attack slowdown doesn't reduce speed (no inject needed).
             try { KeepSprint.onRenderFrame(mc) } catch (_: Exception) {}

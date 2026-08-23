@@ -12,21 +12,23 @@ import kotlin.random.Random
 /**
  * KeepSprint — keeps sprint speed while attacking.
  *
- * Vanilla MC reduces horizontal speed when attacking (to ~60%). This module re-applies the
- * desired keep percentage so your speed doesn't drop — i.e. you "keep sprint speed" while
- * fighting.
+ * Vanilla MC reduces horizontal speed when attacking (to ~60%). KeepSprint re-applies the
+ * desired keep percentage so your speed doesn't drop while you fight.
  *
- * Trigger (two styles, like SuperKnockback):
- *   - RisingEdge (default): fire on a fresh hit (hurtTime rising edge). Reliable, never misses.
- *   - HurtTimeExact: fire when target.hurtTime == HurtTime (tunable; exact frame can be missed
- *     under 20Hz sampling).
- * Plus optional Delay (ms before the keep applies) and HitCount (fire once every N hits).
+ * IMPORTANT: this module does NOT depend on any target/crosshair. It only looks at the PLAYER's
+ * own attack action (holding left-click / attack key). That is the Raven model — Raven's
+ * KeepSprint.multiplies motion when the player attacks, with no target requirement. Basing the
+ * trigger on the crosshair target's hurtTime was the bug: if the crosshair wasn't precisely on
+ * the mob the module never fired.
  *
- * Modes:
- * - Normal: always keep to [horizontalKeep] (1.0 = full sprint speed kept).
- * - Legit: interpolate the keep factor by distance to target (closer = more conservative).
+ * While the player is attacking, on each qualifying hit it scales the player's horizontal motion
+ * by the keep factor (applied on the main thread via EventBridge.armKeepSprint so it isn't
+ * overwritten next frame).
  *
- * Chance lets the keep apply probabilistically (more covert).
+ * Config:
+ *   - HorizontalKeep (Normal mode) / Legit distance interpolation.
+ *   - Delay (ms before the keep applies), HitCount (fire once every N hits), Chance.
+ *   - Trigger is the player's own attack; `OnlyMove`/`OnlyGround` conditions still apply.
  */
 object KeepSprint : Module("KeepSprint", Category.COMBAT) {
 
@@ -45,9 +47,7 @@ object KeepSprint : Module("KeepSprint", Category.COMBAT) {
     // ========== Probability ==========
     private val chance by probability("Chance", 100, 0..100)
 
-    // ========== Trigger (like SuperKnockback) ==========
-    private val triggerMode by choices("TriggerMode", arrayOf("RisingEdge", "HurtTimeExact"))
-    private val hurtTime by int("HurtTime", 10, 0..10)
+    // ========== Trigger (delay + hit throttle) ==========
     private val delay by int("Delay", 0, 0..500, "ms")
     private val hitCount by int("HitCount", 1, 1..20, "hits")
 
@@ -69,15 +69,8 @@ object KeepSprint : Module("KeepSprint", Category.COMBAT) {
     private var hitCounter = 0
     private var delayEndNano = 0L
     private var delayPending = false
-    private var lastTargetId = -1
+    private var wasAttacking = false
 
-    // RisingEdge fresh-hit detection (set by the attack listener).
-    private var hitPending = false
-
-    // HurtTimeExact fresh-hit detection (rising-edge of hurtTime, evaluated in tick).
-    private var prevHurt = false
-
-    private val attackListener: (TargetState?) -> Unit = { if (enabled) hitPending = true }
     private val tickListener: (PlayerState, TargetState?) -> Unit = { p, t -> if (enabled) onTick(p, t) }
 
     private fun onTick(player: PlayerState, target: TargetState?) {
@@ -92,36 +85,23 @@ object KeepSprint : Module("KeepSprint", Category.COMBAT) {
             return
         }
 
-        // Reset edge state when no target / target changes.
-        if (target == null) {
-            hitPending = false
-            prevHurt = false
-            lastTargetId = -1
+        // Trigger = the player is holding the attack (physical left click / attack key down).
+        // KeepSprint does NOT need a target; only the player's own attack action matters.
+        val attacking = player.isAttackKeyDown || EventBridge.isLeftMousePhysicallyDown
+
+        // Hit rising edge of the player's own attack (to throttle "per hit").
+        val attackStarted = attacking && !wasAttacking
+        wasAttacking = attacking
+
+        if (!attacking) {
+            hitCounter = 0
             return
         }
-        if (lastTargetId != target.entityId) {
-            lastTargetId = target.entityId
-            hitPending = false
-            prevHurt = false
-            hitCounter = 0
-        }
 
-        // Determine whether this tick is a trigger.
-        val triggered = when (triggerMode) {
-            "HurtTimeExact" -> {
-                val isHurt = target.hurtTime > 0
-                val fresh = isHurt && !prevHurt
-                prevHurt = isHurt
-                // For HurtTimeExact we fire when hurtTime == HurtTime; otherwise we treat the
-                // rising edge as the start and only fire at the configured value.
-                if (isHurt && !fresh && target.hurtTime == hurtTime) true else false
-            }
-            else -> { // RisingEdge
-                if (hitPending) { hitPending = false; true } else false
-            }
-        }
-        if (!triggered) return
+        // Only count a fresh attack for the hit-count throttle.
+        if (!attackStarted) return
 
+        // Unified conditions (OnlyGround/OnlyMove/...). Note: no target required.
         if (!ConditionChecker.check(triggerOptions, player, target)) return
         if (chance.current < 100 && Random.nextInt(100) >= chance.current) return
 
@@ -139,14 +119,11 @@ object KeepSprint : Module("KeepSprint", Category.COMBAT) {
         }
     }
 
-    /** Arm the keep-speed application. The actual motion is applied on the MC main thread
-     *  (EventBridge.armKeepSprint + ForgeBootstrap.render drains it) so it isn't overwritten
-     *  next frame. Algorithm (keep factor) lives in core. */
+    /** Arm the keep-speed application. The actual motion is applied on the MC main thread. */
     private fun applyKeep(player: PlayerState, target: TargetState?) {
         if (player === io.switchlite.core.model.PlayerState.EMPTY) return
         if (!ConditionChecker.check(triggerOptions, player, target)) return
 
-        // Build the core config snapshot the algorithm needs.
         val config = io.switchlite.core.strategy.keepsprint.KeepSprintConfig(
             mode = mode,
             horizontalKeep = horizontalKeep,
@@ -164,7 +141,6 @@ object KeepSprint : Module("KeepSprint", Category.COMBAT) {
             config, mode, target?.distance,
             player.motionX, player.motionY, player.motionZ
         )
-        // Arm the main-thread keep with the computed factor.
         EventBridge.armKeepSprint(result.keepFactor)
         io.switchlite.core.logging.CoreLogger.debug(
             "[KeepSprint] Armed keep at ${"%.0f".format(result.keepFactor * 100)}% (mode=$mode)"
@@ -173,24 +149,18 @@ object KeepSprint : Module("KeepSprint", Category.COMBAT) {
 
     // ========== Lifecycle ==========
     override fun onEnable() {
-        EventBridge.registerAttackListener(attackListener)
         EventBridge.registerTickListener(tickListener)
         lastPlayer = null
         hitCounter = 0
         delayPending = false
-        hitPending = false
-        prevHurt = false
-        lastTargetId = -1
+        wasAttacking = false
     }
 
     override fun onDisable() {
-        EventBridge.unregisterAttackListener(attackListener)
         EventBridge.unregisterTickListener(tickListener)
         lastPlayer = null
         hitCounter = 0
         delayPending = false
-        hitPending = false
-        prevHurt = false
-        lastTargetId = -1
+        wasAttacking = false
     }
 }

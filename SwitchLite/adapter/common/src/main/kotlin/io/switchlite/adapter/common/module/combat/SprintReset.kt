@@ -28,7 +28,7 @@ object SprintReset : Module("SprintReset", Category.COMBAT) {
     private val mode by choices("Mode", arrayOf("Nostop", "Silent"))
     private val chance by int("Chance", 100, 0..100, "%")
     private val delay by int("Delay", 0, 0..500, "ms")
-    private val tick by int("Tick", 1, 1..20)
+    private val hitCount by int("HitCount", 1, 1..20, "hits")
 
     // ========== Conditions (Unified Engine) ==========
     private val onlyGround by boolean("OnlyGround", true)
@@ -100,9 +100,9 @@ object SprintReset : Module("SprintReset", Category.COMBAT) {
         prevHurt = isHurt
         if (!justHit) return
 
-        // Tick throttle: fire once every `tick` hits.
+        // Hit-count throttle: fire once every `hitCount` hits.
         hitCounter++
-        if (hitCounter < tick) return
+        if (hitCounter < hitCount) return
         hitCounter = 0
 
         // Probability

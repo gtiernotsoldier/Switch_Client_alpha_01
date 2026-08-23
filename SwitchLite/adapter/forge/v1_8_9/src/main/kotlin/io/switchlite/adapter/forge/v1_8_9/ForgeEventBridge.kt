@@ -113,44 +113,52 @@ object ForgeEventBridge : IEventBridge {
     } catch (_: Exception) { fallback }
 
     /** Convert a MC Vec3 (net.minecraft.util.Vec3) to our core Vec3, or null. */
-    private fun mcVec3ToVec3(mcVec3: Any?): Vec3? = try {
-        if (mcVec3 == null) return null
-        val c = mcVec3.javaClass
-        Vec3(
-            c.getField("field_72450_a").getDouble(mcVec3),
-            c.getField("field_72448_b").getDouble(mcVec3),
-            c.getField("field_72449_c").getDouble(mcVec3)
-        )
-    } catch (_: Exception) { null }
+    private fun mcVec3ToVec3(mcVec3: Any?): Vec3? {
+        return try {
+            if (mcVec3 == null) return null
+            val c = mcVec3.javaClass
+            Vec3(
+                c.getField("field_72450_a").getDouble(mcVec3),
+                c.getField("field_72448_b").getDouble(mcVec3),
+                c.getField("field_72449_c").getDouble(mcVec3)
+            )
+        } catch (_: Exception) { null }
+    }
 
     /** Convert our core Vec3 to a MC Vec3 instance (net.minecraft.util.Vec3). */
-    private fun coreVec3ToMcVec3(v: Vec3): Any? = try {
-        val c = Class.forName("net.minecraft.util.Vec3")
-        val ctor = c.getConstructor(Double::class.java, Double::class.java, Double::class.java)
-        ctor.newInstance(v.x, v.y, v.z)
-    } catch (_: Exception) { null }
+    private fun coreVec3ToMcVec3(v: Vec3): Any? {
+        return try {
+            val c = Class.forName("net.minecraft.util.Vec3")
+            val ctor = c.getConstructor(Double::class.java, Double::class.java, Double::class.java)
+            ctor.newInstance(v.x, v.y, v.z)
+        } catch (_: Exception) { null }
+    }
 
     /** Min corner (minX/minY/minZ) of an MC AxisAlignedBB as our core Vec3, or null. */
-    private fun bbMin(box: Any?): Vec3? = try {
-        if (box == null) return null
-        val c = box.javaClass
-        Vec3(
-            c.getField("field_72340_a").getDouble(box),
-            c.getField("field_72338_b").getDouble(box),
-            c.getField("field_72339_c").getDouble(box)
-        )
-    } catch (_: Exception) { null }
+    private fun bbMin(box: Any?): Vec3? {
+        return try {
+            if (box == null) return null
+            val c = box.javaClass
+            Vec3(
+                c.getField("field_72340_a").getDouble(box),
+                c.getField("field_72338_b").getDouble(box),
+                c.getField("field_72339_c").getDouble(box)
+            )
+        } catch (_: Exception) { null }
+    }
 
     /** Max corner (maxX/maxY/maxZ) of an MC AxisAlignedBB as our core Vec3, or null. */
-    private fun bbMax(box: Any?): Vec3? = try {
-        if (box == null) return null
-        val c = box.javaClass
-        Vec3(
-            c.getField("field_72336_d").getDouble(box),
-            c.getField("field_72337_e").getDouble(box),
-            c.getField("field_72334_f").getDouble(box)
-        )
-    } catch (_: Exception) { null }
+    private fun bbMax(box: Any?): Vec3? {
+        return try {
+            if (box == null) return null
+            val c = box.javaClass
+            Vec3(
+                c.getField("field_72336_d").getDouble(box),
+                c.getField("field_72337_e").getDouble(box),
+                c.getField("field_72334_f").getDouble(box)
+            )
+        } catch (_: Exception) { null }
+    }
 
     private fun isMouseButtonDown(button: Int): Boolean = try {
         mouseIsButtonDown.invoke(null, button) as Boolean

@@ -260,6 +260,9 @@ object ForgeBootstrap {
             // Apply queued JumpReset jump pulses on the main thread (press/release the jump key so
             // MC's own tick performs the jump and the Keystrokes HUD reflects it).
             try { EventBridge.drainPendingJump() } catch (_: Exception) {}
+            // Refresh Keystrokes key mirrors on the main thread — the 20Hz background sample could
+            // miss the ~80ms JumpReset jump pulse, so read the real key state every render frame.
+            try { ForgeEventBridge.refreshKeyDisplayState() } catch (_: Exception) {}
 
             // KeepSprint — pure module-layer, main thread. When the player is attacking + moving,
             // scale motionX/Z back up so the attack slowdown doesn't reduce speed (no inject needed).

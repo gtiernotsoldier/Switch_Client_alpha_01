@@ -183,6 +183,22 @@ object ForgeEventBridge : IEventBridge {
         } catch (_: Exception) { false }
     }
 
+    /**
+     * Refresh the Keystrokes HUD key-state mirrors from the MAIN thread (render loop).
+     * The background 20Hz tick previously sampled these, but a JumpReset pulse only presses the jump
+     * key for ~80ms on the main thread, so the 20Hz sample could miss the window and the jump key
+     * never lit up. Reading on the main thread every frame makes the HUD reflect the real key state.
+     */
+    fun refreshKeyDisplayState() {
+        try {
+            EventBridge.isKeyJumpDown = readKeyPressed("forge:gs_keyBindJump")
+            EventBridge.isKeyForwardDown = readKeyPressed("forge:gs_keyBindForward")
+            EventBridge.isKeyBackDown = readKeyPressed("forge:gs_keyBindBack")
+            EventBridge.isKeyLeftDown = readKeyPressed("forge:gs_keyBindLeft")
+            EventBridge.isKeyRightDown = readKeyPressed("forge:gs_keyBindRight")
+        } catch (_: Exception) {}
+    }
+
     private fun sendPacket(packet: Any?) {
         try {
             val player = getPlayer() ?: return

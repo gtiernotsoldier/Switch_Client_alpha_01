@@ -104,6 +104,27 @@ object KeepSprintStrategy : Strategy<KeepSprintConfig, KeepSprintState, KeepSpri
     override val name: String = "KeepSprint"
 
     /**
+     * Probability gate — rolls once per attack action. Returns true when the attack should be kept
+     * (keep sprint that swing). Pure math, no platform deps.
+     */
+    fun shouldActivate(config: KeepSprintConfig): Boolean =
+        config.chance >= 100 || kotlin.random.Random.nextInt(100) < config.chance
+
+    /**
+     * The keep percentage to preserve for this attack — the fraction of the player's natural sprint
+     * speed to keep after the attack slowdown is compensated.
+     *   - Normal: fixed [KeepSprintConfig.horizontalKeep] (1.0 = keep full sprint speed).
+     *   - Legit: no target required — a *simulated* distance in [minReach, maxReach] is interpolated
+     *     to a keep percentage in [minKeep, maxKeep] (closer = more conservative / slower). The caller
+     *     supplies the random distance, so each attack's keep looks slightly different.
+     */
+    fun keepPercentage(config: KeepSprintConfig, mode: String, simulatedDistance: Float): Float =
+        when (mode) {
+            "Legit" -> LegitKeepSprintStrategy.calculateKeep(config, simulatedDistance)
+            else -> config.horizontalKeep
+        }
+
+    /**
      * The multiplier to apply to the player's horizontal motion immediately after an attack so the
      * vanilla slowdown doesn't reduce his speed. `horizontalKeep` is the target fraction of the
      * pre-attack speed to preserve (1.0 = keep full speed), so we divide by the slowdown.

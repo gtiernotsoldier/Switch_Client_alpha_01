@@ -60,6 +60,7 @@ object KeepSprint : Module("KeepSprint", Category.COMBAT) {
     }
 
     // ========== State ==========
+    private var diagCount = 0
     private val tickListener: (PlayerState, TargetState?) -> Unit = { p, t -> if (enabled) onTick(p, t) }
 
     private fun onTick(player: PlayerState, target: TargetState?) {
@@ -67,6 +68,15 @@ object KeepSprint : Module("KeepSprint", Category.COMBAT) {
         // action), keep the speed; otherwise stop. No target required. The main thread applies
         // the keep continuously while active.
         val attacking = player.isAttackKeyDown || EventBridge.isLeftMousePhysicallyDown
+
+        // Module-level throttled diagnostic (confirm the trigger signal and setKeepSprint calls).
+        if (++diagCount % 40 == 0) {
+            io.switchlite.core.logging.CoreLogger.info(
+                "[KeepSprint] tick attacking=$attacking physL=${EventBridge.isLeftMousePhysicallyDown} " +
+                "keyDown=${player.isAttackKeyDown} onGround=${player.onGround} sprint=${player.isSprinting} " +
+                "cond=${ConditionChecker.check(triggerOptions, player, target)} keepActive=${EventBridge.isKeepSprintActive()}"
+            )
+        }
 
         if (!attacking) {
             EventBridge.clearKeepSprint()

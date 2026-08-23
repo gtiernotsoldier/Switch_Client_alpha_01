@@ -764,6 +764,15 @@
     ],
     "mcp": "objectMouseOver"
   },
+  "forge:mc_getRenderViewEntity": {
+    "class": "net.minecraft.client.Minecraft",
+    "aliases": [
+      "mc_getRenderViewEntity",
+      "getRenderViewEntity"
+    ],
+    "mcp": "getRenderViewEntity",
+    "method": "func_175606_aa"
+  },
   "forge:mc_playerController": {
     "class": "net.minecraft.client.Minecraft",
     "field": "field_71442_b",
@@ -889,6 +898,60 @@
     ],
     "mcp": "getEyeHeight",
     "method": "func_70047_e"
+  },
+  "forge:entity_getPositionEyes": {
+    "class": "net.minecraft.entity.Entity",
+    "aliases": [
+      "entity_getPositionEyes",
+      "getPositionEyes"
+    ],
+    "mcp": "getPositionEyes",
+    "method": "func_174824_e"
+  },
+  "forge:entity_getLook": {
+    "class": "net.minecraft.entity.Entity",
+    "aliases": [
+      "entity_getLook",
+      "getLook"
+    ],
+    "mcp": "getLook",
+    "method": "func_70676_i"
+  },
+  "forge:entity_getEntityBoundingBox": {
+    "class": "net.minecraft.entity.Entity",
+    "aliases": [
+      "entity_getEntityBoundingBox",
+      "getEntityBoundingBox"
+    ],
+    "mcp": "getEntityBoundingBox",
+    "method": "func_174813_aQ"
+  },
+  "forge:entity_canBeCollidedWith": {
+    "class": "net.minecraft.entity.Entity",
+    "aliases": [
+      "entity_canBeCollidedWith",
+      "canBeCollidedWith"
+    ],
+    "mcp": "canBeCollidedWith",
+    "method": "func_70027_ad"
+  },
+  "forge:axisAlignedBB_calculateIntercept": {
+    "class": "net.minecraft.util.AxisAlignedBB",
+    "aliases": [
+      "axisAlignedBB_calculateIntercept",
+      "calculateIntercept"
+    ],
+    "mcp": "calculateIntercept",
+    "method": "func_72327_a"
+  },
+  "forge:world_getEntitiesWithinAABBExcludingEntity": {
+    "class": "net.minecraft.world.World",
+    "aliases": [
+      "world_getEntitiesWithinAABBExcludingEntity",
+      "getEntitiesWithinAABBExcludingEntity"
+    ],
+    "mcp": "getEntitiesWithinAABBExcludingEntity",
+    "method": "func_72945_a"
   },
   "forge:player_foodStats": {
     "class": "net.minecraft.entity.player.EntityPlayer",

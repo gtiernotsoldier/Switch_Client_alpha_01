@@ -3,6 +3,7 @@ package io.switchlite.adapter.forge.v1_8_9
 import io.switchlite.adapter.common.api.EventBridge
 import io.switchlite.adapter.common.api.IEventBridge
 import io.switchlite.core.model.*
+import io.switchlite.core.strategy.reach.ReachRaycast
 import io.switchlite.core.util.Vec2
 import io.switchlite.core.util.Vec3
 import io.switchlite.agent.MappingContext
@@ -104,6 +105,51 @@ object ForgeEventBridge : IEventBridge {
 
     private fun getWorld(): Any? = try {
         getMc()?.let { MappingContext.getFieldValue(it, "forge:mc_theWorld") }
+    } catch (_: Exception) { null }
+
+    /** The render view entity (what raycasts = the player normally). */
+    private fun getRenderViewEntity(mc: Any?, fallback: Any?): Any? = try {
+        MappingContext.invokeMethod(mc, "forge:mc_getRenderViewEntity") ?: fallback
+    } catch (_: Exception) { fallback }
+
+    /** Convert a MC Vec3 (net.minecraft.util.Vec3) to our core Vec3, or null. */
+    private fun mcVec3ToVec3(mcVec3: Any?): Vec3? = try {
+        if (mcVec3 == null) return null
+        val c = mcVec3.javaClass
+        Vec3(
+            c.getField("field_72450_a").getDouble(mcVec3),
+            c.getField("field_72448_b").getDouble(mcVec3),
+            c.getField("field_72449_c").getDouble(mcVec3)
+        )
+    } catch (_: Exception) { null }
+
+    /** Convert our core Vec3 to a MC Vec3 instance (net.minecraft.util.Vec3). */
+    private fun coreVec3ToMcVec3(v: Vec3): Any? = try {
+        val c = Class.forName("net.minecraft.util.Vec3")
+        val ctor = c.getConstructor(Double::class.java, Double::class.java, Double::class.java)
+        ctor.newInstance(v.x, v.y, v.z)
+    } catch (_: Exception) { null }
+
+    /** Min corner (minX/minY/minZ) of an MC AxisAlignedBB as our core Vec3, or null. */
+    private fun bbMin(box: Any?): Vec3? = try {
+        if (box == null) return null
+        val c = box.javaClass
+        Vec3(
+            c.getField("field_72340_a").getDouble(box),
+            c.getField("field_72338_b").getDouble(box),
+            c.getField("field_72339_c").getDouble(box)
+        )
+    } catch (_: Exception) { null }
+
+    /** Max corner (maxX/maxY/maxZ) of an MC AxisAlignedBB as our core Vec3, or null. */
+    private fun bbMax(box: Any?): Vec3? = try {
+        if (box == null) return null
+        val c = box.javaClass
+        Vec3(
+            c.getField("field_72336_d").getDouble(box),
+            c.getField("field_72337_e").getDouble(box),
+            c.getField("field_72334_f").getDouble(box)
+        )
     } catch (_: Exception) { null }
 
     private fun isMouseButtonDown(button: Int): Boolean = try {
@@ -263,6 +309,64 @@ object ForgeEventBridge : IEventBridge {
                 val mopCtor = mopClass.getConstructor(Class.forName("net.minecraft.entity.Entity"))
                 mcObjectMouseOverField?.set(getMc(), mopCtor.newInstance(entity))
             } catch (_: Exception) {}
+        }
+
+        // Extended-reach raycast (Raven model): cast from the player's eyes along the look vector for
+        // `reach` blocks, enumerate entity AABBs the segment intersects, pick the nearest, and
+        // overwrite objectMouseOver so the attack range genuinely extends.
+        EventBridge.registerReachRaycast { reachBlocks ->
+            try {
+                val mc = getMc() ?: return@registerReachRaycast false
+                val player = getPlayer() ?: return@registerReachRaycast false
+                val world = getWorld() ?: return@registerReachRaycast false
+                val renderView = getRenderViewEntity(mc, player) ?: return@registerReachRaycast false
+
+                // Eyes + look vector (1.8.9 func_174824_e / func_70676_i).
+                val eyesObj = MappingContext.invokeMethod(renderView, "forge:entity_getPositionEyes", 1.0f) ?: return@registerReachRaycast false
+                val lookObj = MappingContext.invokeMethod(renderView, "forge:entity_getLook", 1.0f) ?: return@registerReachRaycast false
+                val eyes = mcVec3ToVec3(eyesObj) ?: return@registerReachRaycast false
+                val look = mcVec3ToVec3(lookObj)?.normalize() ?: return@registerReachRaycast false
+
+                // Extend the search AABB along the look vector (addCoord then expand, like Raven).
+                val baseBox = MappingContext.invokeMethod(renderView, "forge:entity_getEntityBoundingBox") ?: return@registerReachRaycast false
+                val aabbClass = Class.forName("net.minecraft.util.AxisAlignedBB")
+                val addCoord = aabbClass.getMethod("func_72317_d", Double::class.javaPrimitiveType, Double::class.javaPrimitiveType, Double::class.javaPrimitiveType)
+                val expandBB = aabbClass.getMethod("func_72321_a", Double::class.javaPrimitiveType, Double::class.javaPrimitiveType, Double::class.javaPrimitiveType)
+                val extended = addCoord.invoke(baseBox, look.x * reachBlocks, look.y * reachBlocks, look.z * reachBlocks)
+                val searchBox = expandBB.invoke(extended, 1.0, 1.0, 1.0) ?: return@registerReachRaycast false
+
+                @Suppress("UNCHECKED_CAST")
+                val entities = (MappingContext.invokeMethod(
+                    world, "forge:world_getEntitiesWithinAABBExcludingEntity", renderView, searchBox
+                ) as? List<Any>) ?: return@registerReachRaycast false
+
+                // Nearest-hit search via core slab test.
+                var bestEntity: Any? = null
+                var bestHitVec: Vec3? = null
+                var bestDist = reachBlocks
+                for (entity in entities) {
+                    val collidable = try { MappingContext.invokeMethod(entity, "forge:entity_canBeCollidedWith") as? Boolean ?: false } catch (_: Exception) { false }
+                    if (!collidable) continue
+                    val box = MappingContext.invokeMethod(entity, "forge:entity_getEntityBoundingBox") ?: continue
+                    val bMin = bbMin(box) ?: continue
+                    val bMax = bbMax(box) ?: continue
+                    val t = ReachRaycast.intersectBox(eyes, look, bMin, bMax, reachBlocks) ?: continue
+                    if (t < bestDist) {
+                        bestDist = t
+                        bestEntity = entity
+                        bestHitVec = Vec3(eyes.x + look.x * t, eyes.y + look.y * t, eyes.z + look.z * t)
+                    }
+                }
+
+                if (bestEntity != null && bestHitVec != null) {
+                    val mopClass = Class.forName("net.minecraft.util.MovingObjectPosition")
+                    val mopCtor = mopClass.getConstructor(Class.forName("net.minecraft.entity.Entity"), Class.forName("net.minecraft.util.Vec3"))
+                    val mop = mopCtor.newInstance(bestEntity, coreVec3ToMcVec3(bestHitVec))
+                    mcObjectMouseOverField?.set(mc, mop)
+                    return@registerReachRaycast true
+                }
+            } catch (_: Exception) {}
+            false
         }
 
         EventBridge.registerSwitchSlotHandler { slot ->

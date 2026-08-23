@@ -468,6 +468,17 @@ object EventBridge {
     fun setReach(distance: Float) { reachSetter?.invoke(distance) }
     fun registerReachSetter(handler: (Float) -> Unit) { reachSetter = handler }
 
+    /**
+     * Extended-reach raycast callback. The adapter (Forge/Fabric) implements this using platform
+     * mappings: casts a ray from the player's eyes along the look direction for [reach] blocks,
+     * enumerates entity AABBs, and overwrites `objectMouseOver` with the nearest hit (Raven model).
+     * Returns true if the crosshair was overwritten.
+     */
+    @Volatile private var reachRaycast: ((Double) -> Boolean)? = null
+
+    fun doReachRaycast(reach: Double): Boolean = reachRaycast?.invoke(reach) ?: false
+    fun registerReachRaycast(handler: (Double) -> Boolean) { reachRaycast = handler }
+
     // ========== Mouse Delta (for Self-adaptive AimAssist) ==========
     // Set by ForgeBootstrap / FabricBootstrap each tick before onTick().
 
@@ -661,6 +672,7 @@ object EventBridge {
         resetClickDelayHandler = null
         resetJumpDelayHandler = null
         reachSetter = null
+        reachRaycast = null
         attackTrigger = null
         cancelAttackHandler = null
         syntheticAttack = false

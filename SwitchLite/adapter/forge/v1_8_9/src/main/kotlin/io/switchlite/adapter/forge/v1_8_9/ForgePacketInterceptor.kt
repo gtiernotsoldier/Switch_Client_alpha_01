@@ -45,14 +45,20 @@ object ForgePacketInterceptor : ChannelDuplexHandler() {
         val mc = try { MappingContext.invokeMethod(null, "forge:mc_getMinecraft") } catch (_: Exception) { null }
             ?: return
         val netHandler = try { MappingContext.getFieldValue(mc, "forge:mc_netHandler") } catch (_: Exception) { null }
-            ?: return
-        val channel = try {
-            val networkManager = getNetworkManager(netHandler) ?: return
-            resolveChannelField(networkManager)
-        } catch (e: Exception) {
-            CoreLogger.error("[ForgePacketInterceptor] Failed to get channel: ${e.message}")
-            null
-        } ?: return
+        if (netHandler == null) {
+            CoreLogger.debug("[ForgePacketInterceptor] inject: mc_netHandler is null (not in world yet)")
+            return
+        }
+        val networkManager = getNetworkManager(netHandler)
+        if (networkManager == null) {
+            CoreLogger.error("[ForgePacketInterceptor] inject: getNetworkManager returned null for netHandler=$netHandler (class=${netHandler.javaClass.name})")
+            return
+        }
+        val channel = resolveChannelField(networkManager)
+        if (channel == null) {
+            CoreLogger.error("[ForgePacketInterceptor] inject: resolveChannelField failed for ${networkManager.javaClass.name} (fields=${networkManager.javaClass.declaredFields.map { it.name + ":" + it.type.simpleName }})")
+            return
+        }
 
         val pipeline: ChannelPipeline = channel.pipeline()
         if (pipeline.get(HANDLER_NAME) != null) {

@@ -266,23 +266,23 @@ object ForgeBootstrap {
             try {
                 val player = MappingContext.getFieldValue(mc, "forge:mc_thePlayer")
                 val keepActive = EventBridge.isKeepSprintActive()
+                // Always-log (throttled) to confirm the main thread reaches this block and what it
+                // reads — regardless of keepActive, so we can tell whether the flag isn't set or
+                // the block isn't reached.
+                if (++ksKeepDiag % 60 == 0) {
+                    io.switchlite.core.logging.CoreLogger.info(
+                        "[KeepSprint] main-thread keepActive=$keepActive playerNull=${player == null} factor=${EventBridge.keepSprintFactor}"
+                    )
+                }
                 if (keepActive && player != null) {
                     val factor = EventBridge.keepSprintFactor
                     val mX = MappingContext.getField("forge:entity_motionX")?.getDouble(player) ?: 0.0
                     val mZ = MappingContext.getField("forge:entity_motionZ")?.getDouble(player) ?: 0.0
                     val mag = kotlin.math.sqrt(mX * mX + mZ * mZ)
-                    // Throttled diag so we can confirm this path runs and the factor value.
-                    if (++ksKeepDiag % 60 == 0) {
-                        io.switchlite.core.logging.CoreLogger.info(
-                            "[KeepSprint] main-thread keep factor=$factor motion=(${"%.3f".format(mX)},${"%.3f".format(mZ)}) mag=${"%.3f".format(mag)}"
-                        )
-                    }
                     if (mag > 0.001) {
                         MappingContext.getField("forge:entity_motionX")?.setDouble(player, mX * factor)
                         MappingContext.getField("forge:entity_motionZ")?.setDouble(player, mZ * factor)
                     }
-                } else if (keepActive && ++ksKeepDiag % 60 == 0) {
-                    io.switchlite.core.logging.CoreLogger.info("[KeepSprint] keep active but player null or mag=0")
                 }
             } catch (_: Exception) {}
 

@@ -61,6 +61,7 @@ object KeepSprint : Module("KeepSprint", Category.COMBAT) {
 
     // ========== State ==========
     private var diagCount = 0
+    private var setLogCount = 0
     private val tickListener: (PlayerState, TargetState?) -> Unit = { p, t -> if (enabled) onTick(p, t) }
 
     private fun onTick(player: PlayerState, target: TargetState?) {
@@ -104,6 +105,11 @@ object KeepSprint : Module("KeepSprint", Category.COMBAT) {
             player.motionX, player.motionY, player.motionZ
         )
         EventBridge.setKeepSprint(result.keepFactor)
+        if (++setLogCount % 40 == 0) {
+            io.switchlite.core.logging.CoreLogger.info(
+                "[KeepSprint] setKeepSprint called factor=${result.keepFactor} keepActive=${EventBridge.isKeepSprintActive()}"
+            )
+        }
     }
 
     // ========== Lifecycle ==========

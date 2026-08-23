@@ -1,11 +1,11 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SwitchLite · Aurora 模块控制台</title>
+    <title>SwitchLite · Aurora Console</title>
     <style>
-        /* ===== 全局重置 & Aurora 基础 ===== */
+        /* ===== Global Reset & Aurora Base ===== */
         * {
             margin: 0;
             padding: 0;
@@ -22,7 +22,7 @@
             overflow: hidden;
             color: #fff;
         }
-        /* ===== 侧边栏 (毛玻璃) ===== */
+        /* ===== Sidebar (Frosted Glass) ===== */
         .sidebar {
             width: 200px;
             background: rgba(20, 20, 30, 0.6);
@@ -63,7 +63,7 @@
         }
         .sidebar-divider { border-top: 1px solid rgba(255,255,255,0.05); margin: 8px 14px; }
         .sidebar-foot { padding: 12px 20px; border-top: 1px solid rgba(255,255,255,0.03); font-size: 10px; color: rgba(255,255,255,0.1); text-align: center; }
-        /* ===== 主体 ===== */
+        /* ===== Main ===== */
         .main-content { flex: 1; display: flex; flex-direction: column; padding: 28px 40px 20px 40px; overflow-y: auto; height: 100vh; }
         .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 10px; }
         .header-left { display: flex; align-items: center; gap: 12px; }
@@ -80,7 +80,7 @@
             background: rgba(255,255,255,0.04); padding: 5px 14px; border-radius: 6px; font-size: 12px;
             color: rgba(255,255,255,0.3); border: 1px solid rgba(255,255,255,0.06); font-family: 'SF Mono', monospace;
         }
-        /* ===== 标签栏 (Tabs) ===== */
+        /* ===== Tab Bar ===== */
         .tab-bar { display: flex; background: rgba(255,255,255,0.03); border-radius: 12px; padding: 4px; width: fit-content; margin-bottom: 20px; border: 1px solid rgba(255,255,255,0.04); flex-wrap: wrap; }
         .tab {
             padding: 8px 22px; color: rgba(255,255,255,0.4); font-size: 14px; cursor: pointer;
@@ -91,7 +91,7 @@
 
         .tab-content { flex: 1; }
 
-        /* ===== 双列容器 ===== */
+        /* ===== Two-Column Container ===== */
         .module-grid {
             display: flex;
             gap: 16px;
@@ -104,14 +104,14 @@
             gap: 10px;
         }
 
-        /* ===== 设置列表（每列内部的垂直列表） ===== */
+        /* ===== Settings List (vertical list inside each column) ===== */
         .setting-grid {
             display: flex;
             flex-direction: column;
             gap: 10px;
             width: 100%;
         }
-        /* ===== 核心设置项 (可展开) ===== */
+        /* ===== Core Settings (expandable) ===== */
         .setting-item {
             background: rgba(255,255,255,0.05); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
             border-radius: 16px; border: 1px solid rgba(255,255,255,0.08); overflow: hidden;
@@ -153,7 +153,7 @@
         }
         .hud-chip.off { color: rgba(255,255,255,0.3); background: rgba(255,255,255,0.04); border-color: rgba(255,255,255,0.08); }
         .hud-chip:hover { background: rgba(74,222,128,0.18); }
-        /* ===== 胶囊开关 (暖色) ===== */
+        /* ===== Pill Toggle (warm colors) ===== */
         .toggle-switch {
             width: 38px; height: 20px; background: rgba(255,255,255,0.08); border-radius: 40px;
             position: relative; cursor: pointer; transition: background 0.3s, box-shadow 0.3s; flex-shrink: 0;
@@ -169,7 +169,7 @@
         .toggle-switch .pulse-ring { position: absolute; top: -4px; left: -4px; right: -4px; bottom: -4px; border-radius: 40px; border: 1px solid transparent; pointer-events: none; transition: border-color 0.3s; }
         .toggle-switch.on .pulse-ring { border-color: rgba(255, 122, 0, 0.3); animation: pulse-glow 2.5s infinite ease-in-out; }
         @keyframes pulse-glow { 0% { opacity: 0.4; transform: scale(1); } 50% { opacity: 1; transform: scale(1.12); } 100% { opacity: 0.4; transform: scale(1); } }
-        /* ===== 展开的子选项面板 ===== */
+        /* ===== Expanded Sub-Options Panel ===== */
         .sub-options {
             max-height: 0;
             opacity: 0;
@@ -190,7 +190,7 @@
             border-top: 1px solid rgba(255,255,255,0.06);
         }
 
-        /* 子项内部渐入 */
+        /* Fade-in of sub-items */
         .sub-grid {
             display: grid;
             grid-template-columns: 1fr 1fr;
@@ -226,7 +226,7 @@
         }
         .num-input:focus { outline: none; border-color: rgba(255, 122, 0, 0.4); }
         .text-input { flex: 1; min-width: 90px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.08); border-radius: 6px; color: #fff; padding: 3px 8px; font-size: 12px; }
-        /* 滑块 */
+        /* Slider */
         .slider-row { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 4px; margin: 4px 0; }
         .slider-label-row { display: flex; justify-content: space-between; font-size: 13px; color: rgba(255,255,255,0.6); }
         .slider-label-row .slider-value { color: rgba(255, 122, 0, 0.8); font-weight: 500; }
@@ -237,7 +237,7 @@
         .sub-actions { margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap; }
         .mini-btn { font-size: 10px; padding: 3px 10px; border-radius: 30px; border: 1px solid rgba(255,122,0,0.15); color: rgba(255,122,0,0.7); background: rgba(255,122,0,0.06); cursor: pointer; }
         .mini-btn:hover { background: rgba(255,122,0,0.12); }
-        /* 底部字幕 */
+        /* Bottom subtitle */
         .subtitle-overlay {
             position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
             background: rgba(0,0,0,0.5); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
@@ -260,22 +260,22 @@
     </style>
 </head>
 <body>
-    <!-- ===== 侧边栏 (SwitchLite 分类导航) ===== -->
+    <!-- ===== Sidebar (SwitchLite category navigation) ===== -->
     <aside class="sidebar">
         <div class="sidebar-brand">
             <div class="brand-text">⚡ SwitchLite</div>
-            <div class="brand-sub">Aurora · 极光</div>
+            <div class="brand-sub">Aurora</div>
         </div>
         <nav class="nav-menu" id="sideNav"></nav>
-        <div class="sidebar-foot">v2.1 · 跨版本</div>
+        <div class="sidebar-foot">v2.1 · Cross-version</div>
     </aside>
 
-    <!-- ===== 主体 ===== -->
+    <!-- ===== Main ===== -->
     <main class="main-content">
         <header class="header">
             <div class="header-left">
                 <span class="header-title">SwitchLite</span>
-                <span class="header-status" id="conn">● 连接中…</span>
+                <span class="header-status" id="conn">● Connecting…</span>
             </div>
             <div style="display:flex; gap:8px; flex-wrap:wrap;" id="hdrShortcuts"></div>
         </header>
@@ -286,7 +286,7 @@
         <div class="tab-content" id="tabContent"></div>
     </main>
 
-    <div class="subtitle-overlay">SwitchLite · Aurora 调试面板 · 推桌子效果</div>
+    <div class="subtitle-overlay">SwitchLite · Aurora Debug Panel · Desk-Pushing Effect</div>
 
     <script>
         const $ = s => document.querySelector(s);
@@ -298,15 +298,15 @@
         let token = localStorage.getItem('sl_token') || '';
         let activeCat = 'COMBAT';
 
-        // ----- 展开状态持久化（按模块名） -----
-        // 跨 refresh 保持展开/折叠，避免 3 秒自动刷新把卡片重置成折叠。
+        // ----- Expanded-state persistence (per module name) -----
+        // Keeps expanded/collapsed state across refreshes, so the 3-second auto-refresh doesn't collapse cards.
         let expandedSet = new Set();
 
-        // ----- 分组状态 -----
+        // ----- Grouping state -----
         let leftModules = [];
         let rightModules = [];
 
-        // ----- API 相关（保持不变） -----
+        // ----- API helpers (unchanged) -----
         function authHeaders(){
             return token ? { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' }
                          : { 'Content-Type': 'application/json' };
@@ -323,11 +323,11 @@
                 const info = await fetch('/api/info').then(r=>r.json());
                 if(info.defaultPassword){ token = info.defaultPassword; localStorage.setItem('sl_token', token); return; }
             } catch(e){}
-            const t = prompt('输入 WebUI 访问口令（看注入 cmd / switchlite-agent.log）：');
+            const t = prompt('Enter WebUI access token (see injector cmd / switchlite-agent.log):');
             if(t){ token = t.trim(); localStorage.setItem('sl_token', token); } else window.location.reload();
         }
 
-        // ----- 侧边栏和标签（保持不变） -----
+        // ----- Sidebar and tabs (unchanged) -----
         function buildSideNavAndTabs(){
             $('#sideNav').innerHTML = CATS.map(c => {
                 const n = (modules.filter(m => m.category===c)).length;
@@ -348,8 +348,8 @@
             document.querySelectorAll('#tabBar .tab').forEach(t=>t.classList.toggle('active', t.dataset.cat===activeCat));
         }
 
-        // ----- 渲染选项控件 -----
-        // 跨版本：根据选项名归类 1.8 / 1.9+ / 通用。
+        // ----- Render option widgets -----
+        // Cross-version: classify options by name into 1.8 / 1.9+ / shared.
         function versionOf(o){
             const n = (o.name||'');
             if(/19|1\.9|Cooldown|CritMode|CritStop|WeaponFilter|OnItemUse/.test(n)) return '19';
@@ -362,9 +362,9 @@
             if(v==='18') return '<span class="ver-tag v18">1.8</span>';
             return '';
         }
-        // ----- Mode 配置联动规则 -----
-        // selector: 该模块选择模式的选项名（Mode / CooldownMode）
-        // groups:   { 模式名: [该模式专属的选项名] }  不在任何组里的选项 = 共享，始终显示
+        // ----- Mode configuration linkage rules -----
+        // selector: name of the option that selects this module's mode (Mode / CooldownMode)
+        // groups:   { mode name: [option names specific to that mode] }  options in no group = shared, always shown
         const MODE_RULES = {
             'Velocity': { selector:'Mode', groups:{ 'Legit':['HorizontalMin','HorizontalMax','VerticalMin','VerticalMax','Chance'],
                                                     'Delay':['DelayMs','DelayTicks'],
@@ -386,13 +386,13 @@
             const m = modeOf(o, rule);
             return m ? `<span class="ver-tag v19">${m}</span>` : '';
         }
-        // 根据模块的 CombatVersion / Mode 过滤选项：选择器 + 共享项始终显示，版本/模式专属项只显示当前值。
+        // Filter options by the module's CombatVersion / Mode: selector + shared items always shown, version/mode-specific items show only the current value.
         function optionsForModule(m){
             if(!m.options || m.options.length===0) return [];
-            // 版本过滤（AutoClicker 等）
+            // Version filtering (AutoClicker, etc.)
             const cvOpt = m.options.find(o => o.name==='CombatVersion');
             const cv = cvOpt ? cvOpt.value : null;
-            // 模式过滤（Velocity/KeepSprint/SuperKnockback/JumpReset 等）
+            // Mode filtering (Velocity/KeepSprint/SuperKnockback/JumpReset, etc.)
             const rule = MODE_RULES[m.name];
             const selOpt = rule ? m.options.find(o => o.name===rule.selector) : null;
             const sel = selOpt ? selOpt.value : null;
@@ -404,7 +404,7 @@
                 if(selOpt && o.name===rule.selector) return true;
                 if(rule && sel){
                     const m2 = modeOf(o, rule);
-                    if(m2!=='' && m2!==sel) return false;   // 其它模式的专属项隐藏
+                    if(m2!=='' && m2!==sel) return false;   // hide options exclusive to other modes
                 }
                 if(trigModeOpt && o.name==='HurtTime') return trigModeOpt.value === 'HurtTimeExact';
                 return true;
@@ -455,7 +455,7 @@
             return `<span class="noopts">—</span>`;
         }
 
-        // ----- 单个模块卡片（使用 fullIndex 标识） -----
+        // ----- Single module card (identified by fullIndex) -----
         function moduleCard(m, fullIndex){
             const rule = MODE_RULES[m.name];
             const opts = optionsForModule(m).map(o => optionWidget(o, rule)).join('');
@@ -469,27 +469,27 @@
                         <span class="setting-arrow">⌄</span>
                     </div>
                     <div class="setting-right">
-                        ${m.hudEnabled ? `<span class="hud-chip ${m.hudHidden?'off':''}" data-hud="${m.name}" title="点击切换是否显示在游戏内 HUD">${m.hudHidden?'◌':'◉'}</span>` : ''}
-                        <span class="keybind-chip" data-kb="${m.name}" title="点击设置触发键">⏵ ${m.keyName||'未绑定'}</span>
+                        ${m.hudEnabled ? `<span class="hud-chip ${m.hudHidden?'off':''}" data-hud="${m.name}" title="Click to toggle visibility in the in-game HUD">${m.hudHidden?'◌':'◉'}</span>` : ''}
+                        <span class="keybind-chip" data-kb="${m.name}" title="Click to set trigger key">⏵ ${m.keyName||'Unbound'}</span>
                         <div class="toggle-switch ${enabled?'on':''}" data-mod="${m.name}" data-fullindex="${fullIndex}"><span class="pulse-ring"></span></div>
                     </div>
                 </div>
                 <div class="sub-options">
-                    <div class="sub-grid" data-options="${m.name}">${opts || '<span class="noopts">该模块暂无配置项</span>'}</div>
+                    <div class="sub-grid" data-options="${m.name}">${opts || '<span class="noopts">No options for this module</span>'}</div>
                 </div>
             </div>`;
         }
 
-        // ----- 渲染内容（双列） -----
+        // ----- Render content (two columns) -----
         function renderContent(){
-            // 过滤当前分类的模块
+            // Filter modules of the current category
             const filtered = modules.filter(m => m.category === activeCat);
-            // 按原始顺序（保持奇偶分组）
+            // In original order (keep odd/even grouping)
             const left = filtered.filter((_, i) => i % 2 === 0);
             const right = filtered.filter((_, i) => i % 2 === 1);
 
-            // 存储到分组变量，用于后续展开更新（但我们将直接从 modules 读取状态）
-            // 渲染时使用全量 modules 中的 expanded 状态
+            // Store into grouping variables for later expansion updates (we read state directly from modules)
+            // When rendering, use the expanded state from the full modules list
             const leftHtml = left.map((m, idx) => {
                 const fullIndex = modules.indexOf(m);
                 return moduleCard(m, fullIndex);
@@ -503,42 +503,42 @@
             const content = `
                 <div class="module-grid">
                     <div class="module-column">
-                        <div class="setting-grid">${leftHtml || '<div class="empty">该分类暂无模块</div>'}</div>
+                        <div class="setting-grid">${leftHtml || '<div class="empty">No modules in this category</div>'}</div>
                     </div>
                     <div class="module-column">
-                        <div class="setting-grid">${rightHtml || '<div class="empty">该分类暂无模块</div>'}</div>
+                        <div class="setting-grid">${rightHtml || '<div class="empty">No modules in this category</div>'}</div>
                     </div>
                 </div>
             `;
             $('#tabContent').innerHTML = content;
         }
 
-        // ----- 刷新数据 -----
+        // ----- Refresh data -----
         async function refresh(){
             await ensureToken();
             try {
                 const raw = await api('/api/modules');
-                // 去重
+                // Deduplicate
                 modules = [...new Map(raw.map(m => [m.name, m])).values()];
-                // 展开状态由 expandedSet 独立维护，刷新不重置（不再强制 expanded=false）
-                // 更新标签显示
+                // Expanded state is maintained independently by expandedSet; refresh does not reset it (no longer forces expanded=false)
+                // Update tab visibility
                 document.querySelectorAll('#tabBar .tab').forEach(t=>{
                     const c = t.dataset.cat;
                     t.style.display = modules.some(m=>m.category===c) ? '' : 'none';
                 });
                 buildSideNavAndTabs();
                 renderContent();
-                $('#conn').textContent = '● 在线 · ' + modules.length + ' 模块';
+                $('#conn').textContent = '● Online · ' + modules.length + ' modules';
             } catch(e) {
-                $('#conn').textContent = '● 未连接';
+                $('#conn').textContent = '● Disconnected';
             }
         }
 
-        // ----- 交互事件（修改为使用 fullindex 精确控制展开） -----
+        // ----- Interaction events (uses fullindex for precise expansion control) -----
         let capturingKey = null;
 
         document.addEventListener('click', async e => {
-            // HUD 显示/隐藏 chip
+            // HUD show/hide chip
             const hudChip = e.target.closest('.hud-chip[data-hud]');
             if(hudChip){
                 const name = hudChip.dataset.hud;
@@ -547,17 +547,17 @@
                 refresh();
                 e.stopPropagation(); return;
             }
-            // 按键绑定 chip
+            // Keybind chip
             const kb = e.target.closest('.keybind-chip[data-kb]');
             if(kb){
                 capturingKey = kb.dataset.kb;
                 document.querySelectorAll('.keybind-chip').forEach(c=>c.classList.remove('capturing'));
                 kb.classList.add('capturing');
-                kb.textContent = '⏵ 按任意键… (Esc清除)';
+                kb.textContent = '⏵ Press any key… (Esc to clear)';
                 return;
             }
 
-            // 模块主开关 (使用 data-fullindex)
+            // Module master toggle (uses data-fullindex)
             const modSw = e.target.closest('.setting-header .toggle-switch[data-mod]');
             if(modSw){
                 const name = modSw.dataset.mod;
@@ -566,14 +566,14 @@
                 e.stopPropagation(); return;
             }
 
-            // 子选项开关
+            // Sub-option toggle
             if(e.target.closest('.sub-grid .toggle-switch[data-key]')){
                 const s = e.target.closest('.toggle-switch[data-key]');
                 await api('/api/options', {method:'POST', body:JSON.stringify({key:s.dataset.key, value:!s.classList.contains('on')})});
                 refresh(); return;
             }
 
-            // 展开/折叠：点击卡片头部（排除内部控件）
+            // Expand/collapse: click the card header (excluding inner controls)
             const header = e.target.closest('.setting-header[data-fullindex]');
             if(header && e.button === 0 && !e.target.closest('.toggle-switch') && !e.target.closest('.keybind-chip') && !e.target.closest('.hud-chip') && !e.target.closest('.sub-select')){
                 const fullIndex = parseInt(header.dataset.fullindex, 10);
@@ -581,13 +581,13 @@
                 if(m){
                     if(expandedSet.has(m.name)) expandedSet.delete(m.name);
                     else expandedSet.add(m.name);
-                    renderContent(); // 重新渲染（保留其它卡片的展开状态）
+                    renderContent(); // re-render (keep other cards' expanded state)
                 }
                 return;
             }
         });
 
-        // 滑块 + 数值输入（保持不变，但注意它们内部没有 fullindex，暂时使用 key 定位）
+        // Sliders + numeric input (unchanged; they have no fullindex internally, so locate by key for now)
         document.addEventListener('change', async e => {
             const sel = e.target.closest('.sub-select[data-key]');
             if(sel){
@@ -605,10 +605,10 @@
                 v = Math.min(max, Math.max(min, v));
                 if(isDec) v = Math.round(v*10)/10;
                 await api('/api/options', {method:'POST', body:JSON.stringify({key, value:v})});
-                // 更新UI中的滑块显示（但重新渲染会丢失当前DOM状态，为保持流畅，我们用DOM操作更新）
+                // Update the slider display in the UI (full re-render would lose the current DOM state; use DOM updates for smoothness)
                 const row = num.closest('.slider-row');
                 if(row){ const fill=row.querySelector('.slider-fill'), val=row.querySelector('.slider-value'), pct=max>min?Math.round((v-min)/(max-min)*100):0; fill.style.width=pct+'%'; val.textContent=v+(num.dataset.unit||''); }
-                // 不刷新全页面，只刷新数据（但为了保持一致性，简单调用refresh）
+                // Don't refresh the whole page, only the data (but simply call refresh for consistency)
                 refresh();
                 return;
             }
@@ -618,7 +618,7 @@
             }
         });
 
-        // 滑块点击拖拽（使用 data-key 定位，但为了保持数据同步，不触发全刷新，只更新数值）
+        // Slider click-drag (located by data-key; keep data in sync without a full refresh, update values only)
         document.addEventListener('mousedown', e => {
             const srow = e.target.closest('.slider-track[data-key]');
             if(!srow) return;
@@ -643,7 +643,7 @@
             document.addEventListener('mouseup', up);
         });
 
-        // 滑块点击（触摸）
+        // Slider click (touch)
         document.addEventListener('click', async e => {
             const srow = e.target.closest('.slider-track[data-key]');
             if(srow){
@@ -658,12 +658,12 @@
                 if(fill) fill.style.width=(x*100)+'%';
                 const val = srow.querySelector('.slider-value');
                 if(val) val.textContent=v+(srow.dataset.unit||'');
-                // 不刷新全页面，仅更新显示
+                // Don't refresh the whole page; just update the display
                 return;
             }
         });
 
-        // 按键绑定捕获
+        // Keybind capture
         document.addEventListener('keydown', async e => {
             if(!capturingKey) return;
             e.preventDefault();
@@ -684,16 +684,16 @@
             try {
                 const r = await api('/api/modules/'+encodeURIComponent(name)+'/keybind', {method:'POST', body:JSON.stringify({key:code})});
                 const chip = document.querySelector(`.keybind-chip[data-kb="${name}"]`);
-                if(chip){ chip.classList.remove('capturing'); chip.textContent = '⏵ ' + (r.keyName||(code<=0?'未绑定':'键'+code)); }
+                if(chip){ chip.classList.remove('capturing'); chip.textContent = '⏵ ' + (r.keyName||(code<=0?'Unbound':'Key '+code)); }
                 refresh();
             } catch(err){}
         });
 
-        // 初始化
+        // Init
         refresh();
         setInterval(refresh, 3000);
 
-        // 获取地址信息
+        // Fetch address info
         try {
             fetch('/api/info').then(r=>r.json()).then(info=>{
                 if(info.urls && info.urls.length){

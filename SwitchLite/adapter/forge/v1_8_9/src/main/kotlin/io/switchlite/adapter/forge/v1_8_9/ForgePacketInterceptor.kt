@@ -52,9 +52,17 @@ object ForgePacketInterceptor : ChannelDuplexHandler() {
             CoreLogger.info("[ForgePacketInterceptor] inject: mc_getMinecraft returned null")
             return
         }
-        val netHandler = try { MappingContext.getFieldValue(mc, "forge:mc_netHandler") } catch (_: Exception) { null }
+        // netHandler = mc.thePlayer.sendQueue (EntityPlayerSP.sendQueue, field_71174_a — the same
+        // verified path used for sending packets elsewhere). mc_netHandler (field_71453_ak) reads
+        // null at runtime, so use the player's sendQueue instead.
+        val player = try { MappingContext.getFieldValue(mc, "forge:mc_thePlayer") } catch (_: Exception) { null }
+        if (player == null) {
+            CoreLogger.info("[ForgePacketInterceptor] inject: mc_thePlayer is null (not in world yet)")
+            return
+        }
+        val netHandler = try { MappingContext.getFieldValue(player, "forge:player_sendQueue") } catch (_: Exception) { null }
         if (netHandler == null) {
-            CoreLogger.info("[ForgePacketInterceptor] inject: mc_netHandler is null (not in world yet)")
+            CoreLogger.info("[ForgePacketInterceptor] inject: player.sendQueue is null (not in world yet)")
             return
         }
         val networkManager = getNetworkManager(netHandler)
@@ -100,7 +108,9 @@ object ForgePacketInterceptor : ChannelDuplexHandler() {
         injected = false
         val mc = try { MappingContext.invokeMethod(null, "forge:mc_getMinecraft") } catch (_: Exception) { null }
             ?: return
-        val netHandler = try { MappingContext.getFieldValue(mc, "forge:mc_netHandler") } catch (_: Exception) { null }
+        val player = try { MappingContext.getFieldValue(mc, "forge:mc_thePlayer") } catch (_: Exception) { null }
+            ?: return
+        val netHandler = try { MappingContext.getFieldValue(player, "forge:player_sendQueue") } catch (_: Exception) { null }
             ?: return
         val channel = try {
             val networkManager = getNetworkManager(netHandler) ?: return

@@ -126,9 +126,11 @@ object KeepSprint : Module("KeepSprint", Category.COMBAT) {
                         minReach + kotlin.random.Random.nextFloat() * (maxReach - minReach)
                     } else maxReach
                     val keepPct = KeepSprintStrategy.keepPercentage(config, mode, simDist)
-                    val base = if (sprintBaseline > 0.001) sprintBaseline
-                               else config.sprintBaseSpeed // fallback if baseline not yet measured
-                    swingTargetSpeed = base * keepPct
+                    // Cap = max(vanilla sprint floor, running-max baseline). The floor (0.28) makes
+                    // the FIRST attack work immediately; the running max absorbs speed boosts so the
+                    // ceiling raises dynamically. Never falls back to a stale hardcode.
+                    val cap = KeepSprintStrategy.effectiveCap(config.sprintBaseSpeed, sprintBaseline)
+                    swingTargetSpeed = cap * keepPct
                     activeKeepFactor = keepPct / KeepSprintStrategy.VANILLA_ATTACK_SLOWDOWN
                 }
             }

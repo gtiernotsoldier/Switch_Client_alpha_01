@@ -134,6 +134,19 @@ object KeepSprintStrategy : Strategy<KeepSprintConfig, KeepSprintState, KeepSpri
         config.horizontalKeep / VANILLA_ATTACK_SLOWDOWN
 
     /**
+     * The compounding-proof speed restore ceiling.
+     *
+     * [fixedBase] is the vanilla sprint floor (1.8.9 ≈ 0.28 m/tick) so the very first attack after
+     * a standing sprint works even before a running-max baseline is measured. [measuredMax] is the
+     * running maximum horizontal speed seen while sprinting+moving — it naturally absorbs speed
+     * boosts (potion/effect), raising the ceiling dynamically without ever needing to hardcode a
+     * boosted value. The cap is simply the higher of the two. Restoring only ever raises motion up
+     * to this cap, so it can never accelerate past the player's real sprint speed.
+     */
+    fun effectiveCap(fixedBase: Double, measuredMax: Double): Double =
+        if (measuredMax > fixedBase) measuredMax else fixedBase
+
+    /**
      * Compounding-proof restore: scale the player's current horizontal motion so its magnitude
      * equals [targetHorizontalSpeed] (e.g. sprintBaseSpeed * keepFactor), preserving direction.
      * Returns null when the player is already at/above target (nothing to restore) or essentially

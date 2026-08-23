@@ -1,30 +1,23 @@
 package io.switchlite.adapter.common.module.combat
 
-import io.switchlite.adapter.common.api.EventBridge
 import io.switchlite.adapter.common.module.Module
 import io.switchlite.adapter.common.module.Category
 import io.switchlite.adapter.common.option.*
-import io.switchlite.core.condition.ConditionChecker
-import io.switchlite.core.model.PlayerState
-import io.switchlite.core.model.TargetState
-import io.switchlite.core.util.Vec3
-import kotlin.math.sqrt
 
 /**
  * KeepSprint — no speed drop when attacking (Raven model).
  *
  * Vanilla MC reduces horizontal speed to ~60% when attacking. KeepSprint re-scales the player's
- * horizontal motion by a keep factor on each fresh attack so the speed doesn't drop.
+ * horizontal motion by the keep factor so the speed doesn't drop.
  *
- * Trigger = a fresh attack (rising edge of physical left click OR AutoClicker's syntheticAttack).
- * On each fresh attack it multiplies motionX/Z by the keep factor via EventBridge.applyMotion
- * (same direct motion write as Velocity). No target/crosshair, no main-thread flag dance — just
- * the attack rising edge, matching Raven's KeepSprint.sl() which multiplies motion after the
- * attack.
+ * Implementation: the actual motion scaling happens in the injected attack-method hook
+ * (agent/KeepSprintBridge), which runs at the end of EntityPlayer.attackTargetEntityWithCurrentItem
+ * on the MC main thread (Raven's model — apply right after the attack, perfect timing, no
+ * cross-thread dance). This module only exposes the config (keep factor / Legit interpolation /
+ * chance) that the bridge reads.
  *
  * Config:
- *   - HorizontalKeep (Normal) / Legit distance interpolation, Chance.
- *   - OnlyGround/OnlyMove/etc. conditions.
+ *   - HorizontalKeep (Normal mode) / Legit distance interpolation, Chance.
  */
 object KeepSprint : Module("KeepSprint", Category.COMBAT) {
 
@@ -43,70 +36,25 @@ object KeepSprint : Module("KeepSprint", Category.COMBAT) {
     // ========== Probability ==========
     private val chance by probability("Chance", 100, 0..100)
 
-    // ========== Unified Condition Engine ==========
-    private val onlyGround by boolean("OnlyGround", true)
-    private val onlyMove by boolean("OnlyMove", false)
-    private val onlyMoveForward by boolean("OnlyMoveForward", false)
-    private val onlyWhenTargetGoesBack by boolean("OnlyWhenTargetGoesBack", false)
+    /** Current active keep factor (read by the injected attack-method bridge). */
+    @Volatile
+    var activeKeepFactor: Float = 1.0f
+        private set
 
-    private val triggerOptions by triggerOptions("Trigger") {
-        onlyGround = this@KeepSprint.onlyGround
-        onlyMove = this@KeepSprint.onlyMove
-        onlyMoveForward = this@KeepSprint.onlyMoveForward
-        onlyWhenTargetGoesBack = this@KeepSprint.onlyWhenTargetGoesBack
-    }
-
-    // ========== State ==========
-    private var wasAttacking = false
-    private val tickListener: (PlayerState, TargetState?) -> Unit = { p, t -> if (enabled) onTick(p, t) }
-
-    private fun onTick(player: PlayerState, target: TargetState?) {
-        // 'Attacking' = physical left click OR AutoClicker's synthetic attack.
-        val attacking = EventBridge.syntheticAttack || player.isAttackKeyDown || EventBridge.isLeftMousePhysicallyDown
-
-        // Trigger only on the fresh-attack rising edge (matches Raven: act once per attack).
-        val freshAttack = attacking && !wasAttacking
-        wasAttacking = attacking
-        if (!freshAttack) return
-
-        // Conditions (OnlyGround/OnlyMove/...). No target required.
-        if (!ConditionChecker.check(triggerOptions, player, target)) return
-        if (chance.current < 100 && kotlin.random.Random.nextInt(100) >= chance.current) return
-
-        // Compute the keep factor (core algorithm) and apply the scaled motion directly.
-        val keepFactor = when (mode) {
-            "Legit" -> {
-                val d = target?.distance
-                val minR = minReach; val maxR = maxReach
-                when {
-                    d == null -> horizontalKeep
-                    d <= minR -> minKeep
-                    d >= maxR -> maxKeep
-                    else -> minKeep + (maxKeep - minKeep) * (d - minR) / (maxR - minR)
-                }
-            }
+    /** Update the active keep factor from config (called by module infrastructure / bridge). */
+    fun refreshKeepFactor() {
+        activeKeepFactor = when (mode) {
+            "Legit" -> minKeep // conservative default for the bridge (no distance context here)
             else -> horizontalKeep
         }
-
-        val currentSpeed = sqrt(player.motionX * player.motionX + player.motionZ * player.motionZ)
-        if (currentSpeed < 0.001) return
-
-        EventBridge.applyMotion(
-            Vec3(player.motionX * keepFactor, player.motionY, player.motionZ * keepFactor)
-        )
-        io.switchlite.core.logging.CoreLogger.debug(
-            "[KeepSprint] Kept speed at ${"%.0f".format(keepFactor * 100)}% (mode=$mode)"
-        )
     }
 
     // ========== Lifecycle ==========
     override fun onEnable() {
-        wasAttacking = false
-        EventBridge.registerTickListener(tickListener)
+        refreshKeepFactor()
     }
 
     override fun onDisable() {
-        EventBridge.unregisterTickListener(tickListener)
-        wasAttacking = false
+        activeKeepFactor = 1.0f
     }
 }

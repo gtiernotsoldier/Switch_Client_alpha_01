@@ -34,8 +34,12 @@ object Reach : Module("Reach", Category.COMBAT), HudLineProvider {
     private val reachMin by float("Min", 3.1f, 3.0f..6.0f, "blocks")
     private val reachMax by float("Max", 3.3f, 3.0f..6.0f, "blocks")
 
-    // ========== Trigger ==========
+    // ========== Trigger (click-based, not hit-based) ==========
     private val chance by int("Chance", 100, 0..100, "%")
+    /** Extend only every N clicks (throttle). 1 = extend every click. */
+    private val hitPer by int("HitPer", 1, 1..10)
+    /** Cooldown: skip extension for N ms after the last extension (keeps it bursty / natural). */
+    private val delayMs by int("Delay", 0, 0..500, "ms")
 
     // ========== Raven Conditions ==========
     private val weaponOnly by boolean("WeaponOnly", false)
@@ -57,15 +61,36 @@ object Reach : Module("Reach", Category.COMBAT), HudLineProvider {
         onlyWhenTargetGoesBack = this@Reach.onlyWhenTargetGoesBack
     }
 
+    // ========== State ==========
+    /** Previous frame's left-mouse state, for click-edge counting. */
+    private var prevLeft = false
+    /** Clicks counted so far; extension fires when this reaches hitPer. */
+    private var clickCount = 0
+    /** Timestamp of the last extension, for the Delay cooldown. */
+    private var lastExtendNano = 0L
+
     // ========== Tick Listener ==========
     private val tickListener: (PlayerState, TargetState?) -> Unit = { p, _ ->
         if (enabled) onTick(p)
     }
 
     private fun onTick(player: PlayerState) {
-        // Per-click chance roll (only when physically clicking — Raven triggers on MouseEvent).
-        if (!EventBridge.isLeftMousePhysicallyDown) return
+        val left = EventBridge.isLeftMousePhysicallyDown
+        val clickEdge = left && !prevLeft
+        prevLeft = left
+
+        // Only process on a fresh click (Raven triggers Reach on MouseEvent / click).
+        if (!clickEdge) return
         if (chance < 100 && Random.nextInt(100) >= chance) return
+
+        // HitPer throttle: extend only every N clicks.
+        clickCount++
+        if (clickCount < hitPer) return
+        clickCount = 0
+
+        // Delay cooldown: skip if we extended too recently.
+        val now = System.nanoTime()
+        if (delayMs > 0 && now - lastExtendNano < delayMs * 1_000_000L) return
 
         // Weapon / moving / sprint gates (Raven's call() pre-checks).
         if (weaponOnly && player.weaponType == io.switchlite.core.strategy.click.WeaponType.OTHER) return
@@ -80,14 +105,20 @@ object Reach : Module("Reach", Category.COMBAT), HudLineProvider {
             reachMin + Random.nextFloat() * (reachMax - reachMin)
         } else reachMin
         EventBridge.doReachRaycast(reach.toDouble())
+        lastExtendNano = now
     }
 
     // ========== Lifecycle ==========
     override fun onEnable() {
+        prevLeft = false
+        clickCount = 0
+        lastExtendNano = 0L
         EventBridge.registerTickListener(tickListener)
     }
 
     override fun onDisable() {
         EventBridge.unregisterTickListener(tickListener)
+        prevLeft = false
+        clickCount = 0
     }
 }

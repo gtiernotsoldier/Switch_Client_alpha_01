@@ -65,10 +65,11 @@ object KeepSprint : Module("KeepSprint", Category.COMBAT) {
     private val tickListener: (PlayerState, TargetState?) -> Unit = { p, t -> if (enabled) onTick(p, t) }
 
     private fun onTick(player: PlayerState, target: TargetState?) {
-        // Brute-force Raven model: every tick, if the player is attacking (holding the attack
-        // action), keep the speed; otherwise stop. No target required. The main thread applies
-        // the keep continuously while active.
-        val attacking = player.isAttackKeyDown || EventBridge.isLeftMousePhysicallyDown
+        // Brute-force Raven model: every tick, if the player is attacking, keep the speed.
+        // 'Attacking' = physical left click OR AutoClicker's synthetic attack (AutoClicker
+        // drives syntheticAttack on the main thread; it does NOT change the physical button, so
+        // we must include syntheticAttack or KeepSprint never fires under AutoClicker).
+        val attacking = EventBridge.syntheticAttack || player.isAttackKeyDown || EventBridge.isLeftMousePhysicallyDown
 
         // Module-level throttled diagnostic (confirm the trigger signal and setKeepSprint calls).
         if (++diagCount % 40 == 0) {

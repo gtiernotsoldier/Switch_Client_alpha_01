@@ -7,27 +7,24 @@ import io.switchlite.adapter.common.option.*
 import io.switchlite.core.condition.ConditionChecker
 import io.switchlite.core.model.PlayerState
 import io.switchlite.core.model.TargetState
+import io.switchlite.core.util.Vec3
+import kotlin.math.sqrt
 
 /**
- * KeepSprint — keeps sprint speed while attacking.
+ * KeepSprint — no speed drop when attacking (Raven model).
  *
- * Vanilla MC reduces horizontal speed when attacking (to ~60%). KeepSprint re-applies the
- * desired keep percentage so your speed doesn't drop while you fight.
+ * Vanilla MC reduces horizontal speed to ~60% when attacking. KeepSprint re-scales the player's
+ * horizontal motion by a keep factor on each fresh attack so the speed doesn't drop.
  *
- * IMPORTANT: this module does NOT depend on any target/crosshair. It only looks at the PLAYER's
- * own attack action (holding left-click / attack key). That is the Raven model — Raven's
- * KeepSprint.multiplies motion when the player attacks, with no target requirement. Basing the
- * trigger on the crosshair target's hurtTime was the bug: if the crosshair wasn't precisely on
- * the mob the module never fired.
- *
- * While the player is attacking, on each qualifying hit it scales the player's horizontal motion
- * by the keep factor (applied on the main thread via EventBridge.armKeepSprint so it isn't
- * overwritten next frame).
+ * Trigger = a fresh attack (rising edge of physical left click OR AutoClicker's syntheticAttack).
+ * On each fresh attack it multiplies motionX/Z by the keep factor via EventBridge.applyMotion
+ * (same direct motion write as Velocity). No target/crosshair, no main-thread flag dance — just
+ * the attack rising edge, matching Raven's KeepSprint.sl() which multiplies motion after the
+ * attack.
  *
  * Config:
- *   - HorizontalKeep (Normal mode) / Legit distance interpolation.
- *   - Delay (ms before the keep applies), HitCount (fire once every N hits), Chance.
- *   - Trigger is the player's own attack; `OnlyMove`/`OnlyGround` conditions still apply.
+ *   - HorizontalKeep (Normal) / Legit distance interpolation, Chance.
+ *   - OnlyGround/OnlyMove/etc. conditions.
  */
 object KeepSprint : Module("KeepSprint", Category.COMBAT) {
 
@@ -60,66 +57,56 @@ object KeepSprint : Module("KeepSprint", Category.COMBAT) {
     }
 
     // ========== State ==========
-    private var diagCount = 0
-    private var setLogCount = 0
+    private var wasAttacking = false
     private val tickListener: (PlayerState, TargetState?) -> Unit = { p, t -> if (enabled) onTick(p, t) }
 
     private fun onTick(player: PlayerState, target: TargetState?) {
-        // Brute-force Raven model: every tick, if the player is attacking, keep the speed.
-        // 'Attacking' = physical left click OR AutoClicker's synthetic attack (AutoClicker
-        // drives syntheticAttack on the main thread; it does NOT change the physical button, so
-        // we must include syntheticAttack or KeepSprint never fires under AutoClicker).
+        // 'Attacking' = physical left click OR AutoClicker's synthetic attack.
         val attacking = EventBridge.syntheticAttack || player.isAttackKeyDown || EventBridge.isLeftMousePhysicallyDown
 
-        // Module-level throttled diagnostic (confirm the trigger signal and setKeepSprint calls).
-        if (++diagCount % 40 == 0) {
-            io.switchlite.core.logging.CoreLogger.info(
-                "[KeepSprint] tick attacking=$attacking physL=${EventBridge.isLeftMousePhysicallyDown} " +
-                "keyDown=${player.isAttackKeyDown} onGround=${player.onGround} sprint=${player.isSprinting} " +
-                "cond=${ConditionChecker.check(triggerOptions, player, target)} keepActive=${EventBridge.isKeepSprintActive()}"
-            )
-        }
+        // Trigger only on the fresh-attack rising edge (matches Raven: act once per attack).
+        val freshAttack = attacking && !wasAttacking
+        wasAttacking = attacking
+        if (!freshAttack) return
 
-        if (!attacking) {
-            EventBridge.clearKeepSprint()
-            return
-        }
-
-        // Unified conditions (OnlyGround/OnlyMove/...). No target required.
+        // Conditions (OnlyGround/OnlyMove/...). No target required.
         if (!ConditionChecker.check(triggerOptions, player, target)) return
+        if (chance.current < 100 && kotlin.random.Random.nextInt(100) >= chance.current) return
 
-        // Compute the keep factor (core algorithm) and arm continuous keep.
-        val config = io.switchlite.core.strategy.keepsprint.KeepSprintConfig(
-            mode = mode,
-            horizontalKeep = horizontalKeep,
-            minReach = minReach,
-            maxReach = maxReach,
-            minKeep = minKeep,
-            maxKeep = maxKeep,
-            chance = chance.current,
-            hurtTimeMax = 10,
-            delayTicks = 0,
-            cooldownTicks = 0
-        )
-        val result = io.switchlite.core.strategy.keepsprint.KeepSprintStrategy.computeKeepMotion(
-            config, mode, target?.distance,
-            player.motionX, player.motionY, player.motionZ
-        )
-        EventBridge.setKeepSprint(result.keepFactor)
-        if (++setLogCount % 40 == 0) {
-            io.switchlite.core.logging.CoreLogger.info(
-                "[KeepSprint] setKeepSprint called factor=${result.keepFactor} keepActive=${EventBridge.isKeepSprintActive()}"
-            )
+        // Compute the keep factor (core algorithm) and apply the scaled motion directly.
+        val keepFactor = when (mode) {
+            "Legit" -> {
+                val d = target?.distance
+                val minR = minReach; val maxR = maxReach
+                when {
+                    d == null -> horizontalKeep
+                    d <= minR -> minKeep
+                    d >= maxR -> maxKeep
+                    else -> minKeep + (maxKeep - minKeep) * (d - minR) / (maxR - minR)
+                }
+            }
+            else -> horizontalKeep
         }
+
+        val currentSpeed = sqrt(player.motionX * player.motionX + player.motionZ * player.motionZ)
+        if (currentSpeed < 0.001) return
+
+        EventBridge.applyMotion(
+            Vec3(player.motionX * keepFactor, player.motionY, player.motionZ * keepFactor)
+        )
+        io.switchlite.core.logging.CoreLogger.debug(
+            "[KeepSprint] Kept speed at ${"%.0f".format(keepFactor * 100)}% (mode=$mode)"
+        )
     }
 
     // ========== Lifecycle ==========
     override fun onEnable() {
+        wasAttacking = false
         EventBridge.registerTickListener(tickListener)
     }
 
     override fun onDisable() {
         EventBridge.unregisterTickListener(tickListener)
-        EventBridge.clearKeepSprint()
+        wasAttacking = false
     }
 }

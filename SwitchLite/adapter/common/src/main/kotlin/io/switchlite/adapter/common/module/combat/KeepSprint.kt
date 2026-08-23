@@ -34,6 +34,9 @@ import io.switchlite.agent.MappingContext
  */
 object KeepSprint : Module("KeepSprint", Category.COMBAT) {
 
+    /** Keep fraction at/above which we re-assert sprint every frame (below = vanilla). */
+    private const val KEEP_THRESHOLD = 0.9f
+
     // ========== Mode ==========
     private val mode by choices("Mode", arrayOf("Normal", "Legit"))
 
@@ -126,10 +129,5 @@ object KeepSprint : Module("KeepSprint", Category.COMBAT) {
         } catch (_: Exception) {
             // Never crash the render loop.
         }
-    }
-
-    companion object {
-        /** Keep fraction at/above which we re-assert sprint every frame (below = vanilla). */
-        const val KEEP_THRESHOLD = 0.9f
     }
 }

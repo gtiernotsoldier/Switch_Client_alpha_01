@@ -83,7 +83,7 @@ object KeepSprint : Module("KeepSprint", Category.COMBAT) {
             horizontalKeep = horizontalKeep,
             minReach = minReach, maxReach = maxReach,
             minKeep = minKeep, maxKeep = maxKeep,
-            chance = chance, hurtTimeMax = 10, delayTicks = 0, cooldownTicks = 0
+            chance = chance.current, hurtTimeMax = 10, delayTicks = 0, cooldownTicks = 0
         )
     }
 

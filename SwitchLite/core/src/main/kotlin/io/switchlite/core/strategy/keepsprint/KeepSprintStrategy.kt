@@ -96,6 +96,41 @@ object KeepSprintStrategy : Strategy<KeepSprintConfig, KeepSprintState, KeepSpri
 
     override val name: String = "KeepSprint"
 
+    /**
+     * Pure algorithm: compute the keep-factor and the resulting scaled horizontal motion vector,
+     * given the mode, target distance, and current player motion. Zero platform dependencies.
+     *
+     * @param mode "Normal" or "Legit".
+     * @param distance target distance in blocks, or null.
+     * @param motionX/motionY/motionZ current player motion.
+     * @return [KeepResult] containing the applied keep factor and the motion to apply (or null
+     *         when the player is essentially stationary).
+     */
+    data class KeepResult(val keepFactor: Float, val motion: Vec3?)
+
+    fun computeKeepMotion(
+        config: KeepSprintConfig,
+        mode: String,
+        distance: Float?,
+        motionX: Double,
+        motionY: Double,
+        motionZ: Double
+    ): KeepResult {
+        val keepFactor = when (mode) {
+            "Legit" -> LegitKeepSprintStrategy.calculateKeep(config, distance)
+            else -> config.horizontalKeep
+        }
+        val currentSpeed = sqrt(motionX * motionX + motionZ * motionZ)
+        if (currentSpeed < 0.001) {
+            return KeepResult(keepFactor, null)
+        }
+        // Scale current horizontal motion by the keep factor (1.0 = keep full speed).
+        return KeepResult(
+            keepFactor,
+            Vec3(motionX * keepFactor, motionY, motionZ * keepFactor)
+        )
+    }
+
     override fun execute(config: KeepSprintConfig, state: KeepSprintState, input: Any): KeepSprintResult {
         val ksInput = input as? KeepSprintInput ?: return KeepSprintResult.Pass
 

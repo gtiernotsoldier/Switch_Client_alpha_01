@@ -7,8 +7,6 @@ import io.switchlite.adapter.common.option.*
 import io.switchlite.core.condition.ConditionChecker
 import io.switchlite.core.model.PlayerState
 import io.switchlite.core.model.TargetState
-import io.switchlite.core.util.Vec3
-import kotlin.math.sqrt
 import kotlin.random.Random
 
 /**
@@ -141,36 +139,34 @@ object KeepSprint : Module("KeepSprint", Category.COMBAT) {
         }
     }
 
-    /** Apply the keep factor to the player's horizontal motion. */
+    /** Apply the keep factor to the player's horizontal motion. Algorithm lives in core. */
     private fun applyKeep(player: PlayerState, target: TargetState?) {
         if (player === io.switchlite.core.model.PlayerState.EMPTY) return
         if (!ConditionChecker.check(triggerOptions, player, target)) return
 
-        val keepFactor = when (mode) {
-            "Legit" -> computeLegitKeep(target)
-            else -> horizontalKeep
-        }
-
-        val currentSpeed = sqrt(player.motionX * player.motionX + player.motionZ * player.motionZ)
-        if (currentSpeed < 0.001) return
-
-        EventBridge.applyMotion(
-            Vec3(player.motionX * keepFactor, player.motionY, player.motionZ * keepFactor)
+        // Build the core config snapshot the algorithm needs.
+        val config = io.switchlite.core.strategy.keepsprint.KeepSprintConfig(
+            mode = mode,
+            horizontalKeep = horizontalKeep,
+            minReach = minReach,
+            maxReach = maxReach,
+            minKeep = minKeep,
+            maxKeep = maxKeep,
+            chance = chance.current,
+            hurtTimeMax = 10,
+            delayTicks = 0,
+            cooldownTicks = 0
         )
+
+        val result = io.switchlite.core.strategy.keepsprint.KeepSprintStrategy.computeKeepMotion(
+            config, mode, target?.distance,
+            player.motionX, player.motionY, player.motionZ
+        )
+        val motion = result.motion ?: return
+        EventBridge.applyMotion(motion)
         io.switchlite.core.logging.CoreLogger.debug(
-            "[KeepSprint] Kept speed at ${"%.0f".format(keepFactor * 100)}% (mode=$mode)"
+            "[KeepSprint] Kept speed at ${"%.0f".format(result.keepFactor * 100)}% (mode=$mode)"
         )
-    }
-
-    /** Legit: interpolate keep factor by target distance (closer = more conservative). */
-    private fun computeLegitKeep(target: TargetState?): Float {
-        val dist = target?.distance ?: return horizontalKeep
-        val minR = minReach
-        val maxR = maxReach
-        if (dist <= minR) return minKeep
-        if (dist >= maxR) return maxKeep
-        val t = (dist - minR) / (maxR - minR)
-        return minKeep + (maxKeep - minKeep) * t
     }
 
     // ========== Lifecycle ==========

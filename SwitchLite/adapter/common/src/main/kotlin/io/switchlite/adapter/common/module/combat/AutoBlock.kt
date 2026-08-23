@@ -4,6 +4,7 @@ import io.switchlite.core.condition.ConditionChecker
 import io.switchlite.core.logging.CoreLogger
 import io.switchlite.core.model.PlayerState
 import io.switchlite.core.model.TargetState
+import io.switchlite.core.strategy.autoblock.RangeGate
 import io.switchlite.core.strategy.click.WeaponType
 import io.switchlite.adapter.common.api.EventBridge
 import io.switchlite.adapter.common.module.Module
@@ -37,9 +38,6 @@ import kotlin.random.Random
  * On disable: automatically releases right-click to prevent stuck key.
  */
 object AutoBlock : Module("AutoBlock", Category.COMBAT) {
-
-    /** Hysteresis margin (blocks) for the OnEnter range mode. */
-    private const val RANGE_HYSTERESIS = 1.5f
 
     // ========== Mode ==========
     // Normal = click-style: while AutoClicker / physical left-click is working, block for
@@ -106,8 +104,8 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
     /** Last nanoTime an attack was detected (Srg debounce). */
     private var lastAttackNano: Long = 0L
 
-    /** OnEnter range-mode latch: target has entered the attack range. */
-    private var rangeEngaged: Boolean = false
+    /** OnEnter range-mode latch (algorithm state, owned by core RangeGate). */
+    private val rangeGateState = RangeGate.State()
 
     /** Throttle counter for diagnostic logging (every ~40 ticks ≈ 2s). */
     private var diagCount: Int = 0
@@ -153,8 +151,17 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
         val conditionsMet = ConditionChecker.check(triggerOptions, player, target)
 
         // Distance gate — behavior depends on RangeMode (InRange = continuous; OnEnter = latch
-        // on entry with hysteresis).
-        val inRange = computeInRange(target)
+        // on entry with hysteresis). Algorithm lives in core RangeGate.
+        val inRange = RangeGate.compute(
+            rangeGateState,
+            RangeGate.Config(
+                mode = if (rangeMode == "OnEnter") RangeGate.Mode.ON_ENTER else RangeGate.Mode.IN_RANGE,
+                minDistance = minDistance,
+                maxDistance = maxDistance,
+                hysteresis = RangeGate.DEFAULT_HYSTERESIS
+            ),
+            target?.distance
+        )
         val probPass = probability >= 100 || Random.nextInt(100) < probability
 
         if (++diagCount % 40 == 0) {
@@ -234,29 +241,6 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
         }
     }
 
-    /**
-     * Distance gate per [rangeMode].
-     *  - "InRange": target within [minDistance, maxDistance].
-     *  - "OnEnter": engage once the target enters [minDistance, maxDistance], then hold until it
-     *    leaves beyond maxDistance + [RANGE_HYSTERESIS] (no flicker at the boundary).
-     */
-    private fun computeInRange(target: TargetState?): Boolean {
-        if (target == null) {
-            rangeEngaged = false
-            return false
-        }
-        val d = target.distance
-        val within = d >= minDistance && d <= maxDistance
-        return when (rangeMode) {
-            "OnEnter" -> {
-                if (within) rangeEngaged = true
-                else if (d > maxDistance + RANGE_HYSTERESIS) rangeEngaged = false
-                rangeEngaged && d >= minDistance
-            }
-            else -> within
-        }
-    }
-
     // ========== Helpers ==========
 
     /**
@@ -284,7 +268,7 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
         // right-click (Raven style). Overriding the whole use key would swallow the
         // player's manual blocking.
         lastAttackNano = 0L
-        rangeEngaged = false
+        rangeGateState.reset()
         EventBridge.registerTickListener(tickListener)
     }
 
@@ -294,6 +278,6 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
         EventBridge.syntheticUse = false
         reblockPending = false
         lastAttackNano = 0L
-        rangeEngaged = false
+        rangeGateState.reset()
     }
 }

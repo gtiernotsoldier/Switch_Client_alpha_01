@@ -139,8 +139,8 @@ object Speedometer : Module("Speedometer", Category.RENDER) {
         return ((ctx.fontRenderer.fontHeight * 3 + 4) * scale).toInt()
     }
 
-    private fun speedText(): String = "Speed %.1f b/s".format(speedBps)
-    private fun retentionText(): String = "Retain %.0f%%".format(retentionPct)
+    private fun speedText(): String = "Speed %.2f b/s".format(speedBps)
+    private fun retentionText(): String = "Retain %.1f%%".format(retentionPct)
     private fun sprintText(): String = if (sprinting) "Sprint" else "Walk"
 
     private fun draw(ctx: RenderContext) {

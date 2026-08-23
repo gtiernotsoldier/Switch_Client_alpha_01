@@ -7,6 +7,7 @@ import io.switchlite.adapter.common.api.EventBridge
 import io.switchlite.core.strategy.keepsprint.KeepSprintConfig
 import io.switchlite.core.strategy.keepsprint.KeepSprintStrategy
 import io.switchlite.agent.MappingContext
+import io.switchlite.core.logging.CoreLogger
 
 /**
  * KeepSprint — keep sprinting through an attack (no speed drop).
@@ -64,6 +65,14 @@ object KeepSprint : Module("KeepSprint", Category.COMBAT) {
     var activeKeepFactor: Float = 1.0f
         private set
 
+    // ========== Diagnostic (interval measurement) ==========
+    /** Frame counter for the diagnostic. */
+    @Volatile private var diagFrame = 0
+    /** Frames since the last attack rising edge, measured while attacking. */
+    @Volatile private var framesSinceAttackEdge = 0
+    /** When sprint was observed switched OFF despite us wanting keep. */
+    @Volatile private var sprintSwitchOffObserved = false
+
     // ========== Lifecycle ==========
     override fun onDisable() {
         reset()
@@ -116,6 +125,8 @@ object KeepSprint : Module("KeepSprint", Category.COMBAT) {
             val attackEdge = attacking && !prevAttacking
             prevAttacking = attacking
             if (attackEdge) {
+                framesSinceAttackEdge = 0
+                sprintSwitchOffObserved = false
                 val config = buildConfig()
                 keepThisSwing = KeepSprintStrategy.shouldActivate(config)
                 if (keepThisSwing) {
@@ -126,7 +137,24 @@ object KeepSprint : Module("KeepSprint", Category.COMBAT) {
                 }
             }
 
-            if (!attacking || !moving || !keepThisSwing) return
+            if (!attacking || !moving) return
+
+            framesSinceAttackEdge++
+
+            // ── Diagnostic: quantify the interval (the gap between "sprint switched away" and our
+            //    restore). We log only while a swing is being kept, throttled, to a limited burst.
+            if (keepThisSwing && keepFraction >= KEEP_THRESHOLD && (++diagFrame % 5 == 0)) {
+                val speedDeficit = ((sprintCap * keepFraction - currentSpeed) / (sprintCap * keepFraction) * 100).toInt()
+                // Detect whether MC flipped sprint off this frame (the "interval" we care about).
+                if (!sprinting) sprintSwitchOffObserved = true
+                CoreLogger.info(
+                    "[KeepSprint] frame=$framesSinceAttackEdge sprintNow=$sprinting " +
+                    "speed=$currentSpeed cap=${"%.3f".format(sprintCap)} keep=${"%.2f".format(keepFraction)} " +
+                    "deficit%=$speedDeficit switchedOff=$sprintSwitchOffObserved"
+                )
+            }
+
+            if (!keepThisSwing) return
             if (keepFraction < KEEP_THRESHOLD) return // below threshold → leave vanilla alone
 
             // 1) Undo the sprinting→walking flip: re-assert sprint on the main thread.

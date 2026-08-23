@@ -7,25 +7,42 @@ import io.switchlite.adapter.common.api.EventBridge
 import io.switchlite.core.strategy.keepsprint.KeepSprintConfig
 import io.switchlite.core.strategy.keepsprint.KeepSprintStrategy
 import io.switchlite.agent.MappingContext
-import io.switchlite.core.logging.CoreLogger
 
 /**
  * KeepSprint — keep sprinting through an attack (no speed drop).
  *
  * Essence: the vanilla attack drops speed for two reasons — MC internally switches sprinting→walking
- * (setSprinting(false)) AND multiplies horizontal motion by 0.6, both inside the attack method. The
- * only reliable way to counter this without bytecode injection is, on the MC main thread every render
- * frame while attacking + moving:
+ * (setSprinting(false)) AND multiplies horizontal motion by 0.6, both inside the attack method
+ * (`func_71061_d_` / attackTargetEntityWithCurrentItem). This module counters that on the MC main
+ * thread every render frame while attacking + moving:
  *   1. re-assert sprint (setSprinting(true)) to undo the state flip, and
- *   2. restore motion back up to the sprint cap (restoreMotion) to undo the motion *= 0.6.
+ *   2. restore motion back up to the sprint cap (core restoreMotion) to undo the motion *= 0.6.
  *
- * Anti-detection: we never inject and we add natural jitter — the restore target is the sprint cap
- * times a small random factor near 1.0, so kept speed isn't a frozen constant (a perfectly flat speed
- * every swing is what a server heuristic would flag). Each swing also rolls [Chance], and Legit mode
- * randomizes the keep fraction via a simulated distance (no target needed).
+ * Config semantics (Normal mode): `HorizontalKeep` is the fraction of the sprint speed to PRESERVE —
+ * 1.0 = keep full sprint (no drop), 0.6 = vanilla. It is a THRESHOLD: at/above KEEP_THRESHOLD (0.9)
+ * we keep sprint at all; below we leave vanilla alone.
  *
- * Algorithm (chance, keep fraction, jittered restore) lives in core (KeepSprintStrategy); this module
- * is orchestration + platform landing, all on the MC main thread render loop (no packets).
+ * ═══════════════════════════════════════════════════════════════════════════════
+ *  KNOWN LIMITATION — READ BEFORE toggling this module (verdict: DEPRECATED).
+ *  This per-frame "re-assert after the fact" approach is NOT stable. Vanilla cancels
+ *  sprint + cuts motion EVERY swing inside the attack method, i.e. at click-CPS rate.
+ *  A render-frame reassert (≈60Hz) races the tick/CPS-level destruction (10–20Hz), so
+ *  the outcome depends entirely on CPS and frame timing — at high CPS the cancellation
+ *  outruns the recovery and KeepSprint visibly fails / is hit-or-miss. Cannot be fixed
+ *  from this layer without ALSO making it detectable on servers.
+ *
+ *  The ONLY CPS-independent, stable solution is to intercept the attack method AT THE
+ *  SOURCE — replace the motion*=0.6 constant and swallow setSprinting(false) inside
+ *  func_71061_d_ (LiquidBounce's `@ModifyConstant(0.6)` + `@Redirect(setSprinting)`).
+ *  That requires bytecode injection (agent), which the team deliberately avoids here
+ *  because this behavior is easy for anticheats to flag.
+ *
+ *  Recommended disposition: leave the per-frame reassert OFF by default; if this module
+ *  is ever needed for real, implement the injection-based source interception in
+ *  agent/Transformer + a KeepSprintBridge (see git history for the earlier approach).
+ *  The pure-reflection restore (motion + jitter) is retained below mainly as a fallback
+ *  for low-CPS casual play and as a reference implementation.
+ * ═══════════════════════════════════════════════════════════════════════════════
  */
 object KeepSprint : Module("KeepSprint", Category.COMBAT) {
 
@@ -65,16 +82,6 @@ object KeepSprint : Module("KeepSprint", Category.COMBAT) {
     var activeKeepFactor: Float = 1.0f
         private set
 
-    // ========== Diagnostic (interval measurement) ==========
-    /** Whether the one-shot probe has fired (confirms onRenderFrame is reached). */
-    @Volatile private var probeLogged = false
-    /** Frame counter for the diagnostic. */
-    @Volatile private var diagFrame = 0
-    /** Frames since the last attack rising edge, measured while attacking. */
-    @Volatile private var framesSinceAttackEdge = 0
-    /** When sprint was observed switched OFF despite us wanting keep. */
-    @Volatile private var sprintSwitchOffObserved = false
-
     // ========== Lifecycle ==========
     override fun onDisable() {
         reset()
@@ -86,10 +93,6 @@ object KeepSprint : Module("KeepSprint", Category.COMBAT) {
         prevAttacking = false
         keepFraction = 1.0f
         sprintCap = 0.28
-        probeLogged = false
-        diagFrame = 0
-        framesSinceAttackEdge = 0
-        sprintSwitchOffObserved = false
     }
 
     private fun buildConfig(): KeepSprintConfig {
@@ -120,18 +123,6 @@ object KeepSprint : Module("KeepSprint", Category.COMBAT) {
             // "Attacking now" — physical left mouse OR AutoClicker synthetic attack.
             val attacking = EventBridge.isLeftMousePhysicallyDown || EventBridge.syntheticAttack
 
-            // PROBE: fire once on first enable to confirm this function is even called and what the
-            // key signals read. This is a one-shot diagnostic — it does NOT depend on the entry
-            // conditions below, so if it prints we know the hook + module are alive.
-            if (!probeLogged) {
-                probeLogged = true
-                CoreLogger.info(
-                    "[KeepSprint.PROBE] onRenderFrame reached! playerNull=false " +
-                    "enabled=$enabled attacking=$attacking (phys=${EventBridge.isLeftMousePhysicallyDown} " +
-                    "synth=${EventBridge.syntheticAttack}) moving=$moving speed=$currentSpeed"
-                )
-            }
-
             // Track the natural sprint cap as a running max while sprinting + moving (also during an
             // attack — the max absorbs the pre-slowdown speed). Stable, never a stale 0.28-only value.
             val sprinting = MappingContext.invokeMethod(player, "forge:player_isSprinting") as? Boolean ?: false
@@ -143,8 +134,6 @@ object KeepSprint : Module("KeepSprint", Category.COMBAT) {
             val attackEdge = attacking && !prevAttacking
             prevAttacking = attacking
             if (attackEdge) {
-                framesSinceAttackEdge = 0
-                sprintSwitchOffObserved = false
                 val config = buildConfig()
                 keepThisSwing = KeepSprintStrategy.shouldActivate(config)
                 if (keepThisSwing) {
@@ -156,22 +145,6 @@ object KeepSprint : Module("KeepSprint", Category.COMBAT) {
             }
 
             if (!attacking || !moving) return
-
-            framesSinceAttackEdge++
-
-            // ── Diagnostic: quantify the interval (the gap between "sprint switched away" and our
-            //    restore). We log only while a swing is being kept, throttled, to a limited burst.
-            if (keepThisSwing && keepFraction >= KEEP_THRESHOLD && (++diagFrame % 5 == 0)) {
-                val speedDeficit = ((sprintCap * keepFraction - currentSpeed) / (sprintCap * keepFraction) * 100).toInt()
-                // Detect whether MC flipped sprint off this frame (the "interval" we care about).
-                if (!sprinting) sprintSwitchOffObserved = true
-                CoreLogger.info(
-                    "[KeepSprint] frame=$framesSinceAttackEdge sprintNow=$sprinting " +
-                    "speed=$currentSpeed cap=${"%.3f".format(sprintCap)} keep=${"%.2f".format(keepFraction)} " +
-                    "deficit%=$speedDeficit switchedOff=$sprintSwitchOffObserved"
-                )
-            }
-
             if (!keepThisSwing) return
             if (keepFraction < KEEP_THRESHOLD) return // below threshold → leave vanilla alone
 

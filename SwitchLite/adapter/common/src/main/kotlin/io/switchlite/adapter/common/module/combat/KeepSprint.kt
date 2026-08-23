@@ -105,12 +105,13 @@ object KeepSprint : Module("KeepSprint", Category.COMBAT) {
             // "Attacking now" — physical left mouse OR AutoClicker synthetic attack.
             val attacking = EventBridge.isLeftMousePhysicallyDown || EventBridge.syntheticAttack
 
-            // Measure the natural sprint baseline only when NOT attacking — this is the ceiling we
-            // restore to, so we never accelerate past the player's real sprint speed.
-            if (sprinting && moving && !attacking) {
-                sprintBaseline = currentSpeed
-                prevAttacking = false
-                return
+            // Track the natural sprint ceiling as a running max while sprinting + moving. This runs
+            // even during an attack (the max absorbs the pre-slowdown speed), so the restore target
+            // is a stable, real value — it never resets to 0 the instant you start attacking and
+            // never depends on a stale pre-attack sample. This is what kills the "hit-or-miss"
+            // speed: every attack restores toward the same sprint cap.
+            if (sprinting && moving) {
+                if (currentSpeed > sprintBaseline) sprintBaseline = currentSpeed
             }
 
             // Rising edge of an attack action → roll chance and decide this swing's keep target.

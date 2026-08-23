@@ -317,28 +317,27 @@ object EventBridge {
     @Volatile var serverSprintState: Boolean = false
 
     // ========== KeepSprint (main-thread speed keep) ==========
-    // KeepSprint must apply motion on the MC main thread at the moment/right after an attack,
-    // otherwise the background tick thread's writes are overwritten next frame (which is why it
-    // only "partially worked"). The module sets these on the background tick thread; the platform
-    // render thread reads them every frame and, while [keepSprintActive] is true, scales the
-    // player's horizontal motion by [keepSprintFactor]. The platform also clears
-    // [keepSprintActive] itself once it has consumed the keep (Raven applies once on the attack
-    // frame; we apply on the render frame right after the hit rising edge).
+    // KeepSprint applies motion on the MC main thread (background-thread writes get overwritten
+    // next frame). The module sets [keepSprintActive] true while it wants the speed kept (player
+    // attacking & moving) and [keepSprintFactor]; the platform render thread multiplies the
+    // player's horizontal motion by the factor EVERY frame while active (brute-force Raven model:
+    // hold the speed continuously, not a one-shot).
     @Volatile var keepSprintActive: Boolean = false
     @Volatile var keepSprintFactor: Float = 1.0f
 
-    /** KeepSprint module sets this on a fresh hit (backend tick). */
-    fun armKeepSprint(factor: Float) {
+    /** KeepSprint module sets this each tick while it wants the speed kept. */
+    fun setKeepSprint(factor: Float) {
         keepSprintFactor = factor
         keepSprintActive = true
     }
 
-    /** Platform render thread consumes one keep application. */
-    fun consumeKeepSprint(): Boolean {
-        val a = keepSprintActive
+    /** KeepSprint module clears this when it no longer wants to keep speed. */
+    fun clearKeepSprint() {
         keepSprintActive = false
-        return a
     }
+
+    /** Platform render thread reads whether to keep speed this frame. */
+    fun isKeepSprintActive(): Boolean = keepSprintActive
 
     // ========== Click Delay Reset (DelayRemover — 1.8 exclusive) ==========
     private var resetClickDelayHandler: (() -> Unit)? = null

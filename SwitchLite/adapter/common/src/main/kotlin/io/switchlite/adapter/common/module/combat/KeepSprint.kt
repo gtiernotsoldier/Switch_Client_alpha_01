@@ -7,7 +7,6 @@ import io.switchlite.adapter.common.option.*
 import io.switchlite.core.condition.ConditionChecker
 import io.switchlite.core.model.PlayerState
 import io.switchlite.core.model.TargetState
-import kotlin.random.Random
 
 /**
  * KeepSprint — keeps sprint speed while attacking.
@@ -47,10 +46,6 @@ object KeepSprint : Module("KeepSprint", Category.COMBAT) {
     // ========== Probability ==========
     private val chance by probability("Chance", 100, 0..100)
 
-    // ========== Trigger (delay + hit throttle) ==========
-    private val delay by int("Delay", 0, 0..500, "ms")
-    private val hitCount by int("HitCount", 1, 1..20, "hits")
-
     // ========== Unified Condition Engine ==========
     private val onlyGround by boolean("OnlyGround", true)
     private val onlyMove by boolean("OnlyMove", false)
@@ -65,65 +60,23 @@ object KeepSprint : Module("KeepSprint", Category.COMBAT) {
     }
 
     // ========== State ==========
-    @Volatile private var lastPlayer: PlayerState? = null
-    private var hitCounter = 0
-    private var delayEndNano = 0L
-    private var delayPending = false
-    private var wasAttacking = false
-
     private val tickListener: (PlayerState, TargetState?) -> Unit = { p, t -> if (enabled) onTick(p, t) }
 
     private fun onTick(player: PlayerState, target: TargetState?) {
-        lastPlayer = player
-
-        // Apply delayed keep when the timer expires.
-        if (delayPending) {
-            if (System.nanoTime() >= delayEndNano) {
-                delayPending = false
-                applyKeep(player, target)
-            }
-            return
-        }
-
-        // Trigger = the player is holding the attack (physical left click / attack key down).
-        // KeepSprint does NOT need a target; only the player's own attack action matters.
+        // Brute-force Raven model: every tick, if the player is attacking (holding the attack
+        // action), keep the speed; otherwise stop. No target required. The main thread applies
+        // the keep continuously while active.
         val attacking = player.isAttackKeyDown || EventBridge.isLeftMousePhysicallyDown
 
-        // Hit rising edge of the player's own attack (to throttle "per hit").
-        val attackStarted = attacking && !wasAttacking
-        wasAttacking = attacking
-
         if (!attacking) {
-            hitCounter = 0
+            EventBridge.clearKeepSprint()
             return
         }
 
-        // Only count a fresh attack for the hit-count throttle.
-        if (!attackStarted) return
-
-        // Unified conditions (OnlyGround/OnlyMove/...). Note: no target required.
-        if (!ConditionChecker.check(triggerOptions, player, target)) return
-        if (chance.current < 100 && Random.nextInt(100) >= chance.current) return
-
-        // Hit-count throttle: keep once every `hitCount` hits.
-        hitCounter++
-        if (hitCounter < hitCount) return
-        hitCounter = 0
-
-        // Delay or immediate keep.
-        if (delay > 0) {
-            delayEndNano = System.nanoTime() + delay * 1_000_000L
-            delayPending = true
-        } else {
-            applyKeep(player, target)
-        }
-    }
-
-    /** Arm the keep-speed application. The actual motion is applied on the MC main thread. */
-    private fun applyKeep(player: PlayerState, target: TargetState?) {
-        if (player === io.switchlite.core.model.PlayerState.EMPTY) return
+        // Unified conditions (OnlyGround/OnlyMove/...). No target required.
         if (!ConditionChecker.check(triggerOptions, player, target)) return
 
+        // Compute the keep factor (core algorithm) and arm continuous keep.
         val config = io.switchlite.core.strategy.keepsprint.KeepSprintConfig(
             mode = mode,
             horizontalKeep = horizontalKeep,
@@ -136,31 +89,20 @@ object KeepSprint : Module("KeepSprint", Category.COMBAT) {
             delayTicks = 0,
             cooldownTicks = 0
         )
-
         val result = io.switchlite.core.strategy.keepsprint.KeepSprintStrategy.computeKeepMotion(
             config, mode, target?.distance,
             player.motionX, player.motionY, player.motionZ
         )
-        EventBridge.armKeepSprint(result.keepFactor)
-        io.switchlite.core.logging.CoreLogger.debug(
-            "[KeepSprint] Armed keep at ${"%.0f".format(result.keepFactor * 100)}% (mode=$mode)"
-        )
+        EventBridge.setKeepSprint(result.keepFactor)
     }
 
     // ========== Lifecycle ==========
     override fun onEnable() {
         EventBridge.registerTickListener(tickListener)
-        lastPlayer = null
-        hitCounter = 0
-        delayPending = false
-        wasAttacking = false
     }
 
     override fun onDisable() {
         EventBridge.unregisterTickListener(tickListener)
-        lastPlayer = null
-        hitCounter = 0
-        delayPending = false
-        wasAttacking = false
+        EventBridge.clearKeepSprint()
     }
 }

@@ -257,16 +257,15 @@ object ForgeBootstrap {
             // strictly thread-safe; this keeps addToSendQueue on the MC thread).
             try { EventBridge.drainPendingSprintReset() } catch (_: Exception) {}
 
-            // KeepSprint: apply the keep-speed motion on the MC main thread (the background
-            // tick thread's writes are overwritten next frame, so we must apply here on the
-            // render thread right after the hit rising edge arms it). Reads the player, scales
-            // motionX/Z by keepSprintFactor, and consumes the one-shot keep flag.
+            // KeepSprint: brute-force apply on the MC main thread. While KeepSprint is active
+            // (player attacking & moving), multiply motionX/Z by the factor EVERY frame so the
+            // background thread's writes can't be overwritten and the speed is held continuously.
+            // This is the Raven model: keep the speed up for the whole attack, no one-shot.
             try {
                 val player = MappingContext.getFieldValue(mc, "forge:mc_thePlayer")
-                if (player != null && EventBridge.consumeKeepSprint()) {
+                if (player != null && EventBridge.isKeepSprintActive()) {
                     val factor = EventBridge.keepSprintFactor
                     val mX = MappingContext.getField("forge:entity_motionX")?.getDouble(player) ?: 0.0
-                    val mY = MappingContext.getField("forge:entity_motionY")?.getDouble(player) ?: 0.0
                     val mZ = MappingContext.getField("forge:entity_motionZ")?.getDouble(player) ?: 0.0
                     val mag = kotlin.math.sqrt(mX * mX + mZ * mZ)
                     if (mag > 0.001) {

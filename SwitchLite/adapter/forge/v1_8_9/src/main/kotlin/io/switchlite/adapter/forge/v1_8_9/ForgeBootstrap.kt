@@ -45,6 +45,9 @@ object ForgeBootstrap {
     /** Diagnostic — log render-hook liveness once. */
     private var renderDiagLogged = false
 
+    /** Throttle counter for the KeepSprint main-thread diagnostic. */
+    private var ksKeepDiag = 0
+
     /** Physical mouse button edge trackers — count real clicks for the CPS counter. */
     private var physLeftPrev = false
     private var physRightPrev = false
@@ -260,18 +263,26 @@ object ForgeBootstrap {
             // KeepSprint: brute-force apply on the MC main thread. While KeepSprint is active
             // (player attacking & moving), multiply motionX/Z by the factor EVERY frame so the
             // background thread's writes can't be overwritten and the speed is held continuously.
-            // This is the Raven model: keep the speed up for the whole attack, no one-shot.
             try {
                 val player = MappingContext.getFieldValue(mc, "forge:mc_thePlayer")
-                if (player != null && EventBridge.isKeepSprintActive()) {
+                val keepActive = EventBridge.isKeepSprintActive()
+                if (keepActive && player != null) {
                     val factor = EventBridge.keepSprintFactor
                     val mX = MappingContext.getField("forge:entity_motionX")?.getDouble(player) ?: 0.0
                     val mZ = MappingContext.getField("forge:entity_motionZ")?.getDouble(player) ?: 0.0
                     val mag = kotlin.math.sqrt(mX * mX + mZ * mZ)
+                    // Throttled diag so we can confirm this path runs and the factor value.
+                    if (++ksKeepDiag % 60 == 0) {
+                        io.switchlite.core.logging.CoreLogger.info(
+                            "[KeepSprint] main-thread keep factor=$factor motion=(${"%.3f".format(mX)},${"%.3f".format(mZ)}) mag=${"%.3f".format(mag)}"
+                        )
+                    }
                     if (mag > 0.001) {
                         MappingContext.getField("forge:entity_motionX")?.setDouble(player, mX * factor)
                         MappingContext.getField("forge:entity_motionZ")?.setDouble(player, mZ * factor)
                     }
+                } else if (keepActive && ++ksKeepDiag % 60 == 0) {
+                    io.switchlite.core.logging.CoreLogger.info("[KeepSprint] keep active but player null or mag=0")
                 }
             } catch (_: Exception) {}
 

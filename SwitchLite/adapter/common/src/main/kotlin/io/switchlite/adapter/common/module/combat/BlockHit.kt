@@ -55,7 +55,7 @@ object BlockHit : Module("BlockHit", Category.COMBAT) {
 
     // ========== Filters ==========
     private val onlySword by boolean("OnlySword", true)
-    private val onlyPlayers by boolean("OnlyPlayers", true)
+    private val onlyPlayers by boolean("OnlyPlayers", false)
 
     // ========== Conditions (Unified Engine — shared with AimAssist/Velocity/etc.) ==========
     private val onlyPlane by boolean("OnlyPlane", true)

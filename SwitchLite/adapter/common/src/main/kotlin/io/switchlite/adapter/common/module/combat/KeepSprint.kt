@@ -66,6 +66,8 @@ object KeepSprint : Module("KeepSprint", Category.COMBAT) {
         private set
 
     // ========== Diagnostic (interval measurement) ==========
+    /** Whether the one-shot probe has fired (confirms onRenderFrame is reached). */
+    @Volatile private var probeLogged = false
     /** Frame counter for the diagnostic. */
     @Volatile private var diagFrame = 0
     /** Frames since the last attack rising edge, measured while attacking. */
@@ -84,6 +86,10 @@ object KeepSprint : Module("KeepSprint", Category.COMBAT) {
         prevAttacking = false
         keepFraction = 1.0f
         sprintCap = 0.28
+        probeLogged = false
+        diagFrame = 0
+        framesSinceAttackEdge = 0
+        sprintSwitchOffObserved = false
     }
 
     private fun buildConfig(): KeepSprintConfig {
@@ -113,6 +119,18 @@ object KeepSprint : Module("KeepSprint", Category.COMBAT) {
 
             // "Attacking now" — physical left mouse OR AutoClicker synthetic attack.
             val attacking = EventBridge.isLeftMousePhysicallyDown || EventBridge.syntheticAttack
+
+            // PROBE: fire once on first enable to confirm this function is even called and what the
+            // key signals read. This is a one-shot diagnostic — it does NOT depend on the entry
+            // conditions below, so if it prints we know the hook + module are alive.
+            if (!probeLogged) {
+                probeLogged = true
+                CoreLogger.info(
+                    "[KeepSprint.PROBE] onRenderFrame reached! playerNull=false " +
+                    "enabled=$enabled attacking=$attacking (phys=${EventBridge.isLeftMousePhysicallyDown} " +
+                    "synth=${EventBridge.syntheticAttack}) moving=$moving speed=$currentSpeed"
+                )
+            }
 
             // Track the natural sprint cap as a running max while sprinting + moving (also during an
             // attack — the max absorbs the pre-slowdown speed). Stable, never a stale 0.28-only value.

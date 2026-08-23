@@ -17,6 +17,10 @@ object ForgePacketInterceptor : ChannelDuplexHandler() {
     private const val HANDLER_NAME = "switchlite_velocity"
     private var injected = false
 
+    /** Diagnostic counters for S12 interception probes. */
+    private var s12Diag = 0
+    private var s12MismatchDiag = 0
+
     // Lazy class references
     private val s12PacketClass by lazy { Class.forName("net.minecraft.network.play.server.S12PacketEntityVelocity") }
     private val s27PacketClass by lazy { Class.forName("net.minecraft.network.play.server.S27PacketExplosion") }
@@ -44,9 +48,7 @@ object ForgePacketInterceptor : ChannelDuplexHandler() {
             ?: return
         val channel = try {
             val networkManager = getNetworkManager(netHandler) ?: return
-            val channelField = networkManager.javaClass.getDeclaredField("channel")
-            channelField.isAccessible = true
-            channelField.get(networkManager) as? io.netty.channel.Channel
+            resolveChannelField(networkManager)
         } catch (e: Exception) {
             CoreLogger.error("[ForgePacketInterceptor] Failed to get channel: ${e.message}")
             null
@@ -71,9 +73,7 @@ object ForgePacketInterceptor : ChannelDuplexHandler() {
             ?: return
         val channel = try {
             val networkManager = getNetworkManager(netHandler) ?: return
-            val channelField = networkManager.javaClass.getDeclaredField("channel")
-            channelField.isAccessible = true
-            channelField.get(networkManager) as? io.netty.channel.Channel
+            resolveChannelField(networkManager)
         } catch (_: Exception) { null } ?: return
 
         val pipeline = channel.pipeline()
@@ -83,8 +83,40 @@ object ForgePacketInterceptor : ChannelDuplexHandler() {
         }
     }
 
+    /**
+     * Resolve the Netty Channel field on a NetworkManager. The field NAME is obfuscated at runtime
+     * (SRG), so matching by name ("channel") throws NoSuchFieldException — the root cause of the
+     * interceptor never injecting. Match by TYPE instead (io.netty.channel.Channel), which is not
+     * obfuscated. Tries the direct-name first for deobfuscated environments, then scans by type.
+     */
+    private fun resolveChannelField(networkManager: Any): io.netty.channel.Channel? {
+        val clazz = networkManager.javaClass
+        // Fast path: a field literally named "channel" (deobf / dev env).
+        try {
+            val f = clazz.getDeclaredField("channel")
+            f.isAccessible = true
+            val v = f.get(networkManager)
+            if (v is io.netty.channel.Channel) return v
+        } catch (_: Exception) {}
+        // Obfuscated runtime: scan all fields for one whose type is Channel.
+        for (f in clazz.declaredFields) {
+            if (io.netty.channel.Channel::class.java.isAssignableFrom(f.type)) {
+                f.isAccessible = true
+                try {
+                    val v = f.get(networkManager)
+                    if (v is io.netty.channel.Channel) return v
+                } catch (_: Exception) {}
+            }
+        }
+        return null
+    }
+
     override fun channelRead(ctx: ChannelHandlerContext, msg: Any) {
         if (s12PacketClass.isInstance(msg)) {
+            // PROBE: confirm S12 knockback packets actually reach this handler (interception alive).
+            if (++s12Diag % 5 == 0) {
+                CoreLogger.info("[ForgePacketInterceptor] S12 packet reached handler (interception alive)")
+            }
             val mc = try { MappingContext.invokeMethod(null, "forge:mc_getMinecraft") } catch (_: Exception) { null }
             val player = try { MappingContext.getFieldValue(mc, "forge:mc_thePlayer") } catch (_: Exception) { null }
             if (player != null) {
@@ -106,6 +138,13 @@ object ForgePacketInterceptor : ChannelDuplexHandler() {
                             return
                         }
                         else -> {}
+                    }
+                } else {
+                    // PROBE: packet reached but entity-id match failed — the likely failure point.
+                    if (++s12MismatchDiag % 5 == 0) {
+                        CoreLogger.info(
+                            "[ForgePacketInterceptor] S12 entityId=$packetEntityId playerId=$playerEntityId (mismatch or null)"
+                        )
                     }
                 }
             }

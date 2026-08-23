@@ -84,17 +84,35 @@ object JumpReset : Module("JumpReset", Category.COMBAT) {
     }
 
     // ========== Knockback Handler ==========
+    /** Throttle for the JumpReset trigger diagnostic. */
+    @Volatile private var jrDiag = 0
+
     private fun onKnockback(ctx: VelocityContext) {
         val player = ctx.player
         val target = ctx.target
         val motion = ctx.originalMotion
 
+        // Diagnostic: log each knockback arrival + which gate blocks (throttled).
+        if (++jrDiag % 3 == 0) {
+            io.switchlite.core.logging.CoreLogger.info(
+                "[JumpReset] S12 recv sprint=${player.isSprinting} ground=${player.onGround} " +
+                "fluid=${EventBridge.isInFluid} motion=(${motion.x},${motion.y},${motion.z}) " +
+                "chance=$chance cd=$cooldownMode/$ticksUntilJump"
+            )
+        }
+
         // ---- Internal conditions (not configurable) ----
         // Must be sprinting
-        if (!player.isSprinting) return
+        if (!player.isSprinting) {
+            if (++jrDiag % 3 == 0) io.switchlite.core.logging.CoreLogger.info("[JumpReset] blocked: not sprinting")
+            return
+        }
 
         // Must be on ground
-        if (!player.onGround) return
+        if (!player.onGround) {
+            if (++jrDiag % 3 == 0) io.switchlite.core.logging.CoreLogger.info("[JumpReset] blocked: not on ground")
+            return
+        }
 
         // NOTE: no hurtTime gate here. The S12 knockback packet (this handler's trigger) is the
         // authoritative "I was hit + knocked back" signal. The old `hurtTime == 9` check was ported

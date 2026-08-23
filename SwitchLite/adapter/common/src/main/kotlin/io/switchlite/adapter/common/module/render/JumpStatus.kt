@@ -20,10 +20,10 @@ import io.switchlite.adapter.common.render.RenderContext
 object JumpStatus : Module("JumpStatus", Category.RENDER) {
 
     @Volatile
-    var posX: Int = 8
+    var posX: Int = -1
         private set
     @Volatile
-    var posY: Int = 260
+    var posY: Int = -1
         private set
 
     /** Widget scale factor. */
@@ -36,6 +36,11 @@ object JumpStatus : Module("JumpStatus", Category.RENDER) {
 
     fun render(ctx: RenderContext) {
         if (!enabled) return
+        // First render: center the widget on screen (posX/posY == -1 means "unplaced").
+        if (posX < 0 || posY < 0) {
+            posX = (ctx.scaledWidth - widgetWidth(ctx)) / 2
+            posY = (ctx.scaledHeight - widgetHeight(ctx)) / 2
+        }
         handleDrag(ctx)
         draw(ctx)
     }

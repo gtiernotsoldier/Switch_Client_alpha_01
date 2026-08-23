@@ -126,11 +126,23 @@ object Velocity : Module("Velocity", Category.COMBAT), HudLineProvider {
 
     // ========== Entry Point ==========
 
+    /** Throttle for the velocity result diagnostic. */
+    @Volatile private var velDiagCount = 0
+
     fun onVelocityPacket(ctx: VelocityContext): PlatformCommand {
         val config = cachedConfig { buildConfig() }
         val result = currentStrategy().execute(config, strategyState, ctx)
         // Expose whether velocity was actually modified/cancelled (for the VelocityDisplay HUD).
-        EventBridge.velocityModified = result is VelocityResult.Modify || result is VelocityResult.Cancel
+        val modified = result is VelocityResult.Modify || result is VelocityResult.Cancel
+        EventBridge.velocityModified = modified
+        // Diagnostic: confirm the strategy actually produced Modify (HUD color check).
+        if (++velDiagCount % 10 == 0) {
+            io.switchlite.core.logging.CoreLogger.info(
+                "[Velocity] packet result=${result.javaClass.simpleName} modified=$modified " +
+                "mode=$mode hMin=$horizontalMin hMax=$horizontalMax vMin=$verticalMin vMax=$verticalMax " +
+                "chance=$probability onlyOnHit=$onlyOnHitFrame"
+            )
+        }
         return mapResultToCommand(result)
     }
 

@@ -49,6 +49,9 @@ object Speedometer : Module("Speedometer", Category.RENDER) {
     private var prevPosZ = 0.0
     private var prevPosTick = -1L
 
+    /** Low-pass filter state to smooth out per-tick position jitter. */
+    private var smoothedSpeed = 0f
+
     private val tickListener: (io.switchlite.core.model.PlayerState, io.switchlite.core.model.TargetState?) -> Unit = { p, _ ->
         if (enabled) {
             // Measure speed from POSITION DISPLACEMENT over time, NOT Entity.motionX/Z.
@@ -62,7 +65,11 @@ object Speedometer : Module("Speedometer", Category.RENDER) {
                     val dx = p.position.x - prevPosX
                     val dz = p.position.z - prevPosZ
                     val dist = sqrt(dx * dx + dz * dz)
-                    speedBps = (dist / dtSec).toFloat()
+                    val instBps = (dist / dtSec).toFloat()
+                    // EMA low-pass: smooths the jitter from reading an integer-ish position each
+                    // tick. First sample just takes the raw value; afterwards blend 30% new.
+                    smoothedSpeed = if (smoothedSpeed <= 0f) instBps else smoothedSpeed * 0.7f + instBps * 0.3f
+                    speedBps = smoothedSpeed
                     retentionPct = if (SPRINT_BPS > 0f) ((speedBps / SPRINT_BPS) * 100f).coerceIn(0f, 300f) else 0f
                 }
             }
@@ -152,6 +159,7 @@ object Speedometer : Module("Speedometer", Category.RENDER) {
     // ========== Lifecycle ==========
     override fun onEnable() {
         prevPosTick = -1L
+        smoothedSpeed = 0f
         EventBridge.registerTickListener(tickListener)
     }
 
@@ -161,5 +169,6 @@ object Speedometer : Module("Speedometer", Category.RENDER) {
         retentionPct = 0f
         sprinting = false
         prevPosTick = -1L
+        smoothedSpeed = 0f
     }
 }

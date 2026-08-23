@@ -34,7 +34,7 @@ object WTap : Module("WTap", Category.COMBAT) {
     private val chance by int("Chance", 100, 0..100, "%")
     private val rangeMin by float("RangeMin", 0.0f, 0.0f..6.0f, "blocks")
     private val rangeMax by float("RangeMax", 3.0f, 0.0f..6.0f, "blocks")
-    private val onlyPlayers by boolean("OnlyPlayers", true)
+    private val onlyPlayers by boolean("OnlyPlayers", false)
 
     // ========== Shared Conditions (Unified Engine) ==========
     private val onlyPlane by boolean("OnlyPlane", true)

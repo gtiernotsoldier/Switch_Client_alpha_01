@@ -96,8 +96,12 @@ object JumpReset : Module("JumpReset", Category.COMBAT) {
         // Must be on ground
         if (!player.onGround) return
 
-        // Must be at hurtTime == 9 (specific frame after damage)
-        if (player.hurtTime != 9) return
+        // NOTE: no hurtTime gate here. The S12 knockback packet (this handler's trigger) is the
+        // authoritative "I was hit + knocked back" signal. The old `hurtTime == 9` check was ported
+        // from LiquidBounce's main-thread tick semantics, but here the packet arrives on the Netty
+        // thread before the main thread applies the damage, so hurtTime reads 0 (or a stale value)
+        // and the exact ==9 frame is essentially never sampled -> JumpReset never fired. Direction A:
+        // trust the packet; remove the hurtTime gate entirely.
 
         // Must not be in water/lava/web
         if (EventBridge.isInFluid) return

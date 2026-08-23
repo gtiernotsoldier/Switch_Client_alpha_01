@@ -125,6 +125,31 @@ object KeepSprintStrategy : Strategy<KeepSprintConfig, KeepSprintState, KeepSpri
         }
 
     /**
+     * Compounding-proof motion restore with natural jitter (anti-detection).
+     *
+     * The vanilla attack multiplies motion by 0.6; this scales the current horizontal motion back
+     * up so its magnitude reaches [targetCap] * [jitter]. [jitter] is a small random factor near 1.0
+     * (e.g. 0.97..1.0) so the kept speed isn't a frozen constant — real players vary slightly, and a
+     * perfectly flat speed every swing is what a server heuristic would flag. Returns null when
+     * already at/above target (no restore) or essentially stationary, so per-frame calling can never
+     * overshoot or accelerate.
+     */
+    fun restoreMotion(
+        motionX: Double,
+        motionY: Double,
+        motionZ: Double,
+        targetCap: Double,
+        jitter: Double
+    ): Vec3? {
+        val current = sqrt(motionX * motionX + motionZ * motionZ)
+        if (current < 0.001) return null
+        val target = targetCap * jitter
+        if (current >= target) return null // already at/above the (jittered) target — nothing to restore
+        val scale = target / current
+        return Vec3(motionX * scale, motionY, motionZ * scale)
+    }
+
+    /**
      * Pure algorithm: compute the keep-factor and the resulting scaled horizontal motion vector,
      * given the mode, target distance, and current player motion. Zero platform dependencies.
      *

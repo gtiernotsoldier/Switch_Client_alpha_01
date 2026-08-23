@@ -44,12 +44,31 @@ object Speedometer : Module("Speedometer", Category.RENDER) {
     @Volatile private var retentionPct: Float = 0f
     @Volatile private var sprinting = false
 
+    // Previous-tick position tracking for displacement-based speed measurement.
+    private var prevPosX = 0.0
+    private var prevPosZ = 0.0
+    private var prevPosTick = -1L
+
     private val tickListener: (io.switchlite.core.model.PlayerState, io.switchlite.core.model.TargetState?) -> Unit = { p, _ ->
         if (enabled) {
-            val hSpeed = sqrt(p.motionX * p.motionX + p.motionZ * p.motionZ)
-            // motion is in blocks/tick (1.8); *20 = blocks/second.
-            speedBps = (hSpeed * 20f).toFloat()
-            retentionPct = if (SPRINT_BPS > 0f) ((speedBps / SPRINT_BPS) * 100f).coerceIn(0f, 300f) else 0f
+            // Measure speed from POSITION DISPLACEMENT over time, NOT Entity.motionX/Z.
+            // field_70159_w (motionX) decays instantly each tick and reads ~walk speed even when
+            // sprinting, so it under-reports. Displacement is the actual distance moved and is
+            // reliable regardless of sprint.
+            val t = System.nanoTime()
+            if (prevPosTick != -1L) {
+                val dtSec = (t - prevPosTick) / 1_000_000_000.0
+                if (dtSec > 0.0) {
+                    val dx = p.position.x - prevPosX
+                    val dz = p.position.z - prevPosZ
+                    val dist = sqrt(dx * dx + dz * dz)
+                    speedBps = (dist / dtSec).toFloat()
+                    retentionPct = if (SPRINT_BPS > 0f) ((speedBps / SPRINT_BPS) * 100f).coerceIn(0f, 300f) else 0f
+                }
+            }
+            prevPosX = p.position.x
+            prevPosZ = p.position.z
+            prevPosTick = t
             sprinting = p.isSprinting
         }
     }
@@ -132,6 +151,7 @@ object Speedometer : Module("Speedometer", Category.RENDER) {
 
     // ========== Lifecycle ==========
     override fun onEnable() {
+        prevPosTick = -1L
         EventBridge.registerTickListener(tickListener)
     }
 
@@ -140,5 +160,6 @@ object Speedometer : Module("Speedometer", Category.RENDER) {
         speedBps = 0f
         retentionPct = 0f
         sprinting = false
+        prevPosTick = -1L
     }
 }

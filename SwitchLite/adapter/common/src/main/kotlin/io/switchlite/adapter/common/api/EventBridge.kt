@@ -659,6 +659,9 @@ object EventBridge {
         pendingJump = true
     }
 
+    /** Whether a JumpReset pulse is currently holding the jump key (main-thread read). */
+    fun isJumpPulseActive(): Boolean = jumpPressedSince != 0L
+
     /**
      * Called by the platform's MAIN (render) thread each frame: apply a queued jump press, and
      * auto-release it after the pulse window. Returns whether the jump key is currently pressed.

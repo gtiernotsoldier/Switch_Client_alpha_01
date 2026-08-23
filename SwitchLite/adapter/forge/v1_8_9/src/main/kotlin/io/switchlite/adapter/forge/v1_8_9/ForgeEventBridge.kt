@@ -188,10 +188,12 @@ object ForgeEventBridge : IEventBridge {
      * The background 20Hz tick previously sampled these, but a JumpReset pulse only presses the jump
      * key for ~80ms on the main thread, so the 20Hz sample could miss the window and the jump key
      * never lit up. Reading on the main thread every frame makes the HUD reflect the real key state.
+     * The jump mirror also ORs the live JumpReset pulse state, because MC may consume/clear the
+     * KeyBinding pressed field before the render frame — the pulse flag is the authoritative signal.
      */
     fun refreshKeyDisplayState() {
         try {
-            EventBridge.isKeyJumpDown = readKeyPressed("forge:gs_keyBindJump")
+            EventBridge.isKeyJumpDown = readKeyPressed("forge:gs_keyBindJump") || EventBridge.isJumpPulseActive()
             EventBridge.isKeyForwardDown = readKeyPressed("forge:gs_keyBindForward")
             EventBridge.isKeyBackDown = readKeyPressed("forge:gs_keyBindBack")
             EventBridge.isKeyLeftDown = readKeyPressed("forge:gs_keyBindLeft")

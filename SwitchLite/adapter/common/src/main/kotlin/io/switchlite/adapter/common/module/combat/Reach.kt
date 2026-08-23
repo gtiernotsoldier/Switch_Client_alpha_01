@@ -2,9 +2,6 @@ package io.switchlite.adapter.common.module.combat
 
 import io.switchlite.core.model.PlayerState
 import io.switchlite.core.model.TargetState
-import io.switchlite.core.strategy.reach.ReachConfig
-import io.switchlite.core.strategy.reach.ReachInput
-import io.switchlite.core.strategy.reach.ReachRaycast
 import io.switchlite.adapter.common.api.EventBridge
 import io.switchlite.adapter.common.module.HudLineProvider
 import io.switchlite.adapter.common.module.Module
@@ -65,30 +62,18 @@ object Reach : Module("Reach", Category.COMBAT), HudLineProvider {
         if (enabled) onTick(p)
     }
 
-    private fun buildConfig(): ReachConfig = ReachConfig(
-        minReach = reachMin,
-        maxReach = reachMax,
-        weaponOnly = weaponOnly,
-        movingOnly = movingOnly,
-        sprintOnly = sprintOnly,
-        hitThroughBlocks = hitThroughBlocks,
-        chance = chance
-    )
-
     private fun onTick(player: PlayerState) {
-        val config = buildConfig()
-
         // Per-click chance roll (only when physically clicking — Raven triggers on MouseEvent).
         if (!EventBridge.isLeftMousePhysicallyDown) return
-        if (config.chance < 100 && Random.nextInt(100) >= config.chance) return
+        if (chance < 100 && Random.nextInt(100) >= chance) return
 
         // Weapon / moving / sprint gates (Raven's call() pre-checks).
-        if (config.weaponOnly && player.weaponType == io.switchlite.core.strategy.click.WeaponType.OTHER) return
-        if (config.movingOnly && !player.isMoving) return
-        if (config.sprintOnly && !player.isSprinting) return
+        if (weaponOnly && player.weaponType == io.switchlite.core.strategy.click.WeaponType.OTHER) return
+        if (movingOnly && !player.isMoving) return
+        if (sprintOnly && !player.isSprinting) return
 
         // Hit-through-blocks: skip extension when the crosshair currently hits a block.
-        if (!config.hitThroughBlocks && EventBridge.isLookingAtBlock) return
+        if (!hitThroughBlocks && EventBridge.isLookingAtBlock) return
 
         // Random reach in min..max, then run the platform raycast to overwrite objectMouseOver.
         val reach = if (reachMax > reachMin) {

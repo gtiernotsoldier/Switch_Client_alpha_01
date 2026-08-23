@@ -20,6 +20,7 @@ object ForgePacketInterceptor : ChannelDuplexHandler() {
     /** Diagnostic counters for S12 interception probes. */
     private var s12Diag = 0
     private var s12MismatchDiag = 0
+    private var ensureDiag = 0
 
     // Lazy class references
     private val s12PacketClass by lazy { Class.forName("net.minecraft.network.play.server.S12PacketEntityVelocity") }
@@ -38,15 +39,22 @@ object ForgePacketInterceptor : ChannelDuplexHandler() {
 
     fun ensureInjected() {
         if (injected) return
+        // PROBE: confirm this is actually called and what injected/mc read (INFO level — visible).
+        if (++ensureDiag % 60 == 0) {
+            CoreLogger.info("[ForgePacketInterceptor] ensureInjected called, injected=$injected")
+        }
         inject()
     }
 
     fun inject() {
         val mc = try { MappingContext.invokeMethod(null, "forge:mc_getMinecraft") } catch (_: Exception) { null }
-            ?: return
+        if (mc == null) {
+            CoreLogger.info("[ForgePacketInterceptor] inject: mc_getMinecraft returned null")
+            return
+        }
         val netHandler = try { MappingContext.getFieldValue(mc, "forge:mc_netHandler") } catch (_: Exception) { null }
         if (netHandler == null) {
-            CoreLogger.debug("[ForgePacketInterceptor] inject: mc_netHandler is null (not in world yet)")
+            CoreLogger.info("[ForgePacketInterceptor] inject: mc_netHandler is null (not in world yet)")
             return
         }
         val networkManager = getNetworkManager(netHandler)

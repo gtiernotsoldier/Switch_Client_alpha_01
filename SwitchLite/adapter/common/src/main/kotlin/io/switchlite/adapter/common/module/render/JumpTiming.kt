@@ -46,10 +46,10 @@ object JumpTiming : Module("JumpTiming", Category.RENDER) {
     private const val COLOR_WHITE = 0xFFFFFF
 
     @Volatile
-    var posX: Int = -1
+    var posX: Int = 8
         private set
     @Volatile
-    var posY: Int = -1
+    var posY: Int = 280
         private set
 
     var scale by float("Scale", 1.0f, 0.5f..2.0f)
@@ -185,9 +185,17 @@ object JumpTiming : Module("JumpTiming", Category.RENDER) {
 
     private fun draw(ctx: RenderContext) {
         val f = ctx.fontRenderer
+        val g = ctx.gl
         val lineH = f.fontHeight + 2
-        f.drawStringWithShadow(status, posX, posY, color)
-        f.drawStringWithShadow(rateText(), posX, posY + lineH, 0xC0C0C0)
+        // Apply the Scale option for real: scale the modelview, draw at posX/scale so the text
+        // lands at posX..posX+width*scale (matching the drag hitbox).
+        g.glPushMatrix()
+        g.glScalef(scale, scale, 1f)
+        val x = (posX / scale).toInt()
+        val y = (posY / scale).toInt()
+        f.drawStringWithShadow(status, x, y, color)
+        f.drawStringWithShadow(rateText(), x, y + lineH, 0xC0C0C0)
+        g.glPopMatrix()
     }
 
     // ========== Lifecycle ==========

@@ -145,15 +145,21 @@ object Speedometer : Module("Speedometer", Category.RENDER) {
 
     private fun draw(ctx: RenderContext) {
         val f = ctx.fontRenderer
-        val x = posX
-        val y = posY
+        val g = ctx.gl
         val lineH = f.fontHeight + 2
 
         val color = if (sprinting) 0xFF7A00 else 0xFFFFFF
 
+        // Apply the Scale option for real: scale the modelview, draw at posX/scale so the text
+        // lands at posX..posX+width*scale (matching the drag hitbox).
+        g.glPushMatrix()
+        g.glScalef(scale, scale, 1f)
+        val x = (posX / scale).toInt()
+        val y = (posY / scale).toInt()
         f.drawStringWithShadow(speedText(), x, y, color)
         f.drawStringWithShadow(retentionText(), x, y + lineH, color)
         f.drawStringWithShadow(sprintText(), x, y + lineH * 2, 0xC0C0C0)
+        g.glPopMatrix()
     }
 
     // ========== Lifecycle ==========

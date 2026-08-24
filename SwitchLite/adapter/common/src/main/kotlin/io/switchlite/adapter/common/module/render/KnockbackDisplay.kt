@@ -31,13 +31,13 @@ object KnockbackDisplay : Module("KnockbackDisplay", Category.RENDER) {
     private const val DEALT_MATCH_MS = 600L
     private const val MEASURE_MS = 1500L
     /** After the measurement, keep the readout for this long, then reset it to zero. */
-    private const val DISPLAY_HOLD_MS = 2000L
+    private const val DISPLAY_HOLD_MS = 500L
 
     @Volatile
-    var posX: Int = -1
+    var posX: Int = 8
         private set
     @Volatile
-    var posY: Int = -1
+    var posY: Int = 320
         private set
 
     var scale by float("Scale", 1.0f, 0.5f..2.0f)
@@ -251,14 +251,22 @@ object KnockbackDisplay : Module("KnockbackDisplay", Category.RENDER) {
 
     private fun draw(ctx: RenderContext) {
         val f = ctx.fontRenderer
+        val g = ctx.gl
         val lineH = f.fontHeight + 2
         val ls = lines()
         // IN line is accent-colored when Velocity modified the last packet, else white.
         val inColor = if (EventBridge.velocityModified) 0xFF7A00 else 0xFFFFFF
-        f.drawStringWithShadow(ls[0], posX, posY, inColor)
-        f.drawStringWithShadow(ls[1], posX, posY + lineH, 0xC0C0C0)
-        f.drawStringWithShadow(ls[2], posX, posY + lineH * 2, 0xFFFFFF)
-        f.drawStringWithShadow(ls[3], posX, posY + lineH * 3, 0xC0C0C0)
+        // Apply the Scale option for real: scale the modelview, draw at posX/scale so the text
+        // lands at posX..posX+width*scale (matching the drag hitbox).
+        g.glPushMatrix()
+        g.glScalef(scale, scale, 1f)
+        val x = (posX / scale).toInt()
+        val y = (posY / scale).toInt()
+        f.drawStringWithShadow(ls[0], x, y, inColor)
+        f.drawStringWithShadow(ls[1], x, y + lineH, 0xC0C0C0)
+        f.drawStringWithShadow(ls[2], x, y + lineH * 2, 0xFFFFFF)
+        f.drawStringWithShadow(ls[3], x, y + lineH * 3, 0xC0C0C0)
+        g.glPopMatrix()
     }
 
     // ========== Lifecycle ==========

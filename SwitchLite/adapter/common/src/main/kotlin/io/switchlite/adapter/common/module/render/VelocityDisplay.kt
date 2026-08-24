@@ -126,16 +126,23 @@ object VelocityDisplay : Module("VelocityDisplay", Category.RENDER) {
 
     private fun draw(ctx: RenderContext) {
         val f = ctx.fontRenderer
-        val x = posX
-        val y = posY
+        val g = ctx.gl
         val lineH = f.fontHeight + 2
 
         // Accent when Velocity modified the last packet; white when vanilla.
         val color = if (modified) 0xFF7A00 else 0xFFFFFF
 
+        // Apply the Scale option for real: scale the modelview, draw at posX/scale so the text
+        // lands at posX..posX+width*scale (matching the drag hitbox).
+        g.glPushMatrix()
+        g.glScalef(scale, scale, 1f)
+        val x = (posX / scale).toInt()
+        val y = (posY / scale).toInt()
+
         val ls = lines()
         f.drawStringWithShadow(ls[0], x, y, color)
         f.drawStringWithShadow(ls[1], x, y + lineH, color)
+        g.glPopMatrix()
     }
 
     // ========== Lifecycle ==========

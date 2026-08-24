@@ -12,6 +12,8 @@ import java.security.ProtectionDomain;
 import javassist.ClassPool;
 import javassist.CtClass;
 import javassist.CtMethod;
+import javassist.expr.ExprEditor;
+import javassist.expr.MethodCall;
 
 /**
  * Javassist bytecode injection layer — hooks Display.update() for HUD rendering.
@@ -316,11 +318,14 @@ public class Transformer implements ClassFileTransformer {
     }
 
     /**
-     * Inject RenderBridge.onWorldRender() at the END of EntityRenderer.renderWorldPass
-     * (SRG func_175068_a — the (IFJ)V method that renders world entities/tile entities).
-     * At that point the GL projection/modelview are the world ones and the depth buffer holds
-     * the rendered scene, so the HitBox overlay aligns with the scene and is occluded by walls.
-     * insertAfter runs the call before every return — with the world matrices active.
+     * Inject RenderBridge.onWorldRender() into EntityRenderer.renderWorldPass (SRG func_175068_a —
+     * the (IFJ)V method that renders world entities/tile entities).
+     *
+     * Preferred anchor: right BEFORE the renderHand call inside renderWorldPass — the world is
+     * fully rendered, the depth buffer holds the scene and the camera matrices are active. This is
+     * the exact point LiquidBounce/FDP use for their Render3D/WorldRender events, so the HitBox
+     * overlay aligns with the scene and is occluded by walls (not X-ray). If the renderHand call
+     * is not found (heavily patched build), fall back to insertAfter (end of method).
      */
     private byte[] transformEntityRenderer(byte[] classfileBuffer) {
         try {
@@ -340,17 +345,31 @@ public class Transformer implements ClassFileTransformer {
                 }
             }
 
-            renderWorldPass.insertAfter(
+            final String hookSrc =
                 "try { Class.forName(\"io.switchlite.agent.\" + new String(\"RenderBridge\"), true, " +
                 "Thread.currentThread().getContextClassLoader())" +
                 ".getMethod(\"onWorldRender\", new java.lang.Class[0])" +
-                ".invoke(null, new java.lang.Object[0]); } catch (Throwable t) {}"
-            );
+                ".invoke(null, new java.lang.Object[0]); } catch (Throwable t) {}";
+
+            final boolean[] anchored = {false};
+            renderWorldPass.instrument(new ExprEditor() {
+                @Override
+                public void edit(MethodCall m) throws javassist.CannotCompileException {
+                    if ("renderHand".equals(m.getMethodName())) {
+                        anchored[0] = true;
+                        // Run the hook, then the original renderHand call ($proceed keeps args).
+                        m.replace("{ " + hookSrc + "$proceed($$); }");
+                    }
+                }
+            });
+            if (!anchored[0]) {
+                renderWorldPass.insertAfter(hookSrc);
+            }
 
             byte[] result = ctClass.toBytecode();
             ctClass.defrost();
             worldHooked = true;
-            Agent.log("[Transformer] EntityRenderer.renderWorldPass hooked — RenderBridge.onWorldRender() called every world frame");
+            Agent.log("[Transformer] EntityRenderer.renderWorldPass hooked (anchor " + (anchored[0] ? "renderHand" : "method-end") + ")");
             return result;
         } catch (Throwable e) {
             Agent.log("[Transformer] renderWorldPass hook failed: " + e.getClass().getSimpleName() + ": " + e.getMessage());

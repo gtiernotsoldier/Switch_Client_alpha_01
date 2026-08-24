@@ -6,7 +6,6 @@ import io.switchlite.adapter.common.module.Module
 import io.switchlite.adapter.common.option.boolean
 import io.switchlite.adapter.common.option.choices
 import io.switchlite.adapter.common.option.float
-import io.switchlite.adapter.common.option.int
 import io.switchlite.adapter.common.render.GL11Bridge
 import io.switchlite.adapter.common.render.GLConstants
 import io.switchlite.adapter.common.render.HitBoxCategory
@@ -16,17 +15,17 @@ import io.switchlite.adapter.common.render.HitBoxEntity
  * HitBox — draws entity collision boxes in the world (visual/RENDER category).
  *
  * The platform adapter (ForgeEventBridge) collects a [io.switchlite.adapter.common.render.HitBoxFrame]
- * inside the EntityRenderer.renderWorldPass hook — at that point the GL projection/modelview are the
- * world ones and the depth buffer holds the rendered scene, so the boxes align with the models and
- * are occluded by walls (NOT X-ray). Rendering draws wireframe boxes only: no facing-direction
- * lines, no entity names.
+ * inside the EntityRenderer.renderWorldPass hook (anchored right before the hand renders) — at that
+ * point the GL projection/modelview are the world ones and the depth buffer holds the rendered
+ * scene, so the boxes align with the models and are occluded by walls (NOT X-ray). Rendering draws
+ * wireframe boxes only: no facing-direction lines, no entity names.
  *
  * Options:
  *   - Mode  "1.8": the entity's REAL bounding box (getEntityBoundingBox).
  *          "1.7": the 1.7.10-era box sizes for entities whose hitbox 1.8 changed (see [SIZE_1_7];
  *          everything else keeps the real box). Verify in-game, then extend the table.
  *   - Players / Mobs / Items / Own: which entity classes get boxes (own = the player itself).
- *   - Per-category colors (0xRRGGBB) and line width (thin default; thick optional).
+ *   - Per-category NAMED colors (plain words: Green/Red/Blue/...) and line width (thin default).
  *
  * Rendered every world frame, not throttled — the provider does the field reads per frame.
  */
@@ -38,12 +37,24 @@ object HitBox : Module("HitBox", Category.RENDER) {
     private val mobs by boolean("Mobs", true)
     private val items by boolean("Items", false)
     private val own by boolean("Own", true)
-    private val playerColor by int("PlayerColor", 0x00FF00, 0x000000..0xFFFFFF)
-    private val mobColor by int("MobColor", 0xFF3030, 0x000000..0xFFFFFF)
-    private val itemColor by int("ItemColor", 0xFFD000, 0x000000..0xFFFFFF)
-    private val ownColor by int("OwnColor", 0x00E5FF, 0x000000..0xFFFFFF)
+    // Named colors (plain words, no hex needed — same style as Keystrokes' TextColor).
+    private val playerColor by choices("PlayerColor", arrayOf("Green", "Red", "Blue", "Yellow", "Purple", "Cyan", "Orange", "White"))
+    private val mobColor by choices("MobColor", arrayOf("Red", "Green", "Blue", "Yellow", "Purple", "Cyan", "Orange", "White"))
+    private val itemColor by choices("ItemColor", arrayOf("Yellow", "Green", "Red", "Blue", "Purple", "Cyan", "Orange", "White"))
+    private val ownColor by choices("OwnColor", arrayOf("Cyan", "Green", "Red", "Blue", "Yellow", "Purple", "Orange", "White"))
     private val lineWidth by float("LineWidth", 1.0f, 1.0f..4.0f)
     private val maxDist by float("MaxDist", 64.0f, 8.0f..256.0f)
+
+    private val PALETTE: Map<String, Int> = mapOf(
+        "White" to 0xFFFFFF,
+        "Red" to 0xFF3030,
+        "Green" to 0x00E64D,
+        "Blue" to 0x30A0FF,
+        "Yellow" to 0xFFD000,
+        "Purple" to 0xB040FF,
+        "Cyan" to 0x00E5FF,
+        "Orange" to 0xFF7A00
+    )
 
     /**
      * 1.7.10 constructor sizes (width × height) for entities whose hitbox changed in 1.8.
@@ -64,10 +75,24 @@ object HitBox : Module("HitBox", Category.RENDER) {
     )
 
     // ========== Entry point (called by the platform's renderWorldPass hook) ==========
+    /** Diagnostic counters (throttled logging so the render loop never spams). */
+    private var diagFrame = 0
+    private var diagNoFrameLogged = false
+
     fun renderWorld(gl: GL11Bridge) {
         if (!enabled) return
-        val frame = EventBridge.getHitBoxFrame() ?: return
+        val frame = EventBridge.getHitBoxFrame()
+        if (frame == null) {
+            if (!diagNoFrameLogged) {
+                diagNoFrameLogged = true
+                io.switchlite.core.logging.CoreLogger.warn("[HitBox] enabled but no frame provider (world hook alive, provider missing?)")
+            }
+            return
+        }
         val entities = frame.entities
+        if (++diagFrame % 100 == 0) {
+            io.switchlite.core.logging.CoreLogger.info("[HitBox] world hook alive, entities=${entities.size}")
+        }
         if (entities.isEmpty()) return
 
         gl.glPushAttrib(GLConstants.GL_ALL_ATTRIB_BITS)
@@ -81,6 +106,7 @@ object HitBox : Module("HitBox", Category.RENDER) {
             if (lineWidth > 1.0f) gl.glLineWidth(lineWidth)
 
             val maxDistSq = maxDist * maxDist
+            var drawn = 0
             for (e in entities) {
                 val color = colorFor(e) ?: continue
                 val dx = e.centerX - frame.viewerX
@@ -88,6 +114,10 @@ object HitBox : Module("HitBox", Category.RENDER) {
                 val dz = e.centerZ - frame.viewerZ
                 if (dx * dx + dy * dy + dz * dz > maxDistSq) continue
                 drawBox(gl, resolveBox(e), color)
+                drawn++
+            }
+            if (diagFrame % 100 == 0 && drawn == 0) {
+                io.switchlite.core.logging.CoreLogger.info("[HitBox] entities=${entities.size} but 0 drawn (filters?)")
             }
         } finally {
             gl.glPopAttrib()
@@ -112,10 +142,10 @@ object HitBox : Module("HitBox", Category.RENDER) {
     }
 
     private fun colorFor(e: HitBoxEntity): Int? = when (e.category) {
-        HitBoxCategory.PLAYER -> if (players) playerColor else null
-        HitBoxCategory.MOB -> if (mobs) mobColor else null
-        HitBoxCategory.ITEM -> if (items) itemColor else null
-        HitBoxCategory.OWN -> if (own) ownColor else null
+        HitBoxCategory.PLAYER -> if (players) PALETTE[playerColor] else null
+        HitBoxCategory.MOB -> if (mobs) PALETTE[mobColor] else null
+        HitBoxCategory.ITEM -> if (items) PALETTE[itemColor] else null
+        HitBoxCategory.OWN -> if (own) PALETTE[ownColor] else null
     }
 
     // ========== Wireframe drawing (12 edges, GL_LINES) ==========

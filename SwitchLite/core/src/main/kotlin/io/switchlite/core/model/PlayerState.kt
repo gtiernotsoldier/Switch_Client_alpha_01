@@ -22,6 +22,11 @@ data class PlayerState(
     val health: Float,
     val hurtTime: Int,
     val maxHurtResistantTime: Int,
+    /**
+     * EntityLivingBase.hurtResistantTime — the i-frame countdown. == maxHurtResistantTime on the
+     * exact frame the entity was just hit (LiquidBounce's "OnlyOnHitFrame" velocity check).
+     */
+    val hurtResistantTime: Int = 0,
     /** Attack cooldown progress 0.0–1.0. 1.8 always 1.0 (no cooldown bar). */
     val attackCooldownProgress: Float = 1.0f,
     val isBlocking: Boolean,
@@ -56,6 +61,7 @@ data class PlayerState(
         health = health,
         hurtTime = hurtTime,
         maxHurtResistantTime = 10,
+        hurtResistantTime = hurtTime,
         isBlocking = false,
         isUsingItem = false,
         isLookingAtTarget = false,
@@ -78,6 +84,7 @@ data class PlayerState(
             health = 0f,
             hurtTime = 0,
             maxHurtResistantTime = 10,
+            hurtResistantTime = 0,
             isBlocking = false,
             isUsingItem = false,
             isLookingAtTarget = false,

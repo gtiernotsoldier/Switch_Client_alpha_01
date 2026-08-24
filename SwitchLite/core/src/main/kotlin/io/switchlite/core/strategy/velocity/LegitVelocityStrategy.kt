@@ -40,18 +40,6 @@ class LegitVelocityStrategy : VelocityStrategy {
             return VelocityResult.Pass(original)
         }
 
-        // 1b. OnlyOnHitFrame gate (ported from LiquidBounce's velocity): only reduce on the exact
-        // frame the player was just hit. LB uses `hurtResistantTime == maxHurtResistantTime` (first
-        // i-frame). Our PlayerState carries hurtTime (the hit-flash countdown, synchronized with the
-        // i-frames in 1.8.9) — the equivalent "just hit" check is hurtTime == maxHurtResistantTime,
-        // with a non-zero max guard.
-        if (config.onlyOnHitFrame) {
-            val maxHurt = player.maxHurtResistantTime
-            if (maxHurt == 0 || player.hurtTime != maxHurt) {
-                return VelocityResult.Pass(original)
-            }
-        }
-
         // 2. Probability check
         if (config.probability < 100) {
             val roll = (Math.random() * 100).toInt()

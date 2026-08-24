@@ -88,6 +88,7 @@ object ForgeStateExtractor : IStateExtractor {
         val isSprinting = MappingContext.invokeMethod(player, "forge:player_isSprinting") as? Boolean ?: false
         val hurtTime = MappingContext.getFieldValue(player, "forge:entity_hurtTime") as? Int ?: 0
         val maxHurtResistantTime = MappingContext.getFieldValue(player, "forge:entity_maxHurtResistantTime") as? Int ?: 10
+        val hurtResistantTime = MappingContext.getFieldValue(player, "forge:entity_hurtResistantTime") as? Int ?: hurtTime
         val health = MappingContext.invokeMethod(player, "forge:entity_health") as? Float ?: 0f
 
         val moveForward = MappingContext.getFieldValue(player, "forge:entity_player_moveForward") as? Float ?: 0f
@@ -135,6 +136,7 @@ object ForgeStateExtractor : IStateExtractor {
             health = health,
             hurtTime = hurtTime,
             maxHurtResistantTime = maxHurtResistantTime,
+            hurtResistantTime = hurtResistantTime,
             attackCooldownProgress = 1.0f,
             isBlocking = isBlocking,
             isUsingItem = false,

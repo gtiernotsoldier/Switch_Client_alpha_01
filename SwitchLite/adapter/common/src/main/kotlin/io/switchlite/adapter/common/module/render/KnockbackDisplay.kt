@@ -30,6 +30,8 @@ object KnockbackDisplay : Module("KnockbackDisplay", Category.RENDER) {
 
     private const val DEALT_MATCH_MS = 600L
     private const val MEASURE_MS = 1500L
+    /** After the measurement, keep the readout for this long, then reset it to zero. */
+    private const val DISPLAY_HOLD_MS = 2000L
 
     @Volatile
     var posX: Int = -1
@@ -158,6 +160,20 @@ object KnockbackDisplay : Module("KnockbackDisplay", Category.RENDER) {
                     outLastPosZ = pos.z
                 }
             }
+
+            // ── Reset to zero after the display hold — stale readouts must not linger ──
+            if (inKbNano != 0L && System.nanoTime() - inKbNano > DISPLAY_HOLD_MS * 1_000_000L) {
+                inKbNano = 0L
+                inMotionX = 0.0; inMotionY = 0.0; inMotionZ = 0.0
+                inDistance = 0.0
+                inMeasuring = false
+            }
+            if (outKbNano != 0L && System.nanoTime() - outKbNano > DISPLAY_HOLD_MS * 1_000_000L) {
+                outKbNano = 0L
+                outMotionX = 0.0; outMotionY = 0.0; outMotionZ = 0.0
+                outDistance = 0.0
+                outMeasuring = false
+            }
         }
     }
 
@@ -210,7 +226,9 @@ object KnockbackDisplay : Module("KnockbackDisplay", Category.RENDER) {
         val inVec = "IN %.2f %.2f %.2f".format(inMotionX, inMotionY, inMotionZ)
         val orig = EventBridge.lastKbOriginalSpeed
         val mod = EventBridge.lastKbModifiedSpeed
-        val cutText = if (orig > 0.001) {
+        // The Velocity retain/cut % only makes sense while the readout is fresh (a knockback is
+        // being displayed); once it resets to zero, drop the suffix.
+        val cutText = if (inKbNano != 0L && orig > 0.001) {
             val retain = (mod / orig * 100).toInt()
             "D %.2f | %s/%s".format(inDistance, retain, 100 - retain)
         } else {

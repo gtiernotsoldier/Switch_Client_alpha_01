@@ -346,13 +346,20 @@ object ForgeBootstrap {
     }
 
     /**
-     * Called by the agent's world-render hook (RenderBridge.onWorldRender — injected at the END of
-     * EntityRenderer.renderWorldPass, func_175068_a) on MC's render thread, while the GL projection
-     * and modelview are the world ones and the depth buffer holds the rendered scene. The HitBox
-     * overlay draws there, so boxes align with the scene and are occluded by walls (not X-ray).
+     * Called by the agent's world-render hook (RenderBridge.onWorldRender — injected inside
+     * EntityRenderer.renderWorldPass, func_175068_a, anchored right before the hand renders) on
+     * MC's render thread, while the GL projection/modelview are the world ones and the depth
+     * buffer holds the rendered scene. The HitBox overlay draws there, so boxes align with the
+     * scene and are occluded by walls (not X-ray).
      */
+    private var worldHookDiagLogged = false
+
     fun renderWorld() {
         try {
+            if (!worldHookDiagLogged) {
+                worldHookDiagLogged = true
+                CoreLogger.info("[ForgeBootstrap.renderWorld] world hook alive")
+            }
             io.switchlite.adapter.common.module.render.HitBox.renderWorld(glBridge)
         } catch (_: Exception) {}
     }

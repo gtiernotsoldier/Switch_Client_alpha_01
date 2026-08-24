@@ -107,7 +107,6 @@ object Velocity : Module("Velocity", Category.COMBAT), HudLineProvider {
         delayMs = delayMs,
         delayTicks = delayTicks,
         triggerOptions = triggerOptions,
-        onlyOnHitFrame = onlyOnHitFrame,
         clickBurstMin = clicksMin,
         clickBurstMax = clicksMax,
         hurtTimeToClick = hurtTimeToClick,
@@ -131,6 +130,16 @@ object Velocity : Module("Velocity", Category.COMBAT), HudLineProvider {
 
     fun onVelocityPacket(ctx: VelocityContext): PlatformCommand {
         val config = cachedConfig { buildConfig() }
+        // OnlyOnHitFrame gate — LiquidBounce's VelocityLegit check, EXACT LB semantics: reduce only
+        // on the frame the player was just hit (`hurtResistantTime == maxHurtResistantTime`, non-zero
+        // max). It is a pure condition, so per the iron rule it lives in the MODULE (like the other
+        // trigger flags), not inside core's strategy — core stays pure scaling math.
+        if (onlyOnHitFrame) {
+            val maxHurt = ctx.player.maxHurtResistantTime
+            if (maxHurt == 0 || ctx.player.hurtResistantTime != maxHurt) {
+                return PlatformCommand.Pass(ctx.originalMotion)
+            }
+        }
         val result = currentStrategy().execute(config, strategyState, ctx)
         // Expose whether velocity was actually modified/cancelled (for the VelocityDisplay HUD).
         val modified = result is VelocityResult.Modify || result is VelocityResult.Cancel

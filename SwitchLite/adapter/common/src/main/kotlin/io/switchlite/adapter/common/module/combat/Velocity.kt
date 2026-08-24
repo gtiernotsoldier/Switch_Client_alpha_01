@@ -1,7 +1,6 @@
 package io.switchlite.adapter.common.module.combat
 
 import io.switchlite.core.model.*
-import io.switchlite.core.option.RandomRange
 import io.switchlite.core.strategy.velocity.ClickVelocityStrategy
 import io.switchlite.core.strategy.velocity.DelayVelocityStrategy
 import io.switchlite.core.strategy.velocity.LegitVelocityStrategy
@@ -9,7 +8,6 @@ import io.switchlite.core.strategy.velocity.VelocityConfig
 import io.switchlite.core.strategy.velocity.VelocityMode
 import io.switchlite.core.strategy.velocity.VelocityResult
 import io.switchlite.core.strategy.velocity.VelocityStrategy
-import io.switchlite.core.util.Vec3
 import io.switchlite.adapter.common.api.EventBridge
 import io.switchlite.adapter.common.module.HudLineProvider
 import io.switchlite.adapter.common.module.Module
@@ -19,7 +17,6 @@ import io.switchlite.adapter.common.option.float
 import io.switchlite.adapter.common.option.int
 import io.switchlite.adapter.common.option.choices
 import io.switchlite.adapter.common.option.triggerOptions
-import kotlin.random.Random
 
 /**
  * Velocity Module — knockback reduction.
@@ -94,53 +91,6 @@ object Velocity : Module("Velocity", Category.COMBAT), HudLineProvider {
     private val clickStrategy = ClickVelocityStrategy()
     private val strategyState = VelocityStrategy.State()
 
-    // ========== OnlyOnHitFrame (deferred to tick — see onVelocityPacket) ==========
-    /** Armed on the Netty thread when an S12/S27 arrives with OnlyOnHitFrame on; consumed on the
-     *  next 20Hz tick if the player is on the hit frame (hurtResistantTime == maxHurtResistantTime). */
-    @Volatile private var hitFramePending = false
-    @Volatile private var hitFramePendingSince = 0L
-    /** Throttle for the hit-frame diagnostic. */
-    @Volatile private var hitFrameDiag = 0
-
-    /**
-     * LB-style hit-frame reduction: on the tick where the player's hurtResistantTime is still at
-     * the max (or the tick right after — our 20Hz poll may drift a tick), scale the CURRENT motion
-     * by the sampled h/v factors, exactly like LiquidBounce's legit mode does on UpdateEvent.
-     *
-     * IMPORTANT: the pending flag is cleared only on success or on a 600ms timeout. It must NOT be
-     * cleared just because hurtResistantTime reads 0 on one poll — the S12 and the damage metadata
-     * are processed on the main thread a tick or two apart, so an early poll legitimately reads 0
-     * before the hit registers. Clearing there was what made OnlyOnHitFrame appear dead.
-     */
-    private val hitFrameTickListener: (PlayerState, TargetState?) -> Unit = { player, _ ->
-        if (enabled && hitFramePending) {
-            val maxHurt = player.maxHurtResistantTime
-            if (maxHurt != 0 && player.hurtResistantTime >= maxHurt - 1) {
-                // On the hit frame — apply the reduction once.
-                hitFramePending = false
-                if (Random.nextInt(100) < probability) {
-                    val h = RandomRange.sample(horizontalMin, horizontalMax)
-                    val v = RandomRange.sample(verticalMin, verticalMax)
-                    val orig = Vec3(player.motionX, player.motionY, player.motionZ)
-                    val reduced = Vec3(orig.x * h, orig.y * v, orig.z * h)
-                    EventBridge.applyMotion(reduced)
-                    EventBridge.velocityModified = true
-                    val origSpeed = Math.sqrt(orig.x * orig.x + orig.z * orig.z)
-                    val modSpeed = Math.sqrt(reduced.x * reduced.x + reduced.z * reduced.z)
-                    EventBridge.recordKnockback(orig, modSpeed)
-                    if (++hitFrameDiag % 3 == 0) {
-                        io.switchlite.core.logging.CoreLogger.info(
-                            "[Velocity] OnlyOnHitFrame applied hrt=${player.hurtResistantTime} max=$maxHurt h=$h v=$v"
-                        )
-                    }
-                }
-            } else if (System.nanoTime() - hitFramePendingSince > 600_000_000L) {
-                // Never landed on the hit frame within the window — drop it.
-                hitFramePending = false
-            }
-        }
-    }
-
     // ========== Config Builder ==========
     private fun buildConfig(): VelocityConfig = VelocityConfig(
         mode = when (mode) {
@@ -180,19 +130,13 @@ object Velocity : Module("Velocity", Category.COMBAT), HudLineProvider {
 
     fun onVelocityPacket(ctx: VelocityContext): PlatformCommand {
         val config = cachedConfig { buildConfig() }
-        // OnlyOnHitFrame — LiquidBounce's VelocityLegit check, LB semantics: reduce ONLY on the
-        // frame the player was just hit (`hurtResistantTime == maxHurtResistantTime`).
-        //
-        // Timing: the check CANNOT be evaluated on the Netty thread — the S12 is queued there but
-        // the hit metadata (which sets hurtResistantTime) is only processed later on the MC main
-        // thread, so on the Netty thread hurtResistantTime reads stale/0 and the gate would NEVER
-        // fire. LB runs the legit reduction on the MAIN tick (UpdateEvent) for exactly this reason.
-        // So we defer: arm [hitFramePending] here and let [hitFrameTickListener] apply the scaling
-        // on the next 20Hz tick, when the hit frame is actually observable.
-        if (onlyOnHitFrame && mode == "Legit") {
-            hitFramePending = true
-            hitFramePendingSince = System.nanoTime()
-            EventBridge.velocityModified = false
+        // OnlyOnHitFrame — LiquidBounce's VelocityLegit semantics, expressed with OUR architecture:
+        // reduce velocity only on the hit frame (i.e. when knocked by an actual attack, the S12
+        // packet), and pass explosions (S27) through untouched. We do NOT try to read
+        // hurtResistantTime (LB is a mod running on MC's main tick where that field is readable;
+        // we are an injector reading from the Netty thread where it is stale/0) — the S12 packet
+        // arriving IS the hit-frame signal, which is the logical equivalent without the read.
+        if (onlyOnHitFrame && mode == "Legit" && !ctx.isKnockbackHit) {
             return PlatformCommand.Pass(ctx.originalMotion)
         }
         val result = currentStrategy().execute(config, strategyState, ctx)
@@ -239,7 +183,6 @@ object Velocity : Module("Velocity", Category.COMBAT), HudLineProvider {
         EventBridge.registerTickListener { currentTick ->
             if (enabled) onTick(currentTick)
         }
-        EventBridge.registerTickListener(hitFrameTickListener)
         EventBridge.registerVelocityListener { ctx ->
             if (enabled) onVelocityPacket(ctx) else PlatformCommand.Pass(ctx.originalMotion)
         }
@@ -248,8 +191,6 @@ object Velocity : Module("Velocity", Category.COMBAT), HudLineProvider {
     override fun onDisable() {
         EventBridge.unregisterVelocityListener()
         EventBridge.unregisterTickListener(this::onTick)
-        EventBridge.unregisterTickListener(hitFrameTickListener)
-        hitFramePending = false
         strategyState.reset()
     }
     /**

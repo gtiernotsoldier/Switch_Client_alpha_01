@@ -46,7 +46,8 @@ object CombatTrigger {
         hitThreshold: Int,
         hitPerMin: Int,
         hitPerMax: Int,
-        chance: Int
+        chance: Int,
+        hurtGate: Boolean = true
     ): EvalResult {
         // POST/PRE hurt window gate. Raven semantics (MC 1.8.9 Entity.hurtResistantTime,
         // i-frames counted down from 20): the target is "just hit" while in the window.
@@ -55,7 +56,14 @@ object CombatTrigger {
         //          lands while the target is still recovering, which is a reliable, forgiving
         //          window for both players and mobs. (Previously `<= 10` required the exact
         //          half-expired moment, which was essentially never sampled and never fired on mobs.)
-        val hurtOk = when (mode) {
+        //
+        // hurtGate=false disables this window entirely (tap/block fire on the attack itself).
+        // This is the reliable path for WTap/STap/BlockHit: our 20Hz background poll cannot
+        // reliably sample the target's hurtResistantTime i-frame window (it is set on the main
+        // thread and only spans ~a few ticks), so gating on it made the modules appear dead.
+        // The attack itself (left click / attack event) is the trigger, exactly as those modules
+        // behaved when they worked before.
+        val hurtOk = !hurtGate || when (mode) {
             Mode.POST  -> target.hurtResistantTime >= 10
             Mode.PRE   -> target.hurtResistantTime > 0 && target.hurtResistantTime <= maxHurtTime
             Mode.EQUAL -> target.hurtResistantTime == maxHurtTime

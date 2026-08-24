@@ -720,7 +720,8 @@ object ForgeEventBridge : IEventBridge {
                 originalMotion = Vec3(motionX, motionY, motionZ),
                 player = player,
                 target = target,
-                packetHandle = packetHandle
+                packetHandle = packetHandle,
+                isKnockbackHit = !s27PacketClass.isInstance(packetHandle)
             )
 
             EventBridge.notifyVelocityPacket(ctx)

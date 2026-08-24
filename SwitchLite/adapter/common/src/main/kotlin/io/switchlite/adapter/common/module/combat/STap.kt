@@ -133,7 +133,10 @@ object STap : Module("STap", Category.COMBAT) {
             hitThreshold = hitThreshold,
             hitPerMin = onceEveryMin,
             hitPerMax = onceEveryMax,
-            chance = chance18
+            chance = chance18,
+            // Fire on the attack itself, not the target's i-frame window (20Hz sampling of it is
+            // unreliable) — restores the working "attack triggers a tap" behaviour.
+            hurtGate = false
         )
         hitCounter = eval.hitCounter
         hitThreshold = eval.hitThreshold

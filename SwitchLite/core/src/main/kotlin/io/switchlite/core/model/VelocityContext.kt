@@ -10,5 +10,11 @@ data class VelocityContext(
     val originalMotion: Vec3,
     val player: PlayerState,
     val target: TargetState?,
-    val packetHandle: Any      // Opaque handle for Delay mode cancellation
+    val packetHandle: Any,      // Opaque handle for Delay mode cancellation
+    /**
+     * True when the knockback came from being hit (S12 velocity packet) vs an explosion (S27).
+     * Lets the Velocity module's OnlyOnHitFrame mode reduce ONLY on attack knockback and pass
+     * explosions through — the "hit frame" signal that doesn't depend on cross-thread field reads.
+     */
+    val isKnockbackHit: Boolean = true
 )

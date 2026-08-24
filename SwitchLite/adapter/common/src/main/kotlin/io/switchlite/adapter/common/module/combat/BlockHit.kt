@@ -157,7 +157,10 @@ object BlockHit : Module("BlockHit", Category.COMBAT) {
             hitThreshold = hitPerThreshold,
             hitPerMin = hitPerMin,
             hitPerMax = hitPerMax,
-            chance = chance
+            chance = chance,
+            // Fire on the attack itself, not the target's i-frame window (20Hz sampling of it is
+            // unreliable) — restores the working "attack triggers a block" behaviour.
+            hurtGate = false
         )
         hitCounter = eval.hitCounter
         hitPerThreshold = eval.hitThreshold

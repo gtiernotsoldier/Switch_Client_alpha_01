@@ -36,6 +36,8 @@ public class Transformer implements ClassFileTransformer {
 
     private static boolean hooked = false;
     private static volatile boolean installed = false;
+    /** Whether the EntityRenderer.renderWorldPass (HitBox) hook was installed. */
+    private static boolean worldHooked = false;
 
     /**
      * Cached game ClassLoader — found once, reused for all Class.forName() calls.
@@ -90,6 +92,21 @@ public class Transformer implements ClassFileTransformer {
                     // addURL) — no bootstrap CL involvement needed anywhere.
                     inst.addTransformer(new Transformer(), true);
                     inst.retransformClasses(displayClass);
+
+                    // Best-effort world hook: retransform EntityRenderer so renderWorldPass gets
+                    // the HitBox overlay call. Failure here must NOT fail the install — the HUD
+                    // (Display) hook is the critical one.
+                    try {
+                        Class<?> erClass = Class.forName("net.minecraft.client.renderer.EntityRenderer", true, displayClass.getClassLoader());
+                        if (inst.isModifiableClass(erClass)) {
+                            inst.retransformClasses(erClass);
+                            Agent.log("[Transformer] EntityRenderer retransformed (world hook " + (worldHooked ? "installed" : "NOT installed") + ")");
+                        } else {
+                            Agent.log("[Transformer] EntityRenderer not modifiable — HitBox world hook skipped");
+                        }
+                    } catch (Throwable t) {
+                        Agent.log("[Transformer] EntityRenderer world hook failed: " + t.getClass().getSimpleName() + ": " + t.getMessage());
+                    }
 
                     // CRITICAL: retransformClasses() does NOT throw if transform() returns null.
                     // We must check the 'hooked' flag to know if the bytecode was actually modified.
@@ -152,6 +169,17 @@ public class Transformer implements ClassFileTransformer {
             Agent.log("[Transformer] handleRetransform: Display class found via: " + displayClass.getClassLoader());
             inst.retransformClasses(displayClass);
 
+            // Best-effort world hook (same as install()).
+            try {
+                Class<?> erClass = Class.forName("net.minecraft.client.renderer.EntityRenderer", true, displayClass.getClassLoader());
+                if (inst.isModifiableClass(erClass)) {
+                    inst.retransformClasses(erClass);
+                    Agent.log("[Transformer] handleRetransform: EntityRenderer world hook " + (worldHooked ? "installed" : "NOT installed"));
+                }
+            } catch (Throwable t) {
+                Agent.log("[Transformer] handleRetransform: EntityRenderer world hook failed: " + t.getClass().getSimpleName() + ": " + t.getMessage());
+            }
+
             // Same false-positive fix as install() — check hooked flag
             if (hooked) {
                 Agent.log("[Transformer] Display.update() hooked via self-attach retransform");
@@ -168,13 +196,25 @@ public class Transformer implements ClassFileTransformer {
     public byte[] transform(ClassLoader loader, String className,
                            Class<?> classBeingRedefined, ProtectionDomain protectionDomain,
                            byte[] classfileBuffer) {
-        // Handle the render hook (Display) only. KeepSprint was moved to a module-layer
-        // implementation (adapter/common KeepSprint.onRenderFrame) — no attack-method injection.
-        if (!"org/lwjgl/opengl/Display".equals(className)) {
-            return null;
+        // Dispatch by class: the HUD render hook (LWJGL Display) and the world-render hook
+        // (EntityRenderer.renderWorldPass — feeds the HitBox overlay) are injected separately.
+        if ("org/lwjgl/opengl/Display".equals(className)) {
+            if (hooked) return null;
+            return transformDisplay(classfileBuffer);
         }
-        if (hooked) return null;
+        if ("net/minecraft/client/renderer/EntityRenderer".equals(className)) {
+            if (worldHooked) return null;
+            return transformEntityRenderer(classfileBuffer);
+        }
+        return null;
+    }
 
+    /**
+     * Inject RenderBridge.onFrame() into Display.update() (HUD overlay hook).
+     * KeepSprint lives in the module layer (adapter/common KeepSprint.onRenderFrame) — no
+     * attack-method injection here.
+     */
+    private byte[] transformDisplay(byte[] classfileBuffer) {
         try {
             ClassPool pool = ClassPool.getDefault();
 
@@ -273,6 +313,49 @@ public class Transformer implements ClassFileTransformer {
             }
         }
         return null;
+    }
+
+    /**
+     * Inject RenderBridge.onWorldRender() at the END of EntityRenderer.renderWorldPass
+     * (SRG func_175068_a — the (IFJ)V method that renders world entities/tile entities).
+     * At that point the GL projection/modelview are the world ones and the depth buffer holds
+     * the rendered scene, so the HitBox overlay aligns with the scene and is occluded by walls.
+     * insertAfter runs the call before every return — with the world matrices active.
+     */
+    private byte[] transformEntityRenderer(byte[] classfileBuffer) {
+        try {
+            ClassPool pool = ClassPool.getDefault();
+            CtClass ctClass = pool.makeClass(new ByteArrayInputStream(classfileBuffer));
+
+            CtMethod renderWorldPass = null;
+            try {
+                renderWorldPass = ctClass.getDeclaredMethod("func_175068_a");
+            } catch (javassist.NotFoundException e) {
+                // Deobfuscated dev-environment fallback (MCP name).
+                try {
+                    renderWorldPass = ctClass.getDeclaredMethod("renderWorldPass");
+                } catch (javassist.NotFoundException e2) {
+                    Agent.log("[Transformer] renderWorldPass (func_175068_a) not found — HitBox world hook skipped");
+                    return null;
+                }
+            }
+
+            renderWorldPass.insertAfter(
+                "try { Class.forName(\"io.switchlite.agent.\" + new String(\"RenderBridge\"), true, " +
+                "Thread.currentThread().getContextClassLoader())" +
+                ".getMethod(\"onWorldRender\", new java.lang.Class[0])" +
+                ".invoke(null, new java.lang.Object[0]); } catch (Throwable t) {}"
+            );
+
+            byte[] result = ctClass.toBytecode();
+            ctClass.defrost();
+            worldHooked = true;
+            Agent.log("[Transformer] EntityRenderer.renderWorldPass hooked — RenderBridge.onWorldRender() called every world frame");
+            return result;
+        } catch (Throwable e) {
+            Agent.log("[Transformer] renderWorldPass hook failed: " + e.getClass().getSimpleName() + ": " + e.getMessage());
+            return null;
+        }
     }
 
     // ═══════════════════════════════════════════

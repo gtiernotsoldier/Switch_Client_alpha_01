@@ -4,7 +4,9 @@ import io.netty.channel.ChannelDuplexHandler
 import io.netty.channel.ChannelHandlerContext
 import io.netty.channel.ChannelPipeline
 import io.netty.channel.ChannelPromise
+import io.switchlite.adapter.common.api.EventBridge
 import io.switchlite.core.logging.CoreLogger
+import io.switchlite.core.util.Vec3
 import io.switchlite.agent.MappingContext
 
 /**
@@ -160,14 +162,14 @@ object ForgePacketInterceptor : ChannelDuplexHandler() {
             }
             val mc = try { MappingContext.invokeMethod(null, "forge:mc_getMinecraft") } catch (_: Exception) { null }
             val player = try { MappingContext.getFieldValue(mc, "forge:mc_thePlayer") } catch (_: Exception) { null }
-            if (player != null) {
-                val packetEntityId = try {
-                    MappingContext.getFieldValue(msg, "forge:S12PacketEntityVelocity_entityID") as? Int
-                } catch (_: Exception) { null }
+            val packetEntityId = try {
+                MappingContext.getFieldValue(msg, "forge:S12PacketEntityVelocity_entityID") as? Int
+            } catch (_: Exception) { null }
+            if (packetEntityId != null && player != null) {
                 val playerEntityId = try {
                     MappingContext.getFieldValue(player, "forge:entity_entityId") as? Int
                 } catch (_: Exception) { null }
-                if (packetEntityId != null && packetEntityId == playerEntityId) {
+                if (packetEntityId == playerEntityId) {
                     val command = ForgeEventBridge.onVelocityPacket(msg)
                     when (command) {
                         is io.switchlite.core.model.PlatformCommand.CancelPacket -> return
@@ -181,6 +183,12 @@ object ForgePacketInterceptor : ChannelDuplexHandler() {
                         else -> {}
                     }
                 } else {
+                    // S12 for ANOTHER entity — feed the dealt-KB observer (KnockbackDisplay)
+                    // so it can correlate this knockback with the player's own attack.
+                    val motion = readS12Motion(msg)
+                    if (motion != null) {
+                        EventBridge.notifyEntityVelocity(packetEntityId, motion)
+                    }
                     // PROBE: packet reached but entity-id match failed — the likely failure point.
                     if (++s12MismatchDiag % 5 == 0) {
                         CoreLogger.info(
@@ -205,6 +213,19 @@ object ForgePacketInterceptor : ChannelDuplexHandler() {
         }
 
         super.channelRead(ctx, msg)
+    }
+
+    /**
+     * Read the S12 velocity motion vector (Int fields, 1/8000 blocks per tick units — the same
+     * conversion ForgeEventBridge.onVelocityPacket applies for the player's own packets).
+     */
+    private fun readS12Motion(msg: Any): Vec3? {
+        return try {
+            val x = MappingContext.getFieldValue(msg, "forge:velocity_motionX") as? Int ?: return null
+            val y = MappingContext.getFieldValue(msg, "forge:velocity_motionY") as? Int ?: return null
+            val z = MappingContext.getFieldValue(msg, "forge:velocity_motionZ") as? Int ?: return null
+            Vec3(x / 8000.0, y / 8000.0, z / 8000.0)
+        } catch (_: Exception) { null }
     }
 
     private fun sendClickBurst(targetId: Int, times: Int) {

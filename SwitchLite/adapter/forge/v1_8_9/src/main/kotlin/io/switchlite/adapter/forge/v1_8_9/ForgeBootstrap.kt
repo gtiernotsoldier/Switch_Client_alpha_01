@@ -8,6 +8,7 @@ import io.switchlite.adapter.common.module.movement.*
 import io.switchlite.adapter.common.module.player.*
 import io.switchlite.adapter.common.module.render.Fullbright
 import io.switchlite.adapter.common.module.render.HUD
+import io.switchlite.adapter.common.module.render.HitBox
 import io.switchlite.adapter.common.module.render.Keystrokes
 import io.switchlite.adapter.common.module.render.NoFOV
 import io.switchlite.adapter.common.module.render.NoHurtCam
@@ -121,7 +122,7 @@ object ForgeBootstrap {
             NoJumpDelay, NoKeyboardFix, NoMouseFix, Sprint, Strafe, StrafeFix,
             AntiBot, AutoTool, BridgeAssist, Eagle, ParallaxStrike, Teams,
             Fullbright, HUD, NoFOV, NoHurtCam, Keystrokes, Speedometer, VelocityDisplay, JumpStatus,
-            JumpTiming, KnockbackDisplay,
+            JumpTiming, KnockbackDisplay, HitBox,
             WebUI,
             FastPlace
         )
@@ -342,6 +343,18 @@ object ForgeBootstrap {
         } catch (e: Exception) {
             // HUD rendering must never crash the game — swallow and continue.
         }
+    }
+
+    /**
+     * Called by the agent's world-render hook (RenderBridge.onWorldRender — injected at the END of
+     * EntityRenderer.renderWorldPass, func_175068_a) on MC's render thread, while the GL projection
+     * and modelview are the world ones and the depth buffer holds the rendered scene. The HitBox
+     * overlay draws there, so boxes align with the scene and are occluded by walls (not X-ray).
+     */
+    fun renderWorld() {
+        try {
+            io.switchlite.adapter.common.module.render.HitBox.renderWorld(glBridge)
+        } catch (_: Exception) {}
     }
 
     /**

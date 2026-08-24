@@ -146,7 +146,7 @@ object Velocity : Module("Velocity", Category.COMBAT), HudLineProvider {
             is VelocityResult.Cancel -> 0.0
             else -> origSpeed // Pass/NoOp → unchanged
         }
-        EventBridge.recordKnockback(origSpeed, modSpeed)
+        EventBridge.recordKnockback(ctx.originalMotion, modSpeed)
         // Diagnostic: confirm the strategy actually produced Modify (HUD color check).
         if (++velDiagCount % 10 == 0) {
             io.switchlite.core.logging.CoreLogger.info(

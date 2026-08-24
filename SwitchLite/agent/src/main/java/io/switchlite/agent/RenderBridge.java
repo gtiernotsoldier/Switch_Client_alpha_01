@@ -25,6 +25,7 @@ public class RenderBridge {
     private static volatile boolean bridgeReady = false;
     private static Object forgeBootstrapInstance = null;
     private static Method forgeBootstrapRender = null;
+    private static Method forgeBootstrapRenderWorld = null;
 
     /**
      * Called every frame from Display.update() before buffer swap.
@@ -39,6 +40,26 @@ public class RenderBridge {
         try {
             if (forgeBootstrapInstance != null && forgeBootstrapRender != null) {
                 forgeBootstrapRender.invoke(forgeBootstrapInstance);
+            }
+        } catch (Throwable t) {
+            // Silently ignore — don't crash the game
+        }
+    }
+
+    /**
+     * Called at the END of EntityRenderer.renderWorldPass (injected by Transformer), while the
+     * GL projection/modelview/depth-buffer are the world ones. Delegates to
+     * ForgeBootstrap.renderWorld() which draws the HitBox overlay there (occluded by walls).
+     * MUST NOT throw — catches everything internally.
+     */
+    public static void onWorldRender() {
+        if (!bridgeReady) {
+            initBridge();
+            return;
+        }
+        try {
+            if (forgeBootstrapInstance != null && forgeBootstrapRenderWorld != null) {
+                forgeBootstrapRenderWorld.invoke(forgeBootstrapInstance);
             }
         } catch (Throwable t) {
             // Silently ignore — don't crash the game
@@ -80,6 +101,12 @@ public class RenderBridge {
             // Kotlin object: get INSTANCE field
             forgeBootstrapInstance = fbClass.getField("INSTANCE").get(null);
             forgeBootstrapRender = fbClass.getMethod("render");
+            try {
+                forgeBootstrapRenderWorld = fbClass.getMethod("renderWorld");
+            } catch (Exception e) {
+                // Older jar without the world hook — HitBox overlay stays off, HUD still works.
+                forgeBootstrapRenderWorld = null;
+            }
             bridgeReady = true;
 
             log("[RenderBridge] Bridge established — ForgeBootstrap.render() will be called every frame");

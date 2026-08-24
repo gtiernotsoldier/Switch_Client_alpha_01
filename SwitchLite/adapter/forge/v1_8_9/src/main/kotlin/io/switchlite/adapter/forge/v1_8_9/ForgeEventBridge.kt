@@ -2,6 +2,9 @@ package io.switchlite.adapter.forge.v1_8_9
 
 import io.switchlite.adapter.common.api.EventBridge
 import io.switchlite.adapter.common.api.IEventBridge
+import io.switchlite.adapter.common.render.HitBoxCategory
+import io.switchlite.adapter.common.render.HitBoxEntity
+import io.switchlite.adapter.common.render.HitBoxFrame
 import io.switchlite.core.model.*
 import io.switchlite.core.strategy.reach.ReachRaycast
 import io.switchlite.core.util.Vec2
@@ -22,6 +25,8 @@ object ForgeEventBridge : IEventBridge {
         mouseClass.getMethod("isButtonDown", Int::class.javaPrimitiveType)
     }
     private val entityLivingBaseClass by lazy { Class.forName("net.minecraft.entity.EntityLivingBase") }
+    private val entityPlayerClass by lazy { Class.forName("net.minecraft.entity.player.EntityPlayer") }
+    private val entityItemClass by lazy { Class.forName("net.minecraft.entity.item.EntityItem") }
     private val itemArmorClass by lazy { Class.forName("net.minecraft.item.ItemArmor") }
     private val armorMaterialClass by lazy { Class.forName("net.minecraft.item.ItemArmor\$ArmorMaterial") }
     private val clothMaterial by lazy { armorMaterialClass.enumConstants.firstOrNull { it.toString() == "CLOTH" } }
@@ -612,6 +617,87 @@ object ForgeEventBridge : IEventBridge {
                 }
                 false
             } catch (_: Exception) { false }
+        }
+
+        // ── Entity position (KnockbackDisplay dealt-KB displacement) ──
+        EventBridge.registerEntityPositionProvider { entityId ->
+            try {
+                val world = getWorld() ?: return@registerEntityPositionProvider null
+                val entity = MappingContext.invokeMethod(world, "forge:world_getEntityByID", entityId) ?: return@registerEntityPositionProvider null
+                Vec3(
+                    MappingContext.getFieldValue(entity, "forge:entity_posX") as? Double ?: 0.0,
+                    MappingContext.getFieldValue(entity, "forge:entity_posY") as? Double ?: 0.0,
+                    MappingContext.getFieldValue(entity, "forge:entity_posZ") as? Double ?: 0.0
+                )
+            } catch (_: Exception) { null }
+        }
+
+        // ── HitBox frame (Render — collected inside the renderWorldPass world hook) ──
+        EventBridge.registerHitBoxFrameProvider {
+            try {
+                val mc = getMc() ?: return@registerHitBoxFrameProvider null
+                val world = getWorld() ?: return@registerHitBoxFrameProvider null
+                val player = getPlayer() ?: return@registerHitBoxFrameProvider null
+                val timer = MappingContext.getFieldValue(mc, "forge:mc_timer")
+                val partialTicks = (MappingContext.getFieldValue(timer, "forge:timer_renderPartialTicks") as? Float) ?: 1.0f
+                val playerId = MappingContext.getFieldValue(player, "forge:entity_entityId") as? Int ?: -1
+                val viewer = getRenderViewEntity(mc, player)
+                val vx = MappingContext.getFieldValue(viewer, "forge:entity_posX") as? Double ?: 0.0
+                val vy = MappingContext.getFieldValue(viewer, "forge:entity_posY") as? Double ?: 0.0
+                val vz = MappingContext.getFieldValue(viewer, "forge:entity_posZ") as? Double ?: 0.0
+
+                val loaded = MappingContext.getFieldValue(world, "forge:world_loadedEntityList") as? List<*> ?: return@registerHitBoxFrameProvider null
+                val entities = mutableListOf<HitBoxEntity>()
+                for (item in loaded) {
+                    val entity = item ?: continue
+                    val category = classifyHitBox(entity, playerId) ?: continue
+                    val isDead = MappingContext.getFieldValue(entity, "forge:entity_isDead") as? Boolean ?: false
+                    if (isDead) continue
+                    val id = MappingContext.getFieldValue(entity, "forge:entity_entityId") as? Int ?: continue
+                    val px = MappingContext.getFieldValue(entity, "forge:entity_posX") as? Double ?: continue
+                    val py = MappingContext.getFieldValue(entity, "forge:entity_posY") as? Double ?: continue
+                    val pz = MappingContext.getFieldValue(entity, "forge:entity_posZ") as? Double ?: continue
+                    val ppx = MappingContext.getFieldValue(entity, "forge:entity_prevPosX") as? Double ?: px
+                    val ppy = MappingContext.getFieldValue(entity, "forge:entity_prevPosY") as? Double ?: py
+                    val ppz = MappingContext.getFieldValue(entity, "forge:entity_prevPosZ") as? Double ?: pz
+                    // Interpolate the feet position (partial-tick smoothness like vanilla rendering).
+                    val rx = ppx + (px - ppx) * partialTicks
+                    val ry = ppy + (py - ppy) * partialTicks
+                    val rz = ppz + (pz - ppz) * partialTicks
+                    val bb = MappingContext.getFieldValue(entity, "forge:entity_getEntityBoundingBox") ?: continue
+                    val minX = MappingContext.getFieldValue(bb, "forge:bb_minX") as? Double ?: continue
+                    val minY = MappingContext.getFieldValue(bb, "forge:bb_minY") as? Double ?: continue
+                    val minZ = MappingContext.getFieldValue(bb, "forge:bb_minZ") as? Double ?: continue
+                    val maxX = MappingContext.getFieldValue(bb, "forge:bb_maxX") as? Double ?: continue
+                    val maxY = MappingContext.getFieldValue(bb, "forge:bb_maxY") as? Double ?: continue
+                    val maxZ = MappingContext.getFieldValue(bb, "forge:bb_maxZ") as? Double ?: continue
+                    // Shift the real box by the interpolation delta so it tracks the rendered model.
+                    val dx = rx - px
+                    val dy = ry - py
+                    val dz = rz - pz
+                    entities.add(HitBoxEntity(
+                        entityId = id,
+                        category = category,
+                        className = entity.javaClass.simpleName,
+                        renderPosX = rx, renderPosY = ry, renderPosZ = rz,
+                        boxMinX = minX + dx, boxMinY = minY + dy, boxMinZ = minZ + dz,
+                        boxMaxX = maxX + dx, boxMaxY = maxY + dy, boxMaxZ = maxZ + dz
+                    ))
+                }
+                HitBoxFrame(vx, vy, vz, entities)
+            } catch (_: Exception) { null }
+        }
+    }
+
+    /** Classify an entity for the HitBox overlay; null = not drawn (projectiles, boats, ...). */
+    private fun classifyHitBox(entity: Any, playerId: Int): HitBoxCategory? {
+        val id = try { MappingContext.getFieldValue(entity, "forge:entity_entityId") as? Int } catch (_: Exception) { null } ?: return null
+        if (id == playerId) return HitBoxCategory.OWN
+        return when {
+            entityPlayerClass.isInstance(entity) -> HitBoxCategory.PLAYER
+            entityItemClass.isInstance(entity) -> HitBoxCategory.ITEM
+            entityLivingBaseClass.isInstance(entity) -> HitBoxCategory.MOB
+            else -> null
         }
     }
 

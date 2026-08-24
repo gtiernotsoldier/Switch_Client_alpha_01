@@ -1239,5 +1239,50 @@
       "currentScreen"
     ],
     "mcp": "currentScreen"
+  },
+  "forge:mc_timer": {
+    "class": "net.minecraft.client.Minecraft",
+    "field": "field_71428_T",
+    "aliases": [
+      "mc_timer",
+      "timer"
+    ],
+    "mcp": "timer"
+  },
+  "forge:timer_renderPartialTicks": {
+    "class": "net.minecraft.util.Timer",
+    "field": "field_74281_c",
+    "aliases": [
+      "timer_renderPartialTicks",
+      "renderPartialTicks"
+    ],
+    "mcp": "renderPartialTicks"
+  },
+  "forge:entity_prevPosX": {
+    "class": "net.minecraft.entity.Entity",
+    "field": "field_70169_q",
+    "aliases": [
+      "entity_prevPosX",
+      "prevPosX"
+    ],
+    "mcp": "prevPosX"
+  },
+  "forge:entity_prevPosY": {
+    "class": "net.minecraft.entity.Entity",
+    "field": "field_70167_r",
+    "aliases": [
+      "entity_prevPosY",
+      "prevPosY"
+    ],
+    "mcp": "prevPosY"
+  },
+  "forge:entity_prevPosZ": {
+    "class": "net.minecraft.entity.Entity",
+    "field": "field_70166_s",
+    "aliases": [
+      "entity_prevPosZ",
+      "prevPosZ"
+    ],
+    "mcp": "prevPosZ"
   }
 }

@@ -65,6 +65,12 @@ class ForgeGL11Bridge : GL11Bridge {
     private val glVertex2fMethod by lazy {
         gl11Class.getMethod("glVertex2f", Float::class.javaPrimitiveType, Float::class.javaPrimitiveType)
     }
+    private val glVertex3fMethod by lazy {
+        gl11Class.getMethod("glVertex3f", Float::class.javaPrimitiveType, Float::class.javaPrimitiveType, Float::class.javaPrimitiveType)
+    }
+    private val glLineWidthMethod by lazy {
+        gl11Class.getMethod("glLineWidth", Float::class.javaPrimitiveType)
+    }
     private val glEndMethod by lazy {
         gl11Class.getMethod("glEnd")
     }
@@ -176,6 +182,14 @@ class ForgeGL11Bridge : GL11Bridge {
 
     override fun glVertex2f(x: Float, y: Float) {
         safeInvoke("glVertex2f", glVertex2fMethod, x, y)
+    }
+
+    override fun glVertex3f(x: Float, y: Float, z: Float) {
+        safeInvoke("glVertex3f", glVertex3fMethod, x, y, z)
+    }
+
+    override fun glLineWidth(width: Float) {
+        safeInvoke("glLineWidth", glLineWidthMethod, width)
     }
 
     override fun glEnd() {

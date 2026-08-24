@@ -7,6 +7,7 @@ import io.switchlite.core.model.VelocityContext
 import io.switchlite.core.model.PlatformCommand
 import io.switchlite.core.util.Vec2
 import io.switchlite.core.util.Vec3
+import io.switchlite.adapter.common.render.HitBoxFrame
 
 /**
  * Global EventBridge singleton.
@@ -161,6 +162,12 @@ object EventBridge {
         lastKnockbackNano = 0L
         lastKbOriginalSpeed = 0.0
         lastKbModifiedSpeed = 0.0
+        lastKbMotionX = 0.0
+        lastKbMotionY = 0.0
+        lastKbMotionZ = 0.0
+        entityVelocityNotifiers.clear()
+        entityPositionProvider = null
+        hitBoxFrameProvider = null
         renderOffsetX = 0f
         renderOffsetY = 0f
         renderOffsetZ = 0f
@@ -206,6 +213,25 @@ object EventBridge {
     /** Set true by notifyVelocityPacket, cleared each tick by modules. */
     @Volatile var velocityPacketReceivedThisTick: Boolean = false
 
+    // ========== Entity Velocity (S12 for OTHER entities — KnockbackDisplay dealt-KB) ==========
+    // The packet interceptor feeds every non-player S12 here (Netty thread, read-only). Modules
+    // register to observe knockbacks applied to OTHER entities — KnockbackDisplay correlates them
+    // with the player's own attacks to show "how much KB did I deal".
+    private val entityVelocityNotifiers = mutableListOf<(entityId: Int, motion: Vec3) -> Unit>()
+
+    fun registerEntityVelocityNotifier(notifier: (Int, Vec3) -> Unit) {
+        entityVelocityNotifiers.add(notifier)
+    }
+
+    fun unregisterEntityVelocityNotifier(notifier: (Int, Vec3) -> Unit) {
+        entityVelocityNotifiers.remove(notifier)
+    }
+
+    /** Called by the adapter (Netty thread) when an S12 velocity packet targets a non-player entity. */
+    fun notifyEntityVelocity(entityId: Int, motion: Vec3) {
+        entityVelocityNotifiers.forEach { it(entityId, motion) }
+    }
+
     /**
      * Whether the last velocity packet was modified or cancelled by the Velocity module. Set by the
      * module on each packet; read by the VelocityDisplay HUD to color the readout (modified → accent,
@@ -228,11 +254,23 @@ object EventBridge {
     @Volatile var lastKbModifiedSpeed: Double = 0.0
 
     /**
-     * Set by the Velocity module when it processes a knockback packet: records the original and
-     * (after reduction) horizontal speeds plus a fresh timestamp.
+     * The original (pre-reduction) knockback MOTION vector from the last velocity packet, in
+     * blocks/tick. Read by the KnockbackDisplay HUD to show the raw "KB x y z" the player was
+     * hit with (the Velocity cut % is shown next to it). 0/0/0 when none yet.
      */
-    fun recordKnockback(originalSpeed: Double, modifiedSpeed: Double) {
-        lastKbOriginalSpeed = originalSpeed
+    @Volatile var lastKbMotionX: Double = 0.0
+    @Volatile var lastKbMotionY: Double = 0.0
+    @Volatile var lastKbMotionZ: Double = 0.0
+
+    /**
+     * Set by the Velocity module when it processes a knockback packet: records the original
+     * motion vector, the (after-reduction) horizontal speed, plus a fresh timestamp.
+     */
+    fun recordKnockback(originalMotion: Vec3, modifiedSpeed: Double) {
+        lastKbMotionX = originalMotion.x
+        lastKbMotionY = originalMotion.y
+        lastKbMotionZ = originalMotion.z
+        lastKbOriginalSpeed = kotlin.math.sqrt(originalMotion.x * originalMotion.x + originalMotion.z * originalMotion.z)
         lastKbModifiedSpeed = modifiedSpeed
         lastKnockbackNano = System.nanoTime()
     }
@@ -736,6 +774,24 @@ object EventBridge {
     fun clearRenderOffset() {
         renderOffsetX = 0f; renderOffsetY = 0f; renderOffsetZ = 0f
     }
+
+    // ========== HitBox (Render — world-space box overlay) ==========
+    // The platform adapter collects one frame of entity boxes per world render (inside the
+    // EntityRenderer.renderWorldPass hook) and hands it to the HitBox module for drawing.
+    // The GL projection/modelview/depth buffer are the real world ones at that point, so the
+    // overlay aligns with the scene and is occluded by walls (NOT X-ray).
+    private var hitBoxFrameProvider: (() -> HitBoxFrame?)? = null
+
+    fun getHitBoxFrame(): HitBoxFrame? = hitBoxFrameProvider?.invoke()
+    fun registerHitBoxFrameProvider(provider: () -> HitBoxFrame?) { hitBoxFrameProvider = provider }
+
+    // ========== Entity Position (KnockbackDisplay dealt-KB displacement) ==========
+    // Platform callback: current position of a given entity id (world.getEntityByID → posX/Y/Z).
+    // Read on the background tick thread (read-only MC access is safe).
+    private var entityPositionProvider: ((Int) -> Vec3?)? = null
+
+    fun getEntityPosition(entityId: Int): Vec3? = entityPositionProvider?.invoke(entityId)
+    fun registerEntityPositionProvider(provider: (Int) -> Vec3?) { entityPositionProvider = provider }
 
     // ========== Render Overrides (NoFOV, NoHurtCam — Render) ==========
     private var resetHurtCamHandler: (() -> Unit)? = null

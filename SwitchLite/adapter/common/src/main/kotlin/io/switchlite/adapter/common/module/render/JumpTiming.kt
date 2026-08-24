@@ -1,25 +1,36 @@
 package io.switchlite.adapter.common.module.render
 
 import io.switchlite.adapter.common.api.EventBridge
+import io.switchlite.core.model.PlayerState
+import io.switchlite.core.model.TargetState
+import io.switchlite.core.model.VelocityContext
 import io.switchlite.adapter.common.module.Category
 import io.switchlite.adapter.common.module.Module
 import io.switchlite.adapter.common.option.float
 import io.switchlite.adapter.common.render.RenderContext
 
 /**
- * JumpTiming — shows the correct jump-reset timing window after a knockback.
+ * JumpTiming — per-hit jump-reset timing quality + success rate.
  *
- * After an S12 knockback, this HUD indicates the timing quality of a MANUAL jump-key press:
- *   - GREEN  : jump pressed within [GREEN_MS] (0..100ms) of the knockback — ideal jump reset.
- *   - YELLOW : jump pressed within [YELLOW_MS] (100..250ms) — late but usable.
- *   - WHITE  : no knockback recently / no manual jump in the window.
+ * The old version tallied every MANUAL jump-key press, so repeated/bunny-hop presses polluted
+ * the statistics. New rule (user's call): only a HIT while SPRINTING opens a timing window, and
+ * each window counts AT MOST ONE outcome — a jump key press (manual OR the JumpReset module's
+ * pulse) inside the window. Repeated presses within the same window never count twice.
  *
- * It also tracks the success rate of manual jump presses only: how often the press landed in the
- * green window vs total manual jump-key presses since enable. Only the player's own jump key is
- * counted — module-driven jumps (JumpReset queueJump) are NOT tallied, so the rate is not polluted
- * by the module itself ("no false positives").
+ *   - GREEN  : jump within [GREEN_MS] (0..100ms) of the knockback — ideal jump reset.
+ *   - YELLOW : jump within [YELLOW_MS] (100..250ms) — late but usable.
+ *   - WHITE  : jump pressed later than [YELLOW_MS] but inside the window — counted, poor timing.
+ *   - MISS   : no jump inside the window — the hit was not reset.
  *
- * Rendered like the other HUD widgets: draggable, plain text, no background.
+ * Statistics: `hits` = sprinting-hit windows closed, `success` = windows that ended with a jump.
+ * Rate = success / hits. A hit while NOT sprinting is ignored entirely (no count).
+ *
+ * JumpReset adaptation: the module's queued jump pulse also presses the jump key, so its jumps
+ * are counted as legitimate successes (the module IS the jump reset), and the status is tagged
+ * "(JR)" when the pulse was the source — so the user can tell module-driven from manual timing.
+ *
+ * The knockback timestamp comes from the velocity notifier (Netty thread, precise), not the 20Hz
+ * tick sample — the window opens the moment the S12/S27 arrives.
  */
 object JumpTiming : Module("JumpTiming", Category.RENDER) {
 
@@ -27,6 +38,12 @@ object JumpTiming : Module("JumpTiming", Category.RENDER) {
     private const val GREEN_MS = 100L
     /** Yellow window: up to this many ms after the knockback. */
     private const val YELLOW_MS = 250L
+    /** A hit window stays open for this long waiting for a jump, then closes as a MISS. */
+    private const val WINDOW_MS = 500L
+
+    private const val COLOR_GREEN = 0x00C853
+    private const val COLOR_YELLOW = 0xFFD600
+    private const val COLOR_WHITE = 0xFFFFFF
 
     @Volatile
     var posX: Int = -1
@@ -42,51 +59,68 @@ object JumpTiming : Module("JumpTiming", Category.RENDER) {
     private var dragOffsetX = 0
     private var dragOffsetY = 0
 
-    // Timing + stats state
+    // Timing + stats state (written on Netty/tick threads, read on render thread)
     @Volatile private var status: String = "JT --"
-    @Volatile private var color = 0xFFFFFF
-    @Volatile private var successCount = 0
-    @Volatile private var totalCount = 0
-    @Volatile private var lastKbNano = 0L
-    @Volatile private var prevJump = false
+    @Volatile private var color = COLOR_WHITE
+    // Written by BOTH the Netty thread (hit-window close) and the tick thread (count/miss) —
+    // use atomics so the counters never lose an increment to a read-modify-write race.
+    private val hits = java.util.concurrent.atomic.AtomicInteger(0)
+    private val success = java.util.concurrent.atomic.AtomicInteger(0)
+    @Volatile private var windowOpen = false
+    @Volatile private var windowStartNano = 0L
+    @Volatile private var windowCounted = false
 
-    private val tickListener: (io.switchlite.core.model.PlayerState, io.switchlite.core.model.TargetState?) -> Unit = { _, _ ->
+    // ========== Hit window opener (Netty thread — precise knockback time) ==========
+    private val velocityNotifier: (VelocityContext) -> Unit = { ctx ->
         if (enabled) {
-            val now = System.nanoTime()
-
-            // Track the most recent knockback.
-            val kb = EventBridge.lastKnockbackNano
-            if (kb > lastKbNano) lastKbNano = kb
-
-            // Detect MANUAL jump-key presses (physical space). We use the real key state; a press edge
-            // that comes from JumpReset's synthetic queue is not a physical press, so it isn't counted.
-            val jumpDown = EventBridge.isKeyJumpDown
-            val pressEdge = jumpDown && !prevJump
-            prevJump = jumpDown
-
-            if (pressEdge) {
-                totalCount++
-                if (lastKbNano != 0L) {
-                    val delayMs = (now - lastKbNano) / 1_000_000L
-                    when {
-                        delayMs <= GREEN_MS -> {
-                            successCount++
-                            status = "JT OK ${delayMs}ms"
-                            color = 0x00C853 // green
-                        }
-                        delayMs <= YELLOW_MS -> {
-                            status = "JT LATE ${delayMs}ms"
-                            color = 0xFFD600 // yellow
-                        }
-                        else -> {
-                            status = "JT OFF ${delayMs}ms"
-                            color = 0xFFFFFF // white
-                        }
-                    }
-                } else {
-                    status = "JT --"
-                    color = 0xFFFFFF
+            // User rule: only a hit while sprinting opens a window (and can count a success).
+            if (ctx.player.isSprinting) {
+                // A new hit while the previous window is still open: close it as a miss.
+                if (windowOpen && !windowCounted) {
+                    hits.incrementAndGet()
+                    status = "JT MISS"
+                    color = COLOR_WHITE
                 }
+                windowOpen = true
+                windowStartNano = System.nanoTime()
+                windowCounted = false
+                status = "JT HIT"
+                color = COLOR_WHITE
+            }
+        }
+    }
+
+    // ========== Window watcher (background 20Hz tick) ==========
+    private val tickListener: (PlayerState, TargetState?) -> Unit = { _, _ ->
+        if (enabled && windowOpen && !windowCounted) {
+            if (EventBridge.isKeyJumpDown) {
+                // Count exactly once per window — repeated presses never re-count.
+                windowCounted = true
+                windowOpen = false
+                hits.incrementAndGet()
+                success.incrementAndGet()
+                val delayMs = (System.nanoTime() - windowStartNano) / 1_000_000L
+                val fromModule = EventBridge.isJumpPulseActive()
+                val tag = if (fromModule) " (JR)" else ""
+                when {
+                    delayMs <= GREEN_MS -> {
+                        status = "JT OK ${delayMs}ms$tag"
+                        color = COLOR_GREEN
+                    }
+                    delayMs <= YELLOW_MS -> {
+                        status = "JT LATE ${delayMs}ms$tag"
+                        color = COLOR_YELLOW
+                    }
+                    else -> {
+                        status = "JT LATE ${delayMs}ms$tag"
+                        color = COLOR_WHITE
+                    }
+                }
+            } else if (System.nanoTime() - windowStartNano > WINDOW_MS * 1_000_000L) {
+                windowOpen = false
+                hits.incrementAndGet()
+                status = "JT MISS"
+                color = COLOR_WHITE
             }
         }
     }
@@ -133,9 +167,10 @@ object JumpTiming : Module("JumpTiming", Category.RENDER) {
     }
 
     private fun rateText(): String {
-        if (totalCount == 0) return "JT rate --"
-        val pct = (successCount * 100f / totalCount).toInt()
-        return "JT ${successCount}/${totalCount} ${pct}%"
+        val h = hits.get()
+        if (h == 0) return "JT rate --"
+        val pct = (success.get() * 100f / h).toInt()
+        return "JT ${success.get()}/$h ${pct}%"
     }
 
     private fun widgetWidth(ctx: RenderContext): Int {
@@ -157,13 +192,16 @@ object JumpTiming : Module("JumpTiming", Category.RENDER) {
 
     // ========== Lifecycle ==========
     override fun onEnable() {
-        successCount = 0; totalCount = 0
-        lastKbNano = 0L; prevJump = false
-        status = "JT --"; color = 0xFFFFFF
+        hits.set(0); success.set(0)
+        windowOpen = false; windowCounted = false
+        status = "JT --"; color = COLOR_WHITE
+        EventBridge.registerVelocityNotifier(velocityNotifier)
         EventBridge.registerTickListener(tickListener)
     }
 
     override fun onDisable() {
+        EventBridge.unregisterVelocityNotifier(velocityNotifier)
         EventBridge.unregisterTickListener(tickListener)
+        windowOpen = false
     }
 }

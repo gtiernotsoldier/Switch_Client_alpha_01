@@ -1,23 +1,35 @@
 package io.switchlite.adapter.common.module.render
 
 import io.switchlite.adapter.common.api.EventBridge
+import io.switchlite.core.model.PlayerState
+import io.switchlite.core.model.TargetState
+import io.switchlite.core.model.VelocityContext
+import io.switchlite.core.util.Vec3
 import io.switchlite.adapter.common.module.Category
 import io.switchlite.adapter.common.module.Module
 import io.switchlite.adapter.common.option.float
 import io.switchlite.adapter.common.render.RenderContext
+import kotlin.math.sqrt
 
 /**
- * KnockbackDisplay — shows the player's knockback coefficient and the actual knockback distance.
+ * KnockbackDisplay — two independent knockback readouts (user's design):
  *
- * After an S12 knockback the HUD shows, compactly:
- *   - KB retain/cut % : how much horizontal speed was kept vs cut by Velocity
- *     (e.g. "KB 40/60" = kept 40%, cut 60%; "KB 100/0" = untouched/vanilla).
- *   - distance moved during the knockback (blocks), measured via position displacement from the
- *     moment the knockback landed until the player's speed settles.
+ *   IN   — knockback RECEIVED by the player: the original S12 motion vector (blocks/tick) that
+ *          Velocity saw, plus the knockback distance (horizontal displacement until the player
+ *          settles) and the Velocity retain/cut % (kept/cut horizontal speed). When Velocity
+ *          modified the last packet, the IN line is drawn in the accent color.
+ *   OUT  — knockback DEALT to others: an S12 velocity packet that arrives for the entity the
+ *          player just attacked (hurtTime rising edge → attack correlation), plus the target's
+ *          measured horizontal displacement.
  *
- * Rendered like the other HUD widgets: draggable, plain text, no background, compact width.
+ * Each source shows 4 values: X, Y, Z (the knockback vector) and D (distance).
+ *
+ * Rendering: 4 lines, draggable while a GUI is open, plain text with shadow, no background box.
  */
 object KnockbackDisplay : Module("KnockbackDisplay", Category.RENDER) {
+
+    private const val DEALT_MATCH_MS = 600L
+    private const val MEASURE_MS = 1500L
 
     @Volatile
     var posX: Int = -1
@@ -33,36 +45,117 @@ object KnockbackDisplay : Module("KnockbackDisplay", Category.RENDER) {
     private var dragOffsetX = 0
     private var dragOffsetY = 0
 
-    // Knockback distance tracking
-    @Volatile private var kbDistance: Double = 0.0
-    @Volatile private var measuring = false
-    @Volatile private var startX = 0.0
-    @Volatile private var startZ = 0.0
-    @Volatile private var lastKbNano = 0L
-    @Volatile private var lastPosX = 0.0
-    @Volatile private var lastPosZ = 0.0
+    // ── IN (received) state ──
+    @Volatile private var inKbNano = 0L
+    @Volatile private var inMotionX = 0.0
+    @Volatile private var inMotionY = 0.0
+    @Volatile private var inMotionZ = 0.0
+    @Volatile private var inMeasuring = false
+    @Volatile private var inStartX = 0.0
+    @Volatile private var inStartZ = 0.0
+    @Volatile private var inDistance = 0.0
+    @Volatile private var inLastKbNano = 0L
 
-    private val tickListener: (io.switchlite.core.model.PlayerState, io.switchlite.core.model.TargetState?) -> Unit = { p, _ ->
+    // ── OUT (dealt) state ──
+    @Volatile private var outKbNano = 0L
+    @Volatile private var outEntityId = -1
+    @Volatile private var outMotionX = 0.0
+    @Volatile private var outMotionY = 0.0
+    @Volatile private var outMotionZ = 0.0
+    @Volatile private var outMeasuring = false
+    @Volatile private var outStartX = 0.0
+    @Volatile private var outStartZ = 0.0
+    @Volatile private var outLastPosX = 0.0
+    @Volatile private var outLastPosZ = 0.0
+    @Volatile private var outDistance = 0.0
+    @Volatile private var outLastKbNano = 0L
+
+    // Attack correlation (set by the attack listener on the background tick thread)
+    @Volatile private var lastAttackedId = -1
+    @Volatile private var lastAttackNano = 0L
+
+    // ========== IN: velocity notifier (Netty thread) — capture the raw knockback vector ==========
+    private val velocityNotifier: (VelocityContext) -> Unit = { ctx ->
         if (enabled) {
-            val kb = EventBridge.lastKnockbackNano
-            if (kb != lastKbNano) {
-                // New knockback: start measuring displacement.
-                lastKbNano = kb
-                measuring = true
-                startX = p.position.x
-                startZ = p.position.z
-                kbDistance = 0.0
+            inMotionX = ctx.originalMotion.x
+            inMotionY = ctx.originalMotion.y
+            inMotionZ = ctx.originalMotion.z
+            inKbNano = System.nanoTime()
+        }
+    }
+
+    // ========== Attack listener (background 20Hz) — remember whom we just hit ==========
+    private val attackListener: (TargetState?) -> Unit = { target ->
+        if (enabled && target != null) {
+            lastAttackedId = target.entityId
+            lastAttackNano = System.nanoTime()
+        }
+    }
+
+    // ========== OUT: entity velocity notifier (Netty thread) — S12 for our recent target ==========
+    private val entityVelocityNotifier: (Int, Vec3) -> Unit = { entityId, motion ->
+        if (enabled) {
+            if (entityId == lastAttackedId && System.nanoTime() - lastAttackNano <= DEALT_MATCH_MS * 1_000_000L) {
+                outMotionX = motion.x
+                outMotionY = motion.y
+                outMotionZ = motion.z
+                outEntityId = entityId
+                outKbNano = System.nanoTime()
             }
-            if (measuring) {
-                val dx = p.position.x - startX
-                val dz = p.position.z - startZ
-                kbDistance = kotlin.math.sqrt(dx * dx + dz * dz)
-                // Stop measuring when the player is basically still (speed settled) OR after ~1.5s.
+        }
+    }
+
+    // ========== Tick (background 20Hz) — displacement measurement for both sources ==========
+    private val tickListener: (PlayerState, TargetState?) -> Unit = { p, _ ->
+        if (enabled) {
+            // ── IN: player displacement after the knockback ──
+            if (inKbNano != inLastKbNano) {
+                inLastKbNano = inKbNano
+                inMeasuring = true
+                inStartX = p.position.x
+                inStartZ = p.position.z
+                inDistance = 0.0
+            }
+            if (inMeasuring) {
+                val dx = p.position.x - inStartX
+                val dz = p.position.z - inStartZ
+                inDistance = sqrt(dx * dx + dz * dz)
                 val settled = kotlin.math.abs(p.motionX) < 0.001 && kotlin.math.abs(p.motionZ) < 0.001
-                val nowNano = System.nanoTime()
-                val elapsedMs = (nowNano - kb) / 1_000_000L
-                if (settled || elapsedMs > 1500L) {
-                    measuring = false
+                if (settled || System.nanoTime() - inKbNano > MEASURE_MS * 1_000_000L) {
+                    inMeasuring = false
+                }
+            }
+
+            // ── OUT: target entity displacement after the knockback ──
+            if (outKbNano != outLastKbNano) {
+                outLastKbNano = outKbNano
+                val pos = EventBridge.getEntityPosition(outEntityId)
+                if (pos != null) {
+                    outMeasuring = true
+                    outStartX = pos.x
+                    outStartZ = pos.z
+                    outLastPosX = pos.x
+                    outLastPosZ = pos.z
+                    outDistance = 0.0
+                } else {
+                    outMeasuring = false
+                }
+            }
+            if (outMeasuring) {
+                val pos = EventBridge.getEntityPosition(outEntityId)
+                if (pos == null) {
+                    outMeasuring = false // despawned / out of range
+                } else {
+                    val dx = pos.x - outStartX
+                    val dz = pos.z - outStartZ
+                    outDistance = sqrt(dx * dx + dz * dz)
+                    // Settled when the entity barely moves between 20Hz samples (KB consumed).
+                    val moved = kotlin.math.abs(pos.x - outLastPosX) + kotlin.math.abs(pos.z - outLastPosZ)
+                    if (moved < 0.001 || System.nanoTime() - outKbNano > MEASURE_MS * 1_000_000L) {
+                        outMeasuring = false
+                    }
+                    outLastPosX = pos.x
+                    outLastPosZ = pos.z
                 }
             }
         }
@@ -109,47 +202,69 @@ object KnockbackDisplay : Module("KnockbackDisplay", Category.RENDER) {
         if (posY + widgetHeight(ctx) > ctx.scaledHeight) posY = ctx.scaledHeight - widgetHeight(ctx)
     }
 
+    // ═══════════════════════════════════════════
+    //  Drawing — 4 lines: IN xyz / IN D+cut / OUT xyz / OUT D
+    // ═══════════════════════════════════════════
+
     private fun lines(): List<String> {
+        val inVec = "IN %.2f %.2f %.2f".format(inMotionX, inMotionY, inMotionZ)
         val orig = EventBridge.lastKbOriginalSpeed
         val mod = EventBridge.lastKbModifiedSpeed
-        val kbLine = if (orig > 0.001) {
+        val cutText = if (orig > 0.001) {
             val retain = (mod / orig * 100).toInt()
-            "KB $retain/${100 - retain}"
+            "D %.2f | %s/%s".format(inDistance, retain, 100 - retain)
         } else {
-            "KB --/--"
+            "D %.2f".format(inDistance)
         }
-        return listOf(kbLine, "D %.2f".format(kbDistance))
+        val outVec = "OUT %.2f %.2f %.2f".format(outMotionX, outMotionY, outMotionZ)
+        val outD = "D %.2f".format(outDistance)
+        return listOf(inVec, cutText, outVec, outD)
     }
 
     private fun widgetWidth(ctx: RenderContext): Int {
         val f = ctx.fontRenderer
-        val maxLine = lines().maxByOrNull { f.getStringWidth(it) }?.let { f.getStringWidth(it) } ?: 70
+        val maxLine = lines().maxByOrNull { f.getStringWidth(it) }?.let { f.getStringWidth(it) } ?: 80
         return (maxLine * scale).toInt() + 2
     }
 
     private fun widgetHeight(ctx: RenderContext): Int {
-        return ((ctx.fontRenderer.fontHeight * 2 + 2) * scale).toInt()
+        return ((ctx.fontRenderer.fontHeight * 4 + 4) * scale).toInt()
     }
 
     private fun draw(ctx: RenderContext) {
         val f = ctx.fontRenderer
         val lineH = f.fontHeight + 2
         val ls = lines()
-        f.drawStringWithShadow(ls[0], posX, posY, 0xFFFFFF)
+        // IN line is accent-colored when Velocity modified the last packet, else white.
+        val inColor = if (EventBridge.velocityModified) 0xFF7A00 else 0xFFFFFF
+        f.drawStringWithShadow(ls[0], posX, posY, inColor)
         f.drawStringWithShadow(ls[1], posX, posY + lineH, 0xC0C0C0)
+        f.drawStringWithShadow(ls[2], posX, posY + lineH * 2, 0xFFFFFF)
+        f.drawStringWithShadow(ls[3], posX, posY + lineH * 3, 0xC0C0C0)
     }
 
     // ========== Lifecycle ==========
     override fun onEnable() {
-        measuring = false
-        kbDistance = 0.0
-        lastKbNano = 0L
+        inMeasuring = false
+        inDistance = 0.0
+        inLastKbNano = 0L
+        outMeasuring = false
+        outDistance = 0.0
+        outLastKbNano = 0L
+        EventBridge.registerVelocityNotifier(velocityNotifier)
+        EventBridge.registerAttackListener(attackListener)
+        EventBridge.registerEntityVelocityNotifier(entityVelocityNotifier)
         EventBridge.registerTickListener(tickListener)
     }
 
     override fun onDisable() {
+        EventBridge.unregisterVelocityNotifier(velocityNotifier)
+        EventBridge.unregisterAttackListener(attackListener)
+        EventBridge.unregisterEntityVelocityNotifier(entityVelocityNotifier)
         EventBridge.unregisterTickListener(tickListener)
-        measuring = false
-        kbDistance = 0.0
+        inMeasuring = false
+        inDistance = 0.0
+        outMeasuring = false
+        outDistance = 0.0
     }
 }

@@ -51,6 +51,30 @@ object EventBridge {
      */
     @Volatile var velocityModified: Boolean = false
 
+    /**
+     * Timestamp (System.nanoTime) of the last knockback packet that affected this player. Set by the
+     * Velocity module / interceptor; read by the JumpTiming HUD to measure jump timing vs knockback.
+     */
+    @Volatile var lastKnockbackNano: Long = 0L
+
+    /**
+     * Knockback coefficient data from the last velocity packet — original horizontal speed and the
+     * modified horizontal speed (after Velocity reduction). Read by VelocityDisplay / KnockbackDisplay
+     * to show the retained/cut percentages. 0/0 when none yet.
+     */
+    @Volatile var lastKbOriginalSpeed: Double = 0.0
+    @Volatile var lastKbModifiedSpeed: Double = 0.0
+
+    /**
+     * Set by the Velocity module when it processes a knockback packet: records the original and
+     * (after reduction) horizontal speeds plus a fresh timestamp.
+     */
+    fun recordKnockback(originalSpeed: Double, modifiedSpeed: Double) {
+        lastKbOriginalSpeed = originalSpeed
+        lastKbModifiedSpeed = modifiedSpeed
+        lastKnockbackNano = System.nanoTime()
+    }
+
     // ========== PreTick (START phase, before game processes input) ==========
     private val startTickListeners = mutableListOf<(PlayerState, TargetState?) -> Unit>()
 
@@ -774,6 +798,9 @@ object EventBridge {
         isKeyJumpDown = false
         velocityPacketReceivedThisTick = false
         velocityModified = false
+        lastKnockbackNano = 0L
+        lastKbOriginalSpeed = 0.0
+        lastKbModifiedSpeed = 0.0
         renderOffsetX = 0f
         renderOffsetY = 0f
         renderOffsetZ = 0f

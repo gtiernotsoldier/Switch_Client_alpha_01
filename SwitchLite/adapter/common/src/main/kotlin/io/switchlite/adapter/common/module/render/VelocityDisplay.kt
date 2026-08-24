@@ -104,9 +104,13 @@ object VelocityDisplay : Module("VelocityDisplay", Category.RENDER) {
 
     private fun lines(): List<String> {
         val hSpeed = sqrt(vx * vx + vz * vz)
+        val retainPct = if (EventBridge.lastKbOriginalSpeed > 0.001) {
+            (EventBridge.lastKbModifiedSpeed / EventBridge.lastKbOriginalSpeed * 100).toInt()
+        } else -1
+        val line2 = if (retainPct >= 0) "KB ${retainPct}%/${100 - retainPct}%" else "Vel H %.2f".format(hSpeed)
         return listOf(
-            "Vel %.3f %.3f %.3f".format(vx, vy, vz),
-            "H %.3f".format(hSpeed)
+            "V %.2f %.2f %.2f".format(vx, vy, vz),
+            line2
         )
     }
 

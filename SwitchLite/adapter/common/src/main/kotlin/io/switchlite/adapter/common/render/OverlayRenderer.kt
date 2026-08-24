@@ -63,6 +63,8 @@ object OverlayRenderer {
             drawSpeedometer(ctx)
             drawVelocityDisplay(ctx)
             drawJumpStatus(ctx)
+            drawJumpTiming(ctx)
+            drawKnockbackDisplay(ctx)
             drawToasts(ctx)
 
         } finally {
@@ -172,6 +174,22 @@ object OverlayRenderer {
     private fun drawJumpStatus(ctx: RenderContext) {
         try {
             io.switchlite.adapter.common.module.render.JumpStatus.render(ctx)
+        } catch (_: Exception) {}
+    }
+
+    // ── JumpTiming (jump-reset timing window + manual success rate) ──
+
+    private fun drawJumpTiming(ctx: RenderContext) {
+        try {
+            io.switchlite.adapter.common.module.render.JumpTiming.render(ctx)
+        } catch (_: Exception) {}
+    }
+
+    // ── KnockbackDisplay (retain/cut % + knockback distance) ──
+
+    private fun drawKnockbackDisplay(ctx: RenderContext) {
+        try {
+            io.switchlite.adapter.common.module.render.KnockbackDisplay.render(ctx)
         } catch (_: Exception) {}
     }
 

@@ -135,6 +135,18 @@ object Velocity : Module("Velocity", Category.COMBAT), HudLineProvider {
         // Expose whether velocity was actually modified/cancelled (for the VelocityDisplay HUD).
         val modified = result is VelocityResult.Modify || result is VelocityResult.Cancel
         EventBridge.velocityModified = modified
+        // Record knockback coefficient (original vs post-reduction horizontal speed) for the
+        // VelocityDisplay / KnockbackDisplay / JumpTiming HUDs.
+        val origSpeed = Math.sqrt(ctx.originalMotion.x * ctx.originalMotion.x + ctx.originalMotion.z * ctx.originalMotion.z)
+        val modSpeed = when (result) {
+            is VelocityResult.Modify -> {
+                val m = result.motion
+                Math.sqrt(m.x * m.x + m.z * m.z)
+            }
+            is VelocityResult.Cancel -> 0.0
+            else -> origSpeed // Pass/NoOp → unchanged
+        }
+        EventBridge.recordKnockback(origSpeed, modSpeed)
         // Diagnostic: confirm the strategy actually produced Modify (HUD color check).
         if (++velDiagCount % 10 == 0) {
             io.switchlite.core.logging.CoreLogger.info(

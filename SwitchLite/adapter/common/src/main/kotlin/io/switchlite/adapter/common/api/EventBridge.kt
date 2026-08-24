@@ -15,6 +15,21 @@ import io.switchlite.core.util.Vec3
  */
 object EventBridge {
 
+    // ═══════════════════════════════════════════════════════════════════════════════
+    //  NAVIGATION INDEX — 8 thematic regions (banners below are prefixed [R1]..[R8]):
+    //   R1 Lifecycle & Tick        : PreTick, Tick, Platform Registration, reset()
+    //   R2 Combat: Attack/KB       : Velocity, Attack Event, Sprint Coordination,
+    //                                Sprint, Sprint Reset, C0B, Jump, Crosshair Target
+    //   R3 Input: Keys & Synthetic : Key, Synthetic Input, Attack(Left), Cancel Attack,
+    //                                Item Use, Forward/Back, CPS, WASD, Snapshots, Mouse
+    //   R4 Motion & Actions        : Motion, Rotation, Rotation Applier, Click/Jump/Right-Click Delay
+    //   R5 Target & Entity         : Entity Info, Team Detection, Reach
+    //   R6 Render & Display        : Render Offset, Render Overrides, Gamma, HUD Text,
+    //                                GUI Mouse, Notifications
+    //   R7 Player Assist           : Hotbar Slot, Sneak, SafeWalk
+    //   R8 Input State (raw)       : Mouse Delta / physical buttons / fluid / food
+    // ═══════════════════════════════════════════════════════════════════════════════
+
     // ========== Velocity ==========
     private var velocityListener: ((VelocityContext) -> PlatformCommand)? = null
     private val velocityNotifiers = mutableListOf<(VelocityContext) -> Unit>()
@@ -75,7 +90,7 @@ object EventBridge {
         lastKnockbackNano = System.nanoTime()
     }
 
-    // ========== PreTick (START phase, before game processes input) ==========
+    // ========== [R1] PreTick (START phase, before game processes input) ==========
     private val startTickListeners = mutableListOf<(PlayerState, TargetState?) -> Unit>()
 
     fun registerStartTickListener(listener: (PlayerState, TargetState?) -> Unit) {
@@ -94,7 +109,7 @@ object EventBridge {
         return velocityListener?.invoke(ctx) ?: PlatformCommand.Pass(ctx.originalMotion)
     }
 
-    // ========== Tick ==========
+    // ========== [R1] Tick ==========
     private val tickListeners = mutableListOf<(PlayerState, TargetState?) -> Unit>()
     private val simpleTickListeners = mutableListOf<(Int) -> Unit>()
     private var tickCounter = 0
@@ -129,7 +144,7 @@ object EventBridge {
         simpleTickListeners.forEach { it(tickCounter) }
     }
 
-    // ========== Attack Event (SuperKnockback — ported LB semantics) ==========
+    // ========== [R2] Attack Event (SuperKnockback — ported LB semantics) ==========
     // We don't hook PlayerControllerMP.attackEntity; instead the adapter feeds us a "fresh hit"
     // notification via the target's hurtTime rising edge (same reliable signal SprintReset uses).
     // Modules register here to act at attack time. The adapter calls notifyAttack(target) when it
@@ -144,7 +159,7 @@ object EventBridge {
         attackListeners.remove(listener)
     }
 
-    // ========== Sprint Coordination (SuperKnockback + SprintReset) ==========
+    // ========== [R2] Sprint Coordination (SuperKnockback + SprintReset) ==========
     // Both modules send sprint packets on a hit. To keep max knockback advantage, SprintReset
     // runs first and SuperKnockback offsets its action by one tick so the two never fire a C0B
     // burst in the same tick. Modules set these flags on enable/disable.
@@ -177,7 +192,7 @@ object EventBridge {
 
     fun getCurrentTick(): Int = tickCounter
 
-    // ========== Rotation ==========
+    // ========== [R4] Rotation ==========
     private var rotationSetter: ((Vec2) -> Unit)? = null
 
     fun setPlayerRotation(rotation: Vec2) {
@@ -188,7 +203,7 @@ object EventBridge {
         rotationSetter = setter
     }
 
-    // ========== Motion ==========
+    // ========== [R4] Motion ==========
     private var motionApplier: ((Vec3) -> Unit)? = null
 
     fun applyMotion(motion: Vec3) {
@@ -199,7 +214,7 @@ object EventBridge {
         motionApplier = applier
     }
 
-    // ========== Key ==========
+    // ========== [R3] Key ==========
     private val keyListeners = mutableListOf<(keyCode: Int, pressed: Boolean) -> Unit>()
 
     fun registerKeyListener(listener: (keyCode: Int, pressed: Boolean) -> Unit) {
@@ -214,7 +229,7 @@ object EventBridge {
         keyListeners.forEach { it(keyCode, pressed) }
     }
 
-    // ========== Main-Thread Synthetic Input State ==========
+    // ========== [R3] Main-Thread Synthetic Input State ==========
     // Combat actions must be applied on the MC render thread, NOT the 20Hz
     // SwitchLite-Tick background thread. Modules (background thread) only write
     // these *desired* states; the platform adapter reads them on the render thread
@@ -289,7 +304,7 @@ object EventBridge {
     /** Same as [syntheticAttackOverride] but for the use-item (right-click) key. */
     @Volatile var syntheticUseOverride: Boolean = false
 
-    // ========== Attack (Left Click) ==========
+    // ========== [R3] Attack (Left Click) ==========
     private var attackTrigger: (() -> Unit)? = null
 
     /**
@@ -317,14 +332,14 @@ object EventBridge {
         attackTrigger = trigger
     }
 
-    // ========== Cancel Attack (HitSelect) ==========
+    // ========== [R3] Cancel Attack (HitSelect) ==========
     private var cancelAttackHandler: (() -> Unit)? = null
 
     fun cancelAttack() { cancelAttackHandler?.invoke() }
 
     fun registerCancelAttackHandler(handler: () -> Unit) { cancelAttackHandler = handler }
 
-    // ========== Sprint ==========
+    // ========== [R2] Sprint ==========
     private var sprintSetter: ((Boolean) -> Unit)? = null
 
     /**
@@ -347,19 +362,19 @@ object EventBridge {
      */
     @Volatile var serverSprintState: Boolean = false
 
-    // ========== Click Delay Reset (DelayRemover — 1.8 exclusive) ==========
+    // ========== [R4] Click Delay Reset (DelayRemover — 1.8 exclusive) ==========
     private var resetClickDelayHandler: (() -> Unit)? = null
 
     fun resetClickDelay() { resetClickDelayHandler?.invoke() }
     fun registerResetClickDelayHandler(handler: () -> Unit) { resetClickDelayHandler = handler }
 
-    // ========== Jump Delay Reset (NoJumpDelay — Movement) ==========
+    // ========== [R4] Jump Delay Reset (NoJumpDelay — Movement) ==========
     private var resetJumpDelayHandler: (() -> Unit)? = null
 
     fun resetJumpDelay() { resetJumpDelayHandler?.invoke() }
     fun registerResetJumpDelayHandler(handler: () -> Unit) { resetJumpDelayHandler = handler }
 
-    // ========== Render Offset (ParallaxStrike — Player) ==========
+    // ========== [R6] Render Offset (ParallaxStrike — Player) ==========
     @Volatile var renderOffsetX: Float = 0f
     @Volatile var renderOffsetY: Float = 0f
     @Volatile var renderOffsetZ: Float = 0f
@@ -369,7 +384,7 @@ object EventBridge {
         renderOffsetX = 0f; renderOffsetY = 0f; renderOffsetZ = 0f
     }
 
-    // ========== Hotbar Slot Switching (AutoTool — Player) ==========
+    // ========== [R7] Hotbar Slot Switching (AutoTool — Player) ==========
     private var switchSlotHandler: ((Int) -> Unit)? = null  // silent switch to slot
     private var getBestSlotHandler: (() -> Int)? = null      // find best tool in hotbar
 
@@ -378,7 +393,7 @@ object EventBridge {
     fun registerSwitchSlotHandler(handler: (Int) -> Unit) { switchSlotHandler = handler }
     fun registerGetBestSlotHandler(handler: () -> Int) { getBestSlotHandler = handler }
 
-    // ========== Sneak Key (Eagle — Player) ==========
+    // ========== [R7] Sneak Key (Eagle — Player) ==========
     private var pressSneakHandler: (() -> Unit)? = null
     private var releaseSneakHandler: (() -> Unit)? = null
     private var edgeDetector: (() -> Boolean)? = null
@@ -390,16 +405,16 @@ object EventBridge {
     fun registerReleaseSneakHandler(handler: () -> Unit) { releaseSneakHandler = handler }
     fun registerEdgeDetector(handler: () -> Boolean) { edgeDetector = handler }
 
-    // ========== Module Cross-Check (BridgeAssist ↔ SafeWalk) ==========
+    // ========== [R7] Module Cross-Check (BridgeAssist ↔ SafeWalk) ==========
     @Volatile var isSafeWalkEnabled: Boolean = false
 
-    // ========== Rotation (BridgeAssist, AimAssist) ==========
+    // ========== [R4] Rotation (BridgeAssist, AimAssist) ==========
     private var rotationApplier: ((Float, Float) -> Unit)? = null
 
     fun setPlayerRotation(yaw: Float, pitch: Float) { rotationApplier?.invoke(yaw, pitch) }
     fun registerRotationApplier(handler: (Float, Float) -> Unit) { rotationApplier = handler }
 
-    // ========== Render Overrides (NoFOV, NoHurtCam — Render) ==========
+    // ========== [R6] Render Overrides (NoFOV, NoHurtCam — Render) ==========
     private var resetHurtCamHandler: (() -> Unit)? = null
     private var resetFovModifierHandler: (() -> Unit)? = null
 
@@ -408,19 +423,19 @@ object EventBridge {
     fun registerResetHurtCamHandler(handler: () -> Unit) { resetHurtCamHandler = handler }
     fun registerResetFovModifierHandler(handler: () -> Unit) { resetFovModifierHandler = handler }
 
-    // ========== Gamma (Fullbright — Render) ==========
+    // ========== [R6] Gamma (Fullbright — Render) ==========
     private var gammaSetter: ((Float) -> Unit)? = null
 
     fun setGamma(value: Float) { gammaSetter?.invoke(value) }
     fun registerGammaSetter(handler: (Float) -> Unit) { gammaSetter = handler }
 
-    // ========== Right-Click Delay (FastPlace — World) ==========
+    // ========== [R4] Right-Click Delay (FastPlace — World) ==========
     private var rightClickDelayHandler: ((Int) -> Unit)? = null
 
     fun setRightClickDelay(ticks: Int) { rightClickDelayHandler?.invoke(ticks) }
     fun registerRightClickDelayHandler(handler: (Int) -> Unit) { rightClickDelayHandler = handler }
 
-    // ========== Team Detection (Teams — Player) ==========
+    // ========== [R5] Team Detection (Teams — Player) ==========
     private var scoreboardTeamChecker: ((String) -> String?)? = null
     private var displayNameProvider: ((String) -> String)? = null
     private var armorColorChecker: ((String) -> Int)? = null
@@ -432,7 +447,7 @@ object EventBridge {
     fun registerDisplayNameProvider(handler: (String) -> String) { displayNameProvider = handler }
     fun registerArmorColorChecker(handler: (String) -> Int) { armorColorChecker = handler }
 
-    // ========== Entity Info (AntiBot — Player) ==========
+    // ========== [R5] Entity Info (AntiBot — Player) ==========
     private var entityTicksProvider: ((String) -> Int)? = null
     private var entityOnGroundChecker: ((String) -> Boolean)? = null
 
@@ -441,10 +456,10 @@ object EventBridge {
     fun registerEntityTicksProvider(handler: (String) -> Int) { entityTicksProvider = handler }
     fun registerEntityOnGroundChecker(handler: (String) -> Boolean) { entityOnGroundChecker = handler }
 
-    // ========== HUD Text (HUD — Render) ==========
+    // ========== [R6] HUD Text (HUD — Render) ==========
     @Volatile var hudTextLine: String = ""
 
-    // ========== GUI Mouse State (populated by platform render hook for HUD drag) ==========
+    // ========== [R6] GUI Mouse State (populated by platform render hook for HUD drag) ==========
     // Scaled GUI coordinates (left-top origin, y down).
     @Volatile var guiMouseX: Int = 0
     @Volatile var guiMouseY: Int = 0
@@ -459,7 +474,7 @@ object EventBridge {
      */
     @Volatile var isGuiOpen: Boolean = false
 
-    // ========== GUI Notifications (Render — right-corner toast) ==========
+    // ========== [R6] GUI Notifications (Render — right-corner toast) ==========
 
     data class Notification(
         val text: String,
@@ -493,7 +508,7 @@ object EventBridge {
         }
     }
 
-    // ========== Reach (Reach — 1.8 exclusive) ==========
+    // ========== [R5] Reach (Reach — 1.8 exclusive) ==========
     private var reachSetter: ((Float) -> Unit)? = null
 
     fun setReach(distance: Float) { reachSetter?.invoke(distance) }
@@ -510,7 +525,7 @@ object EventBridge {
     fun doReachRaycast(reach: Double): Boolean = reachRaycast?.invoke(reach) ?: false
     fun registerReachRaycast(handler: (Double) -> Boolean) { reachRaycast = handler }
 
-    // ========== Mouse Delta (for Self-adaptive AimAssist) ==========
+    // ========== [R8] Mouse Delta (for Self-adaptive AimAssist) ==========
     // Set by ForgeBootstrap / FabricBootstrap each tick before onTick().
 
     /** Raw mouse delta X this frame (pixels, screen space). */
@@ -545,7 +560,7 @@ object EventBridge {
     /** Player's food level (0-20). Vanilla sprint cancels at <= 6. */
     @Volatile var foodLevel: Int = 20
 
-    // ========== WASD Key States (StrafeFix) ==========
+    // ========== [R3] WASD Key States (StrafeFix) ==========
     @Volatile var isKeyForwardDown: Boolean = false
     @Volatile var isKeyBackDown: Boolean = false
     @Volatile var isKeyLeftDown: Boolean = false
@@ -563,7 +578,7 @@ object EventBridge {
     /** Jump (space) key state — used by the Keystrokes HUD. */
     @Volatile var isKeyJumpDown: Boolean = false
 
-    // ========== Input Snapshots (NoMouseFix, NoKeyboardFix) ==========
+    // ========== [R3] Input Snapshots (NoMouseFix, NoKeyboardFix) ==========
     @Volatile var snapMouseDeltaX: Float = 0f
     @Volatile var snapMouseDeltaY: Float = 0f
     @Volatile var snapMouseSensitivity: Float = 1.0f
@@ -573,7 +588,7 @@ object EventBridge {
     @Volatile var snapKeyRight: Boolean = false
     @Volatile var snapKeyAttack: Boolean = false
 
-    // ========== Item Use ==========
+    // ========== [R3] Item Use ==========
     private var releaseUsingItemHandler: (() -> Unit)? = null
     private var pressUseItemHandler: (() -> Unit)? = null
 
@@ -601,7 +616,7 @@ object EventBridge {
         pressUseItemHandler = handler
     }
 
-    // ========== Forward Key (WTap) ==========
+    // ========== [R3] Forward Key (WTap) ==========
     private var pressForwardHandler: (() -> Unit)? = null
     private var releaseForwardHandler: (() -> Unit)? = null
 
@@ -611,7 +626,7 @@ object EventBridge {
     fun registerPressForwardHandler(handler: () -> Unit) { pressForwardHandler = handler }
     fun registerReleaseForwardHandler(handler: () -> Unit) { releaseForwardHandler = handler }
 
-    // ========== Back Key (STap) ==========
+    // ========== [R3] Back Key (STap) ==========
     private var pressBackHandler: (() -> Unit)? = null
     private var releaseBackHandler: (() -> Unit)? = null
 
@@ -621,7 +636,7 @@ object EventBridge {
     fun registerPressBackHandler(handler: () -> Unit) { pressBackHandler = handler }
     fun registerReleaseBackHandler(handler: () -> Unit) { releaseBackHandler = handler }
 
-    // ========== Sprint Reset Packets (SprintReset — 1.8 exclusive) ==========
+    // ========== [R2] Sprint Reset Packets (SprintReset — 1.8 exclusive) ==========
     private var sprintResetHandler: ((String) -> Unit)? = null
 
     /**
@@ -646,7 +661,7 @@ object EventBridge {
 
     fun registerSprintResetHandler(handler: (String) -> Unit) { sprintResetHandler = handler }
 
-    // ========== Generic C0B Entity-Action Packet (SuperKnockback — 1.8 exclusive) ==========
+    // ========== [R2] Generic C0B Entity-Action Packet (SuperKnockback — 1.8 exclusive) ==========
     // Sends a C0BPacketEntityAction with an arbitrary action name (e.g. "START_SPRINTING",
     // "STOP_SPRINTING", "START_SNEAKING", "STOP_SNEAKING"). Used by SuperKnockback's
     // Old / SneakPacket modes (ported from LiquidBounce).
@@ -662,7 +677,7 @@ object EventBridge {
 
     fun registerEntityActionHandler(handler: (String) -> Unit) { sendEntityActionHandler = handler }
 
-    // ========== Jump (JumpReset) ==========
+    // ========== [R2] Jump (JumpReset) ==========
     private var jumpHandler: (() -> Unit)? = null
 
     /**
@@ -709,7 +724,7 @@ object EventBridge {
     fun registerJumpHandler(handler: () -> Unit) { jumpHandler = handler }
     fun registerReleaseJumpHandler(handler: () -> Unit) { releaseJumpHandler = handler }
 
-    // ========== Platform Registration ==========
+    // ========== [R1] Platform Registration ==========
     // Called by ForgeBootstrap / FabricBootstrap to wire up platform-specific handlers
     fun registerPlatformHandlers(
         rotationSetter: (Vec2) -> Unit,

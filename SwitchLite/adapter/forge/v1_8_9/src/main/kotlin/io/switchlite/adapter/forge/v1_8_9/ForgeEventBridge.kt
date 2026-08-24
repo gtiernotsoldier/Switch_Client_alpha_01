@@ -14,7 +14,9 @@ import io.switchlite.agent.MappingContext
  */
 object ForgeEventBridge : IEventBridge {
 
-    // Lazy class references (runtime only)
+    // ========== Reflection References (lazy, resolved once) ==========
+
+    // — LWJGL Mouse & entity/item classes
     private val mouseClass by lazy { Class.forName("org.lwjgl.input.Mouse") }
     private val mouseIsButtonDown by lazy {
         mouseClass.getMethod("isButtonDown", Int::class.javaPrimitiveType)
@@ -24,7 +26,7 @@ object ForgeEventBridge : IEventBridge {
     private val armorMaterialClass by lazy { Class.forName("net.minecraft.item.ItemArmor\$ArmorMaterial") }
     private val clothMaterial by lazy { armorMaterialClass.enumConstants.firstOrNull { it.toString() == "CLOTH" } }
 
-    // Packet class constructors (lazy, created once)
+    // — packet classes
     private val c02PacketUseEntityClass by lazy { Class.forName("net.minecraft.network.play.client.C02PacketUseEntity") }
     private val c02ActionClass by lazy { Class.forName("net.minecraft.network.play.client.C02PacketUseEntity\$Action") }
     private val attackAction by lazy { c02ActionClass.enumConstants.firstOrNull { it.toString() == "ATTACK" } }
@@ -64,12 +66,13 @@ object ForgeEventBridge : IEventBridge {
         c09PacketClass.getConstructor(Int::class.javaPrimitiveType)
     }
 
+    // — blocks & raycast support
     private val blocksClass by lazy { Class.forName("net.minecraft.init.Blocks") }
     private val blocksAir by lazy { blocksClass.getField("AIR").get(null) }
     private val movingObjectTypeClass by lazy { Class.forName("net.minecraft.util.MovingObjectPosition\$MovingObjectType") }
     private val movingObjectTypeBlock by lazy { movingObjectTypeClass.enumConstants.firstOrNull { it.toString() == "BLOCK" } }
 
-    // Cached field references for writes (avoid repeated getField lookups)
+    // — cached mapping fields (avoid repeated getField lookups)
     private val keybindingPressedField by lazy { MappingContext.getField("forge:keybinding_pressed") }
     private val keybindingPressTimeField by lazy { MappingContext.getField("forge:keybinding_pressTime") }
     // LWJGL Mouse.buttons static ByteBuffer — writing it makes Mouse.isButtonDown(0) return
@@ -88,13 +91,28 @@ object ForgeEventBridge : IEventBridge {
     private val playerJumpTicksField by lazy { MappingContext.getField("forge:player_jumpTicks") }
     private val mcObjectMouseOverField by lazy { MappingContext.getField("forge:mc_objectMouseOver") }
 
+    // ========== State ==========
+
     @Volatile
     var pendingMotion: Vec3? = null
 
     /** Previous tick's crosshair-target hurt state (for attack rising-edge detection). */
     private var prevTargetHurt = false
 
-    // ========== Helpers ==========
+    // — click-cadence state (Raven-style)
+    // Each full clicker cadence: press on downTime, release on upTime, regenerated per cycle.
+    private var attackCadenceActive = false
+    private var attackDownTime = 0L
+    private var attackUpTime = 0L
+    private var attackPressed = false
+    private var useCadenceActive = false
+    private var useDownTime = 0L
+    private var useUpTime = 0L
+    private var usePressed = false
+    private val clickRandom = java.util.Random()
+
+    // ========== Platform Helpers ==========
+
     private fun getMc(): Any? = try {
         MappingContext.invokeMethod(null, "forge:mc_getMinecraft")
     } catch (_: Exception) { null }
@@ -227,7 +245,6 @@ object ForgeEventBridge : IEventBridge {
         } catch (_: Exception) {}
     }
 
-    // ========== Registration ==========
     /**
      * 1.8.8/1.8.9 display name of an entity (getDisplayName -> getFormattedText).
      */
@@ -239,10 +256,14 @@ object ForgeEventBridge : IEventBridge {
         } catch (_: Exception) { null }
     }
 
+    // ========== EventBridge Handler Registration ==========
+
     override fun registerListeners() {
+        // ── Rotation & Motion ──
         EventBridge.registerRotationSetter { rotation -> setPlayerRotation(rotation) }
         EventBridge.registerMotionApplier { motion -> applyMotion(motion) }
 
+        // ── Sprint / C0B ──
         EventBridge.registerSprintSetter { sprinting ->
             val player = getPlayer() ?: return@registerSprintSetter
             MappingContext.invokeMethod(player, "forge:player_setSprinting", sprinting)
@@ -253,33 +274,6 @@ object ForgeEventBridge : IEventBridge {
         // Generic C0B entity-action sender (SuperKnockback Old/SneakPacket, ported from LB).
         EventBridge.registerEntityActionHandler { actionName ->
             sendEntityAction(actionName)
-        }
-
-        EventBridge.registerReleaseUsingItemHandler {
-            setKeyBindPressed("forge:gs_keyBindUseItem", false)
-            try {
-                val player = getPlayer() ?: return@registerReleaseUsingItemHandler
-                MappingContext.invokeMethod(player, "forge:player_stopUsingItem")
-            } catch (_: Exception) {}
-        }
-
-        EventBridge.registerPressUseItemHandler {
-            setKeyBindPressed("forge:gs_keyBindUseItem", true)
-        }
-
-        EventBridge.registerPressForwardHandler { setKeyBindPressed("forge:gs_keyBindForward", true) }
-        EventBridge.registerReleaseForwardHandler { setKeyBindPressed("forge:gs_keyBindForward", false) }
-        EventBridge.registerPressBackHandler { setKeyBindPressed("forge:gs_keyBindBack", true) }
-        EventBridge.registerReleaseBackHandler { setKeyBindPressed("forge:gs_keyBindBack", false) }
-
-        EventBridge.registerJumpHandler {
-            // Press the jump key (KeyBinding) on the main thread so MC's own tick performs the jump
-            // and the Keystrokes HUD reflects it. No direct player.jump() — that would mutate the
-            // entity from a background thread and skip the key display.
-            setKeyBindPressed("forge:gs_keyBindJump", true)
-        }
-        EventBridge.registerReleaseJumpHandler {
-            setKeyBindPressed("forge:gs_keyBindJump", false)
         }
 
         EventBridge.registerSprintResetHandler { mode ->
@@ -303,6 +297,11 @@ object ForgeEventBridge : IEventBridge {
             }
         }
 
+        // ── Attack & Click ──
+        EventBridge.registerAttackTrigger {
+            setKeyBindPressed("forge:gs_keyBindAttack", true)
+        }
+
         EventBridge.registerCancelAttackHandler {
             setKeyBindPressed("forge:gs_keyBindAttack", false)
         }
@@ -314,11 +313,142 @@ object ForgeEventBridge : IEventBridge {
             } catch (_: Exception) {}
         }
 
+        EventBridge.registerReleaseUsingItemHandler {
+            setKeyBindPressed("forge:gs_keyBindUseItem", false)
+            try {
+                val player = getPlayer() ?: return@registerReleaseUsingItemHandler
+                MappingContext.invokeMethod(player, "forge:player_stopUsingItem")
+            } catch (_: Exception) {}
+        }
+
+        EventBridge.registerPressUseItemHandler {
+            setKeyBindPressed("forge:gs_keyBindUseItem", true)
+        }
+
+        // ── Jump ──
+        EventBridge.registerJumpHandler {
+            // Press the jump key (KeyBinding) on the main thread so MC's own tick performs the jump
+            // and the Keystrokes HUD reflects it. No direct player.jump() — that would mutate the
+            // entity from a background thread and skip the key display.
+            setKeyBindPressed("forge:gs_keyBindJump", true)
+        }
+        EventBridge.registerReleaseJumpHandler {
+            setKeyBindPressed("forge:gs_keyBindJump", false)
+        }
+
         EventBridge.registerResetJumpDelayHandler {
             try {
                 val player = getPlayer() ?: return@registerResetJumpDelayHandler
                 playerJumpTicksField?.setInt(player, 0)
             } catch (_: Exception) {}
+        }
+
+        // ── Movement keys (WTap/STap) ──
+        EventBridge.registerPressForwardHandler { setKeyBindPressed("forge:gs_keyBindForward", true) }
+        EventBridge.registerReleaseForwardHandler { setKeyBindPressed("forge:gs_keyBindForward", false) }
+        EventBridge.registerPressBackHandler { setKeyBindPressed("forge:gs_keyBindBack", true) }
+        EventBridge.registerReleaseBackHandler { setKeyBindPressed("forge:gs_keyBindBack", false) }
+
+        // ── Aim ──
+        EventBridge.registerRotationApplier { yaw, pitch ->
+            try {
+                val player = getPlayer() ?: return@registerRotationApplier
+                playerRotationYawField?.setFloat(player, yaw)
+                playerRotationPitchField?.setFloat(player, pitch)
+            } catch (_: Exception) {}
+        }
+
+        // ── Render ──
+        EventBridge.registerResetHurtCamHandler {
+            try {
+                val player = getPlayer() ?: return@registerResetHurtCamHandler
+                playerHurtTimeField?.setInt(player, 0)
+            } catch (_: Exception) {}
+        }
+
+        EventBridge.registerResetFovModifierHandler {
+            try {
+                val mc = getMc() ?: return@registerResetFovModifierHandler
+                val er = MappingContext.getFieldValue(mc, "forge:mc_entityRenderer") ?: return@registerResetFovModifierHandler
+                entityRendererFovField?.setFloat(er, 1.0f)
+            } catch (_: Exception) {}
+        }
+
+        EventBridge.registerGammaSetter { gamma ->
+            try {
+                val mc = getMc() ?: return@registerGammaSetter
+                val gs = MappingContext.getFieldValue(mc, "forge:mc_gameSettings") ?: return@registerGammaSetter
+                gsGammaField?.setFloat(gs, gamma)
+            } catch (_: Exception) {}
+        }
+
+        // ── World ──
+        EventBridge.registerRightClickDelayHandler { ticks ->
+            try {
+                val mc = getMc() ?: return@registerRightClickDelayHandler
+                mcRightClickDelayField?.setInt(mc, ticks)
+            } catch (_: Exception) {}
+        }
+
+        // ── Player helpers ──
+        EventBridge.registerSwitchSlotHandler { slot ->
+            try {
+                val player = getPlayer() ?: return@registerSwitchSlotHandler
+                inventoryCurrentItemField?.setInt(player, slot)
+                sendPacket(c09Constructor.newInstance(slot))
+            } catch (_: Exception) {}
+        }
+
+        EventBridge.registerGetBestSlotHandler {
+            var bestSlot = -1
+            var bestSpeed = 1.0f
+            val player = getPlayer() ?: return@registerGetBestSlotHandler -1
+            val mc = getMc()
+            val objMouseOver = try { MappingContext.getFieldValue(mc, "forge:mc_objectMouseOver") } catch (_: Exception) { null }
+            if (objMouseOver == null) return@registerGetBestSlotHandler -1
+
+            val typeOfHit = try { MappingContext.getFieldValue(objMouseOver, "forge:movingObjectPosition_typeOfHit") } catch (_: Exception) { null }
+            if (typeOfHit !== movingObjectTypeBlock) return@registerGetBestSlotHandler -1
+
+            val blockPos = try { MappingContext.getFieldValue(objMouseOver, "forge:movingObjectPosition_blockPos") } catch (_: Exception) { null }
+            val world = getWorld() ?: return@registerGetBestSlotHandler -1
+            val blockState = try { MappingContext.invokeMethod(world, "forge:world_getBlockState", blockPos) } catch (_: Exception) { null }
+            val block = try { MappingContext.invokeMethod(blockState, "forge:iblockstate_block") } catch (_: Exception) { null }
+
+            val inventory = try { MappingContext.getFieldValue(player, "forge:player_inventory") } catch (_: Exception) { null }
+            for (i in 0..8) {
+                val stack = try { MappingContext.invokeMethod(inventory, "forge:inventory_getStackInSlot", i) } catch (_: Exception) { null }
+                if (stack == null) continue
+                val item = try { MappingContext.getFieldValue(stack, "forge:itemStack_item") } catch (_: Exception) { null }
+                if (item == null || block == null) continue
+                val speed = try { MappingContext.invokeMethod(item, "forge:item_getDigSpeed", stack, block) as? Float } catch (_: Exception) { null }
+                if (speed != null && speed > bestSpeed) {
+                    bestSpeed = speed
+                    bestSlot = i
+                }
+            }
+            if (bestSpeed > 1.0f) bestSlot else -1
+        }
+
+        EventBridge.registerPressSneakHandler { setKeyBindPressed("forge:gs_keyBindSneak", true) }
+        EventBridge.registerReleaseSneakHandler { setKeyBindPressed("forge:gs_keyBindSneak", false) }
+
+        EventBridge.registerEdgeDetector {
+            val player = getPlayer() ?: return@registerEdgeDetector false
+            val onGround = MappingContext.getFieldValue(player, "forge:entity_onGround") as? Boolean ?: false
+            if (!onGround) return@registerEdgeDetector false
+            val world = getWorld() ?: return@registerEdgeDetector false
+            val posX = MappingContext.getFieldValue(player, "forge:entity_posX") as? Double ?: 0.0
+            val posY = MappingContext.getFieldValue(player, "forge:entity_posY") as? Double ?: 0.0
+            val posZ = MappingContext.getFieldValue(player, "forge:entity_posZ") as? Double ?: 0.0
+            try {
+                val blockPosClass = Class.forName("net.minecraft.util.BlockPos")
+                val blockPos = blockPosClass.getConstructor(Double::class.java, Double::class.java, Double::class.java)
+                    .newInstance(posX, posY - 1.0, posZ)
+                val bs = MappingContext.invokeMethod(world, "forge:world_getBlockState", blockPos)
+                val b = MappingContext.invokeMethod(bs, "forge:iblockstate_block")
+                b !== blocksAir
+            } catch (_: Exception) { false }
         }
 
         EventBridge.registerReachSetter { distance ->
@@ -396,103 +526,6 @@ object ForgeEventBridge : IEventBridge {
                 }
             } catch (_: Exception) {}
             false
-        }
-
-        EventBridge.registerSwitchSlotHandler { slot ->
-            try {
-                val player = getPlayer() ?: return@registerSwitchSlotHandler
-                inventoryCurrentItemField?.setInt(player, slot)
-                sendPacket(c09Constructor.newInstance(slot))
-            } catch (_: Exception) {}
-        }
-
-        EventBridge.registerGetBestSlotHandler {
-            var bestSlot = -1
-            var bestSpeed = 1.0f
-            val player = getPlayer() ?: return@registerGetBestSlotHandler -1
-            val mc = getMc()
-            val objMouseOver = try { MappingContext.getFieldValue(mc, "forge:mc_objectMouseOver") } catch (_: Exception) { null }
-            if (objMouseOver == null) return@registerGetBestSlotHandler -1
-
-            val typeOfHit = try { MappingContext.getFieldValue(objMouseOver, "forge:movingObjectPosition_typeOfHit") } catch (_: Exception) { null }
-            if (typeOfHit !== movingObjectTypeBlock) return@registerGetBestSlotHandler -1
-
-            val blockPos = try { MappingContext.getFieldValue(objMouseOver, "forge:movingObjectPosition_blockPos") } catch (_: Exception) { null }
-            val world = getWorld() ?: return@registerGetBestSlotHandler -1
-            val blockState = try { MappingContext.invokeMethod(world, "forge:world_getBlockState", blockPos) } catch (_: Exception) { null }
-            val block = try { MappingContext.invokeMethod(blockState, "forge:iblockstate_block") } catch (_: Exception) { null }
-
-            val inventory = try { MappingContext.getFieldValue(player, "forge:player_inventory") } catch (_: Exception) { null }
-            for (i in 0..8) {
-                val stack = try { MappingContext.invokeMethod(inventory, "forge:inventory_getStackInSlot", i) } catch (_: Exception) { null }
-                if (stack == null) continue
-                val item = try { MappingContext.getFieldValue(stack, "forge:itemStack_item") } catch (_: Exception) { null }
-                if (item == null || block == null) continue
-                val speed = try { MappingContext.invokeMethod(item, "forge:item_getDigSpeed", stack, block) as? Float } catch (_: Exception) { null }
-                if (speed != null && speed > bestSpeed) {
-                    bestSpeed = speed
-                    bestSlot = i
-                }
-            }
-            if (bestSpeed > 1.0f) bestSlot else -1
-        }
-
-        EventBridge.registerPressSneakHandler { setKeyBindPressed("forge:gs_keyBindSneak", true) }
-        EventBridge.registerReleaseSneakHandler { setKeyBindPressed("forge:gs_keyBindSneak", false) }
-        EventBridge.registerEdgeDetector {
-            val player = getPlayer() ?: return@registerEdgeDetector false
-            val onGround = MappingContext.getFieldValue(player, "forge:entity_onGround") as? Boolean ?: false
-            if (!onGround) return@registerEdgeDetector false
-            val world = getWorld() ?: return@registerEdgeDetector false
-            val posX = MappingContext.getFieldValue(player, "forge:entity_posX") as? Double ?: 0.0
-            val posY = MappingContext.getFieldValue(player, "forge:entity_posY") as? Double ?: 0.0
-            val posZ = MappingContext.getFieldValue(player, "forge:entity_posZ") as? Double ?: 0.0
-            try {
-                val blockPosClass = Class.forName("net.minecraft.util.BlockPos")
-                val blockPos = blockPosClass.getConstructor(Double::class.java, Double::class.java, Double::class.java)
-                    .newInstance(posX, posY - 1.0, posZ)
-                val bs = MappingContext.invokeMethod(world, "forge:world_getBlockState", blockPos)
-                val b = MappingContext.invokeMethod(bs, "forge:iblockstate_block")
-                b !== blocksAir
-            } catch (_: Exception) { false }
-        }
-
-        EventBridge.registerRotationApplier { yaw, pitch ->
-            try {
-                val player = getPlayer() ?: return@registerRotationApplier
-                playerRotationYawField?.setFloat(player, yaw)
-                playerRotationPitchField?.setFloat(player, pitch)
-            } catch (_: Exception) {}
-        }
-
-        EventBridge.registerResetHurtCamHandler {
-            try {
-                val player = getPlayer() ?: return@registerResetHurtCamHandler
-                playerHurtTimeField?.setInt(player, 0)
-            } catch (_: Exception) {}
-        }
-
-        EventBridge.registerResetFovModifierHandler {
-            try {
-                val mc = getMc() ?: return@registerResetFovModifierHandler
-                val er = MappingContext.getFieldValue(mc, "forge:mc_entityRenderer") ?: return@registerResetFovModifierHandler
-                entityRendererFovField?.setFloat(er, 1.0f)
-            } catch (_: Exception) {}
-        }
-
-        EventBridge.registerGammaSetter { gamma ->
-            try {
-                val mc = getMc() ?: return@registerGammaSetter
-                val gs = MappingContext.getFieldValue(mc, "forge:mc_gameSettings") ?: return@registerGammaSetter
-                gsGammaField?.setFloat(gs, gamma)
-            } catch (_: Exception) {}
-        }
-
-        EventBridge.registerRightClickDelayHandler { ticks ->
-            try {
-                val mc = getMc() ?: return@registerRightClickDelayHandler
-                mcRightClickDelayField?.setInt(mc, ticks)
-            } catch (_: Exception) {}
         }
 
         EventBridge.registerScoreboardTeamChecker { name ->
@@ -580,15 +613,13 @@ object ForgeEventBridge : IEventBridge {
                 false
             } catch (_: Exception) { false }
         }
-
-        EventBridge.registerAttackTrigger {
-            setKeyBindPressed("forge:gs_keyBindAttack", true)
-        }
     }
 
     override fun unregisterListeners() {
         EventBridge.reset()
     }
+
+    // ========== Platform Entry Points ==========
 
     private fun setPlayerRotation(rotation: Vec2) {
         val player = getPlayer() ?: return
@@ -780,17 +811,7 @@ object ForgeEventBridge : IEventBridge {
         } catch (_: Exception) {}
     }
 
-    // ── Time-based click cadence (Raven-style) ──
-    // Each full clicker cadence: press on downTime, release on upTime, regenerated per cycle.
-    private var attackCadenceActive = false
-    private var attackDownTime = 0L
-    private var attackUpTime = 0L
-    private var attackPressed = false
-    private var useCadenceActive = false
-    private var useDownTime = 0L
-    private var useUpTime = 0L
-    private var usePressed = false
-    private val clickRandom = java.util.Random()
+    // ========== Click Cadence Engine ==========
 
     private fun sampleCps(): Int {
         val lo = EventBridge.clickMinCps.coerceAtLeast(1)

@@ -108,10 +108,10 @@ object Velocity : Module("Velocity", Category.COMBAT), HudLineProvider {
     private val strategyState = VelocityStrategy.State()
 
     // ========== Combo state (OnlyOnHitFrame naturalisation) ==========
-    /** Consecutive-hit counter (within [hitWindowMs]). Written on the Netty thread. */
+    // Consecutive-hit counter (within HitWindowMs). Written on the Netty thread.
     @Volatile private var combo = 0
     @Volatile private var lastHitNano = 0L
-    /** EveryNth: how many hits remain before the next reduce candidate. */
+    // EveryNth: how many hits remain before the next reduce candidate.
     @Volatile private var nthRemaining = 2
 
     // ========== Config Builder ==========
@@ -169,11 +169,9 @@ object Velocity : Module("Velocity", Category.COMBAT), HudLineProvider {
         return reduceNormally(config, ctx)
     }
 
-    /**
-     * OnlyOnHitFrame combo gate. Maintains the consecutive-hit counter and returns whether THIS
-     * hit should be reduced, per the configured [naturalMode]. Runs on the Netty thread (single
-     * writer for the combo state — no race).
-     */
+    // OnlyOnHitFrame combo gate. Maintains the consecutive-hit counter and returns whether THIS
+    // hit should be reduced, per the configured NaturalMode. Runs on the Netty thread (single
+    // writer for the combo state — no race).
     private fun comboGatePasses(): Boolean {
         val now = System.nanoTime()
         // A gap longer than the window breaks the combo and resets the EveryNth rhythm.
@@ -196,13 +194,15 @@ object Velocity : Module("Velocity", Category.COMBAT), HudLineProvider {
         }
     }
 
-    /** Reduce chance grows with combo: base + (combo-1)*perHit, capped at [maxChance]. */
+    // Reduce chance grows with combo: base + (combo-1)*perHit, capped at MaxChance.
     private fun rollIncremental(): Boolean {
-        val chance = minOf(maxChance, baseChance + (combo - 1) * chancePerHit)
-        return Random.nextInt(100) < chance
+        val raw = baseChance + (combo - 1) * chancePerHit
+        val chance = if (raw > maxChance) maxChance else raw
+        val roll = Random.nextInt(100)
+        return roll < chance
     }
 
-    /** Reduce only every Nth hit; N randomized to [nthMin..nthMax] each cycle (spaced rhythm). */
+    // Reduce only every Nth hit; N randomized to nthMin..nthMax each cycle (spaced rhythm).
     private fun rollEveryNth(): Boolean {
         if (nthRemaining > 0) {
             nthRemaining = nthRemaining - 1

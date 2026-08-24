@@ -1,5 +1,6 @@
 package io.switchlite.adapter.forge.v1_8_9
 
+import io.switchlite.adapter.common.api.EventBridge
 import io.switchlite.adapter.common.api.IStateExtractor
 import io.switchlite.core.model.*
 import io.switchlite.core.strategy.click.WeaponType
@@ -16,6 +17,7 @@ object ForgeStateExtractor : IStateExtractor {
     // Lazy class references (runtime only — no compile-time MC dependency)
     private val entityClass by lazy { Class.forName("net.minecraft.entity.Entity") }
     private val entityLivingBaseClass by lazy { Class.forName("net.minecraft.entity.EntityLivingBase") }
+    private val entityPlayerClass by lazy { Class.forName("net.minecraft.entity.player.EntityPlayer") }
     private val entityPlayerSPClass by lazy { Class.forName("net.minecraft.client.entity.EntityPlayerSP") }
     private val itemSwordClass by lazy { Class.forName("net.minecraft.item.ItemSword") }
     private val itemAxeClass by lazy { Class.forName("net.minecraft.item.ItemAxe") }
@@ -357,6 +359,12 @@ object ForgeStateExtractor : IStateExtractor {
     private fun isViableTarget(entity: Any?, player: Any): Boolean {
         if (entity === player) return false
         if (!entityLivingBaseClass.isInstance(entity)) return false
+        // TargetFilter (Player category): drop entity types the user filtered out. Affects the
+        // crosshair + nearest target selection used by AimAssist/Velocity/JumpReset/AutoBlock/
+        // BlockHit/WTap/STap/SprintReset/SuperKnockback/HitSelect/TriggerBot.
+        val isPlayer = entityPlayerClass.isInstance(entity)
+        if (isPlayer && !EventBridge.targetFilterPlayers) return false
+        if (!isPlayer && !EventBridge.targetFilterMobs) return false
         val isDead = try { MappingContext.getFieldValue(entity, "forge:entity_isDead") } catch (_: Exception) { true }
         if (isDead == true) return false
         val health = MappingContext.invokeMethod(entity, "forge:entity_health") as? Float ?: 0f

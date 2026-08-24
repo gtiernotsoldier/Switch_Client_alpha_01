@@ -46,11 +46,7 @@ interface GL11Bridge {
     fun glColor4f(red: Float, green: Float, blue: Float, alpha: Float)
     fun glBegin(mode: Int)
     fun glVertex2f(x: Float, y: Float)
-    fun glVertex3f(x: Float, y: Float, z: Float)
     fun glEnd()
-
-    /** Set the OpenGL line width (for world-space wireframe overlays; thin by default). */
-    fun glLineWidth(width: Float)
 
     /** Set GL_TEXTURE_ENV mode (e.g. GL_MODULATE) so glColor4f tints textured quads. */
     fun glTexEnv(target: Int, pname: Int, param: Int)

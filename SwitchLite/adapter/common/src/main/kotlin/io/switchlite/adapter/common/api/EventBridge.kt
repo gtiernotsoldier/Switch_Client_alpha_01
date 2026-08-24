@@ -7,7 +7,6 @@ import io.switchlite.core.model.VelocityContext
 import io.switchlite.core.model.PlatformCommand
 import io.switchlite.core.util.Vec2
 import io.switchlite.core.util.Vec3
-import io.switchlite.adapter.common.render.HitBoxFrame
 
 /**
  * Global EventBridge singleton.
@@ -30,7 +29,9 @@ object EventBridge {
     }
 
     fun onStartTick(player: PlayerState, target: TargetState?) {
-        startTickListeners.forEach { it(player, target) }
+        // Iterate a copy: modules enable/disable (and thus register/unregister listeners) from
+        // other threads; iterating the live list here could throw ConcurrentModificationException.
+        startTickListeners.toList().forEach { it(player, target) }
     }
 
     // ========== Tick ==========
@@ -64,8 +65,8 @@ object EventBridge {
                 "[EventBridge] dispatch #$tickCounter listeners=${tickListeners.size} " +
                 "playerEmpty=${player === PlayerState.EMPTY} sword=${player.weaponType}")
         }
-        tickListeners.forEach { it(player, target) }
-        simpleTickListeners.forEach { it(tickCounter) }
+        tickListeners.toList().forEach { it(player, target) }
+        simpleTickListeners.toList().forEach { it(tickCounter) }
     }
 
     fun getCurrentTick(): Int = tickCounter
@@ -167,7 +168,8 @@ object EventBridge {
         lastKbMotionZ = 0.0
         entityVelocityNotifiers.clear()
         entityPositionProvider = null
-        hitBoxFrameProvider = null
+        targetFilterPlayers = true
+        targetFilterMobs = true
         renderOffsetX = 0f
         renderOffsetY = 0f
         renderOffsetZ = 0f
@@ -207,7 +209,7 @@ object EventBridge {
 
     fun notifyVelocityPacket(ctx: VelocityContext) {
         velocityPacketReceivedThisTick = true
-        velocityNotifiers.forEach { it(ctx) }
+        velocityNotifiers.toList().forEach { it(ctx) }
     }
 
     /** Set true by notifyVelocityPacket, cleared each tick by modules. */
@@ -229,7 +231,7 @@ object EventBridge {
 
     /** Called by the adapter (Netty thread) when an S12 velocity packet targets a non-player entity. */
     fun notifyEntityVelocity(entityId: Int, motion: Vec3) {
-        entityVelocityNotifiers.forEach { it(entityId, motion) }
+        entityVelocityNotifiers.toList().forEach { it(entityId, motion) }
     }
 
     /**
@@ -299,7 +301,7 @@ object EventBridge {
      * Dispatches to registered attack listeners (SuperKnockback uses this).
      */
     fun notifyAttack(target: TargetState?) {
-        attackListeners.forEach { it(target) }
+        attackListeners.toList().forEach { it(target) }
     }
 
     // ========== Sprint Coordination (SuperKnockback + SprintReset) ==========
@@ -775,16 +777,6 @@ object EventBridge {
         renderOffsetX = 0f; renderOffsetY = 0f; renderOffsetZ = 0f
     }
 
-    // ========== HitBox (Render — world-space box overlay) ==========
-    // The platform adapter collects one frame of entity boxes per world render (inside the
-    // EntityRenderer.renderWorldPass hook) and hands it to the HitBox module for drawing.
-    // The GL projection/modelview/depth buffer are the real world ones at that point, so the
-    // overlay aligns with the scene and is occluded by walls (NOT X-ray).
-    private var hitBoxFrameProvider: (() -> HitBoxFrame?)? = null
-
-    fun getHitBoxFrame(): HitBoxFrame? = hitBoxFrameProvider?.invoke()
-    fun registerHitBoxFrameProvider(provider: () -> HitBoxFrame?) { hitBoxFrameProvider = provider }
-
     // ========== Entity Position (KnockbackDisplay dealt-KB displacement) ==========
     // Platform callback: current position of a given entity id (world.getEntityByID → posX/Y/Z).
     // Read on the background tick thread (read-only MC access is safe).
@@ -792,6 +784,13 @@ object EventBridge {
 
     fun getEntityPosition(entityId: Int): Vec3? = entityPositionProvider?.invoke(entityId)
     fun registerEntityPositionProvider(provider: (Int) -> Vec3?) { entityPositionProvider = provider }
+
+    // ========== Target Filter (TargetFilter — Player category) ==========
+    // Shared target-type filter: the TargetFilter module writes these; the platform target
+    // selection (ForgeStateExtractor.isViableTarget + Reach raycast) reads them so the listed
+    // combat modules only aim/act on the allowed entity types. True = type allowed.
+    @Volatile var targetFilterPlayers: Boolean = true
+    @Volatile var targetFilterMobs: Boolean = true
 
     // ========== Render Overrides (NoFOV, NoHurtCam — Render) ==========
     private var resetHurtCamHandler: (() -> Unit)? = null

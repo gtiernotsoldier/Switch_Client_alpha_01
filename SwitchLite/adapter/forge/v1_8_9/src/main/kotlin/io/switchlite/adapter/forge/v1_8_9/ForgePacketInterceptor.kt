@@ -155,61 +155,67 @@ object ForgePacketInterceptor : ChannelDuplexHandler() {
     }
 
     override fun channelRead(ctx: ChannelHandlerContext, msg: Any) {
-        if (s12PacketClass.isInstance(msg)) {
-            // PROBE: confirm S12 knockback packets actually reach this handler (interception alive).
-            if (++s12Diag % 5 == 0) {
-                CoreLogger.info("[ForgePacketInterceptor] S12 packet reached handler (interception alive)")
-            }
-            val mc = try { MappingContext.invokeMethod(null, "forge:mc_getMinecraft") } catch (_: Exception) { null }
-            val player = try { MappingContext.getFieldValue(mc, "forge:mc_thePlayer") } catch (_: Exception) { null }
-            val packetEntityId = try {
-                MappingContext.getFieldValue(msg, "forge:S12PacketEntityVelocity_entityID") as? Int
-            } catch (_: Exception) { null }
-            if (packetEntityId != null && player != null) {
-                val playerEntityId = try {
-                    MappingContext.getFieldValue(player, "forge:entity_entityId") as? Int
+        // Runs on the Netty thread. Any unexpected exception here (e.g. racing the main thread's
+        // entity-list mutation during an explosion) must never escape and kill the connection.
+        try {
+            if (s12PacketClass.isInstance(msg)) {
+                // PROBE: confirm S12 knockback packets actually reach this handler (interception alive).
+                if (++s12Diag % 5 == 0) {
+                    CoreLogger.info("[ForgePacketInterceptor] S12 packet reached handler (interception alive)")
+                }
+                val mc = try { MappingContext.invokeMethod(null, "forge:mc_getMinecraft") } catch (_: Exception) { null }
+                val player = try { MappingContext.getFieldValue(mc, "forge:mc_thePlayer") } catch (_: Exception) { null }
+                val packetEntityId = try {
+                    MappingContext.getFieldValue(msg, "forge:S12PacketEntityVelocity_entityID") as? Int
                 } catch (_: Exception) { null }
-                if (packetEntityId == playerEntityId) {
-                    val command = ForgeEventBridge.onVelocityPacket(msg)
-                    when (command) {
-                        is io.switchlite.core.model.PlatformCommand.CancelPacket -> return
-                        is io.switchlite.core.model.PlatformCommand.ModifyMotion -> {
-                            ForgeEventBridge.pendingMotion = command.motion
+                if (packetEntityId != null && player != null) {
+                    val playerEntityId = try {
+                        MappingContext.getFieldValue(player, "forge:entity_entityId") as? Int
+                    } catch (_: Exception) { null }
+                    if (packetEntityId == playerEntityId) {
+                        val command = ForgeEventBridge.onVelocityPacket(msg)
+                        when (command) {
+                            is io.switchlite.core.model.PlatformCommand.CancelPacket -> return
+                            is io.switchlite.core.model.PlatformCommand.ModifyMotion -> {
+                                ForgeEventBridge.pendingMotion = command.motion
+                            }
+                            is io.switchlite.core.model.PlatformCommand.ClickBurst -> {
+                                sendClickBurst(command.targetId, command.times)
+                                return
+                            }
+                            else -> {}
                         }
-                        is io.switchlite.core.model.PlatformCommand.ClickBurst -> {
-                            sendClickBurst(command.targetId, command.times)
-                            return
+                    } else {
+                        // S12 for ANOTHER entity — feed the dealt-KB observer (KnockbackDisplay)
+                        // so it can correlate this knockback with the player's own attack.
+                        val motion = readS12Motion(msg)
+                        if (motion != null) {
+                            EventBridge.notifyEntityVelocity(packetEntityId, motion)
                         }
-                        else -> {}
+                        // PROBE: packet reached but entity-id match failed — the likely failure point.
+                        if (++s12MismatchDiag % 5 == 0) {
+                            CoreLogger.info(
+                                "[ForgePacketInterceptor] S12 entityId=$packetEntityId playerId=$playerEntityId (mismatch or null)"
+                            )
+                        }
                     }
-                } else {
-                    // S12 for ANOTHER entity — feed the dealt-KB observer (KnockbackDisplay)
-                    // so it can correlate this knockback with the player's own attack.
-                    val motion = readS12Motion(msg)
-                    if (motion != null) {
-                        EventBridge.notifyEntityVelocity(packetEntityId, motion)
+                }
+            } else if (s27PacketClass.isInstance(msg)) {
+                val command = ForgeEventBridge.onVelocityPacket(msg)
+                when (command) {
+                    is io.switchlite.core.model.PlatformCommand.CancelPacket -> return
+                    is io.switchlite.core.model.PlatformCommand.ModifyMotion -> {
+                        ForgeEventBridge.pendingMotion = command.motion
                     }
-                    // PROBE: packet reached but entity-id match failed — the likely failure point.
-                    if (++s12MismatchDiag % 5 == 0) {
-                        CoreLogger.info(
-                            "[ForgePacketInterceptor] S12 entityId=$packetEntityId playerId=$playerEntityId (mismatch or null)"
-                        )
+                    is io.switchlite.core.model.PlatformCommand.ClickBurst -> {
+                        sendClickBurst(command.targetId, command.times)
+                        return
                     }
+                    else -> {}
                 }
             }
-        } else if (s27PacketClass.isInstance(msg)) {
-            val command = ForgeEventBridge.onVelocityPacket(msg)
-            when (command) {
-                is io.switchlite.core.model.PlatformCommand.CancelPacket -> return
-                is io.switchlite.core.model.PlatformCommand.ModifyMotion -> {
-                    ForgeEventBridge.pendingMotion = command.motion
-                }
-                is io.switchlite.core.model.PlatformCommand.ClickBurst -> {
-                    sendClickBurst(command.targetId, command.times)
-                    return
-                }
-                else -> {}
-            }
+        } catch (_: Exception) {
+            CoreLogger.debug("[ForgePacketInterceptor] packet handling swallowed an exception")
         }
 
         super.channelRead(ctx, msg)

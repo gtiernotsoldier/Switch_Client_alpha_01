@@ -2,9 +2,6 @@ package io.switchlite.adapter.forge.v1_8_9
 
 import io.switchlite.adapter.common.api.EventBridge
 import io.switchlite.adapter.common.api.IEventBridge
-import io.switchlite.adapter.common.render.HitBoxCategory
-import io.switchlite.adapter.common.render.HitBoxEntity
-import io.switchlite.adapter.common.render.HitBoxFrame
 import io.switchlite.core.model.*
 import io.switchlite.core.strategy.reach.ReachRaycast
 import io.switchlite.core.util.Vec2
@@ -26,7 +23,7 @@ object ForgeEventBridge : IEventBridge {
     }
     private val entityLivingBaseClass by lazy { Class.forName("net.minecraft.entity.EntityLivingBase") }
     private val entityPlayerClass by lazy { Class.forName("net.minecraft.entity.player.EntityPlayer") }
-    private val entityItemClass by lazy { Class.forName("net.minecraft.entity.item.EntityItem") }
+    private val s27PacketClass by lazy { Class.forName("net.minecraft.network.play.server.S27PacketExplosion") }
     private val itemArmorClass by lazy { Class.forName("net.minecraft.item.ItemArmor") }
     private val armorMaterialClass by lazy { Class.forName("net.minecraft.item.ItemArmor\$ArmorMaterial") }
     private val clothMaterial by lazy { armorMaterialClass.enumConstants.firstOrNull { it.toString() == "CLOTH" } }
@@ -509,6 +506,8 @@ object ForgeEventBridge : IEventBridge {
                 var bestHitVec: Vec3? = null
                 var bestDist = reachBlocks
                 for (entity in entities) {
+                    // TargetFilter (Player category): skip entity types the user filtered out.
+                    if (!isTargetTypeAllowed(entity)) continue
                     val collidable = try { MappingContext.invokeMethod(entity, "forge:entity_canBeCollidedWith") as? Boolean ?: false } catch (_: Exception) { false }
                     if (!collidable) continue
                     val box = MappingContext.invokeMethod(entity, "forge:entity_getEntityBoundingBox") ?: continue
@@ -631,73 +630,17 @@ object ForgeEventBridge : IEventBridge {
                 )
             } catch (_: Exception) { null }
         }
-
-        // ── HitBox frame (Render — collected inside the renderWorldPass world hook) ──
-        EventBridge.registerHitBoxFrameProvider {
-            try {
-                val mc = getMc() ?: return@registerHitBoxFrameProvider null
-                val world = getWorld() ?: return@registerHitBoxFrameProvider null
-                val player = getPlayer() ?: return@registerHitBoxFrameProvider null
-                val timer = MappingContext.getFieldValue(mc, "forge:mc_timer")
-                val partialTicks = (MappingContext.getFieldValue(timer, "forge:timer_renderPartialTicks") as? Float) ?: 1.0f
-                val playerId = MappingContext.getFieldValue(player, "forge:entity_entityId") as? Int ?: -1
-                val viewer = getRenderViewEntity(mc, player)
-                val vx = MappingContext.getFieldValue(viewer, "forge:entity_posX") as? Double ?: 0.0
-                val vy = MappingContext.getFieldValue(viewer, "forge:entity_posY") as? Double ?: 0.0
-                val vz = MappingContext.getFieldValue(viewer, "forge:entity_posZ") as? Double ?: 0.0
-
-                val loaded = MappingContext.getFieldValue(world, "forge:world_loadedEntityList") as? List<*> ?: return@registerHitBoxFrameProvider null
-                val entities = mutableListOf<HitBoxEntity>()
-                for (item in loaded) {
-                    val entity = item ?: continue
-                    val category = classifyHitBox(entity, playerId) ?: continue
-                    val isDead = MappingContext.getFieldValue(entity, "forge:entity_isDead") as? Boolean ?: false
-                    if (isDead) continue
-                    val id = MappingContext.getFieldValue(entity, "forge:entity_entityId") as? Int ?: continue
-                    val px = MappingContext.getFieldValue(entity, "forge:entity_posX") as? Double ?: continue
-                    val py = MappingContext.getFieldValue(entity, "forge:entity_posY") as? Double ?: continue
-                    val pz = MappingContext.getFieldValue(entity, "forge:entity_posZ") as? Double ?: continue
-                    val ppx = MappingContext.getFieldValue(entity, "forge:entity_prevPosX") as? Double ?: px
-                    val ppy = MappingContext.getFieldValue(entity, "forge:entity_prevPosY") as? Double ?: py
-                    val ppz = MappingContext.getFieldValue(entity, "forge:entity_prevPosZ") as? Double ?: pz
-                    // Interpolate the feet position (partial-tick smoothness like vanilla rendering).
-                    val rx = ppx + (px - ppx) * partialTicks
-                    val ry = ppy + (py - ppy) * partialTicks
-                    val rz = ppz + (pz - ppz) * partialTicks
-                    val bb = MappingContext.getFieldValue(entity, "forge:entity_getEntityBoundingBox") ?: continue
-                    val minX = MappingContext.getFieldValue(bb, "forge:bb_minX") as? Double ?: continue
-                    val minY = MappingContext.getFieldValue(bb, "forge:bb_minY") as? Double ?: continue
-                    val minZ = MappingContext.getFieldValue(bb, "forge:bb_minZ") as? Double ?: continue
-                    val maxX = MappingContext.getFieldValue(bb, "forge:bb_maxX") as? Double ?: continue
-                    val maxY = MappingContext.getFieldValue(bb, "forge:bb_maxY") as? Double ?: continue
-                    val maxZ = MappingContext.getFieldValue(bb, "forge:bb_maxZ") as? Double ?: continue
-                    // Shift the real box by the interpolation delta so it tracks the rendered model.
-                    val dx = rx - px
-                    val dy = ry - py
-                    val dz = rz - pz
-                    entities.add(HitBoxEntity(
-                        entityId = id,
-                        category = category,
-                        className = entity.javaClass.simpleName,
-                        renderPosX = rx, renderPosY = ry, renderPosZ = rz,
-                        boxMinX = minX + dx, boxMinY = minY + dy, boxMinZ = minZ + dz,
-                        boxMaxX = maxX + dx, boxMaxY = maxY + dy, boxMaxZ = maxZ + dz
-                    ))
-                }
-                HitBoxFrame(vx, vy, vz, entities)
-            } catch (_: Exception) { null }
-        }
     }
 
-    /** Classify an entity for the HitBox overlay; null = not drawn (projectiles, boats, ...). */
-    private fun classifyHitBox(entity: Any, playerId: Int): HitBoxCategory? {
-        val id = try { MappingContext.getFieldValue(entity, "forge:entity_entityId") as? Int } catch (_: Exception) { null } ?: return null
-        if (id == playerId) return HitBoxCategory.OWN
-        return when {
-            entityPlayerClass.isInstance(entity) -> HitBoxCategory.PLAYER
-            entityItemClass.isInstance(entity) -> HitBoxCategory.ITEM
-            entityLivingBaseClass.isInstance(entity) -> HitBoxCategory.MOB
-            else -> null
+    /** TargetFilter (Player category) gate: whether this entity type may be a combat target.
+     *  Players = EntityPlayer; everything else living = mob. Both-on (module disabled) = allow all. */
+    private fun isTargetTypeAllowed(entity: Any): Boolean {
+        return if (entityPlayerClass.isInstance(entity)) {
+            EventBridge.targetFilterPlayers
+        } else if (entityLivingBaseClass.isInstance(entity)) {
+            EventBridge.targetFilterMobs
+        } else {
+            true // non-living (items, projectiles) — not a combat target, never blocked
         }
     }
 
@@ -724,49 +667,67 @@ object ForgeEventBridge : IEventBridge {
         } catch (_: Exception) {}
     }
 
+    /**
+     * Player velocity packet entry point (S12 entity velocity / S27 explosion), called from the
+     * Netty thread. Hardened: any failure here (e.g. the target scan racing the main thread's
+     * entity-list mutation during an explosion) must NEVER escape to Netty and kill the
+     * connection — always degrade to Pass.
+     */
     fun onVelocityPacket(packetHandle: Any): PlatformCommand {
-        val player = ForgeStateExtractor.extractPlayerState()
-        val targetId = ForgeStateExtractor.getCurrentTargetId()
-        val target = if (targetId != null) ForgeStateExtractor.extractTargetState(targetId) else null
+        return try {
+            val player = ForgeStateExtractor.extractPlayerState()
+            val targetId = ForgeStateExtractor.getCurrentTargetId()
+            val target = if (targetId != null) ForgeStateExtractor.extractTargetState(targetId) else null
 
-        val rawX = MappingContext.getFieldValue(packetHandle, "forge:velocity_motionX")
-        val rawY = MappingContext.getFieldValue(packetHandle, "forge:velocity_motionY")
-        val rawZ = MappingContext.getFieldValue(packetHandle, "forge:velocity_motionZ")
+            // S12 motion fields are Int (1/8000 blocks/tick); S27 explosion motion fields are
+            // Float. Try S12 keys first; for S27 packets they resolve to a different class, so
+            // read the S27-specific keys instead (never throw — getFieldValue degrades to null).
+            var rawX = MappingContext.getFieldValue(packetHandle, "forge:velocity_motionX")
+            var rawY = MappingContext.getFieldValue(packetHandle, "forge:velocity_motionY")
+            var rawZ = MappingContext.getFieldValue(packetHandle, "forge:velocity_motionZ")
+            if (rawX == null && s27PacketClass.isInstance(packetHandle)) {
+                rawX = MappingContext.getFieldValue(packetHandle, "forge:S27PacketExplosion_motionX")
+                rawY = MappingContext.getFieldValue(packetHandle, "forge:S27PacketExplosion_motionY")
+                rawZ = MappingContext.getFieldValue(packetHandle, "forge:S27PacketExplosion_motionZ")
+            }
 
-        val motionX: Double
-        val motionY: Double
-        val motionZ: Double
+            val motionX: Double
+            val motionY: Double
+            val motionZ: Double
 
-        when {
-            rawX is Int -> {
-                motionX = rawX / 8000.0
-                motionY = (rawY as? Int ?: 0) / 8000.0
-                motionZ = (rawZ as? Int ?: 0) / 8000.0
+            when {
+                rawX is Int -> {
+                    motionX = rawX / 8000.0
+                    motionY = (rawY as? Int ?: 0) / 8000.0
+                    motionZ = (rawZ as? Int ?: 0) / 8000.0
+                }
+                rawX is Double -> {
+                    motionX = rawX
+                    motionY = rawY as? Double ?: 0.0
+                    motionZ = rawZ as? Double ?: 0.0
+                }
+                rawX is Float -> {
+                    motionX = rawX.toDouble()
+                    motionY = (rawY as? Float ?: 0f).toDouble()
+                    motionZ = (rawZ as? Float ?: 0f).toDouble()
+                }
+                else -> {
+                    motionX = 0.0; motionY = 0.0; motionZ = 0.0
+                }
             }
-            rawX is Double -> {
-                motionX = rawX
-                motionY = rawY as? Double ?: 0.0
-                motionZ = rawZ as? Double ?: 0.0
-            }
-            rawX is Float -> {
-                motionX = rawX.toDouble()
-                motionY = (rawY as? Float ?: 0f).toDouble()
-                motionZ = (rawZ as? Float ?: 0f).toDouble()
-            }
-            else -> {
-                motionX = 0.0; motionY = 0.0; motionZ = 0.0
-            }
+
+            val ctx = VelocityContext(
+                originalMotion = Vec3(motionX, motionY, motionZ),
+                player = player,
+                target = target,
+                packetHandle = packetHandle
+            )
+
+            EventBridge.notifyVelocityPacket(ctx)
+            EventBridge.onVelocityPacket(ctx)
+        } catch (_: Exception) {
+            PlatformCommand.Pass(Vec3(0.0, 0.0, 0.0))
         }
-
-        val ctx = VelocityContext(
-            originalMotion = Vec3(motionX, motionY, motionZ),
-            player = player,
-            target = target,
-            packetHandle = packetHandle
-        )
-
-        EventBridge.notifyVelocityPacket(ctx)
-        return EventBridge.onVelocityPacket(ctx)
     }
 
     fun onTick() {

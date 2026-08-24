@@ -34,10 +34,10 @@ object KnockbackDisplay : Module("KnockbackDisplay", Category.RENDER) {
     private const val DISPLAY_HOLD_MS = 500L
 
     @Volatile
-    var posX: Int = 8
+    var posX: Int = -1
         private set
     @Volatile
-    var posY: Int = 320
+    var posY: Int = -1
         private set
 
     var scale by float("Scale", 1.0f, 0.5f..2.0f)
@@ -177,11 +177,15 @@ object KnockbackDisplay : Module("KnockbackDisplay", Category.RENDER) {
         }
     }
 
+    /** First-launch placement: slightly below screen center so widgets don't stack. */
+    private const val CENTER_OFFSET = 60
+
     fun render(ctx: RenderContext) {
         if (!enabled) return
         if (posX < 0 || posY < 0) {
             posX = (ctx.scaledWidth - widgetWidth(ctx)) / 2
-            posY = (ctx.scaledHeight - widgetHeight(ctx)) / 2
+            posY = (ctx.scaledHeight - widgetHeight(ctx)) / 2 + CENTER_OFFSET
+            clampToScreen(ctx) // the offset could push it off a short screen
         }
         handleDrag(ctx)
         draw(ctx)

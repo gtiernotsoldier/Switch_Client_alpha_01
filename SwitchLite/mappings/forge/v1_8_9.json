@@ -1284,5 +1284,32 @@
       "prevPosZ"
     ],
     "mcp": "prevPosZ"
+  },
+  "forge:S27PacketExplosion_motionX": {
+    "class": "net.minecraft.network.play.server.S27PacketExplosion",
+    "field": "field_149149_e",
+    "aliases": [
+      "S27PacketExplosion_motionX",
+      "motionX"
+    ],
+    "mcp": "motionX"
+  },
+  "forge:S27PacketExplosion_motionY": {
+    "class": "net.minecraft.network.play.server.S27PacketExplosion",
+    "field": "field_149146_f",
+    "aliases": [
+      "S27PacketExplosion_motionY",
+      "motionY"
+    ],
+    "mcp": "motionY"
+  },
+  "forge:S27PacketExplosion_motionZ": {
+    "class": "net.minecraft.network.play.server.S27PacketExplosion",
+    "field": "field_149147_g",
+    "aliases": [
+      "S27PacketExplosion_motionZ",
+      "motionZ"
+    ],
+    "mcp": "motionZ"
   }
 }

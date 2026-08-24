@@ -32,7 +32,6 @@ SwitchLite/
 | 线程 | 谁在跑 | 职责 |
 |---|---|---|
 | **主线程 (MC render)** | `Display.update()` 注入 → `RenderBridge.onFrame` → `ForgeBootstrap.render()` | 写真实按键、改 motion、落地所有合成本地状态 |
-| **主线程 (世界渲染内)** | `renderWorldPass` 注入 → `RenderBridge.onWorldRender` → `ForgeBootstrap.renderWorld()` | 世界空间叠加（HitBox 碰撞箱）——此时 GL 投影/模型/深度缓冲都是世界真实值，天然被墙遮挡（非透视） |
 | **后台 20Hz** | `Agent.java` → `ForgeBootstrap.tick()` | **模块决策**（读 PlayerState → 调 core 策略 → 写 EventBridge 期望状态） |
 | **Netty 网络线程** | `ForgePacketInterceptor.channelRead()` | 拦 `S12PacketEntityVelocity`/`S27PacketExplosion` → `EventBridge.onVelocityPacket`（自己的）+ `EventBridge.notifyEntityVelocity`（别的实体） |
 
@@ -44,11 +43,9 @@ SwitchLite/
 Rust injector → payload.dll (JNI) → agentmain("jni-attach")
   → javassist retransform Display.update()，在方法体开头插入 RenderBridge.onFrame()
   → 每渲染帧调用 → ForgeBootstrap.render()
-  → javassist retransform EntityRenderer.renderWorldPass（func_175068_a），方法末尾插入 RenderBridge.onWorldRender()
-  → 每世界帧调用 → ForgeBootstrap.renderWorld()（HitBox 世界空间叠加）
 ```
 
-`agent/Transformer.java` hook 两个点：`Display.update()`（2D HUD 渲染管线，必装）和 `EntityRenderer.renderWorldPass`（世界空间叠加，best-effort——失败不影响 HUD）。攻击方法注入（KeepSprint 的字节码方案）已废弃，见 KeepSprint 模块注释。
+`agent/Transformer.java` 只 hook `Display.update()`（2D HUD 渲染管线）。攻击方法注入（KeepSprint 的字节码方案）已废弃，见 KeepSprint 模块注释。
 
 > **坑**：`ForgePacketInterceptor` 用 `player.sendQueue`（`field_71174_a`）拿 Netty handler，**不是** `mc_netHandler`（`field_71453_ak` 是错的映射，读 null）。找 Netty channel 按**字段类型** `io.netty.channel.Channel` 扫描（混淆环境名字不可靠，类型可靠）。pipeline 注入必须 `channel.eventLoop().execute {}`。
 
@@ -95,7 +92,7 @@ Rust injector → payload.dll (JNI) → agentmain("jni-attach")
 | AutoBlock/WTap/STap/BlockHit | 共用 `strategy/combat/CombatTrigger` | `module/combat/*.kt` | `setKeyBindPressed` / C0B |
 | JumpTiming (HUD) | 无（窗口计时在模块） | `module/render/JumpTiming.kt`：**每命中窗口只计一次**（疾跑命中才开窗，重复按跳不计数）+ JumpReset 脉冲适配（`(JR)` 标记） | `ForgePacketInterceptor` S12 通知（Netty 线程精确时间戳） |
 | KnockbackDisplay (HUD) | 无（位移测距在模块） | `module/render/KnockbackDisplay.kt`：IN 收到（原始向量+D+Velocity cut%）/ OUT 打出（S12 与自身攻击关联+目标位移）双数据源 | S12 通知 + `EventBridge.getEntityPosition` |
-| HitBox (Render) | 1.7 尺寸表在模块（待实测校准） | `module/render/HitBox.kt`（类别过滤/颜色/线宽） | `renderWorldPass` 钩子 → `ForgeEventBridge.registerHitBoxFrameProvider` |
+| TargetFilter (Player) | 无 | `module/player/TargetFilter.kt`：玩家/生物过滤 → `EventBridge.targetFilterPlayers/Mobs` | `ForgeStateExtractor.isViableTarget` + Reach 射线 |
 
 **通用模式**：core 是纯函数（可 JUnit 测）；module 读 `PlayerState`→调 core→写 `EventBridge` 期望；forge/fabric 在 `registerListeners()` 里用 `EventBridge.registerXHandler { ... }` 落地。
 
@@ -103,11 +100,11 @@ Rust injector → payload.dll (JNI) → agentmain("jni-attach")
 
 | 想改什么 | 看哪个文件 |
 |---|---|
-| 加一个新模块 | `adapter/common/module/<category>/X.kt` + `ForgeBootstrap.registerAll()` 注册；2D HUD 类加进 `OverlayRenderer`，**世界空间类**（如 HitBox）要加 `renderWorldPass` 钩子 + `ForgeEventBridge` 帧提供器 |
+| 加一个新模块 | `adapter/common/module/<category>/X.kt` + `ForgeBootstrap.registerAll()` 注册；render 类加进 `OverlayRenderer` |
 | 改击退/S12 行为 | `ForgePacketInterceptor` + `EventBridge.onVelocityPacket` + `core/strategy/velocity` |
 | 改按键落地 | `ForgeEventBridge.registerListeners()` + `applySyntheticInput()` |
 | 改 HUD 显示 | `OverlayRenderer.render()` + `module/render/*.kt` |
-| 改世界渲染叠加 | `Transformer`(renderWorldPass 钩子) + `ForgeEventBridge.registerHitBoxFrameProvider` + `module/render/HitBox.kt` |
+| 改目标选择/过滤 | `ForgeStateExtractor.isViableTarget` + `module/player/TargetFilter.kt` |
 | 改 WebUI 配置持久化 | `module/render/WebUI.kt` + `webui/ConfigStore` |
 | 加映射键 | `mappings/forge/v1_8_9.json`（用 srg + FDP/LB Mixin 核实） |
 
@@ -116,7 +113,6 @@ Rust injector → payload.dll (JNI) → agentmain("jni-attach")
 - `mc_netHandler` 映射是坏的（返回 null）——用 `player.sendQueue`。
 - Netty pipeline 操作必须在 event-loop 线程；channel 字段按类型找。
 - 后台线程**不要**直接改 `mc.thePlayer.motion` / 调实体方法（如 `player.jump()`）——走合成输入 `setKeyBindPressed`，主线程落地。
-- HitBox 的"非透视"依赖 `renderWorldPass` 注入点的深度缓冲：无光影（OptiFine M5）正常；开光影（shaders）时深度缓冲可能被合成阶段改写，箱子可能透墙。
 - `ConditionChecker.check(triggerOptions, player, target)` 是统一条件；不同模块的 `triggerOptions` 独立，别跨模块复用。
 - Fabric 与 Forge 各有一套 `EventBridge.registerX` 落地，两个平台都要实现新 API，才算完整。
 

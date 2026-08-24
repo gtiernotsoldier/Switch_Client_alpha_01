@@ -14,8 +14,6 @@ object GLConstants {
     const val GL_QUADS = 0x0007
     const val GL_TRIANGLES = 0x0004
     const val GL_TRIANGLE_FAN = 0x0006
-    /** Line primitive (world-space wireframe overlays, e.g. the HitBox module). */
-    const val GL_LINES = 0x0001
     const val GL_ALL_ATTRIB_BITS = 0x000FFFFF
     const val GL_PROJECTION = 0x1701
     const val GL_MODELVIEW = 0x1700

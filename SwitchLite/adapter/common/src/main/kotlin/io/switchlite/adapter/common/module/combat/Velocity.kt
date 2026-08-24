@@ -17,6 +17,7 @@ import io.switchlite.adapter.common.option.float
 import io.switchlite.adapter.common.option.int
 import io.switchlite.adapter.common.option.choices
 import io.switchlite.adapter.common.option.triggerOptions
+import kotlin.random.Random
 
 /**
  * Velocity Module — knockback reduction.
@@ -55,6 +56,21 @@ object Velocity : Module("Velocity", Category.COMBAT), HudLineProvider {
     // ========== Legit: only reduce on the frame the player is hit (LB port) ==========
     private val onlyOnHitFrame by boolean("OnlyOnHitFrame", false)
 
+    // ========== OnlyOnHitFrame combo naturalisation ==========
+    // Extra anti-pattern layer for sustained attacks: instead of reducing on EVERY hit, skip some
+    // hits randomly so the reduction doesn't form a fixed, detectable rhythm.
+    //   Incremental — reduce chance grows with combo count (rare → more often as you keep getting hit).
+    //   EveryNth    — reduce only every Nth hit (N randomized each cycle) — a spaced-out rhythm.
+    //   Both        — EveryNth picks WHICH hits are candidates, Incremental adds randomness on top.
+    // A combo is consecutive hits within [HitWindowMs]; a longer gap resets it.
+    private val naturalMode by choices("NaturalMode", arrayOf("Both", "Incremental", "EveryNth", "Off"))
+    private val hitWindowMs by int("HitWindowMs", 800, 100..2000, "ms")
+    private val baseChance by int("BaseChance", 20, 0..100, "%")
+    private val chancePerHit by int("ChancePerHit", 25, 0..100, "%")
+    private val maxChance by int("MaxChance", 95, 0..100, "%")
+    private val nthMin by int("NthMin", 2, 1..10)
+    private val nthMax by int("NthMax", 4, 1..10)
+
     // ========== Delay ==========
     private val delayMs by int("DelayMs", 0, 0..500, "ms")
     private val delayTicks by int("DelayTicks", 0, 0..20, "ticks")
@@ -90,6 +106,13 @@ object Velocity : Module("Velocity", Category.COMBAT), HudLineProvider {
     private val delayStrategy = DelayVelocityStrategy(legitStrategy)
     private val clickStrategy = ClickVelocityStrategy()
     private val strategyState = VelocityStrategy.State()
+
+    // ========== Combo state (OnlyOnHitFrame naturalisation) ==========
+    /** Consecutive-hit counter (within [hitWindowMs]). Written on the Netty thread. */
+    @Volatile private var combo = 0
+    @Volatile private var lastHitNano = 0L
+    /** EveryNth: how many hits remain before the next reduce candidate. */
+    @Volatile private var nthRemaining = 2
 
     // ========== Config Builder ==========
     private fun buildConfig(): VelocityConfig = VelocityConfig(
@@ -136,9 +159,58 @@ object Velocity : Module("Velocity", Category.COMBAT), HudLineProvider {
         // hurtResistantTime (LB is a mod running on MC's main tick where that field is readable;
         // we are an injector reading from the Netty thread where it is stale/0) — the S12 packet
         // arriving IS the hit-frame signal, which is the logical equivalent without the read.
-        if (onlyOnHitFrame && mode == "Legit" && !ctx.isKnockbackHit) {
-            return PlatformCommand.Pass(ctx.originalMotion)
+        if (onlyOnHitFrame && mode == "Legit") {
+            // Explosions are not "being hit" — pass through.
+            if (!ctx.isKnockbackHit) return PlatformCommand.Pass(ctx.originalMotion)
+            // Combo naturalisation: under sustained attacks, skip some hits so the reduction
+            // doesn't form a fixed, detectable rhythm. "Off" = reduce every hit (plain LB).
+            if (!comboGatePasses()) return PlatformCommand.Pass(ctx.originalMotion)
         }
+        return reduceNormally(config, ctx)
+    }
+
+    /**
+     * OnlyOnHitFrame combo gate. Maintains the consecutive-hit counter and returns whether THIS
+     * hit should be reduced, per the configured [naturalMode]. Runs on the Netty thread (single
+     * writer for the combo state — no race).
+     */
+    private fun comboGatePasses(): Boolean {
+        val now = System.nanoTime()
+        // A gap longer than the window breaks the combo and resets the EveryNth rhythm.
+        if (lastHitNano != 0L && now - lastHitNano > hitWindowMs * 1_000_000L) {
+            combo = 0
+            nthRemaining = Random.nextInt(nthMin, nthMax + 1).coerceAtLeast(1)
+        }
+        lastHitNano = now
+        combo++
+
+        return when (naturalMode) {
+            "Off" -> true
+            "Incremental" -> rollIncremental()
+            "EveryNth" -> rollEveryNth()
+            else -> rollEveryNth() && rollIncremental() // Both: EveryNth picks the candidate, Incremental adds randomness
+        }
+    }
+
+    /** Reduce chance grows with combo: base + (combo-1)*perHit, capped at [maxChance]. */
+    private fun rollIncremental(): Boolean {
+        val chance = minOf(maxChance, baseChance + (combo - 1) * chancePerHit)
+        return Random.nextInt(100) < chance
+    }
+
+    /** Reduce only every Nth hit; N randomized to [nthMin..nthMax] each cycle (spaced rhythm). */
+    private fun rollEveryNth(): Boolean {
+        return if (nthRemaining > 0) {
+            nthRemaining--
+            false
+        } else {
+            nthRemaining = Random.nextInt(nthMin, nthMax + 1).coerceAtLeast(1)
+            true
+        }
+    }
+
+    /** Run the strategy (conditions + scaling) and return its command. */
+    private fun reduceNormally(config: VelocityConfig, ctx: VelocityContext): PlatformCommand {
         val result = currentStrategy().execute(config, strategyState, ctx)
         // Expose whether velocity was actually modified/cancelled (for the VelocityDisplay HUD).
         val modified = result is VelocityResult.Modify || result is VelocityResult.Cancel
@@ -180,6 +252,10 @@ object Velocity : Module("Velocity", Category.COMBAT), HudLineProvider {
 
     override fun onEnable() {
         EventBridge.unregisterVelocityListener()
+        // Reset OnlyOnHitFrame combo state.
+        combo = 0
+        lastHitNano = 0L
+        nthRemaining = Random.nextInt(nthMin, nthMax + 1).coerceAtLeast(1)
         EventBridge.registerTickListener { currentTick ->
             if (enabled) onTick(currentTick)
         }

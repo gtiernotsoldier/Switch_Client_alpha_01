@@ -43,26 +43,27 @@ object KnockbackDisplay : Module("KnockbackDisplay", Category.RENDER) {
     @Volatile private var lastPosZ = 0.0
 
     private val tickListener: (io.switchlite.core.model.PlayerState, io.switchlite.core.model.TargetState?) -> Unit = { p, _ ->
-        if (!enabled) return@tickListener
-        val kb = EventBridge.lastKnockbackNano
-        if (kb != lastKbNano) {
-            // New knockback: start measuring displacement.
-            lastKbNano = kb
-            measuring = true
-            startX = p.position.x
-            startZ = p.position.z
-            kbDistance = 0.0
-        }
-        if (measuring) {
-            val dx = p.position.x - startX
-            val dz = p.position.z - startZ
-            kbDistance = kotlin.math.sqrt(dx * dx + dz * dz)
-            // Stop measuring when the player is basically still (speed settled) OR after ~1.5s.
-            val settled = kotlin.math.abs(p.motionX) < 0.001 && kotlin.math.abs(p.motionZ) < 0.001
-            val nowNano = System.nanoTime()
-            val elapsedMs = (nowNano - kb) / 1_000_000L
-            if (settled || elapsedMs > 1500L) {
-                measuring = false
+        if (enabled) {
+            val kb = EventBridge.lastKnockbackNano
+            if (kb != lastKbNano) {
+                // New knockback: start measuring displacement.
+                lastKbNano = kb
+                measuring = true
+                startX = p.position.x
+                startZ = p.position.z
+                kbDistance = 0.0
+            }
+            if (measuring) {
+                val dx = p.position.x - startX
+                val dz = p.position.z - startZ
+                kbDistance = kotlin.math.sqrt(dx * dx + dz * dz)
+                // Stop measuring when the player is basically still (speed settled) OR after ~1.5s.
+                val settled = kotlin.math.abs(p.motionX) < 0.001 && kotlin.math.abs(p.motionZ) < 0.001
+                val nowNano = System.nanoTime()
+                val elapsedMs = (nowNano - kb) / 1_000_000L
+                if (settled || elapsedMs > 1500L) {
+                    measuring = false
+                }
             }
         }
     }

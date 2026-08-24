@@ -51,41 +51,42 @@ object JumpTiming : Module("JumpTiming", Category.RENDER) {
     @Volatile private var prevJump = false
 
     private val tickListener: (io.switchlite.core.model.PlayerState, io.switchlite.core.model.TargetState?) -> Unit = { _, _ ->
-        if (!enabled) return@tickListener
-        val now = System.nanoTime()
+        if (enabled) {
+            val now = System.nanoTime()
 
-        // Track the most recent knockback.
-        val kb = EventBridge.lastKnockbackNano
-        if (kb > lastKbNano) lastKbNano = kb
+            // Track the most recent knockback.
+            val kb = EventBridge.lastKnockbackNano
+            if (kb > lastKbNano) lastKbNano = kb
 
-        // Detect MANUAL jump-key presses (physical space). We use the real key state; a press edge
-        // that comes from JumpReset's synthetic queue is not a physical press, so it isn't counted.
-        val jumpDown = EventBridge.isKeyJumpDown
-        val pressEdge = jumpDown && !prevJump
-        prevJump = jumpDown
+            // Detect MANUAL jump-key presses (physical space). We use the real key state; a press edge
+            // that comes from JumpReset's synthetic queue is not a physical press, so it isn't counted.
+            val jumpDown = EventBridge.isKeyJumpDown
+            val pressEdge = jumpDown && !prevJump
+            prevJump = jumpDown
 
-        if (pressEdge) {
-            totalCount++
-            if (lastKbNano != 0L) {
-                val delayMs = (now - lastKbNano) / 1_000_000L
-                when {
-                    delayMs <= GREEN_MS -> {
-                        successCount++
-                        status = "JT OK ${delayMs}ms"
-                        color = 0x00C853 // green
+            if (pressEdge) {
+                totalCount++
+                if (lastKbNano != 0L) {
+                    val delayMs = (now - lastKbNano) / 1_000_000L
+                    when {
+                        delayMs <= GREEN_MS -> {
+                            successCount++
+                            status = "JT OK ${delayMs}ms"
+                            color = 0x00C853 // green
+                        }
+                        delayMs <= YELLOW_MS -> {
+                            status = "JT LATE ${delayMs}ms"
+                            color = 0xFFD600 // yellow
+                        }
+                        else -> {
+                            status = "JT OFF ${delayMs}ms"
+                            color = 0xFFFFFF // white
+                        }
                     }
-                    delayMs <= YELLOW_MS -> {
-                        status = "JT LATE ${delayMs}ms"
-                        color = 0xFFD600 // yellow
-                    }
-                    else -> {
-                        status = "JT OFF ${delayMs}ms"
-                        color = 0xFFFFFF // white
-                    }
+                } else {
+                    status = "JT --"
+                    color = 0xFFFFFF
                 }
-            } else {
-                status = "JT --"
-                color = 0xFFFFFF
             }
         }
     }

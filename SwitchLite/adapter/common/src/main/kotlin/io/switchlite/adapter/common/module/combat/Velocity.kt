@@ -182,13 +182,17 @@ object Velocity : Module("Velocity", Category.COMBAT), HudLineProvider {
             nthRemaining = Random.nextInt(nthMin, nthMax + 1).coerceAtLeast(1)
         }
         lastHitNano = now
-        combo++
+        combo = combo + 1
 
         return when (naturalMode) {
             "Off" -> true
             "Incremental" -> rollIncremental()
             "EveryNth" -> rollEveryNth()
-            else -> rollEveryNth() && rollIncremental() // Both: EveryNth picks the candidate, Incremental adds randomness
+            else -> {
+                // Both: EveryNth picks the candidate, Incremental adds randomness on top.
+                val everyNthOk = rollEveryNth()
+                everyNthOk && rollIncremental()
+            }
         }
     }
 
@@ -200,13 +204,12 @@ object Velocity : Module("Velocity", Category.COMBAT), HudLineProvider {
 
     /** Reduce only every Nth hit; N randomized to [nthMin..nthMax] each cycle (spaced rhythm). */
     private fun rollEveryNth(): Boolean {
-        return if (nthRemaining > 0) {
-            nthRemaining--
-            false
-        } else {
-            nthRemaining = Random.nextInt(nthMin, nthMax + 1).coerceAtLeast(1)
-            true
+        if (nthRemaining > 0) {
+            nthRemaining = nthRemaining - 1
+            return false
         }
+        nthRemaining = Random.nextInt(nthMin, nthMax + 1).coerceAtLeast(1)
+        return true
     }
 
     /** Run the strategy (conditions + scaling) and return its command. */

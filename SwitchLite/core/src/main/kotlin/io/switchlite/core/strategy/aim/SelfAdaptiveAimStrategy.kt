@@ -1,11 +1,11 @@
 package io.switchlite.core.strategy.aim
 
-import io.switchlite.core.algorithm.NoiseProvider
 import io.switchlite.core.algorithm.RotationCalculator
 import io.switchlite.core.condition.ConditionChecker
 import io.switchlite.core.model.PlayerState
 import io.switchlite.core.model.TargetState
 import io.switchlite.core.option.AimMode
+import io.switchlite.core.util.Vec2
 import io.switchlite.core.util.Vec3
 import kotlin.math.abs
 import kotlin.math.sqrt
@@ -29,9 +29,8 @@ import kotlin.math.sqrt
  * ## Architecture
  *
  * - Core layer: pure math, zero platform dependencies.
- * - Uses the same overshoot FSM, reaction delay, FOV check, and noise injection
- *   as [LegitAimStrategy] by delegating to shared helper paths.
- * - Only varies the `aimSpeed` and `smoothness` factors dynamically.
+ * - Uses the same target-point, FOV cone, and Nemui smoothing as [LegitAimStrategy].
+ * - Only varies the `aimSpeed` and `smoothness` factors dynamically via the alignment EMA.
  *
  * Constitution compliance: §1 Safety (never exceeds human limits), §3 Strategy (adaptive).
  */
@@ -92,7 +91,6 @@ class SelfAdaptiveAimStrategy : AimStrategy {
         // 2. 3D range check (full sphere distance)
         val distance3D = player.position.distanceTo(target.position)
         if (distance3D < config.rangeMin || distance3D > config.rangeMax) {
-            state.resetOvershoot()
             return AimResult.Skip
         }
 
@@ -101,21 +99,13 @@ class SelfAdaptiveAimStrategy : AimStrategy {
             return AimResult.Skip
         }
 
-        // 4. Target switch detection (reuse AimStrategy.State fields)
+        // 4. Target switch detection — reset alignment tracking when the target changes
         if (target.entityId != state.lastTargetId) {
             state.lastTargetId = target.entityId
-            state.reactionDelayTicks = sampleReactionDelay()
-            state.resetOvershoot()
             state.hasPreviousFrame = false
         }
 
-        // 5. Reaction delay
-        if (state.reactionDelayTicks > 0) {
-            state.reactionDelayTicks--
-            return AimResult.Skip
-        }
-
-        // 6. Target point computation (same geometry as LegitAimStrategy)
+        // 5. Target point computation (same geometry as LegitAimStrategy)
         val targetPoint: Vec3 = when (config.mode) {
             AimMode.LEGIT, AimMode.SELF_ADAPTIVE -> {
                 val edge = RotationCalculator.getBoxEdgeTarget(eyePos, aim, target.hitbox)
@@ -130,7 +120,7 @@ class SelfAdaptiveAimStrategy : AimStrategy {
         }
         val targetRotation = RotationCalculator.calculateRotation(eyePos, targetPoint)
 
-        // 7. Angular FOV cone check — angle measured from the player's view line (0-360°).
+        // 6. Angular FOV cone check — angle measured from the player's view line (0-360°).
         if (!RotationCalculator.isWithinFov3D(eyePos, aim, targetPoint, config.fov)) {
             return AimResult.Skip
         }
@@ -144,7 +134,7 @@ class SelfAdaptiveAimStrategy : AimStrategy {
             }
         }
 
-        // 8. Self-adaptive: update alignment EMA and compute dynamic factors
+        // 7. Self-adaptive: update alignment EMA and compute dynamic factors
         val angularError = abs(rotationDiff.yaw) + abs(rotationDiff.pitch)
 
         if (state.hasPreviousFrame) {
@@ -163,29 +153,19 @@ class SelfAdaptiveAimStrategy : AimStrategy {
         state.previousAngularError = angularError
         state.hasPreviousFrame = true
 
-        // 9. Dynamic factor calculation
+        // 8. Dynamic factor calculation
         val (dynamicAimSpeed, dynamicSmoothness) = computeDynamicFactors(
             config, state.alignmentEma
         )
 
-        // 9b. Nemui-style fraction smoothing (proportional per-tick close of the gap).
+        // 9. Nemui-style fraction smoothing (proportional per-tick close of the gap).
         val yawFraction = 0.035f * (dynamicAimSpeed / 10f) * dynamicSmoothness
         val pitchFraction = yawFraction * 0.39f
-
-        // 10. Overshoot state machine (shared via OvershootHelper)
-        val finalRotation = OvershootHelper.execute(
-            state = state,
-            player = player,
-            targetPoint = targetRotation,
-            rotationDiff = rotationDiff,
-            yawFactor = yawFraction,
-            pitchFactor = pitchFraction
-        ) ?: return AimResult.Skip
-
-        // 11. Noise injection
-        val noisyRotation = NoiseProvider.applyWalk(finalRotation, config.noiseIntensity)
-
-        return AimResult.ApplyRotation(noisyRotation)
+        val smoothed = Vec2(
+            aim.yaw + rotationDiff.yaw * yawFraction,
+            aim.pitch + rotationDiff.pitch * pitchFraction
+        )
+        return AimResult.ApplyRotation(smoothed)
     }
 
     // ==================== Adaptive Math ====================
@@ -251,9 +231,4 @@ class SelfAdaptiveAimStrategy : AimStrategy {
 
     // ==================== Helpers ====================
 
-    private fun sampleReactionDelay(): Int {
-        val z = NoiseProvider.next(0f, 1f).toDouble()
-        val delayTicks = kotlin.math.exp(1.1 + 0.35 * z)
-        return delayTicks.toInt().coerceIn(1, 6)
-    }
 }

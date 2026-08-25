@@ -128,6 +128,8 @@ object EventBridge {
         edgeDetector = null
         isSafeWalkEnabled = false
         rotationApplier = null
+        desiredRotationYaw = null
+        desiredRotationPitch = null
         resetHurtCamHandler = null
         resetFovModifierHandler = null
         gammaSetter = null
@@ -722,11 +724,29 @@ object EventBridge {
         rotationSetter = setter
     }
 
-    // ========== Rotation (BridgeAssist, AimAssist) ==========
+    // ========== Rotation (AimAssist, BridgeAssist) ==========
     private var rotationApplier: ((Float, Float) -> Unit)? = null
 
     fun setPlayerRotation(yaw: Float, pitch: Float) { rotationApplier?.invoke(yaw, pitch) }
     fun registerRotationApplier(handler: (Float, Float) -> Unit) { rotationApplier = handler }
+
+    // ========== Desired Rotation (AimAssist — computed on background, applied on main thread) ==========
+    // The aim strategy computes the target rotation on the 20Hz background tick; writing the real
+    // rotationYaw/Pitch fields must happen on the MAIN thread (the only place that lands MC state,
+    // and where a background write would be overwritten). Null = no pending rotation this frame.
+    @Volatile var desiredRotationYaw: Float? = null
+    @Volatile var desiredRotationPitch: Float? = null
+
+    /** Apply and clear the pending desired rotation (called on the main render thread). */
+    fun drainDesiredRotation(): Boolean {
+        val yaw = desiredRotationYaw
+        val pitch = desiredRotationPitch
+        if (yaw == null || pitch == null) return false
+        desiredRotationYaw = null
+        desiredRotationPitch = null
+        rotationApplier?.invoke(yaw, pitch)
+        return true
+    }
 
     // ========== Click Delay Reset (DelayRemover — 1.8 exclusive) ==========
     private var resetClickDelayHandler: (() -> Unit)? = null

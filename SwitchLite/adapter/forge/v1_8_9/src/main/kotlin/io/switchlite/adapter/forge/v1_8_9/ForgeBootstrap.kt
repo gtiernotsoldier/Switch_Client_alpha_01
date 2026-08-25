@@ -258,6 +258,11 @@ object ForgeBootstrap {
             // only place that writes the real KeyBinding fields (race-free).
             try { ForgeEventBridge.applySyntheticInput() } catch (_: Exception) {}
 
+            // Apply the AimAssist desired rotation on the MAIN thread (the background tick only
+            // computes it; writing rotationYaw/Pitch must happen here so the main thread owns MC
+            // state — same reason HitSelect's click land on the main thread).
+            try { EventBridge.drainDesiredRotation() } catch (_: Exception) {}
+
             // Send queued SprintReset packets on the main thread (NetworkManager isn't
             // strictly thread-safe; this keeps addToSendQueue on the MC thread).
             try { EventBridge.drainPendingSprintReset() } catch (_: Exception) {}

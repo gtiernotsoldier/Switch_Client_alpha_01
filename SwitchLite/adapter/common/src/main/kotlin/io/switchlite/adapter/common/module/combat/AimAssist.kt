@@ -114,7 +114,11 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
                 )
                 val result = adaptiveStrategy.execute(config, adaptiveState, input)
                 when (result) {
-                    is AimResult.ApplyRotation -> EventBridge.setPlayerRotation(result.rotation)
+                    // Write the desired rotation; the MAIN thread applies it (see drainDesiredRotation).
+                    is AimResult.ApplyRotation -> {
+                        EventBridge.desiredRotationYaw = result.rotation.yaw
+                        EventBridge.desiredRotationPitch = result.rotation.pitch
+                    }
                     is AimResult.Skip -> { /* no-op */ }
                 }
             }
@@ -124,7 +128,11 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
                 val input = AimInput(player, target)
                 val result = legitStrategy.execute(config, legitState, input)
                 when (result) {
-                    is AimResult.ApplyRotation -> EventBridge.setPlayerRotation(result.rotation)
+                    // Write the desired rotation; the MAIN thread applies it (see drainDesiredRotation).
+                    is AimResult.ApplyRotation -> {
+                        EventBridge.desiredRotationYaw = result.rotation.yaw
+                        EventBridge.desiredRotationPitch = result.rotation.pitch
+                    }
                     is AimResult.Skip -> { /* no-op */ }
                 }
             }

@@ -865,7 +865,7 @@ object ForgeEventBridge : IEventBridge {
                 // release state, so the click selector can swallow AutoClicker's clicks too.
                 val now = EventBridge.syntheticAttack
                 val keyCode = (MappingContext.invokeMethod(keyBindAttack, "forge:keybinding_keyCode") as? Int) ?: 0
-                if (now && keyCode != 0 && EventBridge.attackAllowed) {
+                if (now && keyCode != 0 && EventBridge.currentAttackGate()) {
                     driveClickCadence(keyCode, leftClick = true)
                 } else {
                     releaseClick(keyCode, leftClick = true)
@@ -878,9 +878,11 @@ object ForgeEventBridge : IEventBridge {
                 // Assist modules (ClickAssist/BlockHit/AutoBlock): augment the player's
                 // own input — OR with the physical button so their press is not stolen.
                 // attackAllowed (HitSelect) can force the attack key OFF to swallow clicks
-                // that would land inside the target's i-frame window (wasted hits).
+                // that would land inside the target's i-frame window (wasted hits). Decided on
+                // the main thread at this exact frame via the attack-gate provider.
                 val physicalAttack = isMouseButtonDown(0)
-                val effectiveAttack = EventBridge.syntheticAttack || (physicalAttack && EventBridge.attackAllowed)
+                val gateAllowed = EventBridge.currentAttackGate()
+                val effectiveAttack = EventBridge.syntheticAttack || (physicalAttack && gateAllowed)
                 keybindingPressedField?.setBoolean(keyBindAttack, effectiveAttack)
                 // Keep the physical mouse buffer reflecting the real button for the Keystrokes
                 // HUD (do not rewrite it on a swallowed click).

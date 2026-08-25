@@ -9,30 +9,26 @@ import io.switchlite.adapter.common.option.choices
 import io.switchlite.adapter.common.option.int
 
 /**
- * HitSelect - a click selector for the CROSSHAIR target only (no distance filter - the crosshair
- * being on the entity is enough; a distance check was unreliable in fights and is deliberately
- * omitted).
+ * HitSelect — a click selector for the entity on the player's FORWARD ray (the same technique
+ * Reach/JumpReset use; not the unreliable objectMouseOver).
  *
- * Works through two cross-thread flags that ForgeEventBridge.applySyntheticInput applies on the
- * MAIN thread (the only place the real attack key is written):
- *   - attackAllowed=false forces the attack key OFF (swallows clicks / AutoClicker hits) even
- *     while the mouse is held. AutoClicker/TriggerBot's full-clicker override also honours it.
- *   - syntheticAttack=true is a one-tick pulse that fires one counter-attack.
+ * Two rules:
+ *   - Retiming: decided on the MAIN thread at the exact click frame. If the forward-ray target's
+ *     hurtResistantTime > RetimeAt it is still invulnerable, so the click is swallowed; when it
+ *     drops to RetimeAt the click passes through — the hit lands as the target becomes hittable.
+ *     Implemented as an attack-gate provider the platform calls from applySyntheticInput every
+ *     frame, so the decision is made when the click happens, not on the 20Hz background tick.
+ *   - CounterHit: on the background tick, when not clicking and just got hit (hurtTime>0), fire one
+ *     automatic counter-attack once (cooldown-gated) via a syntheticAttack pulse.
  *
- * A Mode selector picks which rule is active:
- *   - Retiming: while the crosshair target's hurtResistantTime > RetimeAt it is still invulnerable,
- *     so clicks are swallowed; when it drops to RetimeAt the click passes through - the re-timed
- *     hit lands exactly as the target becomes hittable again.
- *   - CounterHit: when not clicking and just got hit (hurtTime>0), fire one automatic counter-attack
- *     once (cooldown-gated).
- *   - Both: both rules run.
+ * A Mode selector picks which rule is active: Both / Retiming / CounterHit.
  */
 object HitSelect : Module("HitSelect", Category.COMBAT) {
 
     // ========== Mode selector (which rule is active) ==========
     private val mode by choices("Mode", arrayOf("Both", "Retiming", "CounterHit"))
 
-    // ========== Retiming (swallow clicks inside the crosshair target's i-frame) ==========
+    // ========== Retiming (swallow clicks inside the forward-ray target's i-frame) ==========
     /** Target is considered "about to become hittable" when hurtResistantTime <= this. */
     private val retimeAt by int("RetimeAt", 3, 0..10, "ticks")
 
@@ -44,44 +40,36 @@ object HitSelect : Module("HitSelect", Category.COMBAT) {
     private var lastCounterNano: Long = 0L
     /** Synthetic counter-attack pulse: set true for one background tick, then cleared. */
     private var counterPulse: Boolean = false
-    /** Throttle for the crosshair-target diagnostic. */
-    private var diagCount = 0
 
-    // ========== StartTick Listener (background 20Hz - decision only, lands on main thread) ==========
+    // ========== Main-thread attack gate (Retiming — decided per click frame) ==========
+    // The platform calls this from applySyntheticInput on the render thread right before it writes
+    // the attack key, so a swallowed click is decided at the instant of the click. Returns true =
+    // let the click through, false = swallow it.
+    private val gate: () -> Boolean = {
+        if (enabled && (mode == "Both" || mode == "Retiming")) {
+            val t = EventBridge.getForwardRayTarget()
+            !(t != null && t.hurtResistantTime > retimeAt)
+        } else {
+            true
+        }
+    }
+
+    // ========== Background listener (CounterHit only) ==========
     private val startListener: (PlayerState, TargetState?) -> Unit = { p, _ ->
         if (enabled) onStartTick(p)
     }
 
     private fun onStartTick(player: PlayerState) {
-        // Default for this tick: clicks pass through. Rules below may flip it off.
-        EventBridge.attackAllowed = true
         // Clear a previous counter pulse (unless re-triggered below).
         if (counterPulse) {
             EventBridge.syntheticAttack = false
             counterPulse = false
         }
+        if (mode != "Both" && mode != "CounterHit") return
 
-        // Only the FORWARD-RAY target matters (player's own forward line, not objectMouseOver —
-        // the latter is unreliable mid-fight). No nearest-entity fallback, no distance filter.
         val t = EventBridge.getForwardRayTarget()
-        // Diagnostic: confirm whether the forward-ray target is ever present and what hrt reads.
-        if (++diagCount % 40 == 0) {
-            io.switchlite.core.logging.CoreLogger.info(
-                "[HitSelect] forwardRay=${t?.name ?: "NULL"} hrt=${t?.hurtResistantTime ?: -1} " +
-                "hurtTime=${player.hurtTime} mode=$mode onGround=${player.onGround}"
-            )
-        }
         if (t == null) return
-
-        // ---- Retiming: crosshair target still invulnerable -> swallow the click ----
-        if ((mode == "Both" || mode == "Retiming") && t.hurtResistantTime > retimeAt) {
-            EventBridge.attackAllowed = false
-            return
-        }
-
-        // ---- CounterHit: not clicking, just got hit -> auto attack once ----
-        if ((mode == "Both" || mode == "CounterHit")
-            && !EventBridge.isLeftMousePhysicallyDown
+        if (!EventBridge.isLeftMousePhysicallyDown
             && player.hurtTime > 0
             && System.nanoTime() - lastCounterNano >= counterCdMs * 1_000_000L) {
             lastCounterNano = System.nanoTime()
@@ -95,14 +83,14 @@ object HitSelect : Module("HitSelect", Category.COMBAT) {
         lastCounterNano = 0L
         counterPulse = false
         EventBridge.syntheticAttack = false
-        EventBridge.attackAllowed = true
+        EventBridge.registerAttackGateProvider(gate)
         EventBridge.registerStartTickListener(startListener)
     }
 
     override fun onDisable() {
         EventBridge.unregisterStartTickListener(startListener)
+        EventBridge.registerAttackGateProvider(null)
         EventBridge.syntheticAttack = false
-        EventBridge.attackAllowed = true
         counterPulse = false
     }
 }

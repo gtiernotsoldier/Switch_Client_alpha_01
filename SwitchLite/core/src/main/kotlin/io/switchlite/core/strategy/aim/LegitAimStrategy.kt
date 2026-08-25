@@ -70,7 +70,11 @@ class LegitAimStrategy : AimStrategy {
 
         // 4. Target point computation (world point + rotation)
         val targetPoint: Vec3 = when (config.mode) {
-            AimMode.LEGIT, AimMode.SELF_ADAPTIVE -> {
+            AimMode.SELF_ADAPTIVE -> {
+                // Nemui-style pull: aim at the entity center (strongest pull-back).
+                RotationCalculator.hitboxCenterWorld(target.hitbox)
+            }
+            AimMode.LEGIT -> {
                 // Inside the collision box -> do nothing. Only correct the crosshair back to the
                 // box edge when it drifts outside, and STOP there (no hard lock to a corner).
                 val edge = RotationCalculator.getBoxEdgeTarget(eyePos, aim, target.hitbox)

@@ -172,6 +172,7 @@ object EventBridge {
         entityVelocityNotifiers.clear()
         entityPositionProvider = null
         forwardRayTargetProvider = null
+        fovNearestTargetProvider = null
         targetFilterPlayers = true
         targetFilterMobs = true
         renderOffsetX = 0f
@@ -451,6 +452,16 @@ object EventBridge {
 
     fun getForwardRayTarget(): TargetState? = forwardRayTargetProvider?.invoke()
     fun registerForwardRayTargetProvider(provider: () -> TargetState?) { forwardRayTargetProvider = provider }
+
+    // ========== FOV Nearest Target (AimAssist — Nemui-style selection) ==========
+    // AimAssist pulls toward the nearest entity that lies inside its FOV cone + range, mirroring
+    // Nemui's getValidTarget (which picks the nearest entity within FOV). Unlike the generic tick
+    // target (crosshair-first), this gives AimAssist a target even when the crosshair is slightly
+    // off the entity, enabling the "pull-back" behavior.
+    private var fovNearestTargetProvider: ((fov: Float, range: Float) -> TargetState?)? = null
+
+    fun getFovNearestTarget(fov: Float, range: Float): TargetState? = fovNearestTargetProvider?.invoke(fov, range)
+    fun registerFovNearestTargetProvider(provider: (fov: Float, range: Float) -> TargetState?) { fovNearestTargetProvider = provider }
 
     // ========== 3. Input: Keys & Synthetic ==========
 

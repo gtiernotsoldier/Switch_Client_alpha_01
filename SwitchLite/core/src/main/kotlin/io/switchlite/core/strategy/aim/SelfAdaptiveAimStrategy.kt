@@ -107,7 +107,8 @@ class SelfAdaptiveAimStrategy : AimStrategy {
 
         // 5. Target point computation (same geometry as LegitAimStrategy)
         val targetPoint: Vec3 = when (config.mode) {
-            AimMode.LEGIT, AimMode.SELF_ADAPTIVE -> {
+            AimMode.SELF_ADAPTIVE -> RotationCalculator.hitboxCenterWorld(target.hitbox)
+            AimMode.LEGIT -> {
                 val edge = RotationCalculator.getBoxEdgeTarget(eyePos, aim, target.hitbox)
                 if (edge == null) return AimResult.Skip
                 edge.world

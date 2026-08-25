@@ -360,6 +360,66 @@ object ForgeStateExtractor : IStateExtractor {
         return nearestEntity?.let { MappingContext.getFieldValue(it, "forge:entity_entityId") as? Int }
     }
 
+    /**
+     * Nemui-style target selection for AimAssist: pick the nearest viable entity that lies inside
+     * the FOV cone (half-angle = fov/2 around the player's view) AND within [range] blocks (3D).
+     *
+     * Unlike [getCurrentTargetId] (crosshair-first, no FOV gate), this gives AimAssist a target
+     * whenever a nearby entity is inside the cone — so the crosshair gets "pulled back" toward it
+     * even if the crosshair is slightly off the entity.
+     *
+     * @param fov total cone angle in degrees (half applied each side of the view).
+     * @param range max 3D distance in blocks.
+     * @return the entity id of the nearest in-cone target, or null.
+     */
+    fun getFovNearestTargetId(fov: Float, range: Float): Int? {
+        val player = getPlayer() ?: return null
+        val world = getWorld() ?: return null
+        val halfFov = fov / 2f
+        if (halfFov <= 0f) return null
+
+        val playerX = MappingContext.getFieldValue(player, "forge:entity_posX") as? Double ?: return null
+        val playerY = MappingContext.getFieldValue(player, "forge:entity_posY") as? Double ?: return null
+        val playerZ = MappingContext.getFieldValue(player, "forge:entity_posZ") as? Double ?: return null
+        val playerYaw = MappingContext.getFieldValue(player, "forge:player_rotationYaw") as? Float ?: 0f
+        val playerPitch = MappingContext.getFieldValue(player, "forge:player_rotationPitch") as? Float ?: 0f
+
+        val loadedList = MappingContext.getFieldValue(world, "forge:world_loadedEntityList") as? List<*> ?: return null
+        val rangeSq = range * range
+
+        var nearestId: Int? = null
+        var nearestDistSq = Double.MAX_VALUE
+
+        for (entity in loadedList) {
+            if (!isViableTarget(entity, player)) continue
+            val ex = MappingContext.getFieldValue(entity, "forge:entity_posX") as? Double ?: continue
+            val ey = MappingContext.getFieldValue(entity, "forge:entity_posY") as? Double ?: continue
+            val ez = MappingContext.getFieldValue(entity, "forge:entity_posZ") as? Double ?: continue
+
+            val dx = ex - playerX
+            val dy = ey - playerY
+            val dz = ez - playerZ
+            val distSq = dx * dx + dy * dy + dz * dz
+            if (distSq > rangeSq) continue
+
+            // Yaw/pitch to the entity center, compared against the player's current view.
+            val dirLenXZ = kotlin.math.sqrt(dx * dx + dz * dz)
+            val yawTo = (Math.atan2(dz, dx) * (180.0 / Math.PI) - 90.0).toFloat()
+            var yawDiff = playerYaw - yawTo
+            yawDiff = ((yawDiff % 360.0) + 540.0) % 360.0 - 180.0 // wrap to [-180,180]
+            if (yawDiff > halfFov || yawDiff < -halfFov) continue
+            val pitchTo = (-Math.atan2(dy, dirLenXZ) * (180.0 / Math.PI)).toFloat()
+            val pitchDiff = Math.abs(playerPitch - pitchTo)
+            if (pitchDiff > halfFov) continue
+
+            if (distSq < nearestDistSq) {
+                nearestDistSq = distSq
+                nearestId = MappingContext.getFieldValue(entity, "forge:entity_entityId") as? Int
+            }
+        }
+        return nearestId
+    }
+
     private fun isViableTarget(entity: Any?, player: Any): Boolean {
         if (entity === player) return false
         if (!entityLivingBaseClass.isInstance(entity)) return false

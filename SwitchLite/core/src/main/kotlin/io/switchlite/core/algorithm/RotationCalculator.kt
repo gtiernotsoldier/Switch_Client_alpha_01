@@ -242,6 +242,16 @@ object RotationCalculator {
     data class BoxEdgeTarget(val world: Vec3, val rotation: Vec2)
 
     /**
+     * World-space center point of an AABB hitbox. Used by SELF_ADAPTIVE (and Nemui-style pull)
+     * to aim at the entity's center rather than its box edge.
+     */
+    fun hitboxCenterWorld(box: Hitbox): Vec3 = Vec3(
+        (box.minX + box.maxX) / 2.0,
+        (box.minY + box.maxY) / 2.0,
+        (box.minZ + box.maxZ) / 2.0
+    )
+
+    /**
      * Compute the closest world point on the AABB surface to a ray (origin + dir*t, t>=0).
      * For each of the 6 faces, clamp the ray's intersection with the face plane onto the face
      * rectangle, and keep the point with the smallest distance to the ray.

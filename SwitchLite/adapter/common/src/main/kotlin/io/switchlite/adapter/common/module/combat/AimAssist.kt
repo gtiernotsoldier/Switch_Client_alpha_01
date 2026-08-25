@@ -102,8 +102,14 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
      * Called by EventBridge on every client tick.
      * Routes to Legit/Normal (via LegitAimStrategy) or SelfAdaptive (via SelfAdaptiveAimStrategy).
      * NO algorithm logic here — only config assembly + result mapping.
+     *
+     * Target selection mirrors Nemui: prefer the nearest viable entity inside the FOV cone + range
+     * (so the crosshair gets "pulled back" toward it even when slightly off), falling back to the
+     * generic tick target.
      */
     fun onClientTick(player: PlayerState, target: TargetState?) {
+        val aimTarget = EventBridge.getFovNearestTarget(fov, rangeMax) ?: target
+
         // AutoClicker/TriggerBot active -> the player is effectively attacking continuously, so
         // the onlyOnClick trigger (which reads the PHYSICAL attack key) must not block aiming.
         // Mark isAttackKeyDown so onlyOnClick passes; never touches the global field.
@@ -117,7 +123,7 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
                 val config = cachedConfig("adaptive") { buildConfig(AimMode.SELF_ADAPTIVE) }
                 val input = AimInput(
                     player = effPlayer,
-                    target = target,
+                    target = aimTarget,
                     mouseDeltaX = EventBridge.mouseDeltaX,
                     mouseDeltaY = EventBridge.mouseDeltaY,
                     sensitivity = EventBridge.mouseSensitivity
@@ -135,7 +141,7 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
             else -> {
                 // Legit / Normal — delegate to LegitAimStrategy
                 val config = cachedConfig("legit") { buildConfig() }
-                val input = AimInput(effPlayer, target)
+                val input = AimInput(effPlayer, aimTarget)
                 val result = legitStrategy.execute(config, legitState, input)
                 when (result) {
                     // Write the desired rotation; the MAIN thread applies it (see drainDesiredRotation).

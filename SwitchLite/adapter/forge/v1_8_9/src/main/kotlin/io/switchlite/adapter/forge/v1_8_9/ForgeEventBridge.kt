@@ -690,6 +690,16 @@ object ForgeEventBridge : IEventBridge {
                 ForgeStateExtractor.extractTargetState(id)
             } catch (_: Exception) { null }
         }
+
+        // AimAssist's Nemui-style target selector: nearest viable entity inside the FOV cone + range.
+        // Runs on the background tick thread (read-only MC access). Wrapped so a mapping failure
+        // never kills module dispatch.
+        EventBridge.registerFovNearestTargetProvider { fov, range ->
+            try {
+                val id = ForgeStateExtractor.getFovNearestTargetId(fov, range) ?: return@registerFovNearestTargetProvider null
+                ForgeStateExtractor.extractTargetState(id)
+            } catch (_: Exception) { null }
+        }
     }
 
     /** TargetFilter (Player category) gate: whether this entity type may be a combat target.

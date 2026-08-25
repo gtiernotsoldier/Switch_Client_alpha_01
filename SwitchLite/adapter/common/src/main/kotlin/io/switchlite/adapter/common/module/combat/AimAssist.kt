@@ -46,7 +46,7 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
     private val fov by float("Fov", 360.0f, 0.0f..360.0f, "degrees")
 
     // Behavior settings
-    private val aimSpeed by int("AimSpeed", 6, 1..20, "%")
+    private val aimSpeed by int("AimSpeed", 5, 1..20, "deg/tick")
     private val smoothness by float("Smoothness", 0.85f, 0.0f..1.0f)
     private val noiseIntensity by float("NoiseIntensity", 0.05f, 0.0f..0.5f)
     /** Natural aim offset (degrees): the aim point drifts slowly within ±offset so the crosshair
@@ -145,7 +145,13 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
             else -> {
                 // Legit / Normal — delegate to LegitAimStrategy
                 val config = cachedConfig("legit") { buildConfig() }
-                val input = AimInput(effPlayer, aimTarget)
+                val input = AimInput(
+                    player = effPlayer,
+                    target = aimTarget,
+                    mouseDeltaX = EventBridge.mouseDeltaX,
+                    mouseDeltaY = EventBridge.mouseDeltaY,
+                    sensitivity = EventBridge.mouseSensitivity
+                )
                 val result = legitStrategy.execute(config, legitState, input)
                 when (result) {
                     // Write the desired rotation; the MAIN thread applies it (see drainDesiredRotation).

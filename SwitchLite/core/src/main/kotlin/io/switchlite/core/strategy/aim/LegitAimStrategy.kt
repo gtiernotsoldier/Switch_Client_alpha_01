@@ -23,8 +23,9 @@ import kotlin.math.abs
  *    - LEGIT: compute the box's yaw/pitch angular range. While the crosshair is inside that range
  *      (on the target) do nothing; only when it drifts outside, pull back to the nearest edge.
  * 5. FOV: 360° = full 360 (skip the cone gate); otherwise the target point must be inside the cone.
- * 6. Angle-difference proportional smoothing (fraction of the remaining delta per tick) with a
- *    click boost and an on-target stop threshold — fast, convergent, no edge jitter.
+ * 6. Physics: fixed-speed glide (rotMove, max `aimSpeed` degrees per tick → distance/time feel),
+ *    scaled by how hard the PLAYER is turning (fast mouse = assist yields so the player leads;
+ *    idle mouse = assist pulls), plus click boost and an on-target stop threshold.
  */
 class LegitAimStrategy : AimStrategy {
 
@@ -41,6 +42,8 @@ class LegitAimStrategy : AimStrategy {
         const val STOP_PITCH = 0.1f
         /** FOV value that means "full 360°" — the cone gate is skipped entirely. */
         const val FULL_FOV = 360f
+        /** Mouse pixels/tick above which the assist fully yields to the player (they are turning). */
+        const val YIELD_PIXELS = 120f
     }
 
     override fun execute(
@@ -49,7 +52,7 @@ class LegitAimStrategy : AimStrategy {
         input: Any
     ): AimResult {
         require(input is AimInput) { "LegitAimStrategy expects AimInput" }
-        return processTick(config, state, input.player, input.target)
+        return processTick(config, state, input.player, input.target, input.mouseDeltaX, input.mouseDeltaY)
     }
 
     // ---- Visible for testing ----
@@ -58,7 +61,9 @@ class LegitAimStrategy : AimStrategy {
         config: AimConfig,
         state: AimStrategy.State,
         player: PlayerState,
-        target: TargetState?
+        target: TargetState?,
+        mouseDeltaX: Float = 0f,
+        mouseDeltaY: Float = 0f
     ): AimResult {
         // 1. Null guard
         if (target == null) {
@@ -160,20 +165,20 @@ class LegitAimStrategy : AimStrategy {
             }
         }
 
-        // 7. Angle-difference proportional smoothing: move a fraction of the remaining yaw/pitch
-        // delta each tick. Big gap → big move, small gap → small move — the pull converges
-        // smoothly and never jitters at the edge (unlike fixed per-tick degree steps).
-        // Clicking (isAttackKeyDown) modestly boosts the fraction so a click snaps back into the
-        // box, but gently — human-natural, not machine-fast.
+        // 7. Physics: fixed-speed glide (rotMove). Speed = max degrees per tick — distance/time
+        // feel, so the pull takes a constant time proportional to the gap, like a hand.
+        // Yield factor: the faster the PLAYER is turning (mouse pixels/tick), the more the assist
+        // yields — the player leads their own turn; when they stop, the assist pulls back in.
+        val yield = (1f - (kotlin.math.sqrt(mouseDeltaX * mouseDeltaX + mouseDeltaY * mouseDeltaY) / YIELD_PIXELS))
+            .coerceIn(0f, 1f)
         val clickBoost = if (player.isAttackKeyDown) CLICK_SPEED_BOOST else 1f
-        val fraction = (config.aimSpeed / 20f) * clickBoost * (if (onTarget) ON_TARGET_FACTOR else 1f)
-        val f = fraction.coerceIn(0f, 1f)
+        val speed = config.aimSpeed.toFloat() * yield * clickBoost * (if (onTarget) ON_TARGET_FACTOR else 1f)
+        val newYaw = RotationCalculator.rotMove(targetYaw, aim.yaw, speed)
+        val newPitch = RotationCalculator.rotMove(targetPitch, aim.pitch, speed * 0.39f)
         // Stop threshold: once the delta is tiny, release entirely (no micro-jitter at the edge).
         if (abs(rotationDiff.yaw) < STOP_YAW && abs(rotationDiff.pitch) < STOP_PITCH) {
             return AimResult.Skip
         }
-        val newYaw = aim.yaw + rotationDiff.yaw * f
-        val newPitch = aim.pitch + rotationDiff.pitch * f * 0.39f
         return AimResult.ApplyRotation(Vec2(newYaw, newPitch))
     }
 }

@@ -49,6 +49,8 @@ class SelfAdaptiveAimStrategy : AimStrategy {
         const val STOP_PITCH = 0.1f
         /** FOV value that means "full 360°" — the cone gate is skipped entirely. */
         const val FULL_FOV = 360f
+        /** Mouse pixels/tick above which the assist fully yields to the player (they are turning). */
+        const val YIELD_PIXELS = 120f
     }
 
     /** Extended state with adaptive tracking fields. */
@@ -213,18 +215,19 @@ class SelfAdaptiveAimStrategy : AimStrategy {
             config, state.alignmentEma
         )
 
-        // 9. Angle-difference proportional smoothing: move a fraction of the remaining yaw/pitch
-        // delta per tick — big gap → big move, small gap → small move, converging smoothly with
-        // no edge jitter. Clicking gently boosts the pull (natural, not machine-fast).
+        // 9. Physics: fixed-speed glide (rotMove) — distance/time feel, like a hand.
+        // Yield factor: the faster the PLAYER is turning (mouse pixels/tick), the more the assist
+        // yields so the player leads; when they stop, the assist pulls back in.
+        val mouseMag = kotlin.math.sqrt(mouseDeltaX * mouseDeltaX + mouseDeltaY * mouseDeltaY)
+        val yield = (1f - (mouseMag / YIELD_PIXELS)).coerceIn(0f, 1f)
         val clickBoost = if (player.isAttackKeyDown) CLICK_SPEED_BOOST else 1f
-        val fraction = (dynamicAimSpeed / 20f) * clickBoost * (if (onTarget) ON_TARGET_FACTOR else 1f) * dynamicSmoothness
-        val f = fraction.coerceIn(0f, 1f)
+        val speed = dynamicAimSpeed.toFloat() * yield * clickBoost * (if (onTarget) ON_TARGET_FACTOR else 1f) * dynamicSmoothness
         // Stop threshold: once the delta is tiny, release entirely (no micro-jitter at the edge).
         if (abs(rotationDiff.yaw) < STOP_YAW && abs(rotationDiff.pitch) < STOP_PITCH) {
             return AimResult.Skip
         }
-        val newYaw = aim.yaw + rotationDiff.yaw * f
-        val newPitch = aim.pitch + rotationDiff.pitch * f * 0.39f
+        val newYaw = RotationCalculator.rotMove(targetYaw, aim.yaw, speed)
+        val newPitch = RotationCalculator.rotMove(targetPitch, aim.pitch, speed * 0.39f)
         return AimResult.ApplyRotation(Vec2(newYaw, newPitch))
     }
 

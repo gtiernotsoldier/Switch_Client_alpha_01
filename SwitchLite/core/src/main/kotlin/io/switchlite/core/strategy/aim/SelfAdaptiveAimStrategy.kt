@@ -40,6 +40,9 @@ class SelfAdaptiveAimStrategy : AimStrategy {
         const val EYE_HEIGHT = 1.62
         /** LockOnCrosshair alignment threshold (degrees): crosshair must be this close to assist. */
         const val LOCK_ANGLE = 8f
+        /** Nemui smoothStopping: stop applying micro-corrections once this close (prevents jitter). */
+        const val STOP_YAW = 0.2f
+        const val STOP_PITCH = 0.1f
     }
 
     /** Extended state with adaptive tracking fields. */
@@ -107,16 +110,15 @@ class SelfAdaptiveAimStrategy : AimStrategy {
 
         // 5. Target point computation (same geometry as LegitAimStrategy)
         val targetPoint: Vec3 = when (config.mode) {
-            AimMode.SELF_ADAPTIVE -> RotationCalculator.hitboxCenterWorld(target.hitbox)
+            AimMode.NORMAL, AimMode.SELF_ADAPTIVE -> {
+                // Continuous tracking: aim at the hitbox center every tick so the crosshair follows
+                // the target wherever it moves (and stays on it when passing through).
+                RotationCalculator.hitboxCenterWorld(target.hitbox)
+            }
             AimMode.LEGIT -> {
                 val edge = RotationCalculator.getBoxEdgeTarget(eyePos, aim, target.hitbox)
                 if (edge == null) return AimResult.Skip
                 edge.world
-            }
-            AimMode.NORMAL -> {
-                val hit = RotationCalculator.rayHitPoint(eyePos, aim, target.hitbox)
-                hit ?: (RotationCalculator.getBoxEdgeTarget(eyePos, aim, target.hitbox)?.world
-                    ?: target.position)
             }
         }
         val targetRotation = RotationCalculator.calculateRotation(eyePos, targetPoint)
@@ -159,15 +161,24 @@ class SelfAdaptiveAimStrategy : AimStrategy {
             config, state.alignmentEma
         )
 
-        // 9. Nemui-style fraction smoothing (proportional per-tick close of the gap).
-        // aimSpeed=20 → fraction ≈ 0.35 (Nemui max speed); aimSpeed=8 → ~0.14.
-        val yawFraction = 0.35f * (dynamicAimSpeed / 20f) * dynamicSmoothness
+        // 9. Nemui-style fraction smoothing (proportional per-tick close of the gap) + stopping gate.
+        // aimSpeed=20 → ~70% of the gap per tick; aimSpeed=8 → ~24%. Fast pull, exponential ease.
+        val yawFraction = 0.7f * (dynamicAimSpeed / 20f) * dynamicSmoothness
         val pitchFraction = yawFraction * 0.39f
-        val smoothed = Vec2(
-            aim.yaw + rotationDiff.yaw * yawFraction,
-            aim.pitch + rotationDiff.pitch * pitchFraction
+        val smoothedYaw = aim.yaw + rotationDiff.yaw * yawFraction
+        val smoothedPitch = aim.pitch + rotationDiff.pitch * pitchFraction
+
+        // Nemui smoothStopping: apply each axis independently — skip it once already aligned on
+        // that axis, so the exponential glide never micro-moves near the target (no jitter/stiff).
+        val applyYaw = abs(rotationDiff.yaw) >= STOP_YAW
+        val applyPitch = abs(rotationDiff.pitch) >= STOP_PITCH
+        if (!applyYaw && !applyPitch) return AimResult.Skip
+        return AimResult.ApplyRotation(
+            Vec2(
+                if (applyYaw) smoothedYaw else aim.yaw,
+                if (applyPitch) smoothedPitch else aim.pitch
+            )
         )
-        return AimResult.ApplyRotation(smoothed)
     }
 
     // ==================== Adaptive Math ====================

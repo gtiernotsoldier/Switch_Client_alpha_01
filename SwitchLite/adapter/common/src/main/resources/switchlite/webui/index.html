@@ -396,6 +396,13 @@
             const rule = MODE_RULES[m.name];
             const selOpt = rule ? m.options.find(o => o.name===rule.selector) : null;
             const sel = selOpt ? selOpt.value : null;
+            // NaturalMode (Velocity OnlyOnHitFrame) sub-option dependency:
+            //   BaseChance/ChancePerHit/MaxChance show when NaturalMode is Both or Incremental
+            //   NthMin/NthMax           show when NaturalMode is Both or EveryNth
+            const naturalModeOpt = m.options.find(o => o.name==='NaturalMode');
+            const nat = naturalModeOpt ? naturalModeOpt.value : null;
+            const natIncr = (nat==='Both' || nat==='Incremental');
+            const natNth  = (nat==='Both' || nat==='EveryNth');
             // SuperKnockback: HurtTime only applies when TriggerMode == HurtTimeExact.
             const trigModeOpt = m.options.find(o => o.name==='TriggerMode');
             return m.options.filter(o => {
@@ -405,6 +412,10 @@
                 if(rule && sel){
                     const m2 = modeOf(o, rule);
                     if(m2!=='' && m2!==sel) return false;   // hide options exclusive to other modes
+                }
+                if(m.name==='Velocity' && nat){
+                    if((o.name==='BaseChance'||o.name==='ChancePerHit'||o.name==='MaxChance') && !natIncr) return false;
+                    if((o.name==='NthMin'||o.name==='NthMax') && !natNth) return false;
                 }
                 if(trigModeOpt && o.name==='HurtTime') return trigModeOpt.value === 'HurtTimeExact';
                 return true;

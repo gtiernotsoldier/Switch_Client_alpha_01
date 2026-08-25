@@ -50,12 +50,12 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
     private val smoothness by float("Smoothness", 0.85f, 0.0f..1.0f)
     private val noiseIntensity by float("NoiseIntensity", 0.05f, 0.0f..0.5f)
 
-    // Target selection (consumed by StateExtractor, not by Core strategy)
-    @Suppress("unused")
-    private val prioritizeDistance by boolean("PrioritizeDistance", true)
-
     // Mode: Legit (box edge) vs Normal (center/random) vs SelfAdaptive (adaptive)
     private val mode by choices("Mode", arrayOf("Legit", "Normal", "SelfAdaptive"))
+    /**
+     * LockOnCrosshair — when ON, only assist once the crosshair is already aligned to the target
+     * (within a small angle). Off = assist anywhere inside the FOV.
+     */
     private val lockOnCrosshair by boolean("LockOnCrosshair", false)
 
     // Trigger conditions (Unified Engine)

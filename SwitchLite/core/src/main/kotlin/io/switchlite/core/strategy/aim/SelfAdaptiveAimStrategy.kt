@@ -37,6 +37,9 @@ import kotlin.math.sqrt
  */
 class SelfAdaptiveAimStrategy : AimStrategy {
 
+    /** LockOnCrosshair alignment threshold (degrees): crosshair must be this close to assist. */
+    private val LOCK_ANGLE = 8f
+
     /** Extended state with adaptive tracking fields. */
     class AdaptiveState : AimStrategy.State() {
         var alignmentEma: Float = 0.5f
@@ -132,6 +135,12 @@ class SelfAdaptiveAimStrategy : AimStrategy {
         val rotationDiff = RotationCalculator.calculateDifference(player.rotation, targetPoint)
         if (!RotationCalculator.isWithinFov(rotationDiff, config.horizontalFov, config.verticalFov)) {
             return AimResult.Skip
+        }
+        // LockOnCrosshair: only assist once the crosshair is already aligned to the target.
+        if (config.lockOnCrosshair) {
+            if (abs(rotationDiff.yaw) > LOCK_ANGLE || abs(rotationDiff.pitch) > LOCK_ANGLE) {
+                return AimResult.Skip
+            }
         }
 
         // 8. Self-adaptive: update alignment EMA and compute dynamic factors

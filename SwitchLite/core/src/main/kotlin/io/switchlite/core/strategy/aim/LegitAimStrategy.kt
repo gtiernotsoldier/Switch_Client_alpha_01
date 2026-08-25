@@ -31,6 +31,9 @@ import kotlin.math.sqrt
  */
 class LegitAimStrategy : AimStrategy {
 
+    /** LockOnCrosshair alignment threshold (degrees): crosshair must be this close to assist. */
+    internal val lockAngleDegrees = 8f
+
     override fun execute(
         config: AimConfig,
         state: AimStrategy.State,
@@ -106,6 +109,13 @@ class LegitAimStrategy : AimStrategy {
         val rotationDiff = RotationCalculator.calculateDifference(player.rotation, targetPoint)
         if (!RotationCalculator.isWithinFov(rotationDiff, config.horizontalFov, config.verticalFov)) {
             return AimResult.Skip
+        }
+        // LockOnCrosshair: only assist once the crosshair is already aligned to the target. Off = any
+        // point in the FOV. This stops the crosshair flying toward a target on its own (detectable).
+        if (config.lockOnCrosshair) {
+            if (abs(rotationDiff.yaw) > lockAngleDegrees || abs(rotationDiff.pitch) > lockAngleDegrees) {
+                return AimResult.Skip
+            }
         }
 
         // 8. Smoothing factors

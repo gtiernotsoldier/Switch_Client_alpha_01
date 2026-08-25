@@ -42,8 +42,8 @@ class SelfAdaptiveAimStrategy : AimStrategy {
         const val LOCK_ANGLE = 8f
         /** LB "Aim while on target" deceleration — slows the pull when already on the target. */
         const val ON_TARGET_FACTOR = 0.85f
-        /** Clicking boosts the pull speed so a single click quickly snaps back into the box. */
-        const val CLICK_SPEED_BOOST = 3f
+        /** Clicking gently boosts the pull — natural snap-back, not machine-fast. */
+        const val CLICK_SPEED_BOOST = 1.5f
         /** Angle-difference stop threshold (degrees): release once the delta is this small. */
         const val STOP_YAW = 0.2f
         const val STOP_PITCH = 0.1f
@@ -175,6 +175,11 @@ class SelfAdaptiveAimStrategy : AimStrategy {
             }
         }
 
+        // 6b. Natural drift — the aim point wanders slowly within ±offset, human-like.
+        val (driftYaw, driftPitch) = RotationCalculator.updateNaturalDrift(state, config.offset)
+        targetYaw += driftYaw
+        targetPitch += driftPitch
+
         val rotationDiff = RotationCalculator.calculateDifference(aim, Vec2(targetYaw, targetPitch))
 
         // LockOnCrosshair: only assist once the crosshair is already aligned to the target.
@@ -210,7 +215,7 @@ class SelfAdaptiveAimStrategy : AimStrategy {
 
         // 9. Angle-difference proportional smoothing: move a fraction of the remaining yaw/pitch
         // delta per tick — big gap → big move, small gap → small move, converging smoothly with
-        // no edge jitter. Clicking boosts the fraction so one click snaps back into the box.
+        // no edge jitter. Clicking gently boosts the pull (natural, not machine-fast).
         val clickBoost = if (player.isAttackKeyDown) CLICK_SPEED_BOOST else 1f
         val fraction = (dynamicAimSpeed / 20f) * clickBoost * (if (onTarget) ON_TARGET_FACTOR else 1f) * dynamicSmoothness
         val f = fraction.coerceIn(0f, 1f)

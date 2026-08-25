@@ -46,9 +46,12 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
     private val fov by float("Fov", 360.0f, 0.0f..360.0f, "degrees")
 
     // Behavior settings
-    private val aimSpeed by int("AimSpeed", 8, 1..20, "%")
+    private val aimSpeed by int("AimSpeed", 6, 1..20, "%")
     private val smoothness by float("Smoothness", 0.85f, 0.0f..1.0f)
     private val noiseIntensity by float("NoiseIntensity", 0.05f, 0.0f..0.5f)
+    /** Natural aim offset (degrees): the aim point drifts slowly within ±offset so the crosshair
+     *  never locks dead-on — reads like a human hand, not a machine. */
+    private val offset by float("Offset", 0.5f, 0.0f..3.0f, "degrees")
 
     // Mode: Legit (box edge) vs Normal (crosshair-point lock) vs SelfAdaptive (adaptive)
     private val mode by choices("Mode", arrayOf("Legit", "Normal", "SelfAdaptive"))
@@ -91,6 +94,7 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
         aimSpeed = aimSpeed,
         smoothness = smoothness,
         noiseIntensity = noiseIntensity,
+        offset = offset,
         lockOnCrosshair = lockOnCrosshair,
         triggerOptions = triggerOptions
     )

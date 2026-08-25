@@ -26,8 +26,21 @@ interface AimStrategy : Strategy<AimConfig, AimStrategy.State, AimResult> {
     open class State : StrategyContext {
         var lastTargetId: Int = -1
 
+        /** Slowly-drifting natural aim offset (degrees) — target angles shift within ±offset so
+         *  the crosshair never locks dead-on. Re-randomized toward a new goal periodically. */
+        var driftYaw: Float = 0f
+        var driftPitch: Float = 0f
+        var driftGoalYaw: Float = 0f
+        var driftGoalPitch: Float = 0f
+        var driftTicksLeft: Int = 0
+
         override fun reset() {
             lastTargetId = -1
+            driftYaw = 0f
+            driftPitch = 0f
+            driftGoalYaw = 0f
+            driftGoalPitch = 0f
+            driftTicksLeft = 0
         }
     }
 }

@@ -325,6 +325,36 @@ object RotationCalculator {
     }
 
     /**
+     * Natural aim drift: the aim point wanders slowly within ±[offset] degrees instead of locking
+     * dead-on the target, reading like a human hand. Picks a new random drift goal every ~40 ticks
+     * and eases the current drift toward it (linear interpolation), so the offset never jitters.
+     *
+     * @param state the strategy state carrying the drift fields (may be any [AimStrategy.State]).
+     * @param offset max drift magnitude in degrees.
+     * @return the current (yawDrift, pitchDrift) to add to the aim angles.
+     */
+    fun updateNaturalDrift(
+        state: io.switchlite.core.strategy.aim.AimStrategy.State,
+        offset: Float
+    ): Pair<Float, Float> {
+        if (offset <= 0f) {
+            state.driftYaw = 0f
+            state.driftPitch = 0f
+            return 0f to 0f
+        }
+        if (state.driftTicksLeft <= 0) {
+            state.driftGoalYaw = kotlin.random.Random.nextFloat() * 2f - 1f
+            state.driftGoalPitch = kotlin.random.Random.nextFloat() * 2f - 1f
+            state.driftTicksLeft = 20 + kotlin.random.Random.nextInt(40)
+        }
+        state.driftTicksLeft--
+        // Ease 10% of the remaining way toward the goal each tick — smooth, never a jump.
+        state.driftYaw += (state.driftGoalYaw * offset - state.driftYaw) * 0.1f
+        state.driftPitch += (state.driftGoalPitch * offset * 0.6f - state.driftPitch) * 0.1f
+        return state.driftYaw to state.driftPitch
+    }
+
+    /**
      * Compute the closest world point on the AABB surface to a ray (origin + dir*t, t>=0).
      * For each of the 6 faces, clamp the ray's intersection with the face plane onto the face
      * rectangle, and keep the point with the smallest distance to the ray.

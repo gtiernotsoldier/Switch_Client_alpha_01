@@ -5,58 +5,53 @@ import io.switchlite.core.model.TargetState
 import io.switchlite.adapter.common.api.EventBridge
 import io.switchlite.adapter.common.module.Module
 import io.switchlite.adapter.common.module.Category
-import io.switchlite.adapter.common.option.boolean
+import io.switchlite.adapter.common.option.choices
 import io.switchlite.adapter.common.option.float
 import io.switchlite.adapter.common.option.int
 
 /**
- * HitSelect — a click selector that decides whether the player's attack click actually fires.
+ * HitSelect — a click selector for the CROSSHAIR target only (never the nearest-entity fallback).
  *
- * Unlike a mod (which can swallow the attack event directly), we are an injector: the background
- * tick only WRITES desired state, and the MAIN thread is the only place that writes the real
- * attack key. So HitSelect works through two cross-thread flags that ForgeEventBridge.applySyntheticInput
- * applies on the render thread:
+ * Works through two cross-thread flags that ForgeEventBridge.applySyntheticInput applies on the
+ * MAIN thread (the only place the real attack key is written):
+ *   - attackAllowed=false forces the attack key OFF (swallows clicks / AutoClicker hits) even
+ *     while the mouse is held. AutoClicker/TriggerBot's full-clicker override also honours it.
+ *   - syntheticAttack=true is a one-tick pulse that fires one counter-attack.
  *
- *   - [EventBridge.attackAllowed] — when false, the attack key is forced OFF even if the physical
- *     mouse button is held. Used to swallow clicks that would land while the target is still in its
- *     i-frame window (a wasted hit).
- *   - [EventBridge.syntheticAttack] — a one-tick pulse that presses the attack key even though the
- *     player isn't clicking. Used for the counter-attack.
- *
- * Two rules (both on by default):
- *
- * 1. Retiming — while the target is still invulnerable (hurtResistantTime > RetimeAt), clicks are
- *    swallowed; when it drops to RetimeAt the click passes through, so it lands exactly as the
- *    target becomes hittable again. This is the core "don't waste hits on the i-frame" mechanic.
- *
- * 2. CounterHit — when the player is within range, NOT clicking, and just got hit (hurtTime > 0),
- *    fire one automatic counter-attack once (cooldown-gated). The "eat a hit then hit back" trade.
+ * A Mode selector picks which rule is active:
+ *   - Retiming: while the crosshair target's hurtResistantTime > RetimeAt it is still invulnerable,
+ *     so clicks are swallowed; when it drops to RetimeAt the click passes through — the re-timed
+ *     hit lands exactly as the target becomes hittable again.
+ *   - CounterHit: when in range, not clicking, and just got hit (hurtTime>0), fire one automatic
+ *     counter-attack once (cooldown-gated).
+ *   - Both: both rules run.
  */
 object HitSelect : Module("HitSelect", Category.COMBAT) {
 
-    // ========== Rule 2: Retiming (swallow clicks inside the target's i-frame window) ==========
-    private val retiming by boolean("Retiming", true)
+    // ========== Mode selector (which rule is active) ==========
+    private val mode by choices("Mode", arrayOf("Both", "Retiming", "CounterHit"))
+
+    // ========== Retiming (swallow clicks inside the crosshair target's i-frame) ==========
     private val retimeRange by float("RetimeRange", 3.0f, 0.0f..6.0f, "blocks")
     /** Target is considered "about to become hittable" when hurtResistantTime <= this. */
     private val retimeAt by int("RetimeAt", 3, 0..10, "ticks")
 
-    // ========== Rule 1: CounterHit (eat a hit → auto hit back) ==========
-    private val counterHit by boolean("CounterHit", true)
+    // ========== CounterHit (eat a hit → auto hit back) ==========
     private val counterRange by float("CounterRange", 3.0f, 0.0f..6.0f, "blocks")
     private val counterCdMs by int("CounterCD", 300, 0..1000, "ms")
 
     // ========== State ==========
-    /** Last time Rule 1 fired a counter-attack (cooldown). */
+    /** Last time CounterHit fired a counter-attack (cooldown). */
     private var lastCounterNano: Long = 0L
     /** Synthetic counter-attack pulse: set true for one background tick, then cleared. */
     private var counterPulse: Boolean = false
 
     // ========== StartTick Listener (background 20Hz — decision only, lands on main thread) ==========
-    private val startListener: (PlayerState, TargetState?) -> Unit = { p, t ->
-        if (enabled) onStartTick(p, t)
+    private val startListener: (PlayerState, TargetState?) -> Unit = { p, _ ->
+        if (enabled) onStartTick(p)
     }
 
-    private fun onStartTick(player: PlayerState, target: TargetState?) {
+    private fun onStartTick(player: PlayerState) {
         // Default for this tick: clicks pass through. Rules below may flip it off.
         EventBridge.attackAllowed = true
         // Clear a previous counter pulse (unless re-triggered below).
@@ -65,17 +60,21 @@ object HitSelect : Module("HitSelect", Category.COMBAT) {
             counterPulse = false
         }
 
-        val t = target
+        // Only the CROSSHAIR target matters (no nearest-entity fallback).
+        val t = EventBridge.crosshairTarget
+        if (t == null) return
 
-        // ---- Rule 2: Retiming — target still invulnerable → swallow the click ----
-        if (retiming && t != null && t.distance >= 0f && t.distance <= retimeRange
+        // ---- Retiming: crosshair target still invulnerable → swallow the click ----
+        if ((mode == "Both" || mode == "Retiming")
+            && t.distance >= 0f && t.distance <= retimeRange
             && t.hurtResistantTime > retimeAt) {
             EventBridge.attackAllowed = false
             return
         }
 
-        // ---- Rule 1: CounterHit — in range, not clicking, just got hit → auto attack once ----
-        if (counterHit && t != null && t.distance >= 0f && t.distance <= counterRange
+        // ---- CounterHit: in range, not clicking, just got hit → auto attack once ----
+        if ((mode == "Both" || mode == "CounterHit")
+            && t.distance >= 0f && t.distance <= counterRange
             && !EventBridge.isLeftMousePhysicallyDown
             && player.hurtTime > 0
             && System.nanoTime() - lastCounterNano >= counterCdMs * 1_000_000L) {

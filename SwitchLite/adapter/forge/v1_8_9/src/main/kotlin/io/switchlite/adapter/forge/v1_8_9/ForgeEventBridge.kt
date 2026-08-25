@@ -801,9 +801,11 @@ object ForgeEventBridge : IEventBridge {
                 // regenerated per cycle at the requested CPS. This avoids the one-shot-pulse
                 // stutter from the 20Hz strategy. Also writes LWJGL Mouse.buttons so keystrokes
                 // HUDs that read physical mouse state see the click.
+                // attackAllowed (HitSelect) also gates here: when false the cadence is held in the
+                // release state, so the click selector can swallow AutoClicker's clicks too.
                 val now = EventBridge.syntheticAttack
                 val keyCode = (MappingContext.invokeMethod(keyBindAttack, "forge:keybinding_keyCode") as? Int) ?: 0
-                if (now && keyCode != 0) {
+                if (now && keyCode != 0 && EventBridge.attackAllowed) {
                     driveClickCadence(keyCode, leftClick = true)
                 } else {
                     releaseClick(keyCode, leftClick = true)

@@ -830,9 +830,16 @@ object EventBridge {
             return false
         }
 
-        // Exponential ease of the offset toward the desired correction (Nemui SimpleAnimation).
-        val fY = desiredRotationFractionY.coerceIn(0f, 1f) * yield
-        val fP = desiredRotationFractionP.coerceIn(0f, 1f) * yield
+        // Soft-landing: the pull weakens as the crosshair gets close to the target — near the aim
+        // point it drops to ~30%, so the assist "lets go" instead of hard-locking the crosshair.
+        // This is the difference between 硬锁 (sticky lock) and 软吸附 (soft assist).
+        val gap = abs(desiredOffsetYaw) + abs(desiredOffsetPitch)
+        val relax = (gap / HARD_LOCK_ANGLE).coerceIn(SOFT_MIN, 1f)
+
+        // Exponential ease of the offset toward the desired correction (Nemui SimpleAnimation),
+        // scaled by the soft-landing relax.
+        val fY = desiredRotationFractionY.coerceIn(0f, 1f) * yield * relax
+        val fP = desiredRotationFractionP.coerceIn(0f, 1f) * yield * relax
         if (fY <= 0f && fP <= 0f) return false
         aimOffsetYaw = normalizeAngle(aimOffsetYaw + (desiredOffsetYaw - aimOffsetYaw) * fY)
         aimOffsetPitch = aimOffsetPitch + (desiredOffsetPitch - aimOffsetPitch) * fP
@@ -849,9 +856,17 @@ object EventBridge {
         return true
     }
 
-    /** Dead-zone (degrees): stop assisting once the animation is this close to the target. */
+    /** Dead-zone (degrees): stop assisting once this close to the target. */
     private const val DEAD_YAW = 0.2f
     private const val DEAD_PITCH = 0.1f
+
+    /**
+     * Soft-landing scale (degrees): at this combined angular gap the assist is at full strength;
+     * closer than that it relaxes down to [SOFT_MIN] so it doesn't hard-lock the crosshair.
+     */
+    private const val HARD_LOCK_ANGLE = 12f
+    /** Soft-est pull strength it can drop to near the target (0..1). */
+    private const val SOFT_MIN = 0.3f
 
     /** Mouse pixels/frame above which the assist fully yields to the player (they are turning). */
     private const val YIELD_PIXELS = 120f

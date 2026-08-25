@@ -59,10 +59,13 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
     private val lockOnCrosshair by boolean("LockOnCrosshair", false)
 
     // Trigger conditions (Unified Engine)
+    /** Only aim while attacking (physical click OR AutoClicker active). Off = aim whenever the
+     *  target is in range/FOV, even if not clicking. */
+    private val onlyOnClick by boolean("OnlyOnClick", true)
     private val triggerOptions by triggerOptions("Trigger") {
         onlyCurrentView = true
         disableOnMine = true
-        onlyOnClick = true
+        onlyOnClick = this@AimAssist.onlyOnClick
         chance = 100
     }
 

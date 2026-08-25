@@ -8,6 +8,7 @@ import io.switchlite.core.model.TargetState
 import io.switchlite.core.option.AimMode
 import io.switchlite.core.util.Vec3
 import kotlin.math.abs
+import kotlin.math.sqrt
 
 /**
  * Self-adaptive aim strategy — adjusts assist intensity based on the player's

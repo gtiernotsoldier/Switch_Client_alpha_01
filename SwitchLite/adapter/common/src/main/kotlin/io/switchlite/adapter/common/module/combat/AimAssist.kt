@@ -41,9 +41,9 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
     private val rangeMin by float("RangeMin", 3.0f, 0.0f..10.0f, "blocks")
     private val rangeMax by float("RangeMax", 6.0f, 0.0f..10.0f, "blocks")
 
-    // FOV setting — angular cone measured around the player's view line (0-360°), like Nemui's
-    // "Max Angle". Half the value is applied each side of the view line.
-    private val fov by float("Fov", 80.0f, 0.0f..360.0f, "degrees")
+    // FOV setting — 360 = full 360° (skip the cone gate entirely, Raven-XD default); lower values
+    // restrict the pull to an angular cone around the view line.
+    private val fov by float("Fov", 360.0f, 0.0f..360.0f, "degrees")
 
     // Behavior settings
     private val aimSpeed by int("AimSpeed", 8, 1..20, "%")
@@ -63,7 +63,9 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
      *  target is in range/FOV, even if not clicking. */
     private val onlyOnClick by boolean("OnlyOnClick", true)
     private val triggerOptions by triggerOptions("Trigger") {
-        onlyCurrentView = true
+        // NOTE: onlyCurrentView intentionally OFF — it would require the crosshair to already be on
+        // the target, which blocks the pull-back when the crosshair is slightly off (that is the
+        // whole point of the assist). FOV (default 360 = full) gates the scope instead.
         disableOnMine = true
         onlyOnClick = this@AimAssist.onlyOnClick
         chance = 100

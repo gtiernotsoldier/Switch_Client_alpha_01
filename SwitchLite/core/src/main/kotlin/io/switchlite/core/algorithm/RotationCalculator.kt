@@ -242,6 +242,61 @@ object RotationCalculator {
     data class BoxEdgeTarget(val world: Vec3, val rotation: Vec2)
 
     /**
+     * Angular extent of a hitbox as seen from [eyePos] — the yaw and pitch ranges that still
+     * count as "on the target". Mirrors Raven-XD's NormalAimAssist.getRotation: the crosshair is
+     * considered on-target while its yaw/pitch stay inside these ranges; only outside them does
+     * the assist pull back. NaN-safe (falls back to 0 range when the box is degenerate).
+     */
+    data class BoxAngleRange(
+        val yawMin: Float,
+        val yawMax: Float,
+        val pitchMin: Float,
+        val pitchMax: Float
+    ) {
+        val isDegenerate: Boolean
+            get() = yawMin.isNaN() || yawMax.isNaN() || pitchMin.isNaN() || pitchMax.isNaN()
+    }
+
+    /**
+     * Compute [BoxAngleRange] of a hitbox from [eyePos]. Yaw/pitch to each of the 8 corners are
+     * collected and wrapped into the smallest continuous span (a box rarely spans > 180°).
+     */
+    fun getBoxAngleRange(eyePos: Vec3, box: Hitbox): BoxAngleRange {
+        val corners = listOf(
+            Vec3(box.minX, box.minY, box.minZ),
+            Vec3(box.minX, box.minY, box.maxZ),
+            Vec3(box.minX, box.maxY, box.minZ),
+            Vec3(box.minX, box.maxY, box.maxZ),
+            Vec3(box.maxX, box.minY, box.minZ),
+            Vec3(box.maxX, box.minY, box.maxZ),
+            Vec3(box.maxX, box.maxY, box.minZ),
+            Vec3(box.maxX, box.maxY, box.maxZ)
+        )
+        var yawMin = Float.MAX_VALUE
+        var yawMax = -Float.MAX_VALUE
+        var pitchMin = Float.MAX_VALUE
+        var pitchMax = -Float.MAX_VALUE
+        for (c in corners) {
+            val rot = calculateRotation(eyePos, c)
+            // Wrapped yaw in [-180,180]; keep the span continuous by treating values < -90 as +360.
+            val yaw = normalizeAngle(rot.yaw)
+            val yawWrapped = if (yaw < -90f) yaw + 360f else yaw
+            yawMin = minOf(yawMin, yawWrapped)
+            yawMax = maxOf(yawMax, yawWrapped)
+            pitchMin = minOf(pitchMin, rot.pitch)
+            pitchMax = maxOf(pitchMax, rot.pitch)
+        }
+        // Clamp back to [-180,180] for comparison against the player's normalized yaw.
+        yawMin = normalizeAngle(yawMin)
+        yawMax = normalizeAngle(yawMax)
+        if (yawMin > yawMax) {
+            // Wrapped across ±180 — treat as full coverage (target surrounds the view line).
+            yawMin = -180f; yawMax = 180f
+        }
+        return BoxAngleRange(yawMin, yawMax, pitchMin, pitchMax)
+    }
+
+    /**
      * World-space center point of an AABB hitbox. Used by SELF_ADAPTIVE (and Nemui-style pull)
      * to aim at the entity's center rather than its box edge.
      */
@@ -250,6 +305,24 @@ object RotationCalculator {
         (box.minY + box.maxY) / 2.0,
         (box.minZ + box.maxZ) / 2.0
     )
+
+    /**
+     * LB (Raven-XD AimSimulator.rotMove) rotation movement: move at most [diff] degrees toward
+     * [target] per tick (fixed speed, not proportional), stopping entirely when the remaining
+     * delta is below a small random threshold (avoids jitter at the edge).
+     *
+     * @param target target rotation value (yaw or pitch), degrees.
+     * @param current current rotation value, degrees.
+     * @param diff max degrees moved per tick (0..180).
+     */
+    fun rotMove(target: Float, current: Float, diff: Float): Float {
+        if (diff <= 0f) return current
+        var delta = normalizeAngle(target - current)
+        // Stop below a tiny random threshold — the assist releases instead of micro-jittering.
+        if (kotlin.math.abs(delta) < 0.1f * kotlin.random.Random.nextFloat() + 0.1f) return current
+        if (kotlin.math.abs(delta) <= diff) return current + delta
+        return current + (if (delta < 0f) -diff else diff)
+    }
 
     /**
      * Compute the closest world point on the AABB surface to a ray (origin + dir*t, t>=0).

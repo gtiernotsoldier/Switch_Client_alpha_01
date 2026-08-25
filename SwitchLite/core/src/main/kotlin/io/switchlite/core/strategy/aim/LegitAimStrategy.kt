@@ -10,20 +10,21 @@ import io.switchlite.core.util.Vec3
 import kotlin.math.abs
 
 /**
- * Default LEGIT / NORMAL aim strategy.
+ * LEGIT / NORMAL aim strategy, modeled on Raven-XD (LiquidBounce) NormalAimAssist.
  *
- * Processing pipeline per tick:
+ * Per tick:
  * 1. Null-target guard → Skip.
- * 2. 3D range check (full sphere distance) → Skip.
+ * 2. 3D range check → Skip.
  * 3. Unified condition check → Skip.
- * 4. Target point computation:
- *    - NORMAL / SELF_ADAPTIVE: continuous tracking — aim at the hitbox center so the crosshair
- *      follows the target wherever it moves (not a fixed point).
- *    - LEGIT: no tracking inside the box; only pull the crosshair back to the nearest box surface
- *      when it drifts out, and STOP there (edge stop, no hard lock).
- * 5. Angular FOV cone check → Skip if outside.
- * 6. LockOnCrosshair gate → Skip if not already aligned (when enabled).
- * 7. Nemui-style proportional smoothing + stopping gate → emit [AimResult.ApplyRotation].
+ * 4. Mode geometry:
+ *    - NORMAL: lock onto the exact point the crosshair ray hits the box and track it as the
+ *      target moves (continuous tracking). If the crosshair is off the box, pull it back to the
+ *      nearest surface so it re-enters the box.
+ *    - LEGIT: compute the box's yaw/pitch angular range. While the crosshair is inside that range
+ *      (on the target) do nothing; only when it drifts outside, pull back to the nearest edge.
+ * 5. FOV: 360° = full 360 (skip the cone gate); otherwise the target point must be inside the cone.
+ * 6. LB rotMove fixed-speed smoothing (max `speed` degrees per tick) + on-target deceleration —
+ *    fast pull without overshoot ("脱落") and without edge jitter.
  */
 class LegitAimStrategy : AimStrategy {
 
@@ -31,9 +32,10 @@ class LegitAimStrategy : AimStrategy {
         const val EYE_HEIGHT = 1.62
         /** LockOnCrosshair alignment threshold (degrees): crosshair must be this close to assist. */
         const val LOCK_ANGLE = 8f
-        /** Nemui smoothStopping: stop applying micro-corrections once this close (prevents jitter). */
-        const val STOP_YAW = 0.2f
-        const val STOP_PITCH = 0.1f
+        /** LB "Aim while on target" deceleration — slows the pull when already on the target. */
+        const val ON_TARGET_FACTOR = 0.85f
+        /** FOV value that means "full 360°" — the cone gate is skipped entirely. */
+        const val FULL_FOV = 360f
     }
 
     override fun execute(
@@ -73,54 +75,74 @@ class LegitAimStrategy : AimStrategy {
             return AimResult.Skip
         }
 
-        // 4. Target point computation (world point + rotation)
-        val targetPoint: Vec3 = when (config.mode) {
-            AimMode.NORMAL, AimMode.SELF_ADAPTIVE -> {
-                // Continuous tracking: aim at the hitbox center every tick. The crosshair stays on
-                // the target as it moves (and when the crosshair passes through it, it keeps
-                // tracking) — not locked to a single fixed point.
-                RotationCalculator.hitboxCenterWorld(target.hitbox)
+        // 4. Mode geometry — decide the target yaw/pitch this tick.
+        val targetYaw: Float
+        val targetPitch: Float
+        val onTarget: Boolean
+        when (config.mode) {
+            AimMode.NORMAL -> {
+                // Continuous tracking: aim at the exact point the crosshair ray hits the box.
+                // If it misses (crosshair slightly off), pull back to the nearest surface so the
+                // crosshair re-enters the box — then it tracks that point as the target moves.
+                val hit = RotationCalculator.rayHitPoint(eyePos, aim, target.hitbox)
+                if (hit != null) {
+                    val rot = RotationCalculator.calculateRotation(eyePos, hit)
+                    targetYaw = rot.yaw
+                    targetPitch = rot.pitch
+                    onTarget = true
+                } else {
+                    val edge = RotationCalculator.getBoxEdgeTarget(eyePos, aim, target.hitbox)
+                    if (edge == null) return AimResult.Skip
+                    targetYaw = edge.rotation.yaw
+                    targetPitch = edge.rotation.pitch
+                    onTarget = false
+                }
             }
             AimMode.LEGIT -> {
-                // No tracking inside the box. Only pull back to the nearest box surface when the
-                // crosshair drifts outside, and stop at the edge (no hard lock to a corner).
-                val edge = RotationCalculator.getBoxEdgeTarget(eyePos, aim, target.hitbox)
-                if (edge == null) return AimResult.Skip
-                edge.world
+                // Angular range of the box as seen from the eyes. Inside = on target → no pull.
+                // Outside = pull back to the nearest edge.
+                val range = RotationCalculator.getBoxAngleRange(eyePos, target.hitbox)
+                if (range.isDegenerate) return AimResult.Skip
+                val yaw = RotationCalculator.normalizeAngle(aim.yaw)
+                val pitch = aim.pitch
+                val inYaw = yaw in range.yawMin..range.yawMax
+                val inPitch = pitch in range.pitchMin..range.pitchMax
+                if (inYaw && inPitch) return AimResult.Skip
+                onTarget = false
+                targetYaw = if (yaw < range.yawMin) range.yawMin else if (yaw > range.yawMax) range.yawMax else aim.yaw
+                targetPitch = if (pitch < range.pitchMin) range.pitchMin else if (pitch > range.pitchMax) range.pitchMax else aim.pitch
+            }
+            AimMode.SELF_ADAPTIVE -> {
+                val center = RotationCalculator.hitboxCenterWorld(target.hitbox)
+                val rot = RotationCalculator.calculateRotation(eyePos, center)
+                targetYaw = rot.yaw
+                targetPitch = rot.pitch
+                onTarget = true
             }
         }
-        val targetRotation = RotationCalculator.calculateRotation(eyePos, targetPoint)
 
-        // 5. Angular FOV cone check — angle measured from the player's view line (0-360°).
-        if (!RotationCalculator.isWithinFov3D(eyePos, aim, targetPoint, config.fov)) {
-            return AimResult.Skip
+        // 5. FOV gate — full 360 means skip; otherwise the target point must be inside the cone.
+        if (config.fov < FULL_FOV) {
+            val diff = RotationCalculator.calculateDifference(aim, Vec2(targetYaw, targetPitch))
+            if (abs(diff.yaw) > config.fov / 2f || abs(diff.pitch) > config.fov / 2f) {
+                return AimResult.Skip
+            }
         }
 
-        val rotationDiff = RotationCalculator.calculateDifference(aim, targetRotation)
+        val rotationDiff = RotationCalculator.calculateDifference(aim, Vec2(targetYaw, targetPitch))
 
         // 6. LockOnCrosshair: only assist once the crosshair is already aligned to the target.
-        // Off = assist anywhere inside the FOV cone.
         if (config.lockOnCrosshair) {
             if (abs(rotationDiff.yaw) > LOCK_ANGLE || abs(rotationDiff.pitch) > LOCK_ANGLE) {
                 return AimResult.Skip
             }
         }
 
-        // 7. Nemui-style proportional smoothing + stopping gate.
-        // Close a fraction of the remaining yaw/pitch gap each tick (exponential ease), so the
-        // pull is fast when far and tapers off when close — no fixed-degree cap, no overshoot.
-        // aimSpeed=20 → ~50% of the gap per tick; aimSpeed=8 → ~20%.
-        val yawFraction = 0.5f * (config.aimSpeed / 20f) * config.smoothness
-        val pitchFraction = yawFraction * 0.39f
-        val smoothed = Vec2(
-            aim.yaw + rotationDiff.yaw * yawFraction,
-            aim.pitch + rotationDiff.pitch * pitchFraction
-        )
-        // Nemui smoothStopping: once already this close to the aim point, stop correcting —
-        // otherwise the exponential glide keeps micro-moving near the target (feels stiff/jittery).
-        if (abs(rotationDiff.yaw) < STOP_YAW && abs(rotationDiff.pitch) < STOP_PITCH) {
-            return AimResult.Skip
-        }
-        return AimResult.ApplyRotation(smoothed)
+        // 7. LB rotMove fixed-speed smoothing. Speed in degrees per tick (aimSpeed 1-20).
+        // Slower when already on the target (LB "Aim while on target") to avoid overshoot 脱落.
+        val speed = config.aimSpeed.toFloat() * (if (onTarget) ON_TARGET_FACTOR else 1f)
+        val newYaw = RotationCalculator.rotMove(targetYaw, aim.yaw, speed)
+        val newPitch = RotationCalculator.rotMove(targetPitch, aim.pitch, speed * 0.39f)
+        return AimResult.ApplyRotation(Vec2(newYaw, newPitch))
     }
 }

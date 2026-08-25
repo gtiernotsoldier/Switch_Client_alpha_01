@@ -40,9 +40,10 @@ class SelfAdaptiveAimStrategy : AimStrategy {
         const val EYE_HEIGHT = 1.62
         /** LockOnCrosshair alignment threshold (degrees): crosshair must be this close to assist. */
         const val LOCK_ANGLE = 8f
-        /** Nemui smoothStopping: stop applying micro-corrections once this close (prevents jitter). */
-        const val STOP_YAW = 0.2f
-        const val STOP_PITCH = 0.1f
+        /** LB "Aim while on target" deceleration — slows the pull when already on the target. */
+        const val ON_TARGET_FACTOR = 0.85f
+        /** FOV value that means "full 360°" — the cone gate is skipped entirely. */
+        const val FULL_FOV = 360f
     }
 
     /** Extended state with adaptive tracking fields. */
@@ -108,27 +109,58 @@ class SelfAdaptiveAimStrategy : AimStrategy {
             state.hasPreviousFrame = false
         }
 
-        // 5. Target point computation (same geometry as LegitAimStrategy)
-        val targetPoint: Vec3 = when (config.mode) {
-            AimMode.NORMAL, AimMode.SELF_ADAPTIVE -> {
-                // Continuous tracking: aim at the hitbox center every tick so the crosshair follows
-                // the target wherever it moves (and stays on it when passing through).
-                RotationCalculator.hitboxCenterWorld(target.hitbox)
+        // 5. Mode geometry (same as LegitAimStrategy, Raven-XD style)
+        val targetYaw: Float
+        val targetPitch: Float
+        val onTarget: Boolean
+        when (config.mode) {
+            AimMode.NORMAL -> {
+                // Continuous tracking of the crosshair-pointed spot on the box; pull back to the
+                // surface when off.
+                val hit = RotationCalculator.rayHitPoint(eyePos, aim, target.hitbox)
+                if (hit != null) {
+                    val rot = RotationCalculator.calculateRotation(eyePos, hit)
+                    targetYaw = rot.yaw
+                    targetPitch = rot.pitch
+                    onTarget = true
+                } else {
+                    val edge = RotationCalculator.getBoxEdgeTarget(eyePos, aim, target.hitbox)
+                    if (edge == null) return AimResult.Skip
+                    targetYaw = edge.rotation.yaw
+                    targetPitch = edge.rotation.pitch
+                    onTarget = false
+                }
             }
             AimMode.LEGIT -> {
-                val edge = RotationCalculator.getBoxEdgeTarget(eyePos, aim, target.hitbox)
-                if (edge == null) return AimResult.Skip
-                edge.world
+                val range = RotationCalculator.getBoxAngleRange(eyePos, target.hitbox)
+                if (range.isDegenerate) return AimResult.Skip
+                val yaw = RotationCalculator.normalizeAngle(aim.yaw)
+                val pitch = aim.pitch
+                val inYaw = yaw in range.yawMin..range.yawMax
+                val inPitch = pitch in range.pitchMin..range.pitchMax
+                if (inYaw && inPitch) return AimResult.Skip
+                onTarget = false
+                targetYaw = if (yaw < range.yawMin) range.yawMin else if (yaw > range.yawMax) range.yawMax else aim.yaw
+                targetPitch = if (pitch < range.pitchMin) range.pitchMin else if (pitch > range.pitchMax) range.pitchMax else aim.pitch
+            }
+            AimMode.SELF_ADAPTIVE -> {
+                val center = RotationCalculator.hitboxCenterWorld(target.hitbox)
+                val rot = RotationCalculator.calculateRotation(eyePos, center)
+                targetYaw = rot.yaw
+                targetPitch = rot.pitch
+                onTarget = true
             }
         }
-        val targetRotation = RotationCalculator.calculateRotation(eyePos, targetPoint)
 
-        // 6. Angular FOV cone check — angle measured from the player's view line (0-360°).
-        if (!RotationCalculator.isWithinFov3D(eyePos, aim, targetPoint, config.fov)) {
-            return AimResult.Skip
+        // 6. FOV gate — full 360 means skip; otherwise the target must be inside the cone.
+        if (config.fov < FULL_FOV) {
+            val diff = RotationCalculator.calculateDifference(aim, Vec2(targetYaw, targetPitch))
+            if (abs(diff.yaw) > config.fov / 2f || abs(diff.pitch) > config.fov / 2f) {
+                return AimResult.Skip
+            }
         }
 
-        val rotationDiff = RotationCalculator.calculateDifference(aim, targetRotation)
+        val rotationDiff = RotationCalculator.calculateDifference(aim, Vec2(targetYaw, targetPitch))
 
         // LockOnCrosshair: only assist once the crosshair is already aligned to the target.
         if (config.lockOnCrosshair) {
@@ -161,24 +193,11 @@ class SelfAdaptiveAimStrategy : AimStrategy {
             config, state.alignmentEma
         )
 
-        // 9. Nemui-style fraction smoothing (proportional per-tick close of the gap) + stopping gate.
-        // aimSpeed=20 → ~70% of the gap per tick; aimSpeed=8 → ~24%. Fast pull, exponential ease.
-        val yawFraction = 0.7f * (dynamicAimSpeed / 20f) * dynamicSmoothness
-        val pitchFraction = yawFraction * 0.39f
-        val smoothedYaw = aim.yaw + rotationDiff.yaw * yawFraction
-        val smoothedPitch = aim.pitch + rotationDiff.pitch * pitchFraction
-
-        // Nemui smoothStopping: apply each axis independently — skip it once already aligned on
-        // that axis, so the exponential glide never micro-moves near the target (no jitter/stiff).
-        val applyYaw = abs(rotationDiff.yaw) >= STOP_YAW
-        val applyPitch = abs(rotationDiff.pitch) >= STOP_PITCH
-        if (!applyYaw && !applyPitch) return AimResult.Skip
-        return AimResult.ApplyRotation(
-            Vec2(
-                if (applyYaw) smoothedYaw else aim.yaw,
-                if (applyPitch) smoothedPitch else aim.pitch
-            )
-        )
+        // 9. LB rotMove fixed-speed smoothing (degrees per tick) + on-target deceleration.
+        val speed = dynamicAimSpeed.toFloat() * (if (onTarget) ON_TARGET_FACTOR else 1f) * dynamicSmoothness
+        val newYaw = RotationCalculator.rotMove(targetYaw, aim.yaw, speed)
+        val newPitch = RotationCalculator.rotMove(targetPitch, aim.pitch, speed * 0.39f)
+        return AimResult.ApplyRotation(Vec2(newYaw, newPitch))
     }
 
     // ==================== Adaptive Math ====================

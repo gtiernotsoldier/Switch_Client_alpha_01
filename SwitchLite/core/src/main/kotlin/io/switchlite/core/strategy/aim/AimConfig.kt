@@ -25,7 +25,7 @@ data class AimConfig(
     val mode: AimMode = AimMode.LEGIT,
     val rangeMin: Float = 3.0f,
     val rangeMax: Float = 6.0f,
-    val fov: Float = 60.0f,
+    val fov: Float = 360.0f,
     val aimSpeed: Int = 8,
     val smoothness: Float = 0.85f,
     val noiseIntensity: Float = 0.05f,

@@ -827,6 +827,15 @@
     ],
     "mcp": "entityHit"
   },
+  "forge:movingObjectPosition_hitVec": {
+    "class": "net.minecraft.util.MovingObjectPosition",
+    "field": "field_72307_f",
+    "aliases": [
+      "movingObjectPosition_hitVec",
+      "hitVec"
+    ],
+    "mcp": "hitVec"
+  },
   "forge:movingObjectPosition_typeOfHit": {
     "class": "net.minecraft.util.MovingObjectPosition",
     "field": "field_72313_a",

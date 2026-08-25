@@ -630,6 +630,66 @@ object ForgeEventBridge : IEventBridge {
                 )
             } catch (_: Exception) { null }
         }
+
+        // ── Forward ray target (HitSelect — own forward ray, not objectMouseOver) ──
+        // objectMouseOver.entityHit is unreliable mid-fight (the crosshair can briefly leave the
+        // entity). This casts its own ray from the player's eyes along the look direction (the same
+        // technique Reach uses) and returns the entity the line hits, if any.
+        EventBridge.registerForwardRayTargetProvider {
+            try {
+                val mc = getMc() ?: return@registerForwardRayTargetProvider null
+                val world = getWorld() ?: return@registerForwardRayTargetProvider null
+                val player = getPlayer() ?: return@registerForwardRayTargetProvider null
+                val renderView = getRenderViewEntity(mc, player) ?: return@registerForwardRayTargetProvider null
+                val eyesObj = MappingContext.invokeMethod(renderView, "forge:entity_getPositionEyes", 1.0f) ?: return@registerForwardRayTargetProvider null
+                val lookObj = MappingContext.invokeMethod(renderView, "forge:entity_getLook", 1.0f) ?: return@registerForwardRayTargetProvider null
+                val eyes = mcVec3ToVec3(eyesObj) ?: return@registerForwardRayTargetProvider null
+                val look = mcVec3ToVec3(lookObj)?.normalize() ?: return@registerForwardRayTargetProvider null
+
+                val maxReach = 4.5
+                val endMc = coreVec3ToMcVec3(Vec3(eyes.x + look.x * maxReach, eyes.y + look.y * maxReach, eyes.z + look.z * maxReach))
+                // Nearest block along the ray caps how far an entity can be hit (no wallhack).
+                var reach = maxReach
+                val blockHit = MappingContext.invokeMethod(world, "forge:world_rayTraceBlocks", eyesObj, endMc, false, true, false)
+                if (blockHit != null) {
+                    val hitVecObj = MappingContext.getFieldValue(blockHit, "forge:movingObjectPosition_hitVec")
+                    val hitVec = mcVec3ToVec3(hitVecObj)
+                    if (hitVec != null) {
+                        val dx = hitVec.x - eyes.x; val dy = hitVec.y - eyes.y; val dz = hitVec.z - eyes.z
+                        reach = kotlin.math.sqrt(dx * dx + dy * dy + dz * dz)
+                    }
+                }
+
+                val baseBox = MappingContext.invokeMethod(renderView, "forge:entity_getEntityBoundingBox") ?: return@registerForwardRayTargetProvider null
+                val aabbClass = Class.forName("net.minecraft.util.AxisAlignedBB")
+                val addCoord = aabbClass.getMethod("func_72317_d", Double::class.javaPrimitiveType, Double::class.javaPrimitiveType, Double::class.javaPrimitiveType)
+                val expandBB = aabbClass.getMethod("func_72321_a", Double::class.javaPrimitiveType, Double::class.javaPrimitiveType, Double::class.javaPrimitiveType)
+                val extended = addCoord.invoke(baseBox, look.x * reach, look.y * reach, look.z * reach)
+                val searchBox = expandBB.invoke(extended, 1.0, 1.0, 1.0) ?: return@registerForwardRayTargetProvider null
+
+                @Suppress("UNCHECKED_CAST")
+                val entities = (MappingContext.invokeMethod(world, "forge:world_getEntitiesWithinAABBExcludingEntity", renderView, searchBox) as? List<Any>) ?: return@registerForwardRayTargetProvider null
+
+                var bestEntity: Any? = null
+                var bestT = reach
+                for (e in entities) {
+                    if (!isTargetTypeAllowed(e)) continue
+                    val collidable = try { MappingContext.invokeMethod(e, "forge:entity_canBeCollidedWith") as? Boolean ?: false } catch (_: Exception) { false }
+                    if (!collidable) continue
+                    val box = MappingContext.invokeMethod(e, "forge:entity_getEntityBoundingBox") ?: continue
+                    val bMin = bbMin(box) ?: continue
+                    val bMax = bbMax(box) ?: continue
+                    val t = ReachRaycast.intersectBox(eyes, look, bMin, bMax, reach) ?: continue
+                    if (t < bestT) {
+                        bestT = t
+                        bestEntity = e
+                    }
+                }
+                if (bestEntity == null) return@registerForwardRayTargetProvider null
+                val id = MappingContext.getFieldValue(bestEntity, "forge:entity_entityId") as? Int ?: return@registerForwardRayTargetProvider null
+                ForgeStateExtractor.extractTargetState(id)
+            } catch (_: Exception) { null }
+        }
     }
 
     /** TargetFilter (Player category) gate: whether this entity type may be a combat target.

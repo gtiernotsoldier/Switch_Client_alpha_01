@@ -44,6 +44,8 @@ object HitSelect : Module("HitSelect", Category.COMBAT) {
     private var lastCounterNano: Long = 0L
     /** Synthetic counter-attack pulse: set true for one background tick, then cleared. */
     private var counterPulse: Boolean = false
+    /** Throttle for the crosshair-target diagnostic. */
+    private var diagCount = 0
 
     // ========== StartTick Listener (background 20Hz - decision only, lands on main thread) ==========
     private val startListener: (PlayerState, TargetState?) -> Unit = { p, _ ->
@@ -59,8 +61,16 @@ object HitSelect : Module("HitSelect", Category.COMBAT) {
             counterPulse = false
         }
 
-        // Only the CROSSHAIR target matters (no nearest-entity fallback, no distance check).
-        val t = EventBridge.crosshairTarget
+        // Only the FORWARD-RAY target matters (player's own forward line, not objectMouseOver —
+        // the latter is unreliable mid-fight). No nearest-entity fallback, no distance filter.
+        val t = EventBridge.getForwardRayTarget()
+        // Diagnostic: confirm whether the forward-ray target is ever present and what hrt reads.
+        if (++diagCount % 40 == 0) {
+            io.switchlite.core.logging.CoreLogger.info(
+                "[HitSelect] forwardRay=${t?.name ?: "NULL"} hrt=${t?.hurtResistantTime ?: -1} " +
+                "hurtTime=${player.hurtTime} mode=$mode onGround=${player.onGround}"
+            )
+        }
         if (t == null) return
 
         // ---- Retiming: crosshair target still invulnerable -> swallow the click ----

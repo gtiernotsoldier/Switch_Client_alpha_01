@@ -169,6 +169,7 @@ object EventBridge {
         lastKbMotionZ = 0.0
         entityVelocityNotifiers.clear()
         entityPositionProvider = null
+        forwardRayTargetProvider = null
         targetFilterPlayers = true
         targetFilterMobs = true
         renderOffsetX = 0f
@@ -439,6 +440,15 @@ object EventBridge {
      * SuperKnockback) read this instead of the generic `target`, matching Raven.
      */
     @Volatile var crosshairTarget: TargetState? = null
+
+    // ========== Forward Ray Target (HitSelect — player's forward line, not objectMouseOver) ==========
+    // objectMouseOver.entityHit is unreliable mid-fight (the crosshair can briefly leave the
+    // entity). HitSelect instead uses a dedicated forward raycast from the player's eyes along the
+    // look direction (like Reach / JumpReset) and acts on whatever entity that line hits.
+    private var forwardRayTargetProvider: (() -> TargetState?)? = null
+
+    fun getForwardRayTarget(): TargetState? = forwardRayTargetProvider?.invoke()
+    fun registerForwardRayTargetProvider(provider: () -> TargetState?) { forwardRayTargetProvider = provider }
 
     // ========== 3. Input: Keys & Synthetic ==========
 

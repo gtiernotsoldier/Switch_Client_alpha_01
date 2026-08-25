@@ -844,15 +844,9 @@ object EventBridge {
         aimOffsetYaw = normalizeAngle(aimOffsetYaw + (desiredOffsetYaw - aimOffsetYaw) * fY)
         aimOffsetPitch = aimOffsetPitch + (desiredOffsetPitch - aimOffsetPitch) * fP
 
-        val applyYaw = currentYaw + aimOffsetYaw
-        val applyPitch = currentPitch + aimOffsetPitch
-
-        // MC mouse GCD alignment (LB AimSimulator.getGCD): quantize so each rotation move is a step
-        // the mouse can actually produce at this sensitivity — reads like a human hand.
-        val gcd = mouseGcd()
-        val qYaw = (kotlin.math.round((applyYaw - currentYaw) / gcd) * gcd).toFloat()
-        val qPitch = (kotlin.math.round((applyPitch - currentPitch) / gcd) * gcd).toFloat()
-        rotationApplier?.invoke(currentYaw + qYaw, currentPitch + qPitch)
+        // Apply the smooth correction directly — no GCD quantization (dropped; it added nothing
+        // and made the assist feel stepped/hard).
+        rotationApplier?.invoke(currentYaw + aimOffsetYaw, currentPitch + aimOffsetPitch)
         return true
     }
 
@@ -870,12 +864,6 @@ object EventBridge {
 
     /** Mouse pixels/frame above which the assist fully yields to the player (they are turning). */
     private const val YIELD_PIXELS = 120f
-
-    /** MC GCD (LiquidBounce AimSimulator.getGCD): the smallest rotation step a mouse can produce. */
-    private fun mouseGcd(): Float {
-        val f = mouseSensitivity * 0.6f + 0.2f
-        return f * f * f * 8f * 0.15f
-    }
 
     private fun normalizeAngle(angle: Float): Float {
         var a = angle % 360f

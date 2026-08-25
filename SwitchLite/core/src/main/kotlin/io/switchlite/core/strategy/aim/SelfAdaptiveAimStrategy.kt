@@ -169,19 +169,15 @@ class SelfAdaptiveAimStrategy : AimStrategy {
         state.previousAngularError = angularError
         state.hasPreviousFrame = true
 
-        // 8. Dynamic factor calculation — adaptive smoothness from the alignment EMA.
-        val dynamicSmoothness = computeDynamicFactors(
-            config, state.alignmentEma
-        )
-
-        // 9. Output: TARGET rotation + independent per-axis interpolation fractions. Actual
-        // smoothing and the player-yield run on the MAIN thread every render frame
-        // (drainDesiredRotationFrame) — frame-rate, not tick. Fractions carry the adaptive EMA
-        // (dynamicAimSpeed/dynamicSmoothness) scaled from the config axis speeds.
+        // 8. Self-adaptive strength: the alignment EMA maps to a pull-strength multiplier —
+        //    poor aim (low alignment) → strong assist, good aim (high alignment) → weak assist.
+        //    This is what makes SelfAdaptive different from Normal: it never applies a fixed
+        //    speed, it adapts to YOUR skill every tick.
+        val strength = computeDynamicStrength(state.alignmentEma)
         val clickBoost = if (player.isAttackKeyDown) CLICK_SPEED_BOOST else 1f
         val onTargetFactor = if (abs(rotationDiff.yaw) < 5f && abs(rotationDiff.pitch) < 3f) ON_TARGET_FACTOR else 1f
-        val fracY = config.aimSpeedY * clickBoost * onTargetFactor * dynamicSmoothness
-        val fracP = config.aimSpeedP * clickBoost * onTargetFactor * dynamicSmoothness
+        val fracY = config.aimSpeedY * clickBoost * onTargetFactor * strength
+        val fracP = config.aimSpeedP * clickBoost * onTargetFactor * strength
         return AimResult.ApplyRotation(Vec2(targetYaw, targetPitch), fracY, fracP)
     }
 
@@ -218,29 +214,27 @@ class SelfAdaptiveAimStrategy : AimStrategy {
     }
 
     /**
-     * Map alignment EMA to a dynamic smoothness multiplier.
+     * Map the alignment EMA to a pull-strength multiplier.
      *
-     * | EMA range | smoothness modifier | Behaviour        |
-     * |-----------|---------------------|------------------|
-     * | < 0.3     | +20%                | Strong assist    |
-     * | 0.3-0.5   | +10%                | Moderate assist  |
-     * | 0.5-0.7   | default             | Standard assist  |
-     * | > 0.7     | -15%                | Minimal assist   |
+     * | EMA range | strength | Behaviour          |
+     * |-----------|----------|--------------------|
+     * | < 0.3     | 1.6x     | Strong assist      |
+     * | 0.3-0.5   | 1.3x     | Moderate assist    |
+     * | 0.5-0.7   | 1.0x     | Standard assist    |
+     * | > 0.7     | 0.6x     | Minimal assist     |
      *
-     * The axis speeds stay at their configured values; only the smoothness (and thus the pull
-     * strength) adapts to the player's actual aim skill.
+     * Low alignment = the player's mouse movement isn't reducing the angular error (struggling) →
+     * the assist works harder. High alignment = the player is aiming well on their own → the
+     * assist backs off. This is the core SelfAdaptive behavior — completely distinct from Normal's
+     * fixed speed.
      */
-    internal fun computeDynamicFactors(
-        config: AimConfig,
-        alignmentEma: Float
-    ): Float {
-        val smoothMod = when {
-            alignmentEma < 0.3f -> 1.20f
-            alignmentEma < 0.5f -> 1.10f
-            alignmentEma < 0.7f -> 1.00f
-            else -> 0.85f
+    internal fun computeDynamicStrength(alignmentEma: Float): Float {
+        return when {
+            alignmentEma < 0.3f -> 1.6f
+            alignmentEma < 0.5f -> 1.3f
+            alignmentEma < 0.7f -> 1.0f
+            else -> 0.6f
         }
-        return (config.smoothness * smoothMod).coerceIn(0.1f, 1.0f)
     }
 
     // ==================== Helpers ====================

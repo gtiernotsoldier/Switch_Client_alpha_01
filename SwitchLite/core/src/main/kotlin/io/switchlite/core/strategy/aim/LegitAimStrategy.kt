@@ -23,8 +23,8 @@ import kotlin.math.abs
  *    - LEGIT: compute the box's yaw/pitch angular range. While the crosshair is inside that range
  *      (on the target) do nothing; only when it drifts outside, pull back to the nearest edge.
  * 5. FOV: 360° = full 360 (skip the cone gate); otherwise the target point must be inside the cone.
- * 6. LB rotMove fixed-speed smoothing (max `speed` degrees per tick) + on-target deceleration —
- *    fast pull without overshoot ("脱落") and without edge jitter.
+ * 6. Angle-difference proportional smoothing (fraction of the remaining delta per tick) with a
+ *    click boost and an on-target stop threshold — fast, convergent, no edge jitter.
  */
 class LegitAimStrategy : AimStrategy {
 
@@ -36,6 +36,9 @@ class LegitAimStrategy : AimStrategy {
         const val ON_TARGET_FACTOR = 0.85f
         /** Clicking boosts the pull speed so a single click quickly snaps back into the box. */
         const val CLICK_SPEED_BOOST = 3f
+        /** Angle-difference stop threshold (degrees): release once the delta is this small. */
+        const val STOP_YAW = 0.2f
+        const val STOP_PITCH = 0.1f
         /** FOV value that means "full 360°" — the cone gate is skipped entirely. */
         const val FULL_FOV = 360f
     }
@@ -151,13 +154,19 @@ class LegitAimStrategy : AimStrategy {
             }
         }
 
-        // 7. LB rotMove fixed-speed smoothing. Speed in degrees per tick (aimSpeed 1-20).
-        // Clicking (isAttackKeyDown) massively boosts the pull so a single click snaps the
-        // crosshair back into the box quickly; on-target deceleration avoids overshoot 脱落.
+        // 7. Angle-difference proportional smoothing: move a fraction of the remaining yaw/pitch
+        // delta each tick. Big gap → big move, small gap → small move — the pull converges
+        // smoothly and never jitters at the edge (unlike fixed per-tick degree steps).
+        // Clicking (isAttackKeyDown) boosts the fraction so one click snaps back into the box.
         val clickBoost = if (player.isAttackKeyDown) CLICK_SPEED_BOOST else 1f
-        val speed = config.aimSpeed.toFloat() * clickBoost * (if (onTarget) ON_TARGET_FACTOR else 1f)
-        val newYaw = RotationCalculator.rotMove(targetYaw, aim.yaw, speed)
-        val newPitch = RotationCalculator.rotMove(targetPitch, aim.pitch, speed * 0.39f)
+        val fraction = (config.aimSpeed / 20f) * clickBoost * (if (onTarget) ON_TARGET_FACTOR else 1f)
+        val f = fraction.coerceIn(0f, 1f)
+        // Stop threshold: once the delta is tiny, release entirely (no micro-jitter at the edge).
+        if (abs(rotationDiff.yaw) < STOP_YAW && abs(rotationDiff.pitch) < STOP_PITCH) {
+            return AimResult.Skip
+        }
+        val newYaw = aim.yaw + rotationDiff.yaw * f
+        val newPitch = aim.pitch + rotationDiff.pitch * f * 0.39f
         return AimResult.ApplyRotation(Vec2(newYaw, newPitch))
     }
 }

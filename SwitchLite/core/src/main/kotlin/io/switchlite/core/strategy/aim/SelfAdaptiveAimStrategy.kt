@@ -44,6 +44,9 @@ class SelfAdaptiveAimStrategy : AimStrategy {
         const val ON_TARGET_FACTOR = 0.85f
         /** Clicking boosts the pull speed so a single click quickly snaps back into the box. */
         const val CLICK_SPEED_BOOST = 3f
+        /** Angle-difference stop threshold (degrees): release once the delta is this small. */
+        const val STOP_YAW = 0.2f
+        const val STOP_PITCH = 0.1f
         /** FOV value that means "full 360°" — the cone gate is skipped entirely. */
         const val FULL_FOV = 360f
     }
@@ -205,12 +208,18 @@ class SelfAdaptiveAimStrategy : AimStrategy {
             config, state.alignmentEma
         )
 
-        // 9. LB rotMove fixed-speed smoothing (degrees per tick) + on-target deceleration.
-        // Clicking (isAttackKeyDown) boosts the pull so a single click quickly snaps back.
+        // 9. Angle-difference proportional smoothing: move a fraction of the remaining yaw/pitch
+        // delta per tick — big gap → big move, small gap → small move, converging smoothly with
+        // no edge jitter. Clicking boosts the fraction so one click snaps back into the box.
         val clickBoost = if (player.isAttackKeyDown) CLICK_SPEED_BOOST else 1f
-        val speed = dynamicAimSpeed.toFloat() * clickBoost * (if (onTarget) ON_TARGET_FACTOR else 1f) * dynamicSmoothness
-        val newYaw = RotationCalculator.rotMove(targetYaw, aim.yaw, speed)
-        val newPitch = RotationCalculator.rotMove(targetPitch, aim.pitch, speed * 0.39f)
+        val fraction = (dynamicAimSpeed / 20f) * clickBoost * (if (onTarget) ON_TARGET_FACTOR else 1f) * dynamicSmoothness
+        val f = fraction.coerceIn(0f, 1f)
+        // Stop threshold: once the delta is tiny, release entirely (no micro-jitter at the edge).
+        if (abs(rotationDiff.yaw) < STOP_YAW && abs(rotationDiff.pitch) < STOP_PITCH) {
+            return AimResult.Skip
+        }
+        val newYaw = aim.yaw + rotationDiff.yaw * f
+        val newPitch = aim.pitch + rotationDiff.pitch * f * 0.39f
         return AimResult.ApplyRotation(Vec2(newYaw, newPitch))
     }
 

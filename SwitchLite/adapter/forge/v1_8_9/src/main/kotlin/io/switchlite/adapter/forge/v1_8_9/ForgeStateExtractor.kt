@@ -406,7 +406,7 @@ object ForgeStateExtractor : IStateExtractor {
             val dirLenXZ = kotlin.math.sqrt(dx * dx + dz * dz)
             val yawTo = (Math.atan2(dz, dx) * (180.0 / Math.PI) - 90.0).toFloat()
             var yawDiff = playerYaw - yawTo
-            yawDiff = ((yawDiff % 360.0) + 540.0) % 360.0 - 180.0 // wrap to [-180,180]
+            yawDiff = (((yawDiff % 360f) + 540f) % 360f) - 180f // wrap to [-180,180]
             if (yawDiff > halfFov || yawDiff < -halfFov) continue
             val pitchTo = (-Math.atan2(dy, dirLenXZ) * (180.0 / Math.PI)).toFloat()
             val pitchDiff = Math.abs(playerPitch - pitchTo)

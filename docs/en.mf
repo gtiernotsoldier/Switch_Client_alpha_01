@@ -1,0 +1,127 @@
+```markdown
+# SwitchLite Architecture Map (for Future Maintainers)
+
+> This document is a **lookup table for the actual code**, not a pitch. It tells future maintainers: which files to touch when changing a module, which chain to follow, and where data comes from and goes to.
+> For the philosophy, see the root `README.md`; this document is only about **code reality**.
+
+## 1. Layers and Module Directories (Current 2026 Code Reality)
+
+```
+
+SwitchLite/
+├── injector/            # Rust/C++ DLL injector: process detection, version identification, payload injection
+├── agent/               # Java agent: javassist bytecode injection + MappingContext (mapping abstraction)
+├── core/                # Pure Kotlin algorithms, zero MC dependencies
+│   ├── strategy/        #   VelocityStrategy, AimStrategy, KeepSprintStrategy, ReachRaycast...
+│   ├── algorithm/       #   RotationCalculator, VectorOperations, NoiseProvider
+│   ├── condition/       #   ConditionChecker, TriggerOptions (unified condition engine)
+│   ├── model/           #   PlayerState, TargetState, VelocityContext, PlatformCommand
+│   └── util/            #   Vec2, Vec3
+├── adapter/
+│   ├── common/          # Cross-version shared module logic + hub
+│   │   ├── api/         #   EventBridge (hub), IEventBridge, IStateExtractor
+│   │   ├── module/      #   Module base class + 40 modules (combat/render/movement/player/world)
+│   │   ├── render/      #   OverlayRenderer, RenderContext
+│   │   └── webui/       #   WebUI config server (0.0.0.0:4173)
+│   ├── forge/v1_8_9/   # Forge 1.8.9 landing layer (ForgeBootstrap / ForgeEventBridge / ForgeStateExtractor / ForgePacketInterceptor)
+│   └── fabric/v1_21/   # Fabric landing layer (symmetrical structure)
+├── mappings/forge/v1_8_9.json   # semantic key → SRG/MCP name mapping table
+└── docs/ARCHITECTURE.md          # This document
+
+```
+
+## 2. Three Threads (Prerequisite for Understanding All Timing)
+
+| Thread | Who runs it | Responsibility |
+|---|---|---|
+| **Main thread (MC render)** | `Display.update()` injection → `RenderBridge.onFrame` → `ForgeBootstrap.render()` | Writes real key presses, modifies motion, materializes all synthesized local state |
+| **Background 20Hz** | `Agent.java` → `ForgeBootstrap.tick()` | **Module decision** (reads PlayerState → calls core strategies → writes expected state to EventBridge) |
+| **Netty network thread** | `ForgePacketInterceptor.channelRead()` | Intercepts `S12PacketEntityVelocity`/`S27PacketExplosion` → `EventBridge.onVelocityPacket` (self) + `EventBridge.notifyEntityVelocity` (other entities) |
+
+**Iron rule**: Decisions happen in the background, materialization happens on the main thread. Modules (background thread) only write "expected state"; the main thread render is the **only** place that writes real key presses/motion (see `ForgeEventBridge.applySyntheticInput`).
+
+## 3. Injection Chain (How the Client Starts)
+
+```
+
+Rust injector → payload.dll (JNI) → agentmain("jni-attach")
+→ javassist retransform Display.update(), insert RenderBridge.onFrame() at method entry
+→ called every render frame → ForgeBootstrap.render()
+
+```
+
+`agent/Transformer.java` only hooks `Display.update()` (2D HUD rendering pipeline). Attack method injection (bytecode solution for KeepSprint) is deprecated; see KeepSprint module comments.
+
+> **Pitfall**: `ForgePacketInterceptor` uses `player.sendQueue` (`field_71174_a`) to get the Netty handler, **not** `mc_netHandler` (`field_71453_ak` is the wrong mapping, reads null). To find the Netty channel, scan by **field type** `io.netty.channel.Channel` (obfuscated names are unreliable; types are reliable). Pipeline injection **must** be done with `channel.eventLoop().execute {}`.
+
+## 4. Mapping-Driven (Key to Cross-Version)
+
+- Code has **zero hardcoded MC class/field names** (except ~31 `Class.forName` leftovers).
+- Every access goes through `MappingContext.getFieldValue(obj, "forge:xxx")` / `invokeMethod(...)`.
+- Semantic keys in `mappings/forge/v1_8_9.json`: `"class" + "field"/"method"` (stores SRG name) + `mcp` name (fallback).
+- `joined.srg` (mcp-1.8.9-srg) only gives **obf→SRG**, **does not tell which SRG corresponds to which MCP name**. Determining "which SRG is netHandler" requires the MCP `fields.csv` (not in repo). So SRG names in mapping keys may be manually wrong (e.g., `mc_netHandler`). When adding new mappings, verify with FDP/LB Mixin `@Shadow` when necessary.
+
+## 5. Data Flow: A Combat Module (Velocity as Example)
+
+1. **Interception**: `ForgePacketInterceptor.channelRead` (Netty) receives S12 → checks `entityId == playerId` → `ForgeEventBridge.onVelocityPacket(msg)`.
+2. **Decision**: `EventBridge.onVelocityPacket(ctx)` → Velocity module's `onVelocityPacket` → `core/strategy/velocity/*Strategy.execute()` (pure algorithm, returns `VelocityResult`).
+3. **Materialization**: Returns a `PlatformCommand` (`ModifyMotion`/`CancelPacket`/`ClickBurst`/`Pass`).
+   - `ModifyMotion` → `ForgeEventBridge.pendingMotion` → applied on main thread render.
+   - `CancelPacket` → `return` drops the packet (Netty thread).
+   - `ClickBurst` → sends packet directly on Netty thread.
+4. **Display**: `EventBridge.velocityModified` + `recordKnockback(original, modified)` feeds `VelocityDisplay`/`KnockbackDisplay`/`JumpTiming` HUD.
+
+## 6. EventBridge: The Hub (Both Decoupling Point and the Only "God Object" Warning Area)
+
+**It is correct**—making it a hub that decouples 40 modules from the platform is an architectural decision, not a mistake. **What it needs is boundary discipline**, not splitting into files.
+
+### Admission Discipline (written at the top of the code for future followers)
+> **EventBridge should only hold two kinds of things:**
+> 1. **Cross-thread/cross-module shared state** (`@Volatile`: synthetic inputs, physical keys, motion, knockback data, `crosshairTarget`).
+> 2. **Platform callback decoupling** (`registerXHandler`: modules do not touch MC directly; the platform materializes via handlers).
+> **Module-internal logic must never be placed here**—it belongs in that module's `.kt`. Before adding something new, first ask "is this API or implementation?"
+
+### Sections (Current Code Has 7 Major Sections)
+1. Lifecycle & Tick → 2. Combat: Attack & Knockback → 3. Input: Keys & Synthetic → 4. Motion & Actions → 5. Target & Entity → 6. Render & Display → 7. Player Assist.
+When adding new fields, place them in the appropriate section.
+
+## 7. Module Lookup Table (Where Decision / Materialization / Algorithm Reside)
+
+| Module | Algorithm (core) | Decision (module) | Platform Materialization (forge) |
+|---|---|---|---|
+| Velocity | `strategy/velocity/*Strategy` | `module/combat/Velocity.kt` | `ForgePacketInterceptor` + `ForgeEventBridge.pendingMotion` |
+| JumpReset | `RotationCalculator.yawToDirection` | `module/combat/JumpReset.kt` | `ForgeEventBridge` jump handler (main thread pulses jump key) |
+| Reach | `strategy/reach/ReachRaycast.intersectBox` | `module/combat/Reach.kt` | `ForgeEventBridge.doReachRaycast` (writes `objectMouseOver`) |
+| KeepSprint | `strategy/keepsprint/*` (see comments: deprecated) | `module/combat/KeepSprint.kt` | None (purely local; see module comments) |
+| AimAssist | `strategy/aim/Legit* / SelfAdaptive*` | `module/combat/AimAssist.kt` | `setPlayerRotation` |
+| AutoBlock/WTap/STap/BlockHit | Shared `strategy/combat/CombatTrigger` | `module/combat/*.kt` | `setKeyBindPressed` / C0B |
+| JumpTiming (HUD) | None (window timing in module) | `module/render/JumpTiming.kt`: **counts only once per hit window** (window opens only when sprint-hitting; repeated jump presses do not count) + JumpReset pulse adaptation (`(JR)` marker) | `ForgePacketInterceptor` S12 notification (Netty thread precise timestamp) |
+| KnockbackDisplay (HUD) | None (displacement measurement in module) | `module/render/KnockbackDisplay.kt`: dual data sources – IN received (original vector + D + Velocity cut%) / OUT delivered (S12 linked to own attack + target displacement) | S12 notification + `EventBridge.getEntityPosition` |
+| TargetFilter (Player) | None | `module/player/TargetFilter.kt`: player/mob filtering → `EventBridge.targetFilterPlayers/Mobs` | `ForgeStateExtractor.isViableTarget` + Reach raycast |
+
+**General pattern**: core is pure functions (can be JUnit-tested); module reads `PlayerState` → calls core → writes expected state to `EventBridge`; forge/fabric materialize in `registerListeners()` via `EventBridge.registerXHandler { ... }`.
+
+## 8. Key File List (Most Frequently Touched When Fixing Bugs)
+
+| What to change | Which file to look at |
+|---|---|
+| Add a new module | `adapter/common/module/<category>/X.kt` + register in `ForgeBootstrap.registerAll()`; add render class to `OverlayRenderer` |
+| Change knockback/S12 behavior | `ForgePacketInterceptor` + `EventBridge.onVelocityPacket` + `core/strategy/velocity` |
+| Change key materialization | `ForgeEventBridge.registerListeners()` + `applySyntheticInput()` |
+| Change HUD display | `OverlayRenderer.render()` + `module/render/*.kt` |
+| Change target selection/filtering | `ForgeStateExtractor.isViableTarget` + `module/player/TargetFilter.kt` |
+| Change WebUI config persistence | `module/render/WebUI.kt` + `webui/ConfigStore` |
+| Add a mapping key | `mappings/forge/v1_8_9.json` (verify with SRG + FDP/LB Mixin) |
+
+## 9. Known Pitfalls (Don't Step on These)
+
+- The `mc_netHandler` mapping is broken (returns null) — use `player.sendQueue`.
+- Netty pipeline operations must be on the event-loop thread; find the channel field by type.
+- Background threads **must not** directly modify `mc.thePlayer.motion` / call entity methods (e.g., `player.jump()`) — go through synthetic input `setKeyBindPressed`; materialization happens on main thread.
+- `ConditionChecker.check(triggerOptions, player, target)` is the unified condition; each module's `triggerOptions` is independent—do not reuse across modules.
+- Fabric and Forge each have their own `EventBridge.registerX` materialization; both platforms must implement new APIs for completeness.
+
+---
+
+*Maintenance note: This file is a mapping table to the actual code; every time you refactor EventBridge/ForgeEventBridge/the injection chain, update the corresponding sections here—don't let it go stale.*
+```

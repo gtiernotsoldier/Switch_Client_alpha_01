@@ -167,8 +167,8 @@ class SelfAdaptiveAimStrategy : AimStrategy {
             config, state.alignmentEma
         )
 
-        val yawFactor = dynamicAimSpeed / 20.0f * dynamicSmoothness
-        val pitchFactor = dynamicAimSpeed / 20.0f * dynamicSmoothness * 0.6f
+        val yawFactor = dynamicAimSpeed * 0.5f * dynamicSmoothness
+        val pitchFactor = dynamicAimSpeed * 0.5f * dynamicSmoothness * 0.6f
 
         // 10. Overshoot state machine (shared via OvershootHelper)
         val finalRotation = OvershootHelper.execute(

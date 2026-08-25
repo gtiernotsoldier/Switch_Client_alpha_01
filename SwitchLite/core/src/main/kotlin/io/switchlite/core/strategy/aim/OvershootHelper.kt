@@ -17,15 +17,18 @@ import kotlin.math.abs
  *   OVERSHOOT → countdown → CORRECT (1 tick, accelerated correction)
  *   CORRECT   → IDLE
  *
- * Used by both [LegitAimStrategy] and [SelfAdaptiveAimStrategy].
+ * Movement is NOT a proportional blend: it moves the crosshair by at most
+ * [yawFactor]/[pitchFactor] degrees per tick toward the target (velocity-limited),
+ * so the crosshair glides smoothly to the aim point instead of jumping by a
+ * percentage of the remaining gap each frame.
  *
  * @param state the strategy state carrying overshoot phase + targets.
  * @param player current player snapshot.
  * @param targetPoint the computed ideal aim point (box-edge or center).
  * @param rotationDiff angular delta from current aim to target.
- * @param yawFactor interpolation factor for yaw.
- * @param pitchFactor interpolation factor for pitch.
- * @return the interpolated rotation for this tick, or null (skip).
+ * @param yawFactor max yaw degrees moved per tick.
+ * @param pitchFactor max pitch degrees moved per tick.
+ * @return the new rotation for this tick, or null (skip).
  */
 object OvershootHelper {
 
@@ -39,12 +42,7 @@ object OvershootHelper {
     ): Vec2? {
         return when (state.overshootPhase) {
             AimStrategy.State.OvershootPhase.IDLE -> {
-                val interpolated = RotationCalculator.interpolate(
-                    current = player.rotation,
-                    target = targetPoint,
-                    yawFactor = yawFactor,
-                    pitchFactor = pitchFactor
-                )
+                val interpolated = moveTowards(player.rotation, targetPoint, yawFactor, pitchFactor)
                 val angularSize = abs(rotationDiff.yaw) + abs(rotationDiff.pitch)
                 if (angularSize > 5f && NoiseProvider.nextUniform(0f, 1f) < 0.20f) {
                     val delta = RotationCalculator.calculateDifference(player.rotation, targetPoint)
@@ -57,12 +55,7 @@ object OvershootHelper {
                         if (NoiseProvider.nextUniform(0f, 1f) < 0.5f) 1 else 2
                     state.overshootPhase = AimStrategy.State.OvershootPhase.OVERSHOOT
                     val osTarget = state.overshootTarget ?: return null
-                    RotationCalculator.interpolate(
-                        current = player.rotation,
-                        target = osTarget,
-                        yawFactor = yawFactor,
-                        pitchFactor = pitchFactor
-                    )
+                    moveTowards(player.rotation, osTarget, yawFactor, pitchFactor)
                 } else {
                     interpolated
                 }
@@ -72,12 +65,7 @@ object OvershootHelper {
                     state.resetOvershoot()
                     return null
                 }
-                val result = RotationCalculator.interpolate(
-                    current = player.rotation,
-                    target = osTarget,
-                    yawFactor = yawFactor,
-                    pitchFactor = pitchFactor
-                )
+                val result = moveTowards(player.rotation, osTarget, yawFactor, pitchFactor)
                 state.overshootTicksRemaining--
                 if (state.overshootTicksRemaining <= 0) {
                     state.overshootPhase = AimStrategy.State.OvershootPhase.CORRECT
@@ -85,16 +73,19 @@ object OvershootHelper {
                 result
             }
             AimStrategy.State.OvershootPhase.CORRECT -> {
-                val result = RotationCalculator.interpolate(
-                    current = player.rotation,
-                    target = targetPoint,
-                    yawFactor = yawFactor * 1.2f,  // accelerated correction
-                    pitchFactor = pitchFactor * 1.2f
-                )
+                val result = moveTowards(player.rotation, targetPoint, yawFactor * 1.2f, pitchFactor * 1.2f)
                 state.resetOvershoot()
                 result
             }
         }
+    }
+
+    /** Move at most maxYaw/maxPitch degrees per tick toward [target] (velocity-limited glide). */
+    private fun moveTowards(current: Vec2, target: Vec2, maxYawDeg: Float, maxPitchDeg: Float): Vec2 {
+        val diff = RotationCalculator.calculateDifference(current, target)
+        val yawMove = diff.yaw.coerceIn(-maxYawDeg, maxYawDeg)
+        val pitchMove = diff.pitch.coerceIn(-maxPitchDeg, maxPitchDeg)
+        return Vec2(current.yaw + yawMove, current.pitch + pitchMove)
     }
 }
 

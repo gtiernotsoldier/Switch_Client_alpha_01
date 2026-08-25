@@ -118,9 +118,10 @@ class LegitAimStrategy : AimStrategy {
             }
         }
 
-        // 8. Smoothing factors
-        val yawFactor = config.aimSpeed / 20.0f * config.smoothness
-        val pitchFactor = config.aimSpeed / 20.0f * config.smoothness * 0.6f
+        // 8. Smoothing factors = max degrees moved per tick (velocity-limited glide, not a
+        // proportional blend). Default: 8 * 0.5 * 0.85 ≈ 3.4° yaw / tick, pitch ~60% of that.
+        val yawFactor = config.aimSpeed * 0.5f * config.smoothness
+        val pitchFactor = config.aimSpeed * 0.5f * config.smoothness * 0.6f
 
         // 9. Overshoot state machine (shared via OvershootHelper)
         val finalRotation = OvershootHelper.execute(

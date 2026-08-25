@@ -39,6 +39,8 @@ class SelfAdaptiveAimStrategy : AimStrategy {
 
     private companion object {
         const val EYE_HEIGHT = 1.62
+        /** LockOnCrosshair alignment threshold (degrees): crosshair must be this close to assist. */
+        const val LOCK_ANGLE = 8f
     }
 
     /** Extended state with adaptive tracking fields. */
@@ -128,12 +130,19 @@ class SelfAdaptiveAimStrategy : AimStrategy {
         }
         val targetRotation = RotationCalculator.calculateRotation(eyePos, targetPoint)
 
-        // 7. Spherical FOV check (3D cone; radius grows with distance)
+        // 7. Angular FOV cone check — angle measured from the player's view line (0-360°).
         if (!RotationCalculator.isWithinFov3D(eyePos, aim, targetPoint, config.fov)) {
             return AimResult.Skip
         }
 
         val rotationDiff = RotationCalculator.calculateDifference(aim, targetRotation)
+
+        // LockOnCrosshair: only assist once the crosshair is already aligned to the target.
+        if (config.lockOnCrosshair) {
+            if (abs(rotationDiff.yaw) > LOCK_ANGLE || abs(rotationDiff.pitch) > LOCK_ANGLE) {
+                return AimResult.Skip
+            }
+        }
 
         // 8. Self-adaptive: update alignment EMA and compute dynamic factors
         val angularError = abs(rotationDiff.yaw) + abs(rotationDiff.pitch)
@@ -159,8 +168,9 @@ class SelfAdaptiveAimStrategy : AimStrategy {
             config, state.alignmentEma
         )
 
-        val yawFactor = dynamicAimSpeed * 0.5f * dynamicSmoothness
-        val pitchFactor = dynamicAimSpeed * 0.5f * dynamicSmoothness * 0.6f
+        // 9b. Nemui-style fraction smoothing (proportional per-tick close of the gap).
+        val yawFraction = 0.035f * (dynamicAimSpeed / 10f) * dynamicSmoothness
+        val pitchFraction = yawFraction * 0.39f
 
         // 10. Overshoot state machine (shared via OvershootHelper)
         val finalRotation = OvershootHelper.execute(
@@ -168,8 +178,8 @@ class SelfAdaptiveAimStrategy : AimStrategy {
             player = player,
             targetPoint = targetRotation,
             rotationDiff = rotationDiff,
-            yawFactor = yawFactor,
-            pitchFactor = pitchFactor
+            yawFactor = yawFraction,
+            pitchFactor = pitchFraction
         ) ?: return AimResult.Skip
 
         // 11. Noise injection

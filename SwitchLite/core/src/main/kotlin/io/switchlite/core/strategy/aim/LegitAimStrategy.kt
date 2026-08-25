@@ -7,6 +7,7 @@ import io.switchlite.core.model.PlayerState
 import io.switchlite.core.model.TargetState
 import io.switchlite.core.option.AimMode
 import io.switchlite.core.util.Vec3
+import kotlin.math.abs
 import kotlin.math.exp
 
 /**
@@ -103,17 +104,26 @@ class LegitAimStrategy : AimStrategy {
         }
         val targetRotation = RotationCalculator.calculateRotation(eyePos, targetPoint)
 
-        // 7. Spherical FOV check (3D cone; radius grows with distance)
+        // 7. Angular FOV cone check — angle measured from the player's view line (0-360°).
         if (!RotationCalculator.isWithinFov3D(eyePos, aim, targetPoint, config.fov)) {
             return AimResult.Skip
         }
 
-        // 8. Smoothing factors = max degrees moved per tick (velocity-limited glide, not a
-        // proportional blend). Default: 8 * 0.5 * 0.85 ≈ 3.4° yaw / tick, pitch ~60% of that.
-        val yawFactor = config.aimSpeed * 0.5f * config.smoothness
-        val pitchFactor = config.aimSpeed * 0.5f * config.smoothness * 0.6f
-
         val rotationDiff = RotationCalculator.calculateDifference(aim, targetRotation)
+
+        // LockOnCrosshair: only assist once the crosshair is already aligned to the target.
+        // Off = assist anywhere inside the FOV cone.
+        if (config.lockOnCrosshair) {
+            if (abs(rotationDiff.yaw) > lockAngleDegrees || abs(rotationDiff.pitch) > lockAngleDegrees) {
+                return AimResult.Skip
+            }
+        }
+
+        // 8. Nemui-style smoothing factors = fraction of the remaining gap closed per tick.
+        // Mirrors Nemui's SimpleAnimation: fraction = 0.35 / (10 / speed), speed = aimSpeed / 10.
+        // Pitch closes more slowly than yaw (Nemui yaw 8.2 vs pitch 3.2).
+        val yawFraction = 0.035f * (config.aimSpeed / 10f) * config.smoothness
+        val pitchFraction = yawFraction * 0.39f
 
         // 9. Overshoot state machine (shared via OvershootHelper)
         val finalRotation = OvershootHelper.execute(
@@ -121,8 +131,8 @@ class LegitAimStrategy : AimStrategy {
             player = player,
             targetPoint = targetRotation,
             rotationDiff = rotationDiff,
-            yawFactor = yawFactor,
-            pitchFactor = pitchFactor
+            yawFactor = yawFraction,
+            pitchFactor = pitchFraction
         ) ?: return AimResult.Skip
 
         // 10. Noise injection
@@ -132,6 +142,9 @@ class LegitAimStrategy : AimStrategy {
     }
 
     // ---- Helpers ----
+
+    /** LockOnCrosshair alignment threshold (degrees): crosshair must be this close to assist. */
+    private val lockAngleDegrees = 8f
 
     /**
      * Sample a reaction delay in ticks using a log-normal distribution.

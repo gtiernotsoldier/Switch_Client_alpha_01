@@ -13,10 +13,12 @@ import io.switchlite.core.option.TriggerOptions
  * @property mode LEGIT (box-edge tracking) or NORMAL (crosshair-point lock).
  * @property rangeMin minimum 3D distance (blocks).
  * @property rangeMax maximum 3D distance (blocks).
- * @property fov spherical FOV — total cone angle in degrees (radius = fov / 2).
- * @property aimSpeed raw speed slider (1-20). Converted to a factor internally.
- * @property smoothness interpolation factor modifier (0.0-1.0).
+ * @property fov angular FOV cone measured around the view line (0-360°); radius = fov / 2.
+ * @property aimSpeed raw speed slider (1-20). Mapped to Nemui-style proportional smoothing.
+ * @property smoothness smoothing multiplier (0.0-1.0).
  * @property noiseIntensity magnitude of per-frame random-walk noise (degrees).
+ * @property lockOnCrosshair when true, only assist once the crosshair is already aligned to the
+ *        target (within a small angle). Off = assist anywhere inside the FOV cone.
  * @property triggerOptions unified condition engine settings.
  */
 data class AimConfig(
@@ -27,5 +29,6 @@ data class AimConfig(
     val aimSpeed: Int = 8,
     val smoothness: Float = 0.85f,
     val noiseIntensity: Float = 0.05f,
+    val lockOnCrosshair: Boolean = false,
     val triggerOptions: TriggerOptions = TriggerOptions()
 )

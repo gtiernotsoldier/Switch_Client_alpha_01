@@ -41,8 +41,9 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
     private val rangeMin by float("RangeMin", 3.0f, 0.0f..10.0f, "blocks")
     private val rangeMax by float("RangeMax", 6.0f, 0.0f..10.0f, "blocks")
 
-    // FOV setting (single spherical cone angle; radius grows with distance)
-    private val fov by float("Fov", 60.0f, 0.0f..360.0f, "degrees")
+    // FOV setting — angular cone measured around the player's view line (0-360°), like Nemui's
+    // "Max Angle". Half the value is applied each side of the view line.
+    private val fov by float("Fov", 80.0f, 0.0f..360.0f, "degrees")
 
     // Behavior settings
     private val aimSpeed by int("AimSpeed", 8, 1..20, "%")
@@ -51,6 +52,11 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
 
     // Mode: Legit (box edge) vs Normal (crosshair-point lock) vs SelfAdaptive (adaptive)
     private val mode by choices("Mode", arrayOf("Legit", "Normal", "SelfAdaptive"))
+    /**
+     * LockOnCrosshair — when ON, only assist once the crosshair is already aligned to the target
+     * (within a small angle). Off = assist anywhere inside the FOV cone.
+     */
+    private val lockOnCrosshair by boolean("LockOnCrosshair", false)
 
     // Trigger conditions (Unified Engine)
     /** Only aim while attacking (physical click OR AutoClicker active). Off = aim whenever the
@@ -83,6 +89,7 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
         aimSpeed = aimSpeed,
         smoothness = smoothness,
         noiseIntensity = noiseIntensity,
+        lockOnCrosshair = lockOnCrosshair,
         triggerOptions = triggerOptions
     )
 

@@ -17,17 +17,16 @@ import kotlin.math.abs
  *   OVERSHOOT → countdown → CORRECT (1 tick, accelerated correction)
  *   CORRECT   → IDLE
  *
- * Movement is NOT a proportional blend: it moves the crosshair by at most
- * [yawFactor]/[pitchFactor] degrees per tick toward the target (velocity-limited),
- * so the crosshair glides smoothly to the aim point instead of jumping by a
- * percentage of the remaining gap each frame.
+ * Movement is NOT a fixed degree cap: it closes a fraction of the remaining yaw/pitch gap each
+ * tick (Nemui-style proportional glide), so the crosshair eases toward the aim point — tapering
+ * off as it approaches, which reads as natural and stable.
  *
  * @param state the strategy state carrying overshoot phase + targets.
  * @param player current player snapshot.
  * @param targetPoint the computed ideal aim point (box-edge or center).
  * @param rotationDiff angular delta from current aim to target.
- * @param yawFactor max yaw degrees moved per tick.
- * @param pitchFactor max pitch degrees moved per tick.
+ * @param yawFactor fraction of the yaw gap closed per tick (0..1).
+ * @param pitchFactor fraction of the pitch gap closed per tick (0..1).
  * @return the new rotation for this tick, or null (skip).
  */
 object OvershootHelper {
@@ -80,11 +79,21 @@ object OvershootHelper {
         }
     }
 
-    /** Move at most maxYaw/maxPitch degrees per tick toward [target] (velocity-limited glide). */
-    private fun moveTowards(current: Vec2, target: Vec2, maxYawDeg: Float, maxPitchDeg: Float): Vec2 {
+    /**
+     * Nemui-style proportional glide: move a fraction of the remaining angular gap each tick,
+     * so the crosshair eases toward the aim point (exponential decay), not a fixed degree cap.
+     *
+     * Nemui's SimpleAnimation: deltaValue = |to - from| * 0.35 / (10 / speed). This matches
+     * how Nemui's AimAssist smooths — the bigger the gap the faster it moves, tapering off as
+     * it approaches, which reads as natural and stable.
+     *
+     * @param yawFraction fraction of the yaw gap closed per tick (0..1).
+     * @param pitchFraction fraction of the pitch gap closed per tick (0..1).
+     */
+    private fun moveTowards(current: Vec2, target: Vec2, yawFraction: Float, pitchFraction: Float): Vec2 {
         val diff = RotationCalculator.calculateDifference(current, target)
-        val yawMove = diff.yaw.coerceIn(-maxYawDeg, maxYawDeg)
-        val pitchMove = diff.pitch.coerceIn(-maxPitchDeg, maxPitchDeg)
+        val yawMove = diff.yaw * yawFraction
+        val pitchMove = diff.pitch * pitchFraction
         return Vec2(current.yaw + yawMove, current.pitch + pitchMove)
     }
 }

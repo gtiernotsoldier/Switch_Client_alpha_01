@@ -4,7 +4,6 @@ import io.switchlite.core.algorithm.RotationCalculator
 import io.switchlite.core.condition.ConditionChecker
 import io.switchlite.core.model.PlayerState
 import io.switchlite.core.model.TargetState
-import io.switchlite.core.option.AimMode
 import io.switchlite.core.util.Vec2
 import io.switchlite.core.util.Vec3
 import kotlin.math.abs
@@ -114,71 +113,33 @@ class SelfAdaptiveAimStrategy : AimStrategy {
             state.hasPreviousFrame = false
         }
 
-        // 5. Mode geometry (same as LegitAimStrategy, Raven-XD style)
-        var targetYaw: Float
-        var targetPitch: Float
-        var onTarget: Boolean
-        when (config.mode) {
-            AimMode.NORMAL -> {
-                // Continuous tracking of the crosshair-pointed spot on the box; pull back to the
-                // surface when off.
-                val hit = RotationCalculator.rayHitPoint(eyePos, aim, target.hitbox)
-                if (hit != null) {
-                    val rot = RotationCalculator.calculateRotation(eyePos, hit)
-                    targetYaw = rot.yaw
-                    targetPitch = rot.pitch
-                    onTarget = true
-                } else {
-                    val edge = RotationCalculator.getBoxEdgeTarget(eyePos, aim, target.hitbox)
-                    if (edge == null) return AimResult.Skip
-                    targetYaw = edge.rotation.yaw
-                    targetPitch = edge.rotation.pitch
-                    onTarget = false
-                }
-            }
-            AimMode.LEGIT -> {
-                val range = RotationCalculator.getBoxAngleRange(eyePos, target.hitbox)
-                if (range.isDegenerate) return AimResult.Skip
-                val yaw = RotationCalculator.normalizeAngle(aim.yaw)
-                val pitch = aim.pitch
-                val inYaw = yaw in range.yawMin..range.yawMax
-                val inPitch = pitch in range.pitchMin..range.pitchMax
-                if (inYaw && inPitch) return AimResult.Skip
-                onTarget = false
-                targetYaw = if (yaw < range.yawMin) range.yawMin else if (yaw > range.yawMax) range.yawMax else aim.yaw
-                targetPitch = if (pitch < range.pitchMin) range.pitchMin else if (pitch > range.pitchMax) range.pitchMax else aim.pitch
-            }
-            AimMode.SELF_ADAPTIVE -> {
-                // Crosshair-point tracking (same as NORMAL — no center pull), intensity adapted by
-                // the alignment EMA below.
-                val hit = RotationCalculator.rayHitPoint(eyePos, aim, target.hitbox)
-                if (hit != null) {
-                    val rot = RotationCalculator.calculateRotation(eyePos, hit)
-                    targetYaw = rot.yaw
-                    targetPitch = rot.pitch
-                    onTarget = true
-                } else {
-                    val edge = RotationCalculator.getBoxEdgeTarget(eyePos, aim, target.hitbox)
-                    if (edge == null) return AimResult.Skip
-                    targetYaw = edge.rotation.yaw
-                    targetPitch = edge.rotation.pitch
-                    onTarget = false
-                }
+        // 5. Aim point — Slinky Multipoint blend (center ↔ closest corner), independent axes.
+        // SelfAdaptive tracks the same stable multipoint aim point, intensity adapted by EMA.
+        val aimPoint = RotationCalculator.multipointAimPoint(eyePos, target.hitbox, config.multipointX, config.multipointY)
+        val centerRot = RotationCalculator.calculateRotation(eyePos, RotationCalculator.hitboxCenterWorld(target.hitbox))
+        val targetRot = RotationCalculator.calculateRotation(eyePos, aimPoint)
+
+        // 5b. MinFov freedom zone: crosshair within `minFov` of the target center = inside the
+        // hitbox → aim freely. Assist only pulls when the crosshair drifts outside.
+        if (config.minFov > 0f) {
+            val toCenter = RotationCalculator.calculateDifference(aim, centerRot)
+            if (abs(toCenter.yaw) <= config.minFov / 2f && abs(toCenter.pitch) <= config.minFov / 2f) {
+                return AimResult.Skip
             }
         }
 
-        // 6. FOV gate — full 360 means skip; otherwise the target must be inside the cone.
+        // 6. FOV gate — 360 = full (skip); otherwise the aim point must be inside the cone.
         if (config.fov < FULL_FOV) {
-            val diff = RotationCalculator.calculateDifference(aim, Vec2(targetYaw, targetPitch))
+            val diff = RotationCalculator.calculateDifference(aim, targetRot)
             if (abs(diff.yaw) > config.fov / 2f || abs(diff.pitch) > config.fov / 2f) {
                 return AimResult.Skip
             }
         }
 
-        // 6b. Natural drift — the aim point wanders slowly within ±offset, human-like.
+        // 6c. Natural drift — the aim point wanders slowly within ±offset, human-like.
         val (driftYaw, driftPitch) = RotationCalculator.updateNaturalDrift(state, config.offset)
-        targetYaw += driftYaw
-        targetPitch += driftPitch
+        val targetYaw = targetRot.yaw + driftYaw
+        val targetPitch = targetRot.pitch + driftPitch
 
         val rotationDiff = RotationCalculator.calculateDifference(aim, Vec2(targetYaw, targetPitch))
 
@@ -208,19 +169,20 @@ class SelfAdaptiveAimStrategy : AimStrategy {
         state.previousAngularError = angularError
         state.hasPreviousFrame = true
 
-        // 8. Dynamic factor calculation
-        val (dynamicAimSpeed, dynamicSmoothness) = computeDynamicFactors(
+        // 8. Dynamic factor calculation — adaptive smoothness from the alignment EMA.
+        val dynamicSmoothness = computeDynamicFactors(
             config, state.alignmentEma
         )
 
-        // 9. Output: TARGET rotation + per-frame interpolation fraction. Actual smoothing and the
-        // player-yield run on the MAIN thread every render frame (drainDesiredRotationFrame) —
-        // frame-rate, not tick. Fraction here carries gentle click boost, on-target deceleration,
-        // and the adaptive EMA (dynamicAimSpeed/dynamicSmoothness); mouse-yield is per-frame.
+        // 9. Output: TARGET rotation + independent per-axis interpolation fractions. Actual
+        // smoothing and the player-yield run on the MAIN thread every render frame
+        // (drainDesiredRotationFrame) — frame-rate, not tick. Fractions carry the adaptive EMA
+        // (dynamicAimSpeed/dynamicSmoothness) scaled from the config axis speeds.
         val clickBoost = if (player.isAttackKeyDown) CLICK_SPEED_BOOST else 1f
-        val fraction = (dynamicAimSpeed / 50f) * clickBoost *
-            (if (onTarget) ON_TARGET_FACTOR else 1f) * dynamicSmoothness
-        return AimResult.ApplyRotation(Vec2(targetYaw, targetPitch), fraction)
+        val onTargetFactor = if (abs(rotationDiff.yaw) < 5f && abs(rotationDiff.pitch) < 3f) ON_TARGET_FACTOR else 1f
+        val fracY = config.aimSpeedY * clickBoost * onTargetFactor * dynamicSmoothness
+        val fracP = config.aimSpeedP * clickBoost * onTargetFactor * dynamicSmoothness
+        return AimResult.ApplyRotation(Vec2(targetYaw, targetPitch), fracY, fracP)
     }
 
     // ==================== Adaptive Math ====================
@@ -256,32 +218,29 @@ class SelfAdaptiveAimStrategy : AimStrategy {
     }
 
     /**
-     * Map alignment EMA to dynamic aimSpeed and smoothness factors.
+     * Map alignment EMA to a dynamic smoothness multiplier.
      *
-     * | EMA range | aimSpeed modifier | smoothness modifier | Behaviour        |
-     * |-----------|-------------------|---------------------|------------------|
-     * | < 0.3     | +30%              | +20%                | Strong assist    |
-     * | 0.3-0.5   | +15%              | +10%                | Moderate assist  |
-     * | 0.5-0.7   | default           | default             | Standard assist  |
-     * | > 0.7     | -20%              | -15%                | Minimal assist   |
+     * | EMA range | smoothness modifier | Behaviour        |
+     * |-----------|---------------------|------------------|
+     * | < 0.3     | +20%                | Strong assist    |
+     * | 0.3-0.5   | +10%                | Moderate assist  |
+     * | 0.5-0.7   | default             | Standard assist  |
+     * | > 0.7     | -15%                | Minimal assist   |
      *
-     * All values clamped to [1, config.aimSpeed] and [0.1f, config.smoothness].
+     * The axis speeds stay at their configured values; only the smoothness (and thus the pull
+     * strength) adapts to the player's actual aim skill.
      */
     internal fun computeDynamicFactors(
         config: AimConfig,
         alignmentEma: Float
-    ): Pair<Int, Float> {
-        val (speedMod, smoothMod) = when {
-            alignmentEma < 0.3f -> 1.30f to 1.20f
-            alignmentEma < 0.5f -> 1.15f to 1.10f
-            alignmentEma < 0.7f -> 1.00f to 1.00f
-            else -> 0.80f to 0.85f
+    ): Float {
+        val smoothMod = when {
+            alignmentEma < 0.3f -> 1.20f
+            alignmentEma < 0.5f -> 1.10f
+            alignmentEma < 0.7f -> 1.00f
+            else -> 0.85f
         }
-
-        val aimSpeed = (config.aimSpeed * speedMod).toInt().coerceIn(1, 20)
-        val smoothness = (config.smoothness * smoothMod).coerceIn(0.1f, 1.0f)
-
-        return aimSpeed to smoothness
+        return (config.smoothness * smoothMod).coerceIn(0.1f, 1.0f)
     }
 
     // ==================== Helpers ====================

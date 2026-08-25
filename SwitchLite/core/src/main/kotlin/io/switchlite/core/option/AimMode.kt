@@ -6,5 +6,6 @@ package io.switchlite.core.option
 enum class AimMode {
     LEGIT,
     NORMAL,
-    SELF_ADAPTIVE
+    SELF_ADAPTIVE,
+    LINEAR
 }

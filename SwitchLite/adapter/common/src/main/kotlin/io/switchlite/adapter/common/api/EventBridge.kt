@@ -130,7 +130,8 @@ object EventBridge {
         rotationApplier = null
         desiredRotationYaw = null
         desiredRotationPitch = null
-        desiredRotationFraction = 0.2f
+        desiredRotationFractionY = 0.2f
+        desiredRotationFractionP = 0.1f
         aimOffsetYaw = 0f
         aimOffsetPitch = 0f
         aimAnimActive = false
@@ -753,8 +754,10 @@ object EventBridge {
     // real rotationYaw/Pitch fields directly (background write would be overwritten/race).
     @Volatile var desiredRotationYaw: Float? = null
     @Volatile var desiredRotationPitch: Float? = null
-    /** Per-frame interpolation fraction toward the desired rotation (0..1, set by the strategy). */
-    @Volatile var desiredRotationFraction: Float = 0.2f
+    /** Per-frame yaw interpolation fraction (0..1, set by the strategy). */
+    @Volatile var desiredRotationFractionY: Float = 0.2f
+    /** Per-frame pitch interpolation fraction (0..1, set by the strategy). */
+    @Volatile var desiredRotationFractionP: Float = 0.1f
 
     // Persistent aim-animation state, updated ONLY on the main render thread. Nemui-style: the
     // CORRECTION offset (target - player) is accumulated across frames (never recomputed from the
@@ -772,7 +775,8 @@ object EventBridge {
     fun clearDesiredRotation() {
         desiredRotationYaw = null
         desiredRotationPitch = null
-        desiredRotationFraction = 0.2f
+        desiredRotationFractionY = 0.2f
+        desiredRotationFractionP = 0.1f
         aimOffsetYaw = 0f
         aimOffsetPitch = 0f
         aimAnimActive = false
@@ -827,10 +831,11 @@ object EventBridge {
         }
 
         // Exponential ease of the offset toward the desired correction (Nemui SimpleAnimation).
-        val f = desiredRotationFraction.coerceIn(0f, 1f) * yield
-        if (f <= 0f) return false
-        aimOffsetYaw = normalizeAngle(aimOffsetYaw + (desiredOffsetYaw - aimOffsetYaw) * f)
-        aimOffsetPitch = aimOffsetPitch + (desiredOffsetPitch - aimOffsetPitch) * (f * PITCH_RATIO)
+        val fY = desiredRotationFractionY.coerceIn(0f, 1f) * yield
+        val fP = desiredRotationFractionP.coerceIn(0f, 1f) * yield
+        if (fY <= 0f && fP <= 0f) return false
+        aimOffsetYaw = normalizeAngle(aimOffsetYaw + (desiredOffsetYaw - aimOffsetYaw) * fY)
+        aimOffsetPitch = aimOffsetPitch + (desiredOffsetPitch - aimOffsetPitch) * fP
 
         val applyYaw = currentYaw + aimOffsetYaw
         val applyPitch = currentPitch + aimOffsetPitch
@@ -847,8 +852,6 @@ object EventBridge {
     /** Dead-zone (degrees): stop assisting once the animation is this close to the target. */
     private const val DEAD_YAW = 0.2f
     private const val DEAD_PITCH = 0.1f
-    /** Pitch converges slower than yaw (Nemui yaw 8.2 vs pitch 3.2). */
-    private const val PITCH_RATIO = 0.39f
 
     /** Mouse pixels/frame above which the assist fully yields to the player (they are turning). */
     private const val YIELD_PIXELS = 120f

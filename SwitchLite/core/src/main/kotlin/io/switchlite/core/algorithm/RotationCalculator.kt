@@ -307,6 +307,35 @@ object RotationCalculator {
     )
 
     /**
+     * Slinky-style Multipoint aim point: interpolate between the hitbox center and the surface
+     * point closest to the player, with independent horizontal/vertical blend factors.
+     *
+     * - multipoint 0 → aim at the center (smoothest, most stable).
+     * - multipoint 1 → aim at the closest corner/edge (max reach, can snap).
+     * - 0.5 (Slinky default) → middle of the two.
+     *
+     * Blending world coords independently on X/Z (horizontal) and Y (vertical) avoids the
+     * "snapping between box points" jitter that pure corner-aiming causes.
+     *
+     * @param eyePos player's eye position.
+     * @param box target hitbox.
+     * @param multipointX horizontal blend 0..1.
+     * @param multipointY vertical blend 0..1.
+     * @return the blended aim point in world space.
+     */
+    fun multipointAimPoint(eyePos: Vec3, box: Hitbox, multipointX: Float, multipointY: Float): Vec3 {
+        val center = hitboxCenterWorld(box)
+        val closest = closestSurfacePoint(eyePos, (center - eyePos).normalize(), box)
+        val fx = multipointX.coerceIn(0f, 1f)
+        val fy = multipointY.coerceIn(0f, 1f)
+        // Horizontal blend on X/Z, vertical blend on Y — independent axes like Slinky.
+        val x = center.x + (closest.x - center.x) * fx
+        val y = center.y + (closest.y - center.y) * fy
+        val z = center.z + (closest.z - center.z) * fx
+        return Vec3(x, y, z)
+    }
+
+    /**
      * LB (Raven-XD AimSimulator.rotMove) rotation movement: move at most [diff] degrees toward
      * [target] per tick (fixed speed, not proportional), stopping entirely when the remaining
      * delta is below a small random threshold (avoids jitter at the edge).

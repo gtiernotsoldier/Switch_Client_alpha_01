@@ -4,42 +4,36 @@ import io.switchlite.core.algorithm.RotationCalculator
 import io.switchlite.core.condition.ConditionChecker
 import io.switchlite.core.model.PlayerState
 import io.switchlite.core.model.TargetState
-import io.switchlite.core.option.AimMode
 import io.switchlite.core.util.Vec2
 import io.switchlite.core.util.Vec3
 import kotlin.math.abs
 
 /**
- * LEGIT / NORMAL aim strategy, modeled on Raven-XD (LiquidBounce) NormalAimAssist.
+ * LEGIT / NORMAL / LINEAR aim strategy, rebuilt on Slinky's professional AimAssist design.
  *
  * Per tick:
  * 1. Null-target guard → Skip.
  * 2. 3D range check → Skip.
  * 3. Unified condition check → Skip.
- * 4. Mode geometry:
- *    - NORMAL: lock onto the exact point the crosshair ray hits the box and track it as the
- *      target moves (continuous tracking). If the crosshair is off the box, pull it back to the
- *      nearest surface so it re-enters the box.
- *    - LEGIT: compute the box's yaw/pitch angular range. While the crosshair is inside that range
- *      (on the target) do nothing; only when it drifts outside, pull back to the nearest edge.
- * 5. FOV: 360° = full 360 (skip the cone gate); otherwise the target point must be inside the cone.
- * 6. Physics: fixed-speed glide (rotMove, max `aimSpeed` degrees per tick → distance/time feel),
- *    scaled by how hard the PLAYER is turning (fast mouse = assist yields so the player leads;
- *    idle mouse = assist pulls), plus click boost and an on-target stop threshold.
+ * 4. Aim point = Slinky Multipoint: hitbox center ↔ closest-corner linear blend, independent
+ *    horizontal/vertical factors (stable, no corner snapping).
+ * 5. MinFov freedom zone: while the crosshair is within `minFov` of the target center, aim freely
+ *    (inside the hitbox) — assist only pulls when drifting outside. Hides the assist.
+ * 6. FOV gate: 360 = full (skip); otherwise target must be inside the cone.
+ * 7. LockOnCrosshair gate (optional).
+ * 8. Speed: independent yaw/pitch fractions; Regular (exponential ease) or Linear (near-linear).
+ *    Actual frame smoothing + player-yield run on the main render thread.
  */
 class LegitAimStrategy : AimStrategy {
 
     private companion object {
         const val EYE_HEIGHT = 1.62
-        /** LockOnCrosshair alignment threshold (degrees): crosshair must be this close to assist. */
+        /** LockOnCrosshair alignment threshold (degrees). */
         const val LOCK_ANGLE = 8f
-        /** LB "Aim while on target" deceleration — slows the pull when already on the target. */
+        /** LB "Aim while on target" deceleration. */
         const val ON_TARGET_FACTOR = 0.85f
-        /** Clicking gently boosts the pull — natural snap-back, not machine-fast. */
+        /** Clicking gently boosts the pull. */
         const val CLICK_SPEED_BOOST = 1.5f
-        /** Angle-difference stop threshold (degrees): release once the delta is this small. */
-        const val STOP_YAW = 0.2f
-        const val STOP_PITCH = 0.1f
         /** FOV value that means "full 360°" — the cone gate is skipped entirely. */
         const val FULL_FOV = 360f
     }
@@ -72,7 +66,7 @@ class LegitAimStrategy : AimStrategy {
         val eyePos = Vec3(player.position.x, player.position.y + EYE_HEIGHT, player.position.z)
         val aim = player.rotation
 
-        // 2. 3D range check (full sphere distance, not just X/Z)
+        // 2. 3D range check (full sphere distance)
         val distance3D = player.position.distanceTo(target.position)
         if (distance3D < config.rangeMin || distance3D > config.rangeMax) {
             return AimResult.Skip
@@ -83,94 +77,64 @@ class LegitAimStrategy : AimStrategy {
             return AimResult.Skip
         }
 
-        // 4. Mode geometry — decide the target yaw/pitch this tick.
-        var targetYaw: Float
-        var targetPitch: Float
-        var onTarget: Boolean
-        when (config.mode) {
-            AimMode.NORMAL -> {
-                // Continuous tracking: aim at the point the crosshair ray hits the box and keep
-                // tracking it as the target moves (crosshair-point lock, NOT the center). If the
-                // ray misses (crosshair slightly off), pull back to the nearest surface so it
-                // re-enters the box, then it tracks the hit point again.
-                val hit = RotationCalculator.rayHitPoint(eyePos, aim, target.hitbox)
-                if (hit != null) {
-                    val rot = RotationCalculator.calculateRotation(eyePos, hit)
-                    targetYaw = rot.yaw
-                    targetPitch = rot.pitch
-                    onTarget = true
-                } else {
-                    val edge = RotationCalculator.getBoxEdgeTarget(eyePos, aim, target.hitbox)
-                    if (edge == null) return AimResult.Skip
-                    targetYaw = edge.rotation.yaw
-                    targetPitch = edge.rotation.pitch
-                    onTarget = false
-                }
-            }
-            AimMode.LEGIT -> {
-                // Angular range of the box as seen from the eyes. Inside = on target → no pull
-                // (legit never tracks while inside the box — it only corrects when you drift out).
-                // Outside = pull back to the nearest edge.
-                val range = RotationCalculator.getBoxAngleRange(eyePos, target.hitbox)
-                if (range.isDegenerate) return AimResult.Skip
-                val yaw = RotationCalculator.normalizeAngle(aim.yaw)
-                val pitch = aim.pitch
-                val inYaw = yaw in range.yawMin..range.yawMax
-                val inPitch = pitch in range.pitchMin..range.pitchMax
-                if (inYaw && inPitch) return AimResult.Skip
-                onTarget = false
-                targetYaw = if (yaw < range.yawMin) range.yawMin else if (yaw > range.yawMax) range.yawMax else aim.yaw
-                targetPitch = if (pitch < range.pitchMin) range.pitchMin else if (pitch > range.pitchMax) range.pitchMax else aim.pitch
-            }
-            AimMode.SELF_ADAPTIVE -> {
-                // Same crosshair-point tracking as NORMAL, but with adaptive intensity (EMA).
-                val hit = RotationCalculator.rayHitPoint(eyePos, aim, target.hitbox)
-                if (hit != null) {
-                    val rot = RotationCalculator.calculateRotation(eyePos, hit)
-                    targetYaw = rot.yaw
-                    targetPitch = rot.pitch
-                    onTarget = true
-                } else {
-                    val edge = RotationCalculator.getBoxEdgeTarget(eyePos, aim, target.hitbox)
-                    if (edge == null) return AimResult.Skip
-                    targetYaw = edge.rotation.yaw
-                    targetPitch = edge.rotation.pitch
-                    onTarget = false
-                }
+        // 4. Aim point — Slinky Multipoint blend (center ↔ closest corner), independent axes.
+        // All modes share this stable aim point; the mode only adjusts behavior around it.
+        val aimPoint = RotationCalculator.multipointAimPoint(eyePos, target.hitbox, config.multipointX, config.multipointY)
+        val centerRot = RotationCalculator.calculateRotation(eyePos, RotationCalculator.hitboxCenterWorld(target.hitbox))
+        val targetRot = RotationCalculator.calculateRotation(eyePos, aimPoint)
+
+        // 5. MinFov freedom zone: crosshair within `minFov` of the target CENTER = inside the
+        // hitbox → aim freely (no pull). This is the "hidden assist" behavior: the player owns
+        // the box; the assist only engages when the crosshair drifts out.
+        if (config.minFov > 0f) {
+            val toCenter = RotationCalculator.calculateDifference(aim, centerRot)
+            if (abs(toCenter.yaw) <= config.minFov / 2f && abs(toCenter.pitch) <= config.minFov / 2f) {
+                return AimResult.Skip
             }
         }
 
-        // 5. FOV gate — full 360 means skip; otherwise the target point must be inside the cone.
+        // 6. FOV gate — 360 = full (skip); otherwise the aim point must be inside the cone.
         if (config.fov < FULL_FOV) {
-            val diff = RotationCalculator.calculateDifference(aim, Vec2(targetYaw, targetPitch))
+            val diff = RotationCalculator.calculateDifference(aim, targetRot)
             if (abs(diff.yaw) > config.fov / 2f || abs(diff.pitch) > config.fov / 2f) {
                 return AimResult.Skip
             }
         }
 
-        // 5b. Natural drift — the aim point wanders slowly within ±offset instead of locking
-        // dead-on, reading like a human hand (never machine-exact).
+        // 6b. Natural drift — the aim point wanders slowly within ±offset, human-like.
         val (driftYaw, driftPitch) = RotationCalculator.updateNaturalDrift(state, config.offset)
-        targetYaw += driftYaw
-        targetPitch += driftPitch
+        val targetYaw = targetRot.yaw + driftYaw
+        val targetPitch = targetRot.pitch + driftPitch
 
         val rotationDiff = RotationCalculator.calculateDifference(aim, Vec2(targetYaw, targetPitch))
 
-        // 6. LockOnCrosshair: only assist once the crosshair is already aligned to the target.
+        // 7. LockOnCrosshair: only assist once the crosshair is already aligned to the target.
         if (config.lockOnCrosshair) {
             if (abs(rotationDiff.yaw) > LOCK_ANGLE || abs(rotationDiff.pitch) > LOCK_ANGLE) {
                 return AimResult.Skip
             }
         }
 
-        // 7. Output: the TARGET rotation + a per-frame interpolation fraction. The actual
-        // smoothing + player-yield happen on the MAIN thread every render FRAME
-        // (drainDesiredRotationFrame) — frame-rate interpolation is much smoother than the 20Hz
-        // tick. The fraction here only carries click boost (gentle) and on-target deceleration
-        // (LB aimWhileOnTarget); the mouse-yield is applied per frame in the adapter.
+        // 8. Speed — independent yaw/pitch fractions per frame.
+        // Regular: exponential ease (fraction of remaining gap). Linear: near-linear (fixed small
+        // fraction, stable low-speed tracking — Slinky Linear mode).
         val clickBoost = if (player.isAttackKeyDown) CLICK_SPEED_BOOST else 1f
-        // aimSpeed 1-20 maps to a base fraction 0.02..0.4 per frame.
-        val fraction = (config.aimSpeed / 50f) * clickBoost * (if (onTarget) ON_TARGET_FACTOR else 1f)
-        return AimResult.ApplyRotation(Vec2(targetYaw, targetPitch), fraction)
+        val onTargetFactor = if (isOnTarget(config, rotationDiff)) ON_TARGET_FACTOR else 1f
+        val fracY = if (config.linear) {
+            // Linear: constant tiny fraction — never accelerates, never snaps.
+            0.06f * clickBoost * onTargetFactor * config.smoothness
+        } else {
+            config.aimSpeedY * clickBoost * onTargetFactor * config.smoothness
+        }
+        val fracP = if (config.linear) {
+            0.06f * clickBoost * onTargetFactor * config.smoothness
+        } else {
+            config.aimSpeedP * clickBoost * onTargetFactor * config.smoothness
+        }
+        return AimResult.ApplyRotation(Vec2(targetYaw, targetPitch), fracY, fracP)
+    }
+
+    private fun isOnTarget(config: AimConfig, diff: Vec2): Boolean {
+        return abs(diff.yaw) < 5f && abs(diff.pitch) < 3f
     }
 }

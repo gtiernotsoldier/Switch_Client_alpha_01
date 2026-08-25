@@ -41,20 +41,33 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
     private val rangeMin by float("RangeMin", 3.0f, 0.0f..10.0f, "blocks")
     private val rangeMax by float("RangeMax", 6.0f, 0.0f..10.0f, "blocks")
 
-    // FOV setting — 360 = full 360° (skip the cone gate entirely, Raven-XD default); lower values
-    // restrict the pull to an angular cone around the view line.
+    // FOV setting — 360 = full 360° (skip the cone gate entirely); lower values restrict the pull
+    // to an angular cone around the view line.
     private val fov by float("Fov", 360.0f, 0.0f..360.0f, "degrees")
+    /** MinFov (degrees) — Slinky: while the crosshair is within this angle of the target center,
+     *  aim freely (inside the hitbox); the assist only pulls when drifting outside. Hides the
+     *  assist. 0 = no freedom zone (pull anywhere in FOV). */
+    private val minFov by float("MinFov", 0.0f, 0.0f..30.0f, "degrees")
 
-    // Behavior settings
-    private val aimSpeed by int("AimSpeed", 5, 1..20, "deg/tick")
+    // Behavior settings — independent axis speeds (Slinky-style)
+    private val aimSpeedY by float("SpeedY", 0.25f, 0.0f..1.0f, "per-frame")
+    private val aimSpeedP by float("SpeedP", 0.10f, 0.0f..1.0f, "per-frame")
     private val smoothness by float("Smoothness", 0.85f, 0.0f..1.0f)
     private val noiseIntensity by float("NoiseIntensity", 0.05f, 0.0f..0.5f)
     /** Natural aim offset (degrees): the aim point drifts slowly within ±offset so the crosshair
      *  never locks dead-on — reads like a human hand, not a machine. */
     private val offset by float("Offset", 0.5f, 0.0f..3.0f, "degrees")
+    /** Multipoint (horizontal) — Slinky: 0 = hitbox center, 1 = closest corner, 0.5 = middle.
+     *  Higher values reach further but can feel less smooth. */
+    private val multipointX by float("MultipointX", 0.5f, 0.0f..1.0f)
+    /** Multipoint (vertical) — independent vertical blend. */
+    private val multipointY by float("MultipointY", 0.5f, 0.0f..1.0f)
+    /** Linear mode — near-linear speed, stable low-speed tracking (Slinky Linear). Off = Regular
+     *  exponential ease (distance-proportional). */
+    private val linear by boolean("Linear", false)
 
-    // Mode: Legit (box edge) vs Normal (crosshair-point lock) vs SelfAdaptive (adaptive)
-    private val mode by choices("Mode", arrayOf("Legit", "Normal", "SelfAdaptive"))
+    // Mode: Legit / Normal / SelfAdaptive / Linear
+    private val mode by choices("Mode", arrayOf("Legit", "Normal", "SelfAdaptive", "Linear"))
     /**
      * LockOnCrosshair — when ON, only assist once the crosshair is already aligned to the target
      * (within a small angle). Off = assist anywhere inside the FOV cone.
@@ -92,21 +105,67 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
             "Legit" -> AimMode.LEGIT
             "Normal" -> AimMode.NORMAL
             "SelfAdaptive" -> AimMode.SELF_ADAPTIVE
+            "Linear" -> AimMode.LINEAR
             else -> AimMode.LEGIT
         },
         rangeMin = rangeMin,
         rangeMax = rangeMax,
         fov = fov,
-        aimSpeed = aimSpeed,
+        minFov = minFov,
+        aimSpeedY = aimSpeedY,
+        aimSpeedP = aimSpeedP,
         smoothness = smoothness,
         noiseIntensity = noiseIntensity,
         offset = offset,
+        multipointX = multipointX,
+        multipointY = multipointY,
+        linear = linear || mode == "Linear",
         lockOnCrosshair = lockOnCrosshair,
         triggerOptions = triggerOptions
     )
 
     // ========== Tick Listener Reference ==========
     private var tickListener: ((PlayerState, TargetState?) -> Unit)? = null
+
+    // ========== Single Target Lock (Slinky "Single" mode) ==========
+    // Locks onto the first target and keeps it — never switches to a closer target while the
+    // locked one is still valid. While locked, the FOV is relaxed (locked FOV widening): the
+    // assist keeps tracking even if the target moves outside the original FOV. Lock resets when
+    // the target is lost (out of range / condition fails / dead).
+    private var lockedTargetId: Int = -1
+
+    /**
+     * Resolve the current aim target with Single-lock semantics:
+     * - If we hold a lock and the locked target is still valid (matches the generic tick target
+     *   or the crosshair target), keep it.
+     * - Otherwise (re)acquire: pick the FOV-nearest (or crosshair) target and remember it.
+     */
+    private fun resolveAimTarget(onlyCrosshair: Boolean, genericTarget: TargetState?): TargetState? {
+        // 1. Validate the existing lock: the locked entity must still be the generic/crosshair
+        //    target this tick (i.e. still a valid, in-range, alive target).
+        if (lockedTargetId != -1) {
+            val candidates = listOfNotNull(genericTarget, EventBridge.crosshairTarget)
+            val stillValid = candidates.any { it.entityId == lockedTargetId }
+            if (stillValid) {
+                return candidates.first { it.entityId == lockedTargetId }
+            }
+            // Lock lost → release and re-acquire below.
+            lockedTargetId = -1
+        }
+
+        // 2. (Re)acquire.
+        val acquired = if (onlyCrosshair) {
+            EventBridge.crosshairTarget ?: genericTarget
+        } else {
+            EventBridge.getFovNearestTarget(fov, rangeMax) ?: genericTarget
+        }
+        if (acquired != null) {
+            lockedTargetId = acquired.entityId
+        } else {
+            lockedTargetId = -1
+        }
+        return acquired
+    }
 
     // ========== Event Handler (Platform Agnostic, Thin Glue Layer) ==========
 
@@ -121,11 +180,8 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
      * falling back to the generic tick target.
      */
     fun onClientTick(player: PlayerState, target: TargetState?) {
-        val aimTarget = if (onlyCrosshairTarget) {
-            EventBridge.crosshairTarget ?: target
-        } else {
-            EventBridge.getFovNearestTarget(fov, rangeMax) ?: target
-        }
+        // Single target lock: acquire once, keep it while valid (never switch to a closer target).
+        val aimTarget = resolveAimTarget(onlyCrosshairTarget, target)
 
         // "Clicking" = physically holding the attack button OR a synthetic click fired THIS tick
         // (AutoClicker/TriggerBot write syntheticAttack=true only while actually clicking). Using
@@ -145,11 +201,12 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
                 )
                 val result = adaptiveStrategy.execute(config, adaptiveState, input)
                 when (result) {
-                    // Write target + per-frame fraction; the MAIN thread interpolates every frame.
+                    // Write target + per-axis fractions; the MAIN thread interpolates every frame.
                     is AimResult.ApplyRotation -> {
                         EventBridge.desiredRotationYaw = result.rotation.yaw
                         EventBridge.desiredRotationPitch = result.rotation.pitch
-                        EventBridge.desiredRotationFraction = result.fraction
+                        EventBridge.desiredRotationFractionY = result.fractionY
+                        EventBridge.desiredRotationFractionP = result.fractionP
                     }
                     is AimResult.Skip -> {
                         // No assist this tick — clear the pending target so the main thread stops
@@ -170,11 +227,12 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
                 )
                 val result = legitStrategy.execute(config, legitState, input)
                 when (result) {
-                    // Write target + per-frame fraction; the MAIN thread interpolates every frame.
+                    // Write target + per-axis fractions; the MAIN thread interpolates every frame.
                     is AimResult.ApplyRotation -> {
                         EventBridge.desiredRotationYaw = result.rotation.yaw
                         EventBridge.desiredRotationPitch = result.rotation.pitch
-                        EventBridge.desiredRotationFraction = result.fraction
+                        EventBridge.desiredRotationFractionY = result.fractionY
+                        EventBridge.desiredRotationFractionP = result.fractionP
                     }
                     is AimResult.Skip -> {
                         // No assist this tick — clear the pending target so the main thread stops
@@ -191,6 +249,7 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
     override fun onEnable() {
         legitState.reset()
         adaptiveState.reset()
+        lockedTargetId = -1
         tickListener = { player, target ->
             if (enabled) onClientTick(player, target)
         }
@@ -202,6 +261,7 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
         tickListener = null
         legitState.reset()
         adaptiveState.reset()
+        lockedTargetId = -1
         // Stop any in-flight frame interpolation immediately.
         EventBridge.clearDesiredRotation()
     }

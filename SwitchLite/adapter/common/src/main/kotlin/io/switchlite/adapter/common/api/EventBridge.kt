@@ -484,7 +484,7 @@ object EventBridge {
     // attack key is written — returning true = let the click through, false = swallow it.
     private var attackGateProvider: (() -> Boolean)? = null
 
-    fun registerAttackGateProvider(provider: () -> Boolean) { attackGateProvider = provider }
+    fun registerAttackGateProvider(provider: (() -> Boolean)?) { attackGateProvider = provider }
     fun currentAttackGate(): Boolean = attackGateProvider?.invoke() ?: true
 
     /**

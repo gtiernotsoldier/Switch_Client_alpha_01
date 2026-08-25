@@ -98,10 +98,11 @@ object ForgeStateExtractor : IStateExtractor {
         val isMoving = (motionX != 0.0 || motionZ != 0.0)
         val isMovingForward = moveForward > 0f
 
-        // Effective attack key = physical mouse OR AutoClicker/TriggerBot's synthetic attack.
-        // This lets onlyOnClick-style conditions fire when the player is using a clicker (physical
-        // button not pressed) instead of silently never triggering.
-        val isAttackKeyDown = isMouseButtonDown(0) || EventBridge.syntheticAttack
+        // Physical attack button only. Do NOT OR syntheticAttack here: AutoClicker's stop logic
+        // re-checks onlyOnClick via this field, and including the synthetic click would self-lock
+        // it (once syntheticAttack=true, onlyOnClick is always satisfied -> never stops). AimAssist
+        // handles the clicker case itself by marking isAttackKeyDown when a clicker is active.
+        val isAttackKeyDown = isMouseButtonDown(0)
 
         val isBlocking = MappingContext.invokeMethod(player, "forge:player_isBlocking") as? Boolean ?: false
         val isSneaking = MappingContext.invokeMethod(player, "forge:player_isSneaking") as? Boolean ?: false

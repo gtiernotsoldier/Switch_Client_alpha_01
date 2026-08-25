@@ -102,11 +102,19 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
      * NO algorithm logic here — only config assembly + result mapping.
      */
     fun onClientTick(player: PlayerState, target: TargetState?) {
+        // AutoClicker/TriggerBot active -> the player is effectively attacking continuously, so
+        // the onlyOnClick trigger (which reads the PHYSICAL attack key) must not block aiming.
+        // Mark isAttackKeyDown so onlyOnClick passes; never touches the global field.
+        val effPlayer = if (EventBridge.syntheticAttackOverride) {
+            player.copy(isAttackKeyDown = true)
+        } else {
+            player
+        }
         when (mode) {
             "SelfAdaptive" -> {
                 val config = cachedConfig("adaptive") { buildConfig(AimMode.SELF_ADAPTIVE) }
                 val input = AimInput(
-                    player = player,
+                    player = effPlayer,
                     target = target,
                     mouseDeltaX = EventBridge.mouseDeltaX,
                     mouseDeltaY = EventBridge.mouseDeltaY,
@@ -125,7 +133,7 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
             else -> {
                 // Legit / Normal — delegate to LegitAimStrategy
                 val config = cachedConfig("legit") { buildConfig() }
-                val input = AimInput(player, target)
+                val input = AimInput(effPlayer, target)
                 val result = legitStrategy.execute(config, legitState, input)
                 when (result) {
                     // Write the desired rotation; the MAIN thread applies it (see drainDesiredRotation).

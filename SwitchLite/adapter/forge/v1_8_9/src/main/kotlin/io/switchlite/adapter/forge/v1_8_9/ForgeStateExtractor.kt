@@ -385,7 +385,7 @@ object ForgeStateExtractor : IStateExtractor {
         val playerPitch = MappingContext.getFieldValue(player, "forge:player_rotationPitch") as? Float ?: 0f
 
         val loadedList = MappingContext.getFieldValue(world, "forge:world_loadedEntityList") as? List<*> ?: return null
-        val rangeSq = range * range
+        val rangeSq = (range.toDouble() * range.toDouble())
 
         var nearestId: Int? = null
         var nearestDistSq = Double.MAX_VALUE

@@ -128,8 +128,7 @@ object EventBridge {
         edgeDetector = null
         isSafeWalkEnabled = false
         rotationApplier = null
-        desiredRotationYaw = null
-        desiredRotationPitch = null
+        desiredTargetWorld = null
         desiredRotationFractionY = 0.2f
         desiredRotationFractionP = 0.1f
         aimOffsetYaw = 0f
@@ -747,13 +746,13 @@ object EventBridge {
     fun registerRotationApplier(handler: (Float, Float) -> Unit) { rotationApplier = handler }
 
     // ========== Desired Rotation (AimAssist — computed on background, applied on main thread) ==========
-    // The aim strategy computes the TARGET rotation + a per-frame interpolation fraction on the
-    // 20Hz background tick; the MAIN thread interpolates toward it EVERY RENDER FRAME
-    // (drainDesiredRotationFrame). MC's tick (20Hz) is too coarse for smooth aim — per-frame
-    // interpolation on the render thread is ~3x smoother at 60fps. The strategy never writes the
-    // real rotationYaw/Pitch fields directly (background write would be overwritten/race).
-    @Volatile var desiredRotationYaw: Float? = null
-    @Volatile var desiredRotationPitch: Float? = null
+    // The aim strategy computes the TARGET WORLD POINT + per-frame interpolation fractions on the
+    // 20Hz background tick; the MAIN thread recomputes the rotation EVERY RENDER FRAME from the
+    // player's CURRENT position toward that world point (drainDesiredRotationFrame). Recomputing
+    // per frame is what makes the assist smooth — the cached-angle approach made it jump every
+    // 20Hz tick (一顿一顿). MC's tick (20Hz) is too coarse for smooth aim.
+    /** Target world point to aim at (updated by the strategy each background tick). */
+    @Volatile var desiredTargetWorld: Vec3? = null
     /** Per-frame yaw interpolation fraction (0..1, set by the strategy). */
     @Volatile var desiredRotationFractionY: Float = 0.2f
     /** Per-frame pitch interpolation fraction (0..1, set by the strategy). */
@@ -773,8 +772,7 @@ object EventBridge {
      * pulling toward the last remembered target ("aims at one fixed spot"). Also called on disable.
      */
     fun clearDesiredRotation() {
-        desiredRotationYaw = null
-        desiredRotationPitch = null
+        desiredTargetWorld = null
         desiredRotationFractionY = 0.2f
         desiredRotationFractionP = 0.1f
         aimOffsetYaw = 0f
@@ -783,37 +781,38 @@ object EventBridge {
     }
 
     /**
-     * Main-thread per-frame aim application: move [currentYaw]/[currentPitch] a fraction of the
-     * way toward the desired rotation (exponential ease at render-frame rate). Returns false when
-     * no desired rotation is pending. The desired values are NOT cleared — they stay as the
-     * ongoing target until the strategy updates them (module disable clears them).
+     * Main-thread per-frame aim application. Recomputed EVERY RENDER FRAME from the player's
+     * CURRENT eye position toward the cached target world point — so as the player moves, the
+     * target rotation updates continuously (no 20Hz-tick jumps). The correction offset is eased
+     * exponentially (Nemui-style), with mouse-yield and soft-landing relax.
      *
-     * The player-yield is applied HERE, per frame: the faster the player is turning (mouse
-     * pixels this frame), the more the assist yields so the player leads their own turn. Computing
-     * this on the render frame (not the 20Hz tick) keeps it stable — tick intervals jitter.
-     *
-     * @param currentYaw player's current yaw (read on the main thread).
-     * @param currentPitch player's current pitch (read on the main thread).
+     * @param currentYaw player's current yaw (main thread).
+     * @param currentPitch player's current pitch (main thread).
+     * @param currentEye player's current eye position (main thread) — used to recompute the
+     *        target rotation per frame.
      * @param mouseDeltaX raw mouse delta X this frame (pixels).
      * @param mouseDeltaY raw mouse delta Y this frame (pixels).
      */
     fun drainDesiredRotationFrame(
         currentYaw: Float,
         currentPitch: Float,
+        currentEye: Vec3,
         mouseDeltaX: Float = 0f,
         mouseDeltaY: Float = 0f
     ): Boolean {
-        val yaw = desiredRotationYaw ?: return false
-        val pitch = desiredRotationPitch ?: return false
-        // Player-yield: turning hard (>= YIELD_PIXELS px/frame) → assist yields fully; idle → full pull.
+        val world = desiredTargetWorld ?: return false
+        // Player-yield: turning hard → assist yields fully; idle → full pull.
         val mouseMag = kotlin.math.sqrt(mouseDeltaX * mouseDeltaX + mouseDeltaY * mouseDeltaY)
         val yield = (1f - (mouseMag / YIELD_PIXELS)).coerceIn(0f, 1f)
         if (yield <= 0f) return false
 
-        // Nemui-style persistent offset animation: we smooth the CORRECTION (target - player),
-        // not an absolute angle. The offset persists across frames and converges exponentially, so
-        // the assist never 发飘/打转; and because it's applied on top of the player's CURRENT
-        // rotation, the player's own turns are never fought (the offset just re-targets).
+        // Recompute the target rotation from the player's CURRENT position each frame — this is
+        // what keeps the aim smooth as the player moves (no 20Hz jump).
+        val targetRot = rotationCalculatorForAim().calculateRotation(currentEye, world)
+        val yaw = targetRot.yaw
+        val pitch = targetRot.pitch
+
+        // Persistent offset animation (seed on engage).
         if (!aimAnimActive) {
             aimOffsetYaw = 0f
             aimOffsetPitch = 0f
@@ -832,23 +831,23 @@ object EventBridge {
 
         // Soft-landing: the pull weakens as the crosshair gets close to the target — near the aim
         // point it drops to ~30%, so the assist "lets go" instead of hard-locking the crosshair.
-        // This is the difference between 硬锁 (sticky lock) and 软吸附 (soft assist).
         val gap = abs(desiredOffsetYaw) + abs(desiredOffsetPitch)
         val relax = (gap / HARD_LOCK_ANGLE).coerceIn(SOFT_MIN, 1f)
 
-        // Exponential ease of the offset toward the desired correction (Nemui SimpleAnimation),
-        // scaled by the soft-landing relax.
+        // Exponential ease of the offset toward the desired correction, scaled by soft-landing.
         val fY = desiredRotationFractionY.coerceIn(0f, 1f) * yield * relax
         val fP = desiredRotationFractionP.coerceIn(0f, 1f) * yield * relax
         if (fY <= 0f && fP <= 0f) return false
         aimOffsetYaw = normalizeAngle(aimOffsetYaw + (desiredOffsetYaw - aimOffsetYaw) * fY)
         aimOffsetPitch = aimOffsetPitch + (desiredOffsetPitch - aimOffsetPitch) * fP
 
-        // Apply the smooth correction directly — no GCD quantization (dropped; it added nothing
-        // and made the assist feel stepped/hard).
+        // Apply the smooth correction directly — no GCD quantization.
         rotationApplier?.invoke(currentYaw + aimOffsetYaw, currentPitch + aimOffsetPitch)
         return true
     }
+
+    /** Reference to RotationCalculator (avoid importing it into EventBridge's namespace). */
+    private fun rotationCalculatorForAim() = io.switchlite.core.algorithm.RotationCalculator
 
     /** Dead-zone (degrees): stop assisting once this close to the target. */
     private const val DEAD_YAW = 0.2f

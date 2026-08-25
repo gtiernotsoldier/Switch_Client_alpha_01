@@ -4,7 +4,6 @@ import io.switchlite.core.algorithm.RotationCalculator
 import io.switchlite.core.condition.ConditionChecker
 import io.switchlite.core.model.PlayerState
 import io.switchlite.core.model.TargetState
-import io.switchlite.core.util.Vec2
 import io.switchlite.core.util.Vec3
 import kotlin.math.abs
 
@@ -101,16 +100,27 @@ class LegitAimStrategy : AimStrategy {
             }
         }
 
-        // 6b. Natural drift — the aim point wanders slowly within ±offset, human-like.
+        // 6b. Natural drift — the aim point wanders slowly (human-like hand noise). Applied as a
+        // small world-space offset around the multipoint point.
         val (driftYaw, driftPitch) = RotationCalculator.updateNaturalDrift(state, config.offset)
-        val targetYaw = targetRot.yaw + driftYaw
-        val targetPitch = targetRot.pitch + driftPitch
+        val eyeToTarget = Vec3(
+            aimPoint.x - eyePos.x,
+            aimPoint.y - eyePos.y,
+            aimPoint.z - eyePos.z
+        )
+        val dist = eyeToTarget.length()
+        val latX = -eyeToTarget.z / (if (dist > 0.001) dist else 1.0)
+        val latZ = eyeToTarget.x / (if (dist > 0.001) dist else 1.0)
+        val finalWorld = Vec3(
+            aimPoint.x + latX * driftYaw * 0.02 * dist,
+            aimPoint.y + driftPitch * 0.02 * dist,
+            aimPoint.z + latZ * driftYaw * 0.02 * dist
+        )
 
-        val rotationDiff = RotationCalculator.calculateDifference(aim, Vec2(targetYaw, targetPitch))
-
-        // 7. LockOnCrosshair: only assist once the crosshair is already aligned to the target.
+        // 7. LockOnCrosshair gate (optional): require the crosshair to already be near the aim.
         if (config.lockOnCrosshair) {
-            if (abs(rotationDiff.yaw) > LOCK_ANGLE || abs(rotationDiff.pitch) > LOCK_ANGLE) {
+            val diff = RotationCalculator.calculateDifference(aim, targetRot)
+            if (abs(diff.yaw) > LOCK_ANGLE || abs(diff.pitch) > LOCK_ANGLE) {
                 return AimResult.Skip
             }
         }
@@ -119,9 +129,9 @@ class LegitAimStrategy : AimStrategy {
         // Regular: exponential ease (fraction of remaining gap). Linear: near-linear (fixed small
         // fraction, stable low-speed tracking — Slinky Linear mode).
         val clickBoost = if (player.isAttackKeyDown) CLICK_SPEED_BOOST else 1f
-        val onTargetFactor = if (isOnTarget(config, rotationDiff)) ON_TARGET_FACTOR else 1f
+        val rotDiff = RotationCalculator.calculateDifference(aim, targetRot)
+        val onTargetFactor = if (abs(rotDiff.yaw) < 5f && abs(rotDiff.pitch) < 3f) ON_TARGET_FACTOR else 1f
         val fracY = if (config.linear) {
-            // Linear: constant tiny fraction — never accelerates, never snaps.
             0.06f * clickBoost * onTargetFactor * config.smoothness
         } else {
             config.aimSpeedY * clickBoost * onTargetFactor * config.smoothness
@@ -131,10 +141,6 @@ class LegitAimStrategy : AimStrategy {
         } else {
             config.aimSpeedP * clickBoost * onTargetFactor * config.smoothness
         }
-        return AimResult.ApplyRotation(Vec2(targetYaw, targetPitch), fracY, fracP)
-    }
-
-    private fun isOnTarget(config: AimConfig, diff: Vec2): Boolean {
-        return abs(diff.yaw) < 5f && abs(diff.pitch) < 3f
+        return AimResult.ApplyRotation(finalWorld, fracY, fracP)
     }
 }

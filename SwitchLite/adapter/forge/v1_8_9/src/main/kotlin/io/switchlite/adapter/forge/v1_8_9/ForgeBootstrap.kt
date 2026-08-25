@@ -262,19 +262,23 @@ object ForgeBootstrap {
             } catch (_: Exception) {}
 
             // Apply the AimAssist desired rotation on the MAIN thread, per render FRAME (not per
-            // 20Hz tick — frame-rate interpolation is ~3x smoother at 60fps). The background tick
-            // only computes the target; the actual rotationYaw/Pitch write + player-yield happens
-            // here per frame so the main thread owns MC state (same reason HitSelect's clicks land
-            // on main).
+            // 20Hz tick). The background tick only computes the target WORLD POINT; the rotation
+            // is recomputed here every frame from the player's current eye position (smooth, no
+            // 20Hz jumps). Player-yield also runs here per frame.
             try {
                 val player = MappingContext.invokeMethod(null, "forge:mc_getMinecraft")
                     ?.let { MappingContext.getFieldValue(it, "forge:mc_thePlayer") }
                 if (player != null) {
                     val curYaw = MappingContext.getFieldValue(player, "forge:player_rotationYaw") as? Float ?: 0f
                     val curPitch = MappingContext.getFieldValue(player, "forge:player_rotationPitch") as? Float ?: 0f
+                    val posX = MappingContext.getFieldValue(player, "forge:entity_posX") as? Double ?: 0.0
+                    val posY = MappingContext.getFieldValue(player, "forge:entity_posY") as? Double ?: 0.0
+                    val posZ = MappingContext.getFieldValue(player, "forge:entity_posZ") as? Double ?: 0.0
+                    val eye = io.switchlite.core.util.Vec3(posX, posY + 1.62, posZ)
                     EventBridge.drainDesiredRotationFrame(
                         currentYaw = curYaw,
                         currentPitch = curPitch,
+                        currentEye = eye,
                         mouseDeltaX = EventBridge.mouseDeltaX,
                         mouseDeltaY = EventBridge.mouseDeltaY
                     )

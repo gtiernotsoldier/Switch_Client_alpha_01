@@ -1,30 +1,32 @@
 package io.switchlite.core.strategy.aim
 
 import io.switchlite.core.util.Vec2
+import io.switchlite.core.util.Vec3
 
 /**
  * Typed result from an [AimStrategy] execution.
  *
  * The adapter maps each variant to the appropriate action:
  *
- * - [ApplyRotation] → `EventBridge.setPlayerRotation(rotation)`.
+ * - [ApplyRotation] → stores the target world point; the MAIN thread recomputes the rotation
+ *   toward it every frame and applies it.
  * - [Skip]           → do nothing this tick.
  */
 sealed class AimResult {
 
     /**
-     * The strategy computed the TARGET rotation + per-axis interpolation fractions.
+     * The strategy computed a TARGET WORLD POINT + per-axis interpolation fractions.
      *
-     * The adapter stores the target and fractions; the platform's MAIN render thread interpolates
-     * the player's rotation toward the target every FRAME (frame-rate smoothing, much smoother
-     * than the 20Hz tick).
+     * The adapter stores the target point and fractions; the platform's MAIN render thread
+     * recomputes the rotation from the player's current position every FRAME (frame-rate
+     * smoothing, much smoother than the 20Hz tick).
      *
-     * @property rotation the target (yaw, pitch) to aim toward.
+     * @property worldPoint the target point in world space to aim toward.
      * @property fractionY yaw fraction of the remaining gap closed per render frame (0..1).
      * @property fractionP pitch fraction of the remaining gap closed per render frame (0..1).
      */
     data class ApplyRotation(
-        val rotation: Vec2,
+        val worldPoint: Vec3,
         val fractionY: Float = 0.2f,
         val fractionP: Float = 0.1f
     ) : AimResult()

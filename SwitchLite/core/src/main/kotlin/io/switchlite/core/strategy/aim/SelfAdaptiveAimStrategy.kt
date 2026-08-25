@@ -4,7 +4,6 @@ import io.switchlite.core.algorithm.RotationCalculator
 import io.switchlite.core.condition.ConditionChecker
 import io.switchlite.core.model.PlayerState
 import io.switchlite.core.model.TargetState
-import io.switchlite.core.util.Vec2
 import io.switchlite.core.util.Vec3
 import kotlin.math.abs
 import kotlin.math.sqrt
@@ -136,12 +135,24 @@ class SelfAdaptiveAimStrategy : AimStrategy {
             }
         }
 
-        // 6c. Natural drift — the aim point wanders slowly within ±offset, human-like.
+        // 6c. Natural drift — the aim point wanders slowly within ±offset, human-like. Applied as
+        // a small world-space lateral offset around the multipoint point.
         val (driftYaw, driftPitch) = RotationCalculator.updateNaturalDrift(state, config.offset)
-        val targetYaw = targetRot.yaw + driftYaw
-        val targetPitch = targetRot.pitch + driftPitch
+        val eyeToTarget = Vec3(
+            aimPoint.x - eyePos.x,
+            aimPoint.y - eyePos.y,
+            aimPoint.z - eyePos.z
+        )
+        val dist = eyeToTarget.length()
+        val latX = -eyeToTarget.z / (if (dist > 0.001) dist else 1.0)
+        val latZ = eyeToTarget.x / (if (dist > 0.001) dist else 1.0)
+        val finalWorld = Vec3(
+            aimPoint.x + latX * driftYaw * 0.02 * dist,
+            aimPoint.y + driftPitch * 0.02 * dist,
+            aimPoint.z + latZ * driftYaw * 0.02 * dist
+        )
 
-        val rotationDiff = RotationCalculator.calculateDifference(aim, Vec2(targetYaw, targetPitch))
+        val rotationDiff = RotationCalculator.calculateDifference(aim, targetRot)
 
         // LockOnCrosshair: only assist once the crosshair is already aligned to the target.
         if (config.lockOnCrosshair) {
@@ -178,7 +189,7 @@ class SelfAdaptiveAimStrategy : AimStrategy {
         val onTargetFactor = if (abs(rotationDiff.yaw) < 5f && abs(rotationDiff.pitch) < 3f) ON_TARGET_FACTOR else 1f
         val fracY = config.aimSpeedY * clickBoost * onTargetFactor * strength
         val fracP = config.aimSpeedP * clickBoost * onTargetFactor * strength
-        return AimResult.ApplyRotation(Vec2(targetYaw, targetPitch), fracY, fracP)
+        return AimResult.ApplyRotation(finalWorld, fracY, fracP)
     }
 
     // ==================== Adaptive Math ====================

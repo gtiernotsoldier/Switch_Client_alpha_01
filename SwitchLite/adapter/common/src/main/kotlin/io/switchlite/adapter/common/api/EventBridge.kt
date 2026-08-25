@@ -130,6 +130,7 @@ object EventBridge {
         rotationApplier = null
         desiredRotationYaw = null
         desiredRotationPitch = null
+        desiredRotationFraction = 0.2f
         resetHurtCamHandler = null
         resetFovModifierHandler = null
         gammaSetter = null
@@ -742,22 +743,47 @@ object EventBridge {
     fun registerRotationApplier(handler: (Float, Float) -> Unit) { rotationApplier = handler }
 
     // ========== Desired Rotation (AimAssist — computed on background, applied on main thread) ==========
-    // The aim strategy computes the target rotation on the 20Hz background tick; writing the real
-    // rotationYaw/Pitch fields must happen on the MAIN thread (the only place that lands MC state,
-    // and where a background write would be overwritten). Null = no pending rotation this frame.
+    // The aim strategy computes the TARGET rotation + a per-frame interpolation fraction on the
+    // 20Hz background tick; the MAIN thread interpolates toward it EVERY RENDER FRAME
+    // (drainDesiredRotationFrame). MC's tick (20Hz) is too coarse for smooth aim — per-frame
+    // interpolation on the render thread is ~3x smoother at 60fps. The strategy never writes the
+    // real rotationYaw/Pitch fields directly (background write would be overwritten/race).
     @Volatile var desiredRotationYaw: Float? = null
     @Volatile var desiredRotationPitch: Float? = null
+    /** Per-frame interpolation fraction toward the desired rotation (0..1, set by the strategy). */
+    @Volatile var desiredRotationFraction: Float = 0.2f
 
-    /** Apply and clear the pending desired rotation (called on the main render thread). */
-    fun drainDesiredRotation(): Boolean {
-        val yaw = desiredRotationYaw
-        val pitch = desiredRotationPitch
-        if (yaw == null || pitch == null) return false
-        desiredRotationYaw = null
-        desiredRotationPitch = null
-        rotationApplier?.invoke(yaw, pitch)
+    /**
+     * Main-thread per-frame aim application: move [currentYaw]/[currentPitch] a fraction of the
+     * way toward the desired rotation (exponential ease at render-frame rate). Returns false when
+     * no desired rotation is pending. The desired values are NOT cleared — they stay as the
+     * ongoing target until the strategy updates them (module disable clears them).
+     *
+     * @param currentYaw player's current yaw (read on the main thread).
+     * @param currentPitch player's current pitch (read on the main thread).
+     */
+    fun drainDesiredRotationFrame(currentYaw: Float, currentPitch: Float): Boolean {
+        val yaw = desiredRotationYaw ?: return false
+        val pitch = desiredRotationPitch ?: return false
+        val f = desiredRotationFraction.coerceIn(0f, 1f)
+        // Stop once effectively aligned — no micro-jitter at the edge.
+        val dy = normalizeAngle(yaw - currentYaw)
+        val dp = pitch - currentPitch
+        if (abs(dy) < 0.2f && abs(dp) < 0.1f) return false
+        val newYaw = currentYaw + dy * f
+        val newPitch = currentPitch + dp * (f * 0.39f)
+        rotationApplier?.invoke(newYaw, newPitch)
         return true
     }
+
+    private fun normalizeAngle(angle: Float): Float {
+        var a = angle % 360f
+        if (a > 180f) a -= 360f
+        if (a < -180f) a += 360f
+        return a
+    }
+
+    private fun abs(v: Float): Float = if (v < 0f) -v else v
 
     // ========== Click Delay Reset (DelayRemover — 1.8 exclusive) ==========
     private var resetClickDelayHandler: (() -> Unit)? = null

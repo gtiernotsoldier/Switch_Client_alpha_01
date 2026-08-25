@@ -258,10 +258,19 @@ object ForgeBootstrap {
             // only place that writes the real KeyBinding fields (race-free).
             try { ForgeEventBridge.applySyntheticInput() } catch (_: Exception) {}
 
-            // Apply the AimAssist desired rotation on the MAIN thread (the background tick only
-            // computes it; writing rotationYaw/Pitch must happen here so the main thread owns MC
-            // state — same reason HitSelect's click land on the main thread).
-            try { EventBridge.drainDesiredRotation() } catch (_: Exception) {}
+            // Apply the AimAssist desired rotation on the MAIN thread, per render FRAME (not per
+            // 20Hz tick — frame-rate interpolation is ~3x smoother at 60fps). The background tick
+            // only computes the target + fraction; the actual rotationYaw/Pitch write happens here
+            // so the main thread owns MC state (same reason HitSelect's clicks land on main).
+            try {
+                val player = MappingContext.invokeMethod(null, "forge:mc_getMinecraft")
+                    ?.let { MappingContext.getFieldValue(it, "forge:mc_thePlayer") }
+                if (player != null) {
+                    val curYaw = MappingContext.getFieldValue(player, "forge:player_rotationYaw") as? Float ?: 0f
+                    val curPitch = MappingContext.getFieldValue(player, "forge:player_rotationPitch") as? Float ?: 0f
+                    EventBridge.drainDesiredRotationFrame(curYaw, curPitch)
+                }
+            } catch (_: Exception) {}
 
             // Send queued SprintReset packets on the main thread (NetworkManager isn't
             // strictly thread-safe; this keeps addToSendQueue on the MC thread).

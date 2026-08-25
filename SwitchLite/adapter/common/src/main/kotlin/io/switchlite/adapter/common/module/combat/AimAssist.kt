@@ -60,6 +60,12 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
      * (within a small angle). Off = assist anywhere inside the FOV cone.
      */
     private val lockOnCrosshair by boolean("LockOnCrosshair", false)
+    /**
+     * OnlyCrosshairTarget — when ON, target selection only ever uses the entity under the
+     * crosshair (objectMouseOver). It will NOT pick a different nearby entity from the FOV+range
+     * scan. Use it when you want the assist to only ever follow what your crosshair is on.
+     */
+    private val onlyCrosshairTarget by boolean("OnlyCrosshairTarget", false)
 
     // Trigger conditions (Unified Engine)
     /** Only aim while attacking (physical click OR AutoClicker active). Off = aim whenever the
@@ -109,12 +115,17 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
      * Routes to Legit/Normal (via LegitAimStrategy) or SelfAdaptive (via SelfAdaptiveAimStrategy).
      * NO algorithm logic here — only config assembly + result mapping.
      *
-     * Target selection mirrors Nemui: prefer the nearest viable entity inside the FOV cone + range
-     * (so the crosshair gets "pulled back" toward it even when slightly off), falling back to the
-     * generic tick target.
+     * Target selection: with OnlyCrosshairTarget ON, only the entity under the crosshair
+     * (EventBridge.crosshairTarget) is ever used. Otherwise, mirror Nemui: nearest viable entity
+     * inside the FOV cone + range (so the crosshair gets pulled back even when slightly off),
+     * falling back to the generic tick target.
      */
     fun onClientTick(player: PlayerState, target: TargetState?) {
-        val aimTarget = EventBridge.getFovNearestTarget(fov, rangeMax) ?: target
+        val aimTarget = if (onlyCrosshairTarget) {
+            EventBridge.crosshairTarget ?: target
+        } else {
+            EventBridge.getFovNearestTarget(fov, rangeMax) ?: target
+        }
 
         // "Clicking" = physically holding the attack button OR a synthetic click fired THIS tick
         // (AutoClicker/TriggerBot write syntheticAttack=true only while actually clicking). Using
@@ -134,10 +145,11 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
                 )
                 val result = adaptiveStrategy.execute(config, adaptiveState, input)
                 when (result) {
-                    // Write the desired rotation; the MAIN thread applies it (see drainDesiredRotation).
+                    // Write target + per-frame fraction; the MAIN thread interpolates every frame.
                     is AimResult.ApplyRotation -> {
                         EventBridge.desiredRotationYaw = result.rotation.yaw
                         EventBridge.desiredRotationPitch = result.rotation.pitch
+                        EventBridge.desiredRotationFraction = result.fraction
                     }
                     is AimResult.Skip -> { /* no-op */ }
                 }
@@ -154,10 +166,11 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
                 )
                 val result = legitStrategy.execute(config, legitState, input)
                 when (result) {
-                    // Write the desired rotation; the MAIN thread applies it (see drainDesiredRotation).
+                    // Write target + per-frame fraction; the MAIN thread interpolates every frame.
                     is AimResult.ApplyRotation -> {
                         EventBridge.desiredRotationYaw = result.rotation.yaw
                         EventBridge.desiredRotationPitch = result.rotation.pitch
+                        EventBridge.desiredRotationFraction = result.fraction
                     }
                     is AimResult.Skip -> { /* no-op */ }
                 }
@@ -181,5 +194,8 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
         tickListener = null
         legitState.reset()
         adaptiveState.reset()
+        // Stop any in-flight frame interpolation immediately.
+        EventBridge.desiredRotationYaw = null
+        EventBridge.desiredRotationPitch = null
     }
 }

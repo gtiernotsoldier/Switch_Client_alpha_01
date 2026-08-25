@@ -215,20 +215,16 @@ class SelfAdaptiveAimStrategy : AimStrategy {
             config, state.alignmentEma
         )
 
-        // 9. Physics: fixed-speed glide (rotMove) — distance/time feel, like a hand.
-        // Yield factor: the faster the PLAYER is turning (mouse pixels/tick), the more the assist
-        // yields so the player leads; when they stop, the assist pulls back in.
+        // 9. Output: TARGET rotation + per-frame interpolation fraction. Actual smoothing runs on
+        // the MAIN thread every render frame (drainDesiredRotationFrame) — frame-rate, not tick.
+        // Fraction: player-turn yield (fast mouse = assist yields), gentle click boost, on-target
+        // deceleration, scaled by the adaptive EMA (dynamicAimSpeed/dynamicSmoothness).
         val mouseMag = kotlin.math.sqrt(mouseDeltaX * mouseDeltaX + mouseDeltaY * mouseDeltaY)
         val yield = (1f - (mouseMag / YIELD_PIXELS)).coerceIn(0f, 1f)
         val clickBoost = if (player.isAttackKeyDown) CLICK_SPEED_BOOST else 1f
-        val speed = dynamicAimSpeed.toFloat() * yield * clickBoost * (if (onTarget) ON_TARGET_FACTOR else 1f) * dynamicSmoothness
-        // Stop threshold: once the delta is tiny, release entirely (no micro-jitter at the edge).
-        if (abs(rotationDiff.yaw) < STOP_YAW && abs(rotationDiff.pitch) < STOP_PITCH) {
-            return AimResult.Skip
-        }
-        val newYaw = RotationCalculator.rotMove(targetYaw, aim.yaw, speed)
-        val newPitch = RotationCalculator.rotMove(targetPitch, aim.pitch, speed * 0.39f)
-        return AimResult.ApplyRotation(Vec2(newYaw, newPitch))
+        val fraction = (dynamicAimSpeed / 50f) * yield * clickBoost *
+            (if (onTarget) ON_TARGET_FACTOR else 1f) * dynamicSmoothness
+        return AimResult.ApplyRotation(Vec2(targetYaw, targetPitch), fraction)
     }
 
     // ==================== Adaptive Math ====================

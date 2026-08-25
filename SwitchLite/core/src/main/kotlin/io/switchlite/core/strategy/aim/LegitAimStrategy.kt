@@ -165,20 +165,18 @@ class LegitAimStrategy : AimStrategy {
             }
         }
 
-        // 7. Physics: fixed-speed glide (rotMove). Speed = max degrees per tick — distance/time
-        // feel, so the pull takes a constant time proportional to the gap, like a hand.
-        // Yield factor: the faster the PLAYER is turning (mouse pixels/tick), the more the assist
-        // yields — the player leads their own turn; when they stop, the assist pulls back in.
+        // 7. Output: the TARGET rotation + a per-frame interpolation fraction. The actual
+        // smoothing happens on the MAIN thread every render FRAME (drainDesiredRotationFrame) —
+        // frame-rate interpolation is much smoother than the 20Hz tick.
+        // Fraction components:
+        //  - player-turn yield: the faster the PLAYER turns (mouse px/tick), the more the assist
+        //    yields so the player leads; idle mouse → assist pulls back in.
+        //  - click boost (gentle) and on-target deceleration (LB aimWhileOnTarget).
         val yield = (1f - (kotlin.math.sqrt(mouseDeltaX * mouseDeltaX + mouseDeltaY * mouseDeltaY) / YIELD_PIXELS))
             .coerceIn(0f, 1f)
         val clickBoost = if (player.isAttackKeyDown) CLICK_SPEED_BOOST else 1f
-        val speed = config.aimSpeed.toFloat() * yield * clickBoost * (if (onTarget) ON_TARGET_FACTOR else 1f)
-        val newYaw = RotationCalculator.rotMove(targetYaw, aim.yaw, speed)
-        val newPitch = RotationCalculator.rotMove(targetPitch, aim.pitch, speed * 0.39f)
-        // Stop threshold: once the delta is tiny, release entirely (no micro-jitter at the edge).
-        if (abs(rotationDiff.yaw) < STOP_YAW && abs(rotationDiff.pitch) < STOP_PITCH) {
-            return AimResult.Skip
-        }
-        return AimResult.ApplyRotation(Vec2(newYaw, newPitch))
+        // aimSpeed 1-20 maps to a base fraction 0.02..0.4 per frame.
+        val fraction = (config.aimSpeed / 50f) * yield * clickBoost * (if (onTarget) ON_TARGET_FACTOR else 1f)
+        return AimResult.ApplyRotation(Vec2(targetYaw, targetPitch), fraction)
     }
 }

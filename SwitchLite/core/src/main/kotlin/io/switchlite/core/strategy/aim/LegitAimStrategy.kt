@@ -6,33 +6,32 @@ import io.switchlite.core.condition.ConditionChecker
 import io.switchlite.core.model.PlayerState
 import io.switchlite.core.model.TargetState
 import io.switchlite.core.option.AimMode
-import io.switchlite.core.util.Vec2
-import kotlin.math.abs
+import io.switchlite.core.util.Vec3
 import kotlin.math.exp
-import kotlin.math.sqrt
 
 /**
  * Default LEGIT / NORMAL aim strategy with full humanization.
  *
  * Processing pipeline per tick:
  * 1. Null-target guard → Skip.
- * 2. Horizontal range check (X/Z distance) → Skip.
+ * 2. 3D range check (full sphere distance) → Skip.
  * 3. Unified condition check → Skip.
  * 4. Target-switch detection → reset overshoot, sample reaction delay.
  * 5. Reaction delay countdown → Skip while > 0.
  * 6. Target point computation:
- *    - LEGIT: closest box-edge if outside hitbox; Skip if already inside.
- *    - NORMAL: center or random point within hitbox.
- * 7. FOV check → Skip if outside FOV.
- * 8. Smoothing & interpolation (separate yaw/pitch factors).
+ *    - LEGIT: pull the crosshair back to the nearest box surface if it drifted out; Skip if inside.
+ *    - NORMAL: lock onto the exact point the crosshair ray hits; pull toward it until it hits.
+ * 7. Spherical FOV check → Skip if outside the 3D cone.
+ * 8. Smoothing & velocity-limited glide (separate yaw/pitch factors).
  * 9. Overshoot state machine (IDLE → OVERSHOOT → CORRECT → IDLE).
  * 10. Random-walk noise injection.
  * 11. Emit [AimResult.ApplyRotation].
  */
 class LegitAimStrategy : AimStrategy {
 
-    /** LockOnCrosshair alignment threshold (degrees): crosshair must be this close to assist. */
-    internal val lockAngleDegrees = 8f
+    private companion object {
+        const val EYE_HEIGHT = 1.62
+    }
 
     override fun execute(
         config: AimConfig,
@@ -57,11 +56,12 @@ class LegitAimStrategy : AimStrategy {
             return AimResult.Skip
         }
 
-        // 2. Horizontal range check (X/Z only, ignore height)
-        val dx = player.position.x - target.position.x
-        val dz = player.position.z - target.position.z
-        val horizontalDistance = sqrt(dx * dx + dz * dz)
-        if (horizontalDistance < config.rangeMin || horizontalDistance > config.rangeMax) {
+        val eyePos = Vec3(player.position.x, player.position.y + EYE_HEIGHT, player.position.z)
+        val aim = player.rotation
+
+        // 2. 3D range check (full sphere distance, not just X/Z)
+        val distance3D = player.position.distanceTo(target.position)
+        if (distance3D < config.rangeMin || distance3D > config.rangeMax) {
             state.resetOvershoot()
             return AimResult.Skip
         }
@@ -84,38 +84,28 @@ class LegitAimStrategy : AimStrategy {
             return AimResult.Skip
         }
 
-        // 6. Target point computation
-        val targetPoint = when (config.mode) {
+        // 6. Target point computation (world point + rotation)
+        val targetPoint: Vec3 = when (config.mode) {
             AimMode.LEGIT, AimMode.SELF_ADAPTIVE -> {
-                if (RotationCalculator.isInsideHitbox(
-                        player.position, player.rotation, target.hitbox
-                    )
-                ) {
-                    // Already inside hitbox — human-like hesitation
-                    return AimResult.Skip
-                }
-                RotationCalculator.getClosestBoxEdge(
-                    player.position, player.rotation, target.hitbox
-                )
+                // Inside the collision box -> do nothing. Only correct the crosshair back to the
+                // box edge when it drifts outside, and STOP there (no hard lock to a corner).
+                val edge = RotationCalculator.getBoxEdgeTarget(eyePos, aim, target.hitbox)
+                if (edge == null) return AimResult.Skip
+                edge.world
             }
             AimMode.NORMAL -> {
-                RotationCalculator.calculateTargetPoint(
-                    player.position, target.hitbox, config.lockOnCrosshair
-                )
+                // Lock onto the exact point the crosshair ray hits the box. If the ray misses,
+                // pull toward the nearest surface until it hits, then it locks there.
+                val hit = RotationCalculator.rayHitPoint(eyePos, aim, target.hitbox)
+                hit ?: (RotationCalculator.getBoxEdgeTarget(eyePos, aim, target.hitbox)?.world
+                    ?: target.position)
             }
         }
+        val targetRotation = RotationCalculator.calculateRotation(eyePos, targetPoint)
 
-        // 7. FOV check
-        val rotationDiff = RotationCalculator.calculateDifference(player.rotation, targetPoint)
-        if (!RotationCalculator.isWithinFov(rotationDiff, config.horizontalFov, config.verticalFov)) {
+        // 7. Spherical FOV check (3D cone; radius grows with distance)
+        if (!RotationCalculator.isWithinFov3D(eyePos, aim, targetPoint, config.fov)) {
             return AimResult.Skip
-        }
-        // LockOnCrosshair: only assist once the crosshair is already aligned to the target. Off = any
-        // point in the FOV. This stops the crosshair flying toward a target on its own (detectable).
-        if (config.lockOnCrosshair) {
-            if (abs(rotationDiff.yaw) > lockAngleDegrees || abs(rotationDiff.pitch) > lockAngleDegrees) {
-                return AimResult.Skip
-            }
         }
 
         // 8. Smoothing factors = max degrees moved per tick (velocity-limited glide, not a
@@ -123,11 +113,13 @@ class LegitAimStrategy : AimStrategy {
         val yawFactor = config.aimSpeed * 0.5f * config.smoothness
         val pitchFactor = config.aimSpeed * 0.5f * config.smoothness * 0.6f
 
+        val rotationDiff = RotationCalculator.calculateDifference(aim, targetRotation)
+
         // 9. Overshoot state machine (shared via OvershootHelper)
         val finalRotation = OvershootHelper.execute(
             state = state,
             player = player,
-            targetPoint = targetPoint,
+            targetPoint = targetRotation,
             rotationDiff = rotationDiff,
             yawFactor = yawFactor,
             pitchFactor = pitchFactor
@@ -142,7 +134,6 @@ class LegitAimStrategy : AimStrategy {
     // ---- Helpers ----
 
     /**
-     * Sample a reaction delay in ticks using a log-normal distribution.
      * Sample a reaction delay in ticks using a log-normal distribution.
      * Models human reaction time: median ~3 ticks at 20 TPS.
      */

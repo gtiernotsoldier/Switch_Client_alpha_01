@@ -37,26 +37,20 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
     }
 
     // ========== Configuration (Delegated Properties) ==========
-    // Range settings
+    // Range settings (3D distance, blocks)
     private val rangeMin by float("RangeMin", 3.0f, 0.0f..10.0f, "blocks")
     private val rangeMax by float("RangeMax", 6.0f, 0.0f..10.0f, "blocks")
 
-    // FOV settings
-    private val horizontalFov by float("HorizontalFOV", 90.0f, 0.0f..360.0f, "degrees")
-    private val verticalFov by float("VerticalFOV", 60.0f, 0.0f..360.0f, "degrees")
+    // FOV setting (single spherical cone angle; radius grows with distance)
+    private val fov by float("Fov", 60.0f, 0.0f..360.0f, "degrees")
 
     // Behavior settings
     private val aimSpeed by int("AimSpeed", 8, 1..20, "%")
     private val smoothness by float("Smoothness", 0.85f, 0.0f..1.0f)
     private val noiseIntensity by float("NoiseIntensity", 0.05f, 0.0f..0.5f)
 
-    // Mode: Legit (box edge) vs Normal (center/random) vs SelfAdaptive (adaptive)
+    // Mode: Legit (box edge) vs Normal (crosshair-point lock) vs SelfAdaptive (adaptive)
     private val mode by choices("Mode", arrayOf("Legit", "Normal", "SelfAdaptive"))
-    /**
-     * LockOnCrosshair — when ON, only assist once the crosshair is already aligned to the target
-     * (within a small angle). Off = assist anywhere inside the FOV.
-     */
-    private val lockOnCrosshair by boolean("LockOnCrosshair", false)
 
     // Trigger conditions (Unified Engine)
     /** Only aim while attacking (physical click OR AutoClicker active). Off = aim whenever the
@@ -85,12 +79,10 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
         },
         rangeMin = rangeMin,
         rangeMax = rangeMax,
-        horizontalFov = horizontalFov,
-        verticalFov = verticalFov,
+        fov = fov,
         aimSpeed = aimSpeed,
         smoothness = smoothness,
         noiseIntensity = noiseIntensity,
-        lockOnCrosshair = lockOnCrosshair,
         triggerOptions = triggerOptions
     )
 

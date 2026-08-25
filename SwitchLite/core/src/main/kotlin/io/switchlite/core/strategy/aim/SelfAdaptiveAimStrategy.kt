@@ -6,9 +6,8 @@ import io.switchlite.core.condition.ConditionChecker
 import io.switchlite.core.model.PlayerState
 import io.switchlite.core.model.TargetState
 import io.switchlite.core.option.AimMode
-import io.switchlite.core.util.Vec2
+import io.switchlite.core.util.Vec3
 import kotlin.math.abs
-import kotlin.math.sqrt
 
 /**
  * Self-adaptive aim strategy — adjusts assist intensity based on the player's
@@ -37,8 +36,9 @@ import kotlin.math.sqrt
  */
 class SelfAdaptiveAimStrategy : AimStrategy {
 
-    /** LockOnCrosshair alignment threshold (degrees): crosshair must be this close to assist. */
-    private val LOCK_ANGLE = 8f
+    private companion object {
+        const val EYE_HEIGHT = 1.62
+    }
 
     /** Extended state with adaptive tracking fields. */
     class AdaptiveState : AimStrategy.State() {
@@ -83,11 +83,12 @@ class SelfAdaptiveAimStrategy : AimStrategy {
             return AimResult.Skip
         }
 
-        // 2. Horizontal range check
-        val dx = player.position.x - target.position.x
-        val dz = player.position.z - target.position.z
-        val horizontalDistance = sqrt(dx * dx + dz * dz)
-        if (horizontalDistance < config.rangeMin || horizontalDistance > config.rangeMax) {
+        val eyePos = Vec3(player.position.x, player.position.y + EYE_HEIGHT, player.position.z)
+        val aim = player.rotation
+
+        // 2. 3D range check (full sphere distance)
+        val distance3D = player.position.distanceTo(target.position)
+        if (distance3D < config.rangeMin || distance3D > config.rangeMax) {
             state.resetOvershoot()
             return AimResult.Skip
         }
@@ -111,37 +112,27 @@ class SelfAdaptiveAimStrategy : AimStrategy {
             return AimResult.Skip
         }
 
-        // 6. Target point computation (same as LegitAimStrategy)
-        val targetPoint = when (config.mode) {
+        // 6. Target point computation (same geometry as LegitAimStrategy)
+        val targetPoint: Vec3 = when (config.mode) {
             AimMode.LEGIT, AimMode.SELF_ADAPTIVE -> {
-                if (RotationCalculator.isInsideHitbox(
-                        player.position, player.rotation, target.hitbox
-                    )
-                ) {
-                    return AimResult.Skip
-                }
-                RotationCalculator.getClosestBoxEdge(
-                    player.position, player.rotation, target.hitbox
-                )
+                val edge = RotationCalculator.getBoxEdgeTarget(eyePos, aim, target.hitbox)
+                if (edge == null) return AimResult.Skip
+                edge.world
             }
             AimMode.NORMAL -> {
-                RotationCalculator.calculateTargetPoint(
-                    player.position, target.hitbox, config.lockOnCrosshair
-                )
+                val hit = RotationCalculator.rayHitPoint(eyePos, aim, target.hitbox)
+                hit ?: (RotationCalculator.getBoxEdgeTarget(eyePos, aim, target.hitbox)?.world
+                    ?: target.position)
             }
         }
+        val targetRotation = RotationCalculator.calculateRotation(eyePos, targetPoint)
 
-        // 7. FOV check
-        val rotationDiff = RotationCalculator.calculateDifference(player.rotation, targetPoint)
-        if (!RotationCalculator.isWithinFov(rotationDiff, config.horizontalFov, config.verticalFov)) {
+        // 7. Spherical FOV check (3D cone; radius grows with distance)
+        if (!RotationCalculator.isWithinFov3D(eyePos, aim, targetPoint, config.fov)) {
             return AimResult.Skip
         }
-        // LockOnCrosshair: only assist once the crosshair is already aligned to the target.
-        if (config.lockOnCrosshair) {
-            if (abs(rotationDiff.yaw) > LOCK_ANGLE || abs(rotationDiff.pitch) > LOCK_ANGLE) {
-                return AimResult.Skip
-            }
-        }
+
+        val rotationDiff = RotationCalculator.calculateDifference(aim, targetRotation)
 
         // 8. Self-adaptive: update alignment EMA and compute dynamic factors
         val angularError = abs(rotationDiff.yaw) + abs(rotationDiff.pitch)
@@ -174,7 +165,7 @@ class SelfAdaptiveAimStrategy : AimStrategy {
         val finalRotation = OvershootHelper.execute(
             state = state,
             player = player,
-            targetPoint = targetPoint,
+            targetPoint = targetRotation,
             rotationDiff = rotationDiff,
             yawFactor = yawFactor,
             pitchFactor = pitchFactor

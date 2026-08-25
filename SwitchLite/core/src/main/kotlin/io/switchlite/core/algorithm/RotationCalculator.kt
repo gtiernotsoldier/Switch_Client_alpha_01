@@ -31,11 +31,38 @@ object RotationCalculator {
     }
     
     /**
-     * Check if rotation difference is within FOV limits.
+     * Check if rotation difference is within FOV limits (axis-aligned box, yaw/pitch space).
+     * Retained for backward-compat / tests; prefer [isWithinFov3D] for spherical FOV.
      */
     fun isWithinFov(diff: Vec2, horizontalFov: Float, verticalFov: Float): Boolean {
         return kotlin.math.abs(diff.yaw) <= horizontalFov / 2f && 
                kotlin.math.abs(diff.pitch) <= verticalFov / 2f
+    }
+
+    /**
+     * True 3D spherical FOV check: the target point is "in view" when the angle between the
+     * current aim direction and the direction to the target point is within [fov]/2 degrees.
+     *
+     * This is a cone (sphere cross-section at the target's distance) whose physical radius
+     * grows linearly with distance — the standard FOV geometry.
+     *
+     * @param origin eye position (world).
+     * @param aim current aim rotation (yaw, pitch in degrees).
+     * @param targetPoint the aim target point in world space.
+     * @param fov total cone angle in degrees (radius = fov / 2).
+     */
+    fun isWithinFov3D(origin: Vec3, aim: Vec2, targetPoint: Vec3, fov: Float): Boolean {
+        val toTarget = Vec3(
+            targetPoint.x - origin.x,
+            targetPoint.y - origin.y,
+            targetPoint.z - origin.z
+        )
+        val dist = toTarget.length()
+        if (dist < 1e-6) return true
+        val dir = aimToDirection(aim)
+        val cosAngle = (dir.dot(toTarget) / dist).coerceIn(-1.0, 1.0)
+        val angle = Math.toDegrees(kotlin.math.acos(cosAngle)).toFloat()
+        return angle <= fov / 2f
     }
     
     /**
@@ -179,7 +206,140 @@ object RotationCalculator {
         return calculateRotation(eyePos, targetPoint)
     }
 
-    // ========== Private Helpers ==========
+    /**
+     * Compute the entry point where the aim ray (from [origin] along [aim]) first intersects
+     * the [hitbox]. Returns null if the ray misses the box.
+     *
+     * Used by NORMAL mode to "lock onto" the exact point the crosshair touches, and by LEGIT
+     * to detect whether the crosshair is currently inside the box.
+     */
+    fun rayHitPoint(origin: Vec3, aim: Vec2, hitbox: Hitbox): Vec3? {
+        val dir = aimToDirection(aim)
+        val hit = rayAabbEntry(origin, dir, hitbox) ?: return null
+        return Vec3(
+            origin.x + dir.x * hit,
+            origin.y + dir.y * hit,
+            origin.z + dir.z * hit
+        )
+    }
+
+    /**
+     * Get the world point + rotation toward the closest point on the box surface to the current
+     * aim ray. Unlike the edge-only variant, this picks the nearest surface point so LEGIT mode
+     * "stops at the box edge" rather than hard-locking a corner.
+     *
+     * @return a [BoxEdgeTarget] holding the world point and the rotation toward it, or null if
+     *         the ray already intersects the box (i.e. the crosshair is inside).
+     */
+    fun getBoxEdgeTarget(origin: Vec3, aim: Vec2, hitbox: Hitbox): BoxEdgeTarget? {
+        val dir = aimToDirection(aim)
+        if (rayAabbEntry(origin, dir, hitbox) != null) return null // already inside
+        val surfacePoint = closestSurfacePoint(origin, dir, hitbox)
+        return BoxEdgeTarget(surfacePoint, calculateRotation(origin, surfacePoint))
+    }
+
+    /** Result bundle for box-edge aiming: the world surface point and the rotation toward it. */
+    data class BoxEdgeTarget(val world: Vec3, val rotation: Vec2)
+
+    /**
+     * Compute the closest world point on the AABB surface to a ray (origin + dir*t, t>=0).
+     * For each of the 6 faces, clamp the ray's intersection with the face plane onto the face
+     * rectangle, and keep the point with the smallest distance to the ray.
+     */
+    private fun closestSurfacePoint(origin: Vec3, dir: Vec3, box: Hitbox): Vec3 {
+        val faces = listOf(
+            0 to box.minX, 0 to box.maxX,
+            1 to box.minY, 1 to box.maxY,
+            2 to box.minZ, 2 to box.maxZ
+        )
+        var best: Vec3? = null
+        var bestDist = Double.MAX_VALUE
+        for ((axis, value) in faces) {
+            val p = closestPointOnFaceToRay(origin, dir, box, axis, value) ?: continue
+            val d = distancePointToRay(p, origin, dir)
+            if (d < bestDist) {
+                bestDist = d
+                best = p
+            }
+        }
+        return best ?: boxCenter(box)
+    }
+
+    /**
+     * Closest point on a face rectangle to the ray. [axis] is the fixed axis (0=x,1=y,2=z) and
+     * [value] is its constant coordinate. The other two axes are free and bounded by the box.
+     */
+    private fun closestPointOnFaceToRay(
+        origin: Vec3, dir: Vec3, box: Hitbox, axis: Int, value: Double
+    ): Vec3? {
+        val d = when (axis) {
+            0 -> dir.x
+            1 -> dir.y
+            2 -> dir.z
+            else -> 0.0
+        }
+        if (kotlin.math.abs(d) < 1e-9) return null // ray parallel to the plane
+        val t = (value - originCoordinate(origin, axis)) / d
+        if (t < 0.0) return null // plane behind the ray
+        val px = origin.x + dir.x * t
+        val py = origin.y + dir.y * t
+        val pz = origin.z + dir.z * t
+        val x = if (axis == 0) value else px.coerceIn(box.minX, box.maxX)
+        val y = if (axis == 1) value else py.coerceIn(box.minY, box.maxY)
+        val z = if (axis == 2) value else pz.coerceIn(box.minZ, box.maxZ)
+        return Vec3(x, y, z)
+    }
+
+    private fun originCoordinate(origin: Vec3, axis: Int): Double = when (axis) {
+        0 -> origin.x
+        1 -> origin.y
+        2 -> origin.z
+        else -> 0.0
+    }
+
+    /** Perpendicular distance from a point to a ray (origin + dir*t, t>=0), in world units. */
+    private fun distancePointToRay(p: Vec3, origin: Vec3, dir: Vec3): Double {
+        val toPoint = p - origin
+        val t = toPoint.dot(dir)
+        if (t < 0.0) return toPoint.length()
+        val proj = origin + dir * t
+        return p.distanceTo(proj)
+    }
+
+    private fun boxCenter(box: Hitbox): Vec3 = Vec3(
+        (box.minX + box.maxX) / 2.0,
+        (box.minY + box.maxY) / 2.0,
+        (box.minZ + box.maxZ) / 2.0
+    )
+
+    /**
+     * Entry parameter t (>= 0) where a ray (origin + dir*t) first enters the AABB, or null if
+     * the ray misses the box. Reuses the slab method.
+     */
+    private fun rayAabbEntry(origin: Vec3, dir: Vec3, box: Hitbox): Double? {
+        var tmin = Double.NEGATIVE_INFINITY
+        var tmax = Double.POSITIVE_INFINITY
+        val axes = listOf(
+            Triple(origin.x, dir.x, Pair(box.minX, box.maxX)),
+            Triple(origin.y, dir.y, Pair(box.minY, box.maxY)),
+            Triple(origin.z, dir.z, Pair(box.minZ, box.maxZ))
+        )
+        for ((o, d, range) in axes) {
+            if (kotlin.math.abs(d) < 1e-8) {
+                if (o < range.first || o > range.second) return null
+            } else {
+                val invD = 1.0 / d
+                var t1 = (range.first - o) * invD
+                var t2 = (range.second - o) * invD
+                if (t1 > t2) { val tmp = t1; t1 = t2; t2 = tmp }
+                if (t1 > tmin) tmin = t1
+                if (t2 < tmax) tmax = t2
+                if (tmin > tmax) return null
+            }
+        }
+        return if (tmax < 0.0) null else if (tmin < 0.0) 0.0 else tmin
+    }
+
 
     private enum class Face { MIN_X, MAX_X, MIN_Y, MAX_Y, MIN_Z, MAX_Z }
 

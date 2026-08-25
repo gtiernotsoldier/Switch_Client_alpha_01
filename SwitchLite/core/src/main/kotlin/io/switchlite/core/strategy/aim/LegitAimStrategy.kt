@@ -42,8 +42,6 @@ class LegitAimStrategy : AimStrategy {
         const val STOP_PITCH = 0.1f
         /** FOV value that means "full 360°" — the cone gate is skipped entirely. */
         const val FULL_FOV = 360f
-        /** Mouse pixels/tick above which the assist fully yields to the player (they are turning). */
-        const val YIELD_PIXELS = 120f
     }
 
     override fun execute(
@@ -166,17 +164,13 @@ class LegitAimStrategy : AimStrategy {
         }
 
         // 7. Output: the TARGET rotation + a per-frame interpolation fraction. The actual
-        // smoothing happens on the MAIN thread every render FRAME (drainDesiredRotationFrame) —
-        // frame-rate interpolation is much smoother than the 20Hz tick.
-        // Fraction components:
-        //  - player-turn yield: the faster the PLAYER turns (mouse px/tick), the more the assist
-        //    yields so the player leads; idle mouse → assist pulls back in.
-        //  - click boost (gentle) and on-target deceleration (LB aimWhileOnTarget).
-        val yield = (1f - (kotlin.math.sqrt(mouseDeltaX * mouseDeltaX + mouseDeltaY * mouseDeltaY) / YIELD_PIXELS))
-            .coerceIn(0f, 1f)
+        // smoothing + player-yield happen on the MAIN thread every render FRAME
+        // (drainDesiredRotationFrame) — frame-rate interpolation is much smoother than the 20Hz
+        // tick. The fraction here only carries click boost (gentle) and on-target deceleration
+        // (LB aimWhileOnTarget); the mouse-yield is applied per frame in the adapter.
         val clickBoost = if (player.isAttackKeyDown) CLICK_SPEED_BOOST else 1f
         // aimSpeed 1-20 maps to a base fraction 0.02..0.4 per frame.
-        val fraction = (config.aimSpeed / 50f) * yield * clickBoost * (if (onTarget) ON_TARGET_FACTOR else 1f)
+        val fraction = (config.aimSpeed / 50f) * clickBoost * (if (onTarget) ON_TARGET_FACTOR else 1f)
         return AimResult.ApplyRotation(Vec2(targetYaw, targetPitch), fraction)
     }
 }

@@ -49,8 +49,6 @@ class SelfAdaptiveAimStrategy : AimStrategy {
         const val STOP_PITCH = 0.1f
         /** FOV value that means "full 360°" — the cone gate is skipped entirely. */
         const val FULL_FOV = 360f
-        /** Mouse pixels/tick above which the assist fully yields to the player (they are turning). */
-        const val YIELD_PIXELS = 120f
     }
 
     /** Extended state with adaptive tracking fields. */
@@ -215,14 +213,12 @@ class SelfAdaptiveAimStrategy : AimStrategy {
             config, state.alignmentEma
         )
 
-        // 9. Output: TARGET rotation + per-frame interpolation fraction. Actual smoothing runs on
-        // the MAIN thread every render frame (drainDesiredRotationFrame) — frame-rate, not tick.
-        // Fraction: player-turn yield (fast mouse = assist yields), gentle click boost, on-target
-        // deceleration, scaled by the adaptive EMA (dynamicAimSpeed/dynamicSmoothness).
-        val mouseMag = kotlin.math.sqrt(mouseDeltaX * mouseDeltaX + mouseDeltaY * mouseDeltaY)
-        val yield = (1f - (mouseMag / YIELD_PIXELS)).coerceIn(0f, 1f)
+        // 9. Output: TARGET rotation + per-frame interpolation fraction. Actual smoothing and the
+        // player-yield run on the MAIN thread every render frame (drainDesiredRotationFrame) —
+        // frame-rate, not tick. Fraction here carries gentle click boost, on-target deceleration,
+        // and the adaptive EMA (dynamicAimSpeed/dynamicSmoothness); mouse-yield is per-frame.
         val clickBoost = if (player.isAttackKeyDown) CLICK_SPEED_BOOST else 1f
-        val fraction = (dynamicAimSpeed / 50f) * yield * clickBoost *
+        val fraction = (dynamicAimSpeed / 50f) * clickBoost *
             (if (onTarget) ON_TARGET_FACTOR else 1f) * dynamicSmoothness
         return AimResult.ApplyRotation(Vec2(targetYaw, targetPitch), fraction)
     }

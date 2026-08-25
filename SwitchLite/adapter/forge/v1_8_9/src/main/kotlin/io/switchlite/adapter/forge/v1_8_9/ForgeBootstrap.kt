@@ -144,15 +144,9 @@ object ForgeBootstrap {
             if (mc != null) {
                 val player = MappingContext.getFieldValue(mc, "forge:mc_thePlayer")
 
-                // Mouse delta
-                try {
-                    EventBridge.mouseDeltaX = (mouseGetDX.invoke(null) as Int).toFloat()
-                    EventBridge.mouseDeltaY = (mouseGetDY.invoke(null) as Int).toFloat()
-                } catch (_: Exception) {}
-                try {
-                    val gs = MappingContext.getFieldValue(mc, "forge:mc_gameSettings")
-                    EventBridge.mouseSensitivity = MappingContext.getFieldValue(gs, "forge:gs_mouseSensitivity") as? Float ?: 1.0f
-                } catch (_: Exception) {}
+                // NOTE: mouse delta is NOT sampled here — LWJGL Mouse.getDX/getDY are per-frame
+                // buffers consumed on the render thread; sampling at 20Hz tick drops frames and
+                // jitters with unstable tick intervals. It's read every render frame in render().
 
                 // Physical mouse buttons
                 try {
@@ -258,17 +252,32 @@ object ForgeBootstrap {
             // only place that writes the real KeyBinding fields (race-free).
             try { ForgeEventBridge.applySyntheticInput() } catch (_: Exception) {}
 
+            // Sample mouse delta EVERY render frame (LWJGL Mouse.getDX/getDY are per-frame buffers;
+            // sampling them on the 20Hz tick drops frames and jitters with unstable tick intervals).
+            try {
+                EventBridge.mouseDeltaX = (mouseGetDX.invoke(null) as Int).toFloat()
+                EventBridge.mouseDeltaY = (mouseGetDY.invoke(null) as Int).toFloat()
+                val gs = MappingContext.getFieldValue(mc, "forge:mc_gameSettings")
+                EventBridge.mouseSensitivity = MappingContext.getFieldValue(gs, "forge:gs_mouseSensitivity") as? Float ?: 1.0f
+            } catch (_: Exception) {}
+
             // Apply the AimAssist desired rotation on the MAIN thread, per render FRAME (not per
             // 20Hz tick — frame-rate interpolation is ~3x smoother at 60fps). The background tick
-            // only computes the target + fraction; the actual rotationYaw/Pitch write happens here
-            // so the main thread owns MC state (same reason HitSelect's clicks land on main).
+            // only computes the target; the actual rotationYaw/Pitch write + player-yield happens
+            // here per frame so the main thread owns MC state (same reason HitSelect's clicks land
+            // on main).
             try {
                 val player = MappingContext.invokeMethod(null, "forge:mc_getMinecraft")
                     ?.let { MappingContext.getFieldValue(it, "forge:mc_thePlayer") }
                 if (player != null) {
                     val curYaw = MappingContext.getFieldValue(player, "forge:player_rotationYaw") as? Float ?: 0f
                     val curPitch = MappingContext.getFieldValue(player, "forge:player_rotationPitch") as? Float ?: 0f
-                    EventBridge.drainDesiredRotationFrame(curYaw, curPitch)
+                    EventBridge.drainDesiredRotationFrame(
+                        currentYaw = curYaw,
+                        currentPitch = curPitch,
+                        mouseDeltaX = EventBridge.mouseDeltaX,
+                        mouseDeltaY = EventBridge.mouseDeltaY
+                    )
                 }
             } catch (_: Exception) {}
 

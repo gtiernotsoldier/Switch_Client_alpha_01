@@ -759,13 +759,28 @@ object EventBridge {
      * no desired rotation is pending. The desired values are NOT cleared — they stay as the
      * ongoing target until the strategy updates them (module disable clears them).
      *
+     * The player-yield is applied HERE, per frame: the faster the player is turning (mouse
+     * pixels this frame), the more the assist yields so the player leads their own turn. Computing
+     * this on the render frame (not the 20Hz tick) keeps it stable — tick intervals jitter.
+     *
      * @param currentYaw player's current yaw (read on the main thread).
      * @param currentPitch player's current pitch (read on the main thread).
+     * @param mouseDeltaX raw mouse delta X this frame (pixels).
+     * @param mouseDeltaY raw mouse delta Y this frame (pixels).
      */
-    fun drainDesiredRotationFrame(currentYaw: Float, currentPitch: Float): Boolean {
+    fun drainDesiredRotationFrame(
+        currentYaw: Float,
+        currentPitch: Float,
+        mouseDeltaX: Float = 0f,
+        mouseDeltaY: Float = 0f
+    ): Boolean {
         val yaw = desiredRotationYaw ?: return false
         val pitch = desiredRotationPitch ?: return false
-        val f = desiredRotationFraction.coerceIn(0f, 1f)
+        // Player-yield: turning hard (>= YIELD_PIXELS px/frame) → assist yields fully; idle → full pull.
+        val mouseMag = kotlin.math.sqrt(mouseDeltaX * mouseDeltaX + mouseDeltaY * mouseDeltaY)
+        val yield = (1f - (mouseMag / YIELD_PIXELS)).coerceIn(0f, 1f)
+        val f = (desiredRotationFraction.coerceIn(0f, 1f)) * yield
+        if (f <= 0f) return false
         // Stop once effectively aligned — no micro-jitter at the edge.
         val dy = normalizeAngle(yaw - currentYaw)
         val dp = pitch - currentPitch
@@ -775,6 +790,9 @@ object EventBridge {
         rotationApplier?.invoke(newYaw, newPitch)
         return true
     }
+
+    /** Mouse pixels/frame above which the assist fully yields to the player (they are turning). */
+    private const val YIELD_PIXELS = 120f
 
     private fun normalizeAngle(angle: Float): Float {
         var a = angle % 360f

@@ -112,14 +112,12 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
     fun onClientTick(player: PlayerState, target: TargetState?) {
         val aimTarget = EventBridge.getFovNearestTarget(fov, rangeMax) ?: target
 
-        // AutoClicker/TriggerBot active -> the player is effectively attacking continuously, so
-        // the onlyOnClick trigger (which reads the PHYSICAL attack key) must not block aiming.
-        // Mark isAttackKeyDown so onlyOnClick passes; never touches the global field.
-        val effPlayer = if (EventBridge.syntheticAttackOverride) {
-            player.copy(isAttackKeyDown = true)
-        } else {
-            player
-        }
+        // "Clicking" = physically holding the attack button OR a synthetic click fired THIS tick
+        // (AutoClicker/TriggerBot write syntheticAttack=true only while actually clicking). Using
+        // syntheticAttack — not syntheticAttackOverride (module enabled) — keeps OnlyOnClick
+        // honest: a clicker that is enabled but not currently clicking does NOT make us aim.
+        val clicking = player.isAttackKeyDown || EventBridge.syntheticAttack
+        val effPlayer = if (clicking) player.copy(isAttackKeyDown = true) else player
         when (mode) {
             "SelfAdaptive" -> {
                 val config = cachedConfig("adaptive") { buildConfig(AimMode.SELF_ADAPTIVE) }

@@ -34,6 +34,8 @@ class LegitAimStrategy : AimStrategy {
         const val LOCK_ANGLE = 8f
         /** LB "Aim while on target" deceleration — slows the pull when already on the target. */
         const val ON_TARGET_FACTOR = 0.85f
+        /** Clicking boosts the pull speed so a single click quickly snaps back into the box. */
+        const val CLICK_SPEED_BOOST = 3f
         /** FOV value that means "full 360°" — the cone gate is skipped entirely. */
         const val FULL_FOV = 360f
     }
@@ -81,9 +83,10 @@ class LegitAimStrategy : AimStrategy {
         val onTarget: Boolean
         when (config.mode) {
             AimMode.NORMAL -> {
-                // Continuous tracking: aim at the exact point the crosshair ray hits the box.
-                // If it misses (crosshair slightly off), pull back to the nearest surface so the
-                // crosshair re-enters the box — then it tracks that point as the target moves.
+                // Continuous tracking: aim at the point the crosshair ray hits the box and keep
+                // tracking it as the target moves (crosshair-point lock, NOT the center). If the
+                // ray misses (crosshair slightly off), pull back to the nearest surface so it
+                // re-enters the box, then it tracks the hit point again.
                 val hit = RotationCalculator.rayHitPoint(eyePos, aim, target.hitbox)
                 if (hit != null) {
                     val rot = RotationCalculator.calculateRotation(eyePos, hit)
@@ -99,7 +102,8 @@ class LegitAimStrategy : AimStrategy {
                 }
             }
             AimMode.LEGIT -> {
-                // Angular range of the box as seen from the eyes. Inside = on target → no pull.
+                // Angular range of the box as seen from the eyes. Inside = on target → no pull
+                // (legit never tracks while inside the box — it only corrects when you drift out).
                 // Outside = pull back to the nearest edge.
                 val range = RotationCalculator.getBoxAngleRange(eyePos, target.hitbox)
                 if (range.isDegenerate) return AimResult.Skip
@@ -113,11 +117,20 @@ class LegitAimStrategy : AimStrategy {
                 targetPitch = if (pitch < range.pitchMin) range.pitchMin else if (pitch > range.pitchMax) range.pitchMax else aim.pitch
             }
             AimMode.SELF_ADAPTIVE -> {
-                val center = RotationCalculator.hitboxCenterWorld(target.hitbox)
-                val rot = RotationCalculator.calculateRotation(eyePos, center)
-                targetYaw = rot.yaw
-                targetPitch = rot.pitch
-                onTarget = true
+                // Same crosshair-point tracking as NORMAL, but with adaptive intensity (EMA).
+                val hit = RotationCalculator.rayHitPoint(eyePos, aim, target.hitbox)
+                if (hit != null) {
+                    val rot = RotationCalculator.calculateRotation(eyePos, hit)
+                    targetYaw = rot.yaw
+                    targetPitch = rot.pitch
+                    onTarget = true
+                } else {
+                    val edge = RotationCalculator.getBoxEdgeTarget(eyePos, aim, target.hitbox)
+                    if (edge == null) return AimResult.Skip
+                    targetYaw = edge.rotation.yaw
+                    targetPitch = edge.rotation.pitch
+                    onTarget = false
+                }
             }
         }
 
@@ -139,8 +152,10 @@ class LegitAimStrategy : AimStrategy {
         }
 
         // 7. LB rotMove fixed-speed smoothing. Speed in degrees per tick (aimSpeed 1-20).
-        // Slower when already on the target (LB "Aim while on target") to avoid overshoot 脱落.
-        val speed = config.aimSpeed.toFloat() * (if (onTarget) ON_TARGET_FACTOR else 1f)
+        // Clicking (isAttackKeyDown) massively boosts the pull so a single click snaps the
+        // crosshair back into the box quickly; on-target deceleration avoids overshoot 脱落.
+        val clickBoost = if (player.isAttackKeyDown) CLICK_SPEED_BOOST else 1f
+        val speed = config.aimSpeed.toFloat() * clickBoost * (if (onTarget) ON_TARGET_FACTOR else 1f)
         val newYaw = RotationCalculator.rotMove(targetYaw, aim.yaw, speed)
         val newPitch = RotationCalculator.rotMove(targetPitch, aim.pitch, speed * 0.39f)
         return AimResult.ApplyRotation(Vec2(newYaw, newPitch))

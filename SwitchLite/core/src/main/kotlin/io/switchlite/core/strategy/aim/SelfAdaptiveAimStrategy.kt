@@ -42,6 +42,8 @@ class SelfAdaptiveAimStrategy : AimStrategy {
         const val LOCK_ANGLE = 8f
         /** LB "Aim while on target" deceleration — slows the pull when already on the target. */
         const val ON_TARGET_FACTOR = 0.85f
+        /** Clicking boosts the pull speed so a single click quickly snaps back into the box. */
+        const val CLICK_SPEED_BOOST = 3f
         /** FOV value that means "full 360°" — the cone gate is skipped entirely. */
         const val FULL_FOV = 360f
     }
@@ -144,11 +146,21 @@ class SelfAdaptiveAimStrategy : AimStrategy {
                 targetPitch = if (pitch < range.pitchMin) range.pitchMin else if (pitch > range.pitchMax) range.pitchMax else aim.pitch
             }
             AimMode.SELF_ADAPTIVE -> {
-                val center = RotationCalculator.hitboxCenterWorld(target.hitbox)
-                val rot = RotationCalculator.calculateRotation(eyePos, center)
-                targetYaw = rot.yaw
-                targetPitch = rot.pitch
-                onTarget = true
+                // Crosshair-point tracking (same as NORMAL — no center pull), intensity adapted by
+                // the alignment EMA below.
+                val hit = RotationCalculator.rayHitPoint(eyePos, aim, target.hitbox)
+                if (hit != null) {
+                    val rot = RotationCalculator.calculateRotation(eyePos, hit)
+                    targetYaw = rot.yaw
+                    targetPitch = rot.pitch
+                    onTarget = true
+                } else {
+                    val edge = RotationCalculator.getBoxEdgeTarget(eyePos, aim, target.hitbox)
+                    if (edge == null) return AimResult.Skip
+                    targetYaw = edge.rotation.yaw
+                    targetPitch = edge.rotation.pitch
+                    onTarget = false
+                }
             }
         }
 
@@ -194,7 +206,9 @@ class SelfAdaptiveAimStrategy : AimStrategy {
         )
 
         // 9. LB rotMove fixed-speed smoothing (degrees per tick) + on-target deceleration.
-        val speed = dynamicAimSpeed.toFloat() * (if (onTarget) ON_TARGET_FACTOR else 1f) * dynamicSmoothness
+        // Clicking (isAttackKeyDown) boosts the pull so a single click quickly snaps back.
+        val clickBoost = if (player.isAttackKeyDown) CLICK_SPEED_BOOST else 1f
+        val speed = dynamicAimSpeed.toFloat() * clickBoost * (if (onTarget) ON_TARGET_FACTOR else 1f) * dynamicSmoothness
         val newYaw = RotationCalculator.rotMove(targetYaw, aim.yaw, speed)
         val newPitch = RotationCalculator.rotMove(targetPitch, aim.pitch, speed * 0.39f)
         return AimResult.ApplyRotation(Vec2(newYaw, newPitch))

@@ -131,6 +131,9 @@ object EventBridge {
         desiredRotationYaw = null
         desiredRotationPitch = null
         desiredRotationFraction = 0.2f
+        aimOffsetYaw = 0f
+        aimOffsetPitch = 0f
+        aimAnimActive = false
         resetHurtCamHandler = null
         resetFovModifierHandler = null
         gammaSetter = null
@@ -753,6 +756,28 @@ object EventBridge {
     /** Per-frame interpolation fraction toward the desired rotation (0..1, set by the strategy). */
     @Volatile var desiredRotationFraction: Float = 0.2f
 
+    // Persistent aim-animation state, updated ONLY on the main render thread. Nemui-style: the
+    // CORRECTION offset (target - player) is accumulated across frames (never recomputed from the
+    // player's angle each frame), so the correction converges smoothly and never 发飘/打转; because
+    // it's applied on top of the player's current rotation, the player's own turns aren't fought.
+    private var aimOffsetYaw: Float = 0f
+    private var aimOffsetPitch: Float = 0f
+    private var aimAnimActive: Boolean = false
+
+    /**
+     * Clear the pending aim target. Called when the strategy decides NOT to assist this tick
+     * (no target, out of range, click not held, etc.) — otherwise the main thread would keep
+     * pulling toward the last remembered target ("aims at one fixed spot"). Also called on disable.
+     */
+    fun clearDesiredRotation() {
+        desiredRotationYaw = null
+        desiredRotationPitch = null
+        desiredRotationFraction = 0.2f
+        aimOffsetYaw = 0f
+        aimOffsetPitch = 0f
+        aimAnimActive = false
+    }
+
     /**
      * Main-thread per-frame aim application: move [currentYaw]/[currentPitch] a fraction of the
      * way toward the desired rotation (exponential ease at render-frame rate). Returns false when
@@ -779,20 +804,60 @@ object EventBridge {
         // Player-yield: turning hard (>= YIELD_PIXELS px/frame) → assist yields fully; idle → full pull.
         val mouseMag = kotlin.math.sqrt(mouseDeltaX * mouseDeltaX + mouseDeltaY * mouseDeltaY)
         val yield = (1f - (mouseMag / YIELD_PIXELS)).coerceIn(0f, 1f)
-        val f = (desiredRotationFraction.coerceIn(0f, 1f)) * yield
+        if (yield <= 0f) return false
+
+        // Nemui-style persistent offset animation: we smooth the CORRECTION (target - player),
+        // not an absolute angle. The offset persists across frames and converges exponentially, so
+        // the assist never 发飘/打转; and because it's applied on top of the player's CURRENT
+        // rotation, the player's own turns are never fought (the offset just re-targets).
+        if (!aimAnimActive) {
+            aimOffsetYaw = 0f
+            aimOffsetPitch = 0f
+            aimAnimActive = true
+        }
+
+        // Desired total correction this frame.
+        val desiredOffsetYaw = normalizeAngle(yaw - currentYaw)
+        val desiredOffsetPitch = pitch - currentPitch
+        // Dead zone: already aligned → stop entirely (no micro-jitter at the edge).
+        if (abs(desiredOffsetYaw) < DEAD_YAW && abs(desiredOffsetPitch) < DEAD_PITCH) {
+            aimOffsetYaw = 0f
+            aimOffsetPitch = 0f
+            return false
+        }
+
+        // Exponential ease of the offset toward the desired correction (Nemui SimpleAnimation).
+        val f = desiredRotationFraction.coerceIn(0f, 1f) * yield
         if (f <= 0f) return false
-        // Stop once effectively aligned — no micro-jitter at the edge.
-        val dy = normalizeAngle(yaw - currentYaw)
-        val dp = pitch - currentPitch
-        if (abs(dy) < 0.2f && abs(dp) < 0.1f) return false
-        val newYaw = currentYaw + dy * f
-        val newPitch = currentPitch + dp * (f * 0.39f)
-        rotationApplier?.invoke(newYaw, newPitch)
+        aimOffsetYaw = normalizeAngle(aimOffsetYaw + (desiredOffsetYaw - aimOffsetYaw) * f)
+        aimOffsetPitch = aimOffsetPitch + (desiredOffsetPitch - aimOffsetPitch) * (f * PITCH_RATIO)
+
+        val applyYaw = currentYaw + aimOffsetYaw
+        val applyPitch = currentPitch + aimOffsetPitch
+
+        // MC mouse GCD alignment (LB AimSimulator.getGCD): quantize so each rotation move is a step
+        // the mouse can actually produce at this sensitivity — reads like a human hand.
+        val gcd = mouseGcd()
+        val qYaw = (kotlin.math.round((applyYaw - currentYaw) / gcd) * gcd).toFloat()
+        val qPitch = (kotlin.math.round((applyPitch - currentPitch) / gcd) * gcd).toFloat()
+        rotationApplier?.invoke(currentYaw + qYaw, currentPitch + qPitch)
         return true
     }
 
+    /** Dead-zone (degrees): stop assisting once the animation is this close to the target. */
+    private const val DEAD_YAW = 0.2f
+    private const val DEAD_PITCH = 0.1f
+    /** Pitch converges slower than yaw (Nemui yaw 8.2 vs pitch 3.2). */
+    private const val PITCH_RATIO = 0.39f
+
     /** Mouse pixels/frame above which the assist fully yields to the player (they are turning). */
     private const val YIELD_PIXELS = 120f
+
+    /** MC GCD (LiquidBounce AimSimulator.getGCD): the smallest rotation step a mouse can produce. */
+    private fun mouseGcd(): Float {
+        val f = mouseSensitivity * 0.6f + 0.2f
+        return f * f * f * 8f * 0.15f
+    }
 
     private fun normalizeAngle(angle: Float): Float {
         var a = angle % 360f

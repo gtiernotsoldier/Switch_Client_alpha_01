@@ -151,7 +151,11 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
                         EventBridge.desiredRotationPitch = result.rotation.pitch
                         EventBridge.desiredRotationFraction = result.fraction
                     }
-                    is AimResult.Skip -> { /* no-op */ }
+                    is AimResult.Skip -> {
+                        // No assist this tick — clear the pending target so the main thread stops
+                        // pulling toward the last remembered point (fixes "aims at one fixed spot").
+                        EventBridge.clearDesiredRotation()
+                    }
                 }
             }
             else -> {
@@ -172,7 +176,11 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
                         EventBridge.desiredRotationPitch = result.rotation.pitch
                         EventBridge.desiredRotationFraction = result.fraction
                     }
-                    is AimResult.Skip -> { /* no-op */ }
+                    is AimResult.Skip -> {
+                        // No assist this tick — clear the pending target so the main thread stops
+                        // pulling toward the last remembered point (fixes "aims at one fixed spot").
+                        EventBridge.clearDesiredRotation()
+                    }
                 }
             }
         }
@@ -195,7 +203,6 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
         legitState.reset()
         adaptiveState.reset()
         // Stop any in-flight frame interpolation immediately.
-        EventBridge.desiredRotationYaw = null
-        EventBridge.desiredRotationPitch = null
+        EventBridge.clearDesiredRotation()
     }
 }

@@ -115,9 +115,9 @@ class SelfAdaptiveAimStrategy : AimStrategy {
         }
 
         // 5. Mode geometry (same as LegitAimStrategy, Raven-XD style)
-        val targetYaw: Float
-        val targetPitch: Float
-        val onTarget: Boolean
+        var targetYaw: Float
+        var targetPitch: Float
+        var onTarget: Boolean
         when (config.mode) {
             AimMode.NORMAL -> {
                 // Continuous tracking of the crosshair-pointed spot on the box; pull back to the

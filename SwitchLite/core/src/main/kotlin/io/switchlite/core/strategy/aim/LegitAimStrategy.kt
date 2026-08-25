@@ -81,9 +81,9 @@ class LegitAimStrategy : AimStrategy {
         }
 
         // 4. Mode geometry — decide the target yaw/pitch this tick.
-        val targetYaw: Float
-        val targetPitch: Float
-        val onTarget: Boolean
+        var targetYaw: Float
+        var targetPitch: Float
+        var onTarget: Boolean
         when (config.mode) {
             AimMode.NORMAL -> {
                 // Continuous tracking: aim at the point the crosshair ray hits the box and keep

@@ -44,7 +44,7 @@ object HitSelect : Module("HitSelect", Category.COMBAT) {
     // ========== Main-thread attack gate (Retiming — decided per click frame) ==========
     // The platform calls this from applySyntheticInput on the render thread right before it writes
     // the attack key, so a swallowed click is decided at the instant of the click. Returns true =
-    // let the click through, false = swallow it.
+    // let the click through, false = swallow it (forced pause, then resumes next frame).
     private val gate: () -> Boolean = {
         if (enabled && (mode == "Both" || mode == "Retiming")) {
             val t = EventBridge.getForwardRayTarget()

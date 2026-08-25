@@ -375,8 +375,8 @@
             'JumpReset': { selector:'CooldownMode', groups:{ 'Ticks':['TicksUntilJump'],
                                                              'ReceivedHits':['HitsUntilJump'] } },
             'AutoBlock': { selector:'Mode', groups:{ 'Switch':['SwitchOnRightHold'] } },
-            'HitSelect': { selector:'Mode', groups:{ 'Retiming':['RetimeRange','RetimeAt'],
-                                                      'CounterHit':['CounterRange','CounterCD'] } }
+            'HitSelect': { selector:'Mode', groups:{ 'Retiming':['RetimeAt'],
+                                                      'CounterHit':['CounterCD'] } }
         };
         function modeOf(o, rule){
             for(const [mode, opts] of Object.entries(rule.groups)){

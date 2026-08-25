@@ -160,7 +160,8 @@ class SelfAdaptiveAimStrategy : AimStrategy {
         )
 
         // 9. Nemui-style fraction smoothing (proportional per-tick close of the gap).
-        val yawFraction = 0.035f * (dynamicAimSpeed / 10f) * dynamicSmoothness
+        // aimSpeed=20 → fraction ≈ 0.35 (Nemui max speed); aimSpeed=8 → ~0.14.
+        val yawFraction = 0.35f * (dynamicAimSpeed / 20f) * dynamicSmoothness
         val pitchFraction = yawFraction * 0.39f
         val smoothed = Vec2(
             aim.yaw + rotationDiff.yaw * yawFraction,

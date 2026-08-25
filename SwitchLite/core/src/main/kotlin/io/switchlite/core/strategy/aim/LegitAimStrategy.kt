@@ -108,8 +108,9 @@ class LegitAimStrategy : AimStrategy {
 
         // 7. Nemui-style proportional smoothing: close a fraction of the remaining yaw/pitch gap
         // each tick, easing toward the aim point. Mirrors Nemui's SimpleAnimation
-        // (fraction = 0.35 / (10 / speed), speed = aimSpeed / 10). Pitch closes slower than yaw.
-        val yawFraction = 0.035f * (config.aimSpeed / 10f) * config.smoothness
+        // (fraction = 0.35 / (10 / speed), speed = aimSpeed / 20). Pitch closes slower than yaw.
+        // aimSpeed=20 → fraction ≈ 0.35 (Nemui max speed, ~35% of the gap per tick); aimSpeed=8 → ~0.14.
+        val yawFraction = 0.35f * (config.aimSpeed / 20f) * config.smoothness
         val pitchFraction = yawFraction * 0.39f
         val smoothed = Vec2(
             aim.yaw + rotationDiff.yaw * yawFraction,

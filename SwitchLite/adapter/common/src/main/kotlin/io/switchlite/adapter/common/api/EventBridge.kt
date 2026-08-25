@@ -114,6 +114,7 @@ object EventBridge {
         cancelAttackHandler = null
         syntheticAttack = false
         syntheticUse = false
+        attackAllowed = true
         syntheticAttackOverride = false
         syntheticUseOverride = false
         syntheticForward = false
@@ -465,6 +466,14 @@ object EventBridge {
     // key press is cleared before MC's render thread ever reads it.
     @Volatile var syntheticAttack: Boolean = false
     @Volatile var syntheticUse: Boolean = false
+
+    /**
+     * Attack gate — written by a click-selector module (e.g. HitSelect) on the background tick,
+     * read by the platform's applySyntheticInput on the MAIN thread. When false, the attack key
+     * is forced OFF even if the physical mouse button is held, so the module can swallow wasted
+     * clicks (e.g. hits that land inside the target's i-frame window). True = clicks pass through.
+     */
+    @Volatile var attackAllowed: Boolean = true
 
     /**
      * Synthetic forward/back key states, written by WTap/STap on the background tick

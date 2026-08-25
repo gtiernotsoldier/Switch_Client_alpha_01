@@ -815,10 +815,14 @@ object ForgeEventBridge : IEventBridge {
             } else {
                 // Assist modules (ClickAssist/BlockHit/AutoBlock): augment the player's
                 // own input — OR with the physical button so their press is not stolen.
-                keybindingPressedField?.setBoolean(keyBindAttack, EventBridge.syntheticAttack || isMouseButtonDown(0))
-                // Reflect the effective left-button state in the mouse buffer so the
-                // Keystrokes LMB key flashes (ClickAssist compensation).
-                setMouseButtonPhysical(0, EventBridge.syntheticAttack || isMouseButtonDown(0))
+                // attackAllowed (HitSelect) can force the attack key OFF to swallow clicks
+                // that would land inside the target's i-frame window (wasted hits).
+                val physicalAttack = isMouseButtonDown(0)
+                val effectiveAttack = EventBridge.syntheticAttack || (physicalAttack && EventBridge.attackAllowed)
+                keybindingPressedField?.setBoolean(keyBindAttack, effectiveAttack)
+                // Keep the physical mouse buffer reflecting the real button for the Keystrokes
+                // HUD (do not rewrite it on a swallowed click).
+                setMouseButtonPhysical(0, EventBridge.syntheticAttack || physicalAttack)
             }
             // Forward/back keys (WTap/STap) — applied on the main thread so the tap lands
             // in MC's input and the Keystrokes W/S keys flash. When a tap module overrides,

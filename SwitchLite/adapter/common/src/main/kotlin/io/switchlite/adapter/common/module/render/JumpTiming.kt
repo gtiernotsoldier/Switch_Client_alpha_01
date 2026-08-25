@@ -73,8 +73,10 @@ object JumpTiming : Module("JumpTiming", Category.RENDER) {
     // ========== Hit window opener (Netty thread — precise knockback time) ==========
     private val velocityNotifier: (VelocityContext) -> Unit = { ctx ->
         if (enabled) {
-            // User rule: only a hit while sprinting opens a window (and can count a success).
-            if (ctx.player.isSprinting) {
+            // User rule: only a hit while SPRINTING AND ON THE GROUND opens a window. A jump reset
+            // only makes sense from the ground (a clean, well-timed reset); a mid-air hit or a hit
+            // while not sprinting is not a clean test and is ignored entirely.
+            if (ctx.player.isSprinting && ctx.player.onGround) {
                 // A new hit while the previous window is still open: close it as a miss.
                 if (windowOpen && !windowCounted) {
                     hits.incrementAndGet()

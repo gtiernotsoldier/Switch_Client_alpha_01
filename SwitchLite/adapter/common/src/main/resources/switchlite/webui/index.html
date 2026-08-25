@@ -366,7 +366,7 @@
         // selector: name of the option that selects this module's mode (Mode / CooldownMode)
         // groups:   { mode name: [option names specific to that mode] }  options in no group = shared, always shown
         const MODE_RULES = {
-            'Velocity': { selector:'Mode', groups:{ 'Legit':['HorizontalMin','HorizontalMax','VerticalMin','VerticalMax','Chance'],
+            'Velocity': { selector:'Mode', groups:{ 'Legit':['HorizontalMin','HorizontalMax','VerticalMin','VerticalMax','Chance','OnlyOnHitFrame','NaturalMode','HitWindowMs','BaseChance','ChancePerHit','MaxChance','NthMin','NthMax'],
                                                     'Delay':['DelayMs','DelayTicks'],
                                                     'Click':['ClicksMin','ClicksMax','HurtTimeToClick','WhenFacingEnemyOnly','MaxAngleDifference','ClickRange'] } },
             'KeepSprint': { selector:'Mode', groups:{ 'Normal':['HorizontalKeep'],

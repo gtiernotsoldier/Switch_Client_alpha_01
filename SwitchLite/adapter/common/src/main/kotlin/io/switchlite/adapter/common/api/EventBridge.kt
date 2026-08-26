@@ -82,7 +82,7 @@ object EventBridge {
     }
 
     fun reset() {
-        velocityListener = null
+        velocityListeners.clear()
         velocityNotifiers.clear()
         tickListeners.clear()
         simpleTickListeners.clear()
@@ -206,15 +206,17 @@ object EventBridge {
     // ========== 2. Combat: Attack & Knockback ==========
 
     // ========== Velocity ==========
-    private var velocityListener: ((VelocityContext) -> PlatformCommand)? = null
+    private val velocityListeners = mutableListOf<(VelocityContext) -> PlatformCommand>()
     private val velocityNotifiers = mutableListOf<(VelocityContext) -> Unit>()
 
     fun registerVelocityListener(listener: (VelocityContext) -> PlatformCommand) {
-        velocityListener = listener
+        if (velocityListeners.none { it == listener }) {
+            velocityListeners.add(listener)
+        }
     }
 
-    fun unregisterVelocityListener() {
-        velocityListener = null
+    fun unregisterVelocityListener(listener: (VelocityContext) -> PlatformCommand) {
+        velocityListeners.remove(listener)
     }
 
     /** Register a passive observer of velocity packets (does not return a command). */
@@ -314,7 +316,28 @@ object EventBridge {
     }
 
     fun onVelocityPacket(ctx: VelocityContext): PlatformCommand {
-        return velocityListener?.invoke(ctx) ?: PlatformCommand.Pass(ctx.originalMotion)
+        // Chain of active velocity handlers. The FIRST handler that cancels or click-bursts wins;
+        // ModifyMotion feeds the reduced motion into the NEXT handler (e.g. Velocity reduces, then
+        // KnockbackDelay delays the already-reduced motion). A single listener behaves identically
+        // to the old single-listener path.
+        var current = ctx
+        var modified = false
+        for (listener in velocityListeners) {
+            when (val result = listener(current)) {
+                is PlatformCommand.CancelPacket -> return result
+                is PlatformCommand.ClickBurst -> return result
+                is PlatformCommand.ModifyMotion -> {
+                    current = current.copy(originalMotion = result.motion)
+                    modified = true
+                }
+                else -> {} // Pass / NoOp → continue down the chain
+            }
+        }
+        return if (modified) {
+            PlatformCommand.ModifyMotion(current.originalMotion)
+        } else {
+            PlatformCommand.Pass(ctx.originalMotion)
+        }
     }
 
     // ========== Attack Event (SuperKnockback — ported LB semantics) ==========

@@ -2,7 +2,6 @@ package io.switchlite.adapter.common.module.combat
 
 import io.switchlite.core.model.*
 import io.switchlite.core.strategy.velocity.ClickVelocityStrategy
-import io.switchlite.core.strategy.velocity.DelayVelocityStrategy
 import io.switchlite.core.strategy.velocity.LegitVelocityStrategy
 import io.switchlite.core.strategy.velocity.VelocityConfig
 import io.switchlite.core.strategy.velocity.VelocityMode
@@ -22,7 +21,8 @@ import kotlin.random.Random
 /**
  * Velocity Module — knockback reduction.
  *
- * Modes: Legit (range-random scaling), Delay (buffer + release), Click (click-burst).
+ * Modes: Legit (range-random scaling), Click (click-burst).
+ * (Delay was split out into the standalone KnockbackDelay module.)
  *
  * Architecture compliance (Sandwich):
  * 1. Logic in module: config assembly, result-to-PlatformCommand mapping.
@@ -40,7 +40,7 @@ object Velocity : Module("Velocity", Category.COMBAT), HudLineProvider {
     override fun hudHighlight(): Boolean = true
 
     // ========== Mode ==========
-    private val mode by choices("Mode", arrayOf("Legit", "Delay", "Click"))
+    private val mode by choices("Mode", arrayOf("Legit", "Click"))
 
     // ========== Legit — horizontal (min/max separate) ==========
     private val horizontalMin by float("HorizontalMin", 0.4f, 0.0f..1.0f)
@@ -71,10 +71,6 @@ object Velocity : Module("Velocity", Category.COMBAT), HudLineProvider {
     private val nthMin by int("NthMin", 2, 1..10)
     private val nthMax by int("NthMax", 4, 1..10)
 
-    // ========== Delay ==========
-    private val delayMs by int("DelayMs", 0, 0..500, "ms")
-    private val delayTicks by int("DelayTicks", 0, 0..20, "ticks")
-
     // ========== Condition flags (six independent toggles) ==========
     private val onlyMove by boolean("OnlyMove", false)
     private val onlyMoveForward by boolean("OnlyMoveForward", false)
@@ -103,9 +99,13 @@ object Velocity : Module("Velocity", Category.COMBAT), HudLineProvider {
 
     // ========== Core Strategies (Algorithm lives here) ==========
     private val legitStrategy = LegitVelocityStrategy()
-    private val delayStrategy = DelayVelocityStrategy(legitStrategy)
     private val clickStrategy = ClickVelocityStrategy()
     private val strategyState = VelocityStrategy.State()
+
+    /** Named listener reference so we can unregister exactly this handler (chain-friendly). */
+    private val velocityListenerRef: (VelocityContext) -> PlatformCommand = { ctx ->
+        if (enabled) onVelocityPacket(ctx) else PlatformCommand.Pass(ctx.originalMotion)
+    }
 
     // ========== Combo state (OnlyOnHitFrame naturalisation) ==========
     // Consecutive-hit counter (within HitWindowMs). Written on the Netty thread.
@@ -118,7 +118,6 @@ object Velocity : Module("Velocity", Category.COMBAT), HudLineProvider {
     private fun buildConfig(): VelocityConfig = VelocityConfig(
         mode = when (mode) {
             "Legit" -> VelocityMode.LEGIT
-            "Delay" -> VelocityMode.DELAY
             "Click" -> VelocityMode.CLICK
             else -> VelocityMode.LEGIT
         },
@@ -127,8 +126,6 @@ object Velocity : Module("Velocity", Category.COMBAT), HudLineProvider {
         verticalMin = verticalMin,
         verticalMax = verticalMax,
         probability = probability,
-        delayMs = delayMs,
-        delayTicks = delayTicks,
         triggerOptions = triggerOptions,
         clickBurstMin = clicksMin,
         clickBurstMax = clicksMax,
@@ -141,7 +138,6 @@ object Velocity : Module("Velocity", Category.COMBAT), HudLineProvider {
     /** Select the active strategy based on mode. */
     private fun currentStrategy(): VelocityStrategy = when (mode) {
         "Legit" -> legitStrategy
-        "Delay" -> delayStrategy
         "Click" -> clickStrategy
         else -> legitStrategy
     }
@@ -254,7 +250,6 @@ object Velocity : Module("Velocity", Category.COMBAT), HudLineProvider {
     // ========== Lifecycle ==========
 
     override fun onEnable() {
-        EventBridge.unregisterVelocityListener()
         // Reset OnlyOnHitFrame combo state.
         combo = 0
         lastHitNano = 0L
@@ -262,13 +257,11 @@ object Velocity : Module("Velocity", Category.COMBAT), HudLineProvider {
         EventBridge.registerTickListener { currentTick ->
             if (enabled) onTick(currentTick)
         }
-        EventBridge.registerVelocityListener { ctx ->
-            if (enabled) onVelocityPacket(ctx) else PlatformCommand.Pass(ctx.originalMotion)
-        }
+        EventBridge.registerVelocityListener(velocityListenerRef)
     }
 
     override fun onDisable() {
-        EventBridge.unregisterVelocityListener()
+        EventBridge.unregisterVelocityListener(velocityListenerRef)
         EventBridge.unregisterTickListener(this::onTick)
         strategyState.reset()
     }

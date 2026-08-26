@@ -30,6 +30,7 @@ class LegitVelocityStrategy : VelocityStrategy {
     }
 
     // Visible-for-testing entry point
+    @Suppress("UNUSED_PARAMETER")
     internal fun processLegit(config: VelocityConfig, state: VelocityStrategy.State, ctx: VelocityContext): VelocityResult {
         val player = ctx.player
         val target = ctx.target
@@ -46,19 +47,7 @@ class LegitVelocityStrategy : VelocityStrategy {
             if (roll >= config.probability) return VelocityResult.Pass(original)
         }
 
-        // 3. Delay buffering (when delay is configured even in LEGIT mode)
-        if (config.delayTicks > 0 || config.delayMs > 0) {
-            val totalDelayTicks = config.delayTicks + (config.delayMs / 50)
-            state.delayQueue.add(
-                VelocityStrategy.State.DelayedEntry(
-                    context = ctx,
-                    releaseTick = state.tickCounter + totalDelayTicks
-                )
-            )
-            return VelocityResult.Cancel(ctx.packetHandle)
-        }
-
-        // 4. Sample and scale
+        // 3. Sample and scale
         val h = RandomRange.sample(config.horizontalMin, config.horizontalMax)
         val v = RandomRange.sample(config.verticalMin, config.verticalMax)
         val reduced = VectorOperations.scale(original, h, v, h)

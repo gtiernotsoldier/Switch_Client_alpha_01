@@ -190,6 +190,9 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
         // SelfAdaptive uses the second-order (critically-damped) aim path; the other modes keep
         // the legacy first-order ease so their existing presets feel unchanged.
         EventBridge.aimSecondOrder = mode == "SelfAdaptive"
+        // Normal keeps tracking inside the hitbox (follows the crosshair's projection on the box);
+        // the other modes hard-release when the crosshair is inside the box.
+        EventBridge.aimTrackInsideBox = mode == "Normal"
         // Single target lock: acquire once, keep it while valid (never switch to a closer target).
         val aimTarget = resolveAimTarget(onlyCrosshairTarget, target)
 
@@ -276,6 +279,7 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
         lockedTargetId = -1
         // Stop any in-flight frame interpolation immediately.
         EventBridge.aimSecondOrder = false
+        EventBridge.aimTrackInsideBox = false
         EventBridge.clearDesiredRotation()
     }
 }

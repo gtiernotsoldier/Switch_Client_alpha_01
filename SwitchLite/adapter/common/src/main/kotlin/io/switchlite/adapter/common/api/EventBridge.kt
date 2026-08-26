@@ -140,6 +140,7 @@ object EventBridge {
         aimVelocityYaw = 0f
         aimVelocityPitch = 0f
         aimSecondOrder = false
+        aimTrackInsideBox = false
         resetHurtCamHandler = null
         resetFovModifierHandler = null
         gammaSetter = null
@@ -809,6 +810,9 @@ object EventBridge {
     private var aimVelocityPitch: Float = 0f
     /** When true, use second-order critically-damped easing (SelfAdaptive); false = legacy first-order. */
     @Volatile var aimSecondOrder: Boolean = false
+    /** When true (Normal mode), the assist keeps tracking inside the hitbox by following the
+     *  crosshair's current projection on the box instead of hard-releasing. */
+    @Volatile var aimTrackInsideBox: Boolean = false
 
     /**
      * Clear the pending aim target. Called when the strategy decides NOT to assist this tick
@@ -849,34 +853,41 @@ object EventBridge {
         mouseDeltaX: Float = 0f,
         mouseDeltaY: Float = 0f
     ): Boolean {
-        val world = desiredTargetWorld ?: return false
+        var world = desiredTargetWorld ?: return false
         // Player-yield: turning hard → assist yields fully; idle → full pull.
         val mouseMag = kotlin.math.sqrt(mouseDeltaX * mouseDeltaX + mouseDeltaY * mouseDeltaY)
         val yield = (1f - (mouseMag / YIELD_PIXELS)).coerceIn(0f, 1f)
         if (yield <= 0f) return false
+
+        // Per-frame "crosshair inside the box" check: cast the player's CURRENT aim ray at the
+        // target hitbox.
+        // - Legit / Linear / SelfAdaptive: inside the box = aim freely (assist fully releases).
+        // - Normal: inside the box the assist still tracks, but the aim point follows the
+        //   crosshair's current projection on the box, so the offset soft-releases through the
+        //   damping instead of snapping to zero.
+        var trackingInsideBox = false
+        val hitbox = desiredHitbox
+        if (hitbox != null) {
+            val aim = io.switchlite.core.util.Vec2(currentYaw, currentPitch)
+            val hit = rotationCalculatorForAim().rayHitPoint(currentEye, aim, hitbox)
+            if (hit != null) {
+                if (aimTrackInsideBox) {
+                    world = hit
+                    trackingInsideBox = true
+                } else {
+                    aimOffsetYaw = 0f
+                    aimOffsetPitch = 0f
+                    aimAnimActive = false
+                    return false
+                }
+            }
+        }
 
         // Recompute the target rotation from the player's CURRENT position each frame — this is
         // what keeps the aim smooth as the player moves (no 20Hz jump).
         val targetRot = rotationCalculatorForAim().calculateRotation(currentEye, world)
         val yaw = targetRot.yaw
         val pitch = targetRot.pitch
-
-        // Per-frame "crosshair inside the box = aim freely" check: cast the player's CURRENT
-        // aim ray (from their eye along current yaw/pitch) at the target hitbox. If it hits, the
-        // crosshair is on the box — the player aims completely freely (assist fully releases).
-        // Judged EVERY FRAME with current values (no stale angles, no normalization bugs), and it
-        // covers the WHOLE box at any distance.
-        val hitbox = desiredHitbox
-        if (hitbox != null) {
-            val aim = io.switchlite.core.util.Vec2(currentYaw, currentPitch)
-            val hit = rotationCalculatorForAim().rayHitPoint(currentEye, aim, hitbox)
-            if (hit != null) {
-                aimOffsetYaw = 0f
-                aimOffsetPitch = 0f
-                aimAnimActive = false
-                return false
-            }
-        }
 
         // Persistent offset animation (seed on engage).
         if (!aimAnimActive) {
@@ -888,8 +899,10 @@ object EventBridge {
         // Desired total correction this frame.
         val desiredOffsetYaw = normalizeAngle(yaw - currentYaw)
         val desiredOffsetPitch = pitch - currentPitch
-        // Dead zone: already aligned → stop entirely (no micro-jitter at the edge).
-        if (abs(desiredOffsetYaw) < DEAD_YAW && abs(desiredOffsetPitch) < DEAD_PITCH) {
+        // Dead zone: already aligned → stop entirely (no micro-jitter at the edge). Skipped while
+        // Normal tracks the crosshair projection inside the box, so the offset soft-releases through
+        // the damping instead of snapping to zero.
+        if (!trackingInsideBox && abs(desiredOffsetYaw) < DEAD_YAW && abs(desiredOffsetPitch) < DEAD_PITCH) {
             aimOffsetYaw = 0f
             aimOffsetPitch = 0f
             return false

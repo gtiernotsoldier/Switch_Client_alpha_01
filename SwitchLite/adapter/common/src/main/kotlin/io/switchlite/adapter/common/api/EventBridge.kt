@@ -129,11 +129,15 @@ object EventBridge {
         isSafeWalkEnabled = false
         rotationApplier = null
         desiredTargetWorld = null
+        desiredCenterWorld = null
+        desiredMinFov = 0f
         desiredRotationFractionY = 0.2f
         desiredRotationFractionP = 0.1f
         aimOffsetYaw = 0f
         aimOffsetPitch = 0f
         aimAnimActive = false
+        gcdCarryYaw = 0f
+        gcdCarryPitch = 0f
         resetHurtCamHandler = null
         resetFovModifierHandler = null
         gammaSetter = null
@@ -753,6 +757,10 @@ object EventBridge {
     // 20Hz tick (一顿一顿). MC's tick (20Hz) is too coarse for smooth aim.
     /** Target world point to aim at (updated by the strategy each background tick). */
     @Volatile var desiredTargetWorld: Vec3? = null
+    /** Target hitbox center (world) — for the per-frame MinFov freedom-zone check. */
+    @Volatile var desiredCenterWorld: Vec3? = null
+    /** MinFov freedom-zone angle (degrees): inside this, the main thread lets the player aim free. */
+    @Volatile var desiredMinFov: Float = 0f
     /** Per-frame yaw interpolation fraction (0..1, set by the strategy). */
     @Volatile var desiredRotationFractionY: Float = 0.2f
     /** Per-frame pitch interpolation fraction (0..1, set by the strategy). */
@@ -765,6 +773,9 @@ object EventBridge {
     private var aimOffsetYaw: Float = 0f
     private var aimOffsetPitch: Float = 0f
     private var aimAnimActive: Boolean = false
+    /** GCD quantization remainder carried into the next frame (avoids per-frame step-loss jitter). */
+    private var gcdCarryYaw: Float = 0f
+    private var gcdCarryPitch: Float = 0f
 
     /**
      * Clear the pending aim target. Called when the strategy decides NOT to assist this tick
@@ -773,11 +784,15 @@ object EventBridge {
      */
     fun clearDesiredRotation() {
         desiredTargetWorld = null
+        desiredCenterWorld = null
+        desiredMinFov = 0f
         desiredRotationFractionY = 0.2f
         desiredRotationFractionP = 0.1f
         aimOffsetYaw = 0f
         aimOffsetPitch = 0f
         aimAnimActive = false
+        gcdCarryYaw = 0f
+        gcdCarryPitch = 0f
     }
 
     /**
@@ -812,6 +827,22 @@ object EventBridge {
         val yaw = targetRot.yaw
         val pitch = targetRot.pitch
 
+        // Per-frame MinFov freedom zone (Slinky "minimum FOV"): while the crosshair is within
+        // minFov/2 of the target CENTER (= inside the hitbox), the player aims completely freely —
+        // the assist fully releases. Judged EVERY FRAME from the current aim, so there's no 20Hz
+        // on/off switching (no stutter) and the box is genuinely "free inside".
+        if (desiredMinFov > 0f && desiredCenterWorld != null) {
+            val centerRot = rotationCalculatorForAim().calculateRotation(currentEye, desiredCenterWorld!!)
+            val toCenterYaw = normalizeAngle(centerRot.yaw - currentYaw)
+            val toCenterPitch = centerRot.pitch - currentPitch
+            if (abs(toCenterYaw) <= desiredMinFov / 2f && abs(toCenterPitch) <= desiredMinFov / 2f) {
+                aimOffsetYaw = 0f
+                aimOffsetPitch = 0f
+                aimAnimActive = false
+                return false
+            }
+        }
+
         // Persistent offset animation (seed on engage).
         if (!aimAnimActive) {
             aimOffsetYaw = 0f
@@ -843,12 +874,16 @@ object EventBridge {
 
         // GCD fix (Nemui author: "add gcd fix before rotating towards it so it doesnt flag").
         // Quantize the correction to the smallest rotation step the ORIGINAL Minecraft mouse math
-        // can produce at this sensitivity (f = sens*0.6+0.2, gcd = f^3*8*0.15). Every applied move
-        // is then equivalent to an integer mouse-pixel step — the server can't tell the difference
-        // between our assist and a real mouse movement.
+        // can produce (f = sens*0.6+0.2, gcd = f^3*8*0.15). To avoid per-frame step-loss (jitter),
+        // the quantization remainder is ACCUMULATED and carried into the next frame — the total
+        // correction still lands exactly, but every applied move is a whole mouse-pixel step.
         val gcd = mouseGcd()
-        val stepYaw = (kotlin.math.round(aimOffsetYaw / gcd) * gcd).toFloat()
-        val stepPitch = (kotlin.math.round(aimOffsetPitch / gcd) * gcd).toFloat()
+        val carryYaw = aimOffsetYaw + gcdCarryYaw
+        val carryPitch = aimOffsetPitch + gcdCarryPitch
+        val stepYaw = (kotlin.math.round(carryYaw / gcd) * gcd).toFloat()
+        val stepPitch = (kotlin.math.round(carryPitch / gcd) * gcd).toFloat()
+        gcdCarryYaw = carryYaw - stepYaw
+        gcdCarryPitch = carryPitch - stepPitch
         rotationApplier?.invoke(currentYaw + stepYaw, currentPitch + stepPitch)
         return true
     }

@@ -79,18 +79,13 @@ class LegitAimStrategy : AimStrategy {
         // 4. Aim point — Slinky Multipoint blend (center ↔ closest corner), independent axes.
         // All modes share this stable aim point; the mode only adjusts behavior around it.
         val aimPoint = RotationCalculator.multipointAimPoint(eyePos, target.hitbox, config.multipointX, config.multipointY)
-        val centerRot = RotationCalculator.calculateRotation(eyePos, RotationCalculator.hitboxCenterWorld(target.hitbox))
+        val centerWorld = RotationCalculator.hitboxCenterWorld(target.hitbox)
+        val centerRot = RotationCalculator.calculateRotation(eyePos, centerWorld)
         val targetRot = RotationCalculator.calculateRotation(eyePos, aimPoint)
 
-        // 5. MinFov freedom zone: crosshair within `minFov` of the target CENTER = inside the
-        // hitbox → aim freely (no pull). This is the "hidden assist" behavior: the player owns
-        // the box; the assist only engages when the crosshair drifts out.
-        if (config.minFov > 0f) {
-            val toCenter = RotationCalculator.calculateDifference(aim, centerRot)
-            if (abs(toCenter.yaw) <= config.minFov / 2f && abs(toCenter.pitch) <= config.minFov / 2f) {
-                return AimResult.Skip
-            }
-        }
+        // NOTE: MinFov freedom zone is judged on the MAIN thread EVERY frame (in
+        // drainDesiredRotationFrame) — per-frame from the current aim, so inside the box the
+        // player aims freely with no 20Hz on/off stutter. We only pass center + minFov here.
 
         // 6. FOV gate — 360 = full (skip); otherwise the aim point must be inside the cone.
         if (config.fov < FULL_FOV) {
@@ -141,6 +136,6 @@ class LegitAimStrategy : AimStrategy {
         } else {
             config.aimSpeedP * clickBoost * onTargetFactor * config.smoothness
         }
-        return AimResult.ApplyRotation(finalWorld, fracY, fracP)
+        return AimResult.ApplyRotation(finalWorld, centerWorld, config.minFov, fracY, fracP)
     }
 }

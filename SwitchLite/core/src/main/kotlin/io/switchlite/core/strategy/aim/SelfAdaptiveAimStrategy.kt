@@ -115,17 +115,12 @@ class SelfAdaptiveAimStrategy : AimStrategy {
         // 5. Aim point — Slinky Multipoint blend (center ↔ closest corner), independent axes.
         // SelfAdaptive tracks the same stable multipoint aim point, intensity adapted by EMA.
         val aimPoint = RotationCalculator.multipointAimPoint(eyePos, target.hitbox, config.multipointX, config.multipointY)
-        val centerRot = RotationCalculator.calculateRotation(eyePos, RotationCalculator.hitboxCenterWorld(target.hitbox))
+        val centerWorld = RotationCalculator.hitboxCenterWorld(target.hitbox)
+        val centerRot = RotationCalculator.calculateRotation(eyePos, centerWorld)
         val targetRot = RotationCalculator.calculateRotation(eyePos, aimPoint)
 
-        // 5b. MinFov freedom zone: crosshair within `minFov` of the target center = inside the
-        // hitbox → aim freely. Assist only pulls when the crosshair drifts outside.
-        if (config.minFov > 0f) {
-            val toCenter = RotationCalculator.calculateDifference(aim, centerRot)
-            if (abs(toCenter.yaw) <= config.minFov / 2f && abs(toCenter.pitch) <= config.minFov / 2f) {
-                return AimResult.Skip
-            }
-        }
+        // NOTE: MinFov freedom zone is judged on the MAIN thread every frame (in
+        // drainDesiredRotationFrame) — per-frame from the current aim, no 20Hz on/off stutter.
 
         // 6. FOV gate — 360 = full (skip); otherwise the aim point must be inside the cone.
         if (config.fov < FULL_FOV) {
@@ -189,7 +184,7 @@ class SelfAdaptiveAimStrategy : AimStrategy {
         val onTargetFactor = if (abs(rotationDiff.yaw) < 5f && abs(rotationDiff.pitch) < 3f) ON_TARGET_FACTOR else 1f
         val fracY = config.aimSpeedY * clickBoost * onTargetFactor * strength
         val fracP = config.aimSpeedP * clickBoost * onTargetFactor * strength
-        return AimResult.ApplyRotation(finalWorld, fracY, fracP)
+        return AimResult.ApplyRotation(finalWorld, centerWorld, config.minFov, fracY, fracP)
     }
 
     // ==================== Adaptive Math ====================

@@ -36,7 +36,7 @@ data class AimConfig(
     val rangeMin: Float = 3.0f,
     val rangeMax: Float = 6.0f,
     val fov: Float = 360.0f,
-    val minFov: Float = 0.0f,
+    val minFov: Float = 8.0f,
     val aimSpeedY: Float = 0.25f,
     val aimSpeedP: Float = 0.1f,
     val smoothness: Float = 0.85f,

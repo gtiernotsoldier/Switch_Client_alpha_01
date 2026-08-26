@@ -22,11 +22,17 @@ sealed class AimResult {
      * smoothing, much smoother than the 20Hz tick).
      *
      * @property worldPoint the target point in world space to aim toward.
+     * @property centerWorld the target hitbox CENTER in world space — used by the main thread for
+     *        the per-frame MinFov "inside the box = aim freely" check.
+     * @property minFov freedom-zone angle (degrees): while the crosshair is within minFov/2 of the
+     *        center, the main thread lets the player aim freely (no pull).
      * @property fractionY yaw fraction of the remaining gap closed per render frame (0..1).
      * @property fractionP pitch fraction of the remaining gap closed per render frame (0..1).
      */
     data class ApplyRotation(
         val worldPoint: Vec3,
+        val centerWorld: Vec3,
+        val minFov: Float = 0f,
         val fractionY: Float = 0.2f,
         val fractionP: Float = 0.1f
     ) : AimResult()

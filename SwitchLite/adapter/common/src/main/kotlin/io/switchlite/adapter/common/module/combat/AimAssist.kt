@@ -46,8 +46,8 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
     private val fov by float("Fov", 360.0f, 0.0f..360.0f, "degrees")
     /** MinFov (degrees) — Slinky: while the crosshair is within this angle of the target center,
      *  aim freely (inside the hitbox); the assist only pulls when drifting outside. Hides the
-     *  assist. 0 = no freedom zone (pull anywhere in FOV). */
-    private val minFov by float("MinFov", 0.0f, 0.0f..30.0f, "degrees")
+     *  assist. Judged per-frame on the main thread. Default 8° ≈ a player's hitbox half-angle. */
+    private val minFov by float("MinFov", 8.0f, 0.0f..30.0f, "degrees")
 
     // Behavior settings — independent axis speeds (Slinky-style)
     private val aimSpeedY by float("SpeedY", 0.25f, 0.0f..1.0f, "per-frame")
@@ -201,10 +201,12 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
                 )
                 val result = adaptiveStrategy.execute(config, adaptiveState, input)
                 when (result) {
-                    // Write target world point + per-axis fractions; the MAIN thread recomputes
-                    // the rotation toward it every frame.
+                    // Write target world point + center + minFov + per-axis fractions; the MAIN
+                    // thread recomputes the rotation toward it every frame.
                     is AimResult.ApplyRotation -> {
                         EventBridge.desiredTargetWorld = result.worldPoint
+                        EventBridge.desiredCenterWorld = result.centerWorld
+                        EventBridge.desiredMinFov = result.minFov
                         EventBridge.desiredRotationFractionY = result.fractionY
                         EventBridge.desiredRotationFractionP = result.fractionP
                     }
@@ -227,10 +229,12 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
                 )
                 val result = legitStrategy.execute(config, legitState, input)
                 when (result) {
-                    // Write target world point + per-axis fractions; the MAIN thread recomputes
-                    // the rotation toward it every frame.
+                    // Write target world point + center + minFov + per-axis fractions; the MAIN
+                    // thread recomputes the rotation toward it every frame.
                     is AimResult.ApplyRotation -> {
                         EventBridge.desiredTargetWorld = result.worldPoint
+                        EventBridge.desiredCenterWorld = result.centerWorld
+                        EventBridge.desiredMinFov = result.minFov
                         EventBridge.desiredRotationFractionY = result.fractionY
                         EventBridge.desiredRotationFractionP = result.fractionP
                     }

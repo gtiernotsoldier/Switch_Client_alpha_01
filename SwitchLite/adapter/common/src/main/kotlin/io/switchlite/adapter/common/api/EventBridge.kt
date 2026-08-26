@@ -841,9 +841,25 @@ object EventBridge {
         aimOffsetYaw = normalizeAngle(aimOffsetYaw + (desiredOffsetYaw - aimOffsetYaw) * fY)
         aimOffsetPitch = aimOffsetPitch + (desiredOffsetPitch - aimOffsetPitch) * fP
 
-        // Apply the smooth correction directly — no GCD quantization.
-        rotationApplier?.invoke(currentYaw + aimOffsetYaw, currentPitch + aimOffsetPitch)
+        // GCD fix (Nemui author: "add gcd fix before rotating towards it so it doesnt flag").
+        // Quantize the correction to the smallest rotation step the ORIGINAL Minecraft mouse math
+        // can produce at this sensitivity (f = sens*0.6+0.2, gcd = f^3*8*0.15). Every applied move
+        // is then equivalent to an integer mouse-pixel step — the server can't tell the difference
+        // between our assist and a real mouse movement.
+        val gcd = mouseGcd()
+        val stepYaw = (kotlin.math.round(aimOffsetYaw / gcd) * gcd).toFloat()
+        val stepPitch = (kotlin.math.round(aimOffsetPitch / gcd) * gcd).toFloat()
+        rotationApplier?.invoke(currentYaw + stepYaw, currentPitch + stepPitch)
         return true
+    }
+
+    /**
+     * Original Minecraft mouse rotation GCD (Nemui author: use the vanilla sensitivity math).
+     * f = sensitivity * 0.6 + 0.2; the smallest rotation step is f^3 * 8 * 0.15 degrees.
+     */
+    private fun mouseGcd(): Float {
+        val f = mouseSensitivity * 0.6f + 0.2f
+        return f * f * f * 8f * 0.15f
     }
 
     /** Reference to RotationCalculator (avoid importing it into EventBridge's namespace). */

@@ -26,6 +26,7 @@ object AgentBridge {
         "HitSelect" to "combat",
         "JumpReset" to "combat",
         "KeepSprint" to "combat",
+        "KnockbackDisplace" to "combat",
         "Reach" to "combat",
         "SprintReset" to "combat",
         "STap" to "combat",

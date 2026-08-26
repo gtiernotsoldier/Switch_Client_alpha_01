@@ -62,7 +62,13 @@ object AutoClicker : Module("AutoClicker", Category.COMBAT), HudLineProvider {
     // ========== 1.8 Configuration (Delegated Properties) ==========
     private val maxCps by int("MaxCPS", 10, 0..20, "cps")
     private val minCps by int("MinCPS", 8, 0..20, "cps")
-    private val clickMode by choices("ClickMode", arrayOf("Single", "Double"))
+    /** Click pattern — Slinky: Single | Double | Butterfly. Butterfly emits two tight clicks per
+     *  cadence (legit butterfly clicking); recommended above ~15 CPS to avoid flagging. */
+    private val clickPattern by choices("ClickPattern", arrayOf("Single", "Double", "Butterfly"))
+    /** Randomize click speed (Slinky Randomize). On = jitter CPS each cycle (recommended). */
+    private val randomize by boolean("Randomize", true)
+    /** Simulate exhaust (Slinky Simulate exhaust): occasionally click slower, like a tiring hand. */
+    private val simulateExhaust by boolean("SimulateExhaust", true)
     private val mode by choices("Mode", arrayOf("Normal", "Legit"))
 
     // ====================================================================
@@ -108,6 +114,9 @@ object AutoClicker : Module("AutoClicker", Category.COMBAT), HudLineProvider {
         // Min/MaxCPS take effect immediately (not only after a re-enable).
         EventBridge.clickMinCps = minCps
         EventBridge.clickMaxCps = maxCps
+        EventBridge.clickPattern = clickPattern
+        EventBridge.clickRandomize = randomize
+        EventBridge.clickExhaust = simulateExhaust
         when (combatVersion) {
             "1.8" -> onTick18(player, target)
             "1.9+" -> onTick19(player, target)
@@ -122,8 +131,8 @@ object AutoClicker : Module("AutoClicker", Category.COMBAT), HudLineProvider {
         val config = cachedConfig("18") { ClickConfig(
             minCps = minCps,
             maxCps = maxCps,
-            clickMode = when (clickMode) {
-                "Double" -> ClickMode.DOUBLE
+            clickMode = when (clickPattern) {
+                "Double", "Butterfly" -> ClickMode.DOUBLE
                 "Single" -> ClickMode.SINGLE
                 else -> ClickMode.SINGLE
             },

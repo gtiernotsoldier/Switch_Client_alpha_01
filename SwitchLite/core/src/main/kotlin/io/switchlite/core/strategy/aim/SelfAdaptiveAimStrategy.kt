@@ -167,8 +167,8 @@ class SelfAdaptiveAimStrategy : AimStrategy {
                 0.5f // No mouse movement → neutral alignment
             }.coerceIn(0f, 1f)
 
-            // EMA update: 90% old, 10% new
-            state.alignmentEma = state.alignmentEma * 0.9f + alignment * 0.1f
+            // EMA update: 95% old, 5% new — slow, silky adaptation (no step feel).
+            state.alignmentEma = state.alignmentEma * 0.95f + alignment * 0.05f
         }
         state.previousAngularError = angularError
         state.hasPreviousFrame = true
@@ -222,22 +222,17 @@ class SelfAdaptiveAimStrategy : AimStrategy {
      *
      * | EMA value | strength | Behaviour          |
      * |-----------|----------|--------------------|
-     * | 0.0       | 1.6x     | Strong assist      |
-     * | 0.5       | 1.1x     | Standard assist    |
-     * | 1.0       | 0.6x     | Minimal assist     |
+     * | 0.0       | 1.30x    | Strong assist      |
+     * | 0.5       | 1.00x    | Standard assist    |
+     * | 1.0       | 0.70x    | Gentle assist      |
      *
-     * Linear interpolation between these points — no hard 4-step switching, so the assist strength
-     * glides smoothly as the player's aim skill changes (feels like a natural hand, not stepped).
-     *
-     * Low alignment = the player's mouse movement isn't reducing the angular error (struggling) →
-     * the assist works harder. High alignment = the player is aiming well on their own → the
-     * assist backs off. This is the core SelfAdaptive behavior — completely distinct from Normal's
-     * fixed speed.
+     * Gentle smooth curve (0.7..1.3) — never swings hard, glides subtly with the player's skill.
+     * Combined with the slow EMA this feels like a natural hand adjusting, not a numeric toggle.
      */
     internal fun computeDynamicStrength(alignmentEma: Float): Float {
         val e = alignmentEma.coerceIn(0f, 1f)
-        // strength = 1.6 at e=0, 1.1 at e=0.5, 0.6 at e=1 → linear glide between.
-        return 1.6f - e * 1.0f
+        // strength = 1.3 at e=0, 1.0 at e=0.5, 0.7 at e=1 → gentle linear glide.
+        return 1.3f - e * 0.6f
     }
 
     // ==================== Helpers ====================

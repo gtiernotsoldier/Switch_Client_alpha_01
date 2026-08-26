@@ -170,6 +170,7 @@ object EventBridge {
         isKeyJumpDown = false
         velocityPacketReceivedThisTick = false
         velocityModified = false
+        knockbackDisplaceAngle = 0f
         lastKnockbackNano = 0L
         lastKbOriginalSpeed = 0.0
         lastKbModifiedSpeed = 0.0
@@ -223,6 +224,12 @@ object EventBridge {
         velocityPacketReceivedThisTick = true
         velocityNotifiers.toList().forEach { it(ctx) }
     }
+
+    // ========== Knockback Displace (KnockbackDisplace — 1.8 exclusive) ==========
+    // Abuses a vanilla flaw to deal knockback at a rotated angle (left/right/random/strafe).
+    // The module (background tick) writes the CURRENT desired yaw-offset; the Netty thread
+    // rotates the S12/S27 motion vector by this angle before it lands. 0 = no displacement.
+    @Volatile var knockbackDisplaceAngle: Float = 0f
 
     /** Set true by notifyVelocityPacket, cleared each tick by modules. */
     @Volatile var velocityPacketReceivedThisTick: Boolean = false
@@ -654,6 +661,14 @@ object EventBridge {
      */
     @Volatile var clickMinCps: Int = 0
     @Volatile var clickMaxCps: Int = 0
+    /** Click pattern: "Single" | "Double" | "Butterfly" (Slinky-style butterfly double-clicks).
+     *  Butterfly emits two tight presses per cadence (legit butterfly clicking) — recommended
+     *  above ~15 CPS to avoid detection. */
+    @Volatile var clickPattern: String = "Single"
+    /** Randomize click speed (Slinky Randomize). On = jitter the CPS each cycle. */
+    @Volatile var clickRandomize: Boolean = true
+    /** Simulate exhaust (Slinky Simulate exhaust): occasionally click slower, like a tiring hand. */
+    @Volatile var clickExhaust: Boolean = true
 
     // ========== WASD Key States (StrafeFix) ==========
     @Volatile var isKeyForwardDown: Boolean = false

@@ -107,11 +107,18 @@ object ForgeEventBridge : IEventBridge {
     private var attackDownTime = 0L
     private var attackUpTime = 0L
     private var attackPressed = false
+    // Butterfly double-click support: after the first press/release we schedule a second tight
+    // press+release inside the same cycle (Slinky Butterfly pattern).
+    private var attackButterflyPending = false
+    private var attackButterflyDownTime = 0L
+    private var attackButterflyUpTime = 0L
     private var useCadenceActive = false
     private var useDownTime = 0L
     private var useUpTime = 0L
     private var usePressed = false
     private val clickRandom = java.util.Random()
+    // Simulate-exhaust state: occasionally slow the click rate like a tiring hand (Slinky).
+    private var exhaustUntil = 0L
 
     // ========== Platform Helpers ==========
 
@@ -731,9 +738,24 @@ object ForgeEventBridge : IEventBridge {
     private fun applyMotion(motion: Vec3) {
         val player = getPlayer() ?: return
         try {
-            MappingContext.getField("forge:entity_motionX")?.setDouble(player, motion.x)
-            MappingContext.getField("forge:entity_motionY")?.setDouble(player, motion.y)
-            MappingContext.getField("forge:entity_motionZ")?.setDouble(player, motion.z)
+            // Knockback Displace: rotate the landing motion around Y by the active angle (Slinky
+            // KnockbackDisplace). Distance unchanged, direction displaced (vanilla flaw exploit).
+            val displace = EventBridge.knockbackDisplaceAngle
+            val finalMotion = if (displace != 0f) {
+                val rad = Math.toRadians(displace.toDouble())
+                val cos = kotlin.math.cos(rad)
+                val sin = kotlin.math.sin(rad)
+                Vec3(
+                    motion.x * cos - motion.z * sin,
+                    motion.y,
+                    motion.x * sin + motion.z * cos
+                )
+            } else {
+                motion
+            }
+            MappingContext.getField("forge:entity_motionX")?.setDouble(player, finalMotion.x)
+            MappingContext.getField("forge:entity_motionY")?.setDouble(player, finalMotion.y)
+            MappingContext.getField("forge:entity_motionZ")?.setDouble(player, finalMotion.z)
         } catch (_: Exception) {}
     }
 
@@ -942,8 +964,23 @@ object ForgeEventBridge : IEventBridge {
     private fun sampleCps(): Int {
         val lo = EventBridge.clickMinCps.coerceAtLeast(1)
         val hi = EventBridge.clickMaxCps.coerceAtLeast(lo)
-        if (lo == hi) return lo
-        return lo + clickRandom.nextInt(hi - lo + 1)
+        val base = if (EventBridge.clickRandomize) {
+            lo + clickRandom.nextInt(hi - lo + 1)
+        } else {
+            lo // Randomize off → fixed speed (Slinky: only recommend off on trusted servers)
+        }
+        // Simulate exhaust: occasionally click slower for a short window (tiring hand).
+        if (EventBridge.clickExhaust) {
+            val now = System.currentTimeMillis()
+            if (now >= exhaustUntil && clickRandom.nextInt(20) == 0) {
+                // Every ~20 cycles, slow down for 300-700ms.
+                exhaustUntil = now + 300L + clickRandom.nextInt(400)
+            }
+            if (now < exhaustUntil) {
+                return (base * 0.7f).toInt().coerceAtLeast(1)
+            }
+        }
+        return base
     }
 
     /**
@@ -968,7 +1005,28 @@ object ForgeEventBridge : IEventBridge {
             // Cycle complete: release, then start the next cadence.
             releaseKey(keyCode, leftClick)
             setPressed(leftClick, false)
+            // Butterfly: schedule a tight second press+release inside the SAME cycle before the
+            // next cadence (legit butterfly double-click, recommended >15 CPS to avoid flagging).
+            if (leftClick && EventBridge.clickPattern == "Butterfly") {
+                val gap = 25L + clickRandom.nextInt(30) // 25-55ms between the two clicks
+                attackButterflyPending = true
+                attackButterflyDownTime = now + gap
+                attackButterflyUpTime = now + gap + 40L
+            }
             startCadence(leftClick, now)
+        }
+
+        // Butterfly second click (attack side only).
+        if (leftClick && attackButterflyPending) {
+            if (now >= attackButterflyDownTime && !attackPressed) {
+                pressKey(keyCode, leftClick)
+                setPressed(leftClick, true)
+            }
+            if (attackPressed && now >= attackButterflyUpTime) {
+                releaseKey(keyCode, leftClick)
+                setPressed(leftClick, false)
+                attackButterflyPending = false
+            }
         }
     }
 

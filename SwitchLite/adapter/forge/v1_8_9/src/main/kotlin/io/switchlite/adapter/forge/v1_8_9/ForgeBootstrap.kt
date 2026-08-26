@@ -116,7 +116,7 @@ object ForgeBootstrap {
 
         ModuleRegistry.registerAll(
             AimAssist, AutoBlock, AutoClicker, BlockHit, ClickAssist,
-            DelayRemover, HitSelect, JumpReset, KeepSprint, Reach,
+            DelayRemover, HitSelect, JumpReset, KeepSprint, KnockbackDisplace, Reach,
             SprintReset, STap, SuperKnockback, TriggerBot, Velocity, WTap,
             NoJumpDelay, NoKeyboardFix, NoMouseFix, Sprint, Strafe, StrafeFix,
             AntiBot, AutoTool, BridgeAssist, Eagle, ParallaxStrike, Teams, TargetFilter,

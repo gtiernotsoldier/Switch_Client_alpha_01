@@ -115,12 +115,11 @@ class SelfAdaptiveAimStrategy : AimStrategy {
         // 5. Aim point — Slinky Multipoint blend (center ↔ closest corner), independent axes.
         // SelfAdaptive tracks the same stable multipoint aim point, intensity adapted by EMA.
         val aimPoint = RotationCalculator.multipointAimPoint(eyePos, target.hitbox, config.multipointX, config.multipointY)
-        val centerWorld = RotationCalculator.hitboxCenterWorld(target.hitbox)
-        val centerRot = RotationCalculator.calculateRotation(eyePos, centerWorld)
+        val boxRange = RotationCalculator.getBoxAngleRange(eyePos, target.hitbox)
         val targetRot = RotationCalculator.calculateRotation(eyePos, aimPoint)
 
-        // NOTE: MinFov freedom zone is judged on the MAIN thread every frame (in
-        // drainDesiredRotationFrame) — per-frame from the current aim, no 20Hz on/off stutter.
+        // NOTE: the "inside the whole box = aim freely" check runs on the MAIN thread every frame
+        // using boxRange (full hitbox angular extent — any distance). We only pass the range here.
 
         // 6. FOV gate — 360 = full (skip); otherwise the aim point must be inside the cone.
         if (config.fov < FULL_FOV) {
@@ -184,7 +183,7 @@ class SelfAdaptiveAimStrategy : AimStrategy {
         val onTargetFactor = if (abs(rotationDiff.yaw) < 5f && abs(rotationDiff.pitch) < 3f) ON_TARGET_FACTOR else 1f
         val fracY = config.aimSpeedY * clickBoost * onTargetFactor * strength
         val fracP = config.aimSpeedP * clickBoost * onTargetFactor * strength
-        return AimResult.ApplyRotation(finalWorld, centerWorld, config.minFov, fracY, fracP)
+        return AimResult.ApplyRotation(finalWorld, boxRange, fracY, fracP)
     }
 
     // ==================== Adaptive Math ====================
@@ -222,12 +221,14 @@ class SelfAdaptiveAimStrategy : AimStrategy {
     /**
      * Map the alignment EMA to a pull-strength multiplier.
      *
-     * | EMA range | strength | Behaviour          |
+     * | EMA value | strength | Behaviour          |
      * |-----------|----------|--------------------|
-     * | < 0.3     | 1.6x     | Strong assist      |
-     * | 0.3-0.5   | 1.3x     | Moderate assist    |
-     * | 0.5-0.7   | 1.0x     | Standard assist    |
-     * | > 0.7     | 0.6x     | Minimal assist     |
+     * | 0.0       | 1.6x     | Strong assist      |
+     * | 0.5       | 1.1x     | Standard assist    |
+     * | 1.0       | 0.6x     | Minimal assist     |
+     *
+     * Linear interpolation between these points — no hard 4-step switching, so the assist strength
+     * glides smoothly as the player's aim skill changes (feels like a natural hand, not stepped).
      *
      * Low alignment = the player's mouse movement isn't reducing the angular error (struggling) →
      * the assist works harder. High alignment = the player is aiming well on their own → the
@@ -235,12 +236,9 @@ class SelfAdaptiveAimStrategy : AimStrategy {
      * fixed speed.
      */
     internal fun computeDynamicStrength(alignmentEma: Float): Float {
-        return when {
-            alignmentEma < 0.3f -> 1.6f
-            alignmentEma < 0.5f -> 1.3f
-            alignmentEma < 0.7f -> 1.0f
-            else -> 0.6f
-        }
+        val e = alignmentEma.coerceIn(0f, 1f)
+        // strength = 1.6 at e=0, 1.1 at e=0.5, 0.6 at e=1 → linear glide between.
+        return 1.6f - e * 1.0f
     }
 
     // ==================== Helpers ====================

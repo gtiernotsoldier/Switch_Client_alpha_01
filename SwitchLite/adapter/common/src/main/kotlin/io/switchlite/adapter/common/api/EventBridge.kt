@@ -129,8 +129,7 @@ object EventBridge {
         isSafeWalkEnabled = false
         rotationApplier = null
         desiredTargetWorld = null
-        desiredCenterWorld = null
-        desiredMinFov = 0f
+        desiredBoxRange = null
         desiredRotationFractionY = 0.2f
         desiredRotationFractionP = 0.1f
         aimOffsetYaw = 0f
@@ -757,10 +756,8 @@ object EventBridge {
     // 20Hz tick (一顿一顿). MC's tick (20Hz) is too coarse for smooth aim.
     /** Target world point to aim at (updated by the strategy each background tick). */
     @Volatile var desiredTargetWorld: Vec3? = null
-    /** Target hitbox center (world) — for the per-frame MinFov freedom-zone check. */
-    @Volatile var desiredCenterWorld: Vec3? = null
-    /** MinFov freedom-zone angle (degrees): inside this, the main thread lets the player aim free. */
-    @Volatile var desiredMinFov: Float = 0f
+    /** Target hitbox FULL angular extent — for the per-frame "inside the whole box" freedom check. */
+    @Volatile var desiredBoxRange: io.switchlite.core.algorithm.RotationCalculator.BoxAngleRange? = null
     /** Per-frame yaw interpolation fraction (0..1, set by the strategy). */
     @Volatile var desiredRotationFractionY: Float = 0.2f
     /** Per-frame pitch interpolation fraction (0..1, set by the strategy). */
@@ -784,8 +781,7 @@ object EventBridge {
      */
     fun clearDesiredRotation() {
         desiredTargetWorld = null
-        desiredCenterWorld = null
-        desiredMinFov = 0f
+        desiredBoxRange = null
         desiredRotationFractionY = 0.2f
         desiredRotationFractionP = 0.1f
         aimOffsetYaw = 0f
@@ -827,15 +823,16 @@ object EventBridge {
         val yaw = targetRot.yaw
         val pitch = targetRot.pitch
 
-        // Per-frame MinFov freedom zone (Slinky "minimum FOV"): while the crosshair is within
-        // minFov/2 of the target CENTER (= inside the hitbox), the player aims completely freely —
-        // the assist fully releases. Judged EVERY FRAME from the current aim, so there's no 20Hz
-        // on/off switching (no stutter) and the box is genuinely "free inside".
-        if (desiredMinFov > 0f && desiredCenterWorld != null) {
-            val centerRot = rotationCalculatorForAim().calculateRotation(currentEye, desiredCenterWorld!!)
-            val toCenterYaw = normalizeAngle(centerRot.yaw - currentYaw)
-            val toCenterPitch = centerRot.pitch - currentPitch
-            if (abs(toCenterYaw) <= desiredMinFov / 2f && abs(toCenterPitch) <= desiredMinFov / 2f) {
+        // Per-frame "inside the WHOLE box = aim freely" check: while the crosshair's yaw AND pitch
+        // both fall inside the target hitbox's full angular extent, the player aims completely
+        // freely (the assist fully releases). Judged EVERY FRAME from the current aim, so there's
+        // no 20Hz on/off switching (no stutter) and the entire box is free at any distance.
+        val boxRange = desiredBoxRange
+        if (boxRange != null && !boxRange.isDegenerate) {
+            val inYaw = currentYaw in boxRange.yawMin..boxRange.yawMax ||
+                (boxRange.yawMin > boxRange.yawMax && (currentYaw >= boxRange.yawMin || currentYaw <= boxRange.yawMax))
+            val inPitch = currentPitch in boxRange.pitchMin..boxRange.pitchMax
+            if (inYaw && inPitch) {
                 aimOffsetYaw = 0f
                 aimOffsetPitch = 0f
                 aimAnimActive = false

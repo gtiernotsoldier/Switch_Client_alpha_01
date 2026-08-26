@@ -16,8 +16,8 @@ import kotlin.math.abs
  * 3. Unified condition check → Skip.
  * 4. Aim point = Slinky Multipoint: hitbox center ↔ closest-corner linear blend, independent
  *    horizontal/vertical factors (stable, no corner snapping).
- * 5. MinFov freedom zone: while the crosshair is within `minFov` of the target center, aim freely
- *    (inside the hitbox) — assist only pulls when drifting outside. Hides the assist.
+ * 5. Freedom zone: the whole hitbox's angular extent is passed to the main thread, which lets the
+ *    player aim freely while the crosshair is inside the box (per-frame check, no stutter).
  * 6. FOV gate: 360 = full (skip); otherwise target must be inside the cone.
  * 7. LockOnCrosshair gate (optional).
  * 8. Speed: independent yaw/pitch fractions; Regular (exponential ease) or Linear (near-linear).
@@ -79,13 +79,11 @@ class LegitAimStrategy : AimStrategy {
         // 4. Aim point — Slinky Multipoint blend (center ↔ closest corner), independent axes.
         // All modes share this stable aim point; the mode only adjusts behavior around it.
         val aimPoint = RotationCalculator.multipointAimPoint(eyePos, target.hitbox, config.multipointX, config.multipointY)
-        val centerWorld = RotationCalculator.hitboxCenterWorld(target.hitbox)
-        val centerRot = RotationCalculator.calculateRotation(eyePos, centerWorld)
+        val boxRange = RotationCalculator.getBoxAngleRange(eyePos, target.hitbox)
         val targetRot = RotationCalculator.calculateRotation(eyePos, aimPoint)
 
-        // NOTE: MinFov freedom zone is judged on the MAIN thread EVERY frame (in
-        // drainDesiredRotationFrame) — per-frame from the current aim, so inside the box the
-        // player aims freely with no 20Hz on/off stutter. We only pass center + minFov here.
+        // NOTE: the "inside the whole box = aim freely" check runs on the MAIN thread every frame
+        // using boxRange (full hitbox angular extent — any distance). We only pass the range here.
 
         // 6. FOV gate — 360 = full (skip); otherwise the aim point must be inside the cone.
         if (config.fov < FULL_FOV) {
@@ -136,6 +134,6 @@ class LegitAimStrategy : AimStrategy {
         } else {
             config.aimSpeedP * clickBoost * onTargetFactor * config.smoothness
         }
-        return AimResult.ApplyRotation(finalWorld, centerWorld, config.minFov, fracY, fracP)
+        return AimResult.ApplyRotation(finalWorld, boxRange, fracY, fracP)
     }
 }

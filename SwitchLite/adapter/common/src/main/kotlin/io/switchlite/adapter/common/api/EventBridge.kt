@@ -171,6 +171,7 @@ object EventBridge {
         velocityPacketReceivedThisTick = false
         velocityModified = false
         knockbackDisplaceAngle = 0f
+        aimThroughWalls = false
         lastKnockbackNano = 0L
         lastKbOriginalSpeed = 0.0
         lastKbModifiedSpeed = 0.0
@@ -230,6 +231,11 @@ object EventBridge {
     // The module (background tick) writes the CURRENT desired yaw-offset; the Netty thread
     // rotates the S12/S27 motion vector by this angle before it lands. 0 = no displacement.
     @Volatile var knockbackDisplaceAngle: Float = 0f
+
+    // ========== Aim Through Walls (AimAssist — Slinky "Not behind blocks") ==========
+    // When false (default), the AimAssist target selector rejects entities behind solid blocks
+    // (line-of-sight raycast). True = aim through walls.
+    @Volatile var aimThroughWalls: Boolean = false
 
     /** Set true by notifyVelocityPacket, cleared each tick by modules. */
     @Volatile var velocityPacketReceivedThisTick: Boolean = false

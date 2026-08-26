@@ -412,12 +412,36 @@ object ForgeStateExtractor : IStateExtractor {
             val pitchDiff = Math.abs(playerPitch - pitchTo)
             if (pitchDiff > halfFov) continue
 
+            // Line-of-sight: reject entities behind solid blocks unless throughWalls is on
+            // (Slinky "Not behind blocks" condition for the aim target).
+            if (!EventBridge.aimThroughWalls && !hasLineOfSight(world, player, ex, ey, ez)) continue
+
             if (distSq < nearestDistSq) {
                 nearestDistSq = distSq
                 nearestId = MappingContext.getFieldValue(entity, "forge:entity_entityId") as? Int
             }
         }
         return nearestId
+    }
+
+    /** True when no solid block lies between the player's eyes and the target point. */
+    private fun hasLineOfSight(world: Any, player: Any, tx: Double, ty: Double, tz: Double): Boolean {
+        return try {
+            val playerY = MappingContext.getFieldValue(player, "forge:entity_posY") as? Double ?: return true
+            val eyeHeight = MappingContext.invokeMethod(player, "forge:player_eyeHeight") as? Double ?: 1.62
+            val eyeVec = mcVec3(player, playerY + eyeHeight)
+            val targetVec = mcVec3(player, ty)
+            val hit = MappingContext.invokeMethod(world, "forge:world_rayTraceBlocks", eyeVec, targetVec, false, true, false)
+            hit == null // null = nothing blocked
+        } catch (_: Exception) { true }
+    }
+
+    private fun mcVec3(player: Any, y: Double): Any? {
+        return try {
+            val x = MappingContext.getFieldValue(player, "forge:entity_posX") as? Double ?: return null
+            val z = MappingContext.getFieldValue(player, "forge:entity_posZ") as? Double ?: return null
+            vec3Constructor.newInstance(x, y, z)
+        } catch (_: Exception) { null }
     }
 
     private fun isViableTarget(entity: Any?, player: Any): Boolean {

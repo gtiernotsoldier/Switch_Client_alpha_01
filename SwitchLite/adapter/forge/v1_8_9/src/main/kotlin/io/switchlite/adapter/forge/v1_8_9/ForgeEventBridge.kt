@@ -735,27 +735,29 @@ object ForgeEventBridge : IEventBridge {
         } catch (_: Exception) {}
     }
 
+    /** Rotate the knockback motion vector around Y by [EventBridge.knockbackDisplaceAngle] (local
+     *  KnockbackDisplace). 0 angle = unchanged. Never throws. */
+    private fun applyKnockbackDisplace(motion: Vec3): Vec3 {
+        val angle = EventBridge.knockbackDisplaceAngle
+        if (angle == 0f) return motion
+        return try {
+            val rad = Math.toRadians(angle.toDouble())
+            val cos = kotlin.math.cos(rad)
+            val sin = kotlin.math.sin(rad)
+            Vec3(
+                motion.x * cos - motion.z * sin,
+                motion.y,
+                motion.x * sin + motion.z * cos
+            )
+        } catch (_: Exception) { motion }
+    }
+
     private fun applyMotion(motion: Vec3) {
         val player = getPlayer() ?: return
         try {
-            // Knockback Displace: rotate the landing motion around Y by the active angle (Slinky
-            // KnockbackDisplace). Distance unchanged, direction displaced (vanilla flaw exploit).
-            val displace = EventBridge.knockbackDisplaceAngle
-            val finalMotion = if (displace != 0f) {
-                val rad = Math.toRadians(displace.toDouble())
-                val cos = kotlin.math.cos(rad)
-                val sin = kotlin.math.sin(rad)
-                Vec3(
-                    motion.x * cos - motion.z * sin,
-                    motion.y,
-                    motion.x * sin + motion.z * cos
-                )
-            } else {
-                motion
-            }
-            MappingContext.getField("forge:entity_motionX")?.setDouble(player, finalMotion.x)
-            MappingContext.getField("forge:entity_motionY")?.setDouble(player, finalMotion.y)
-            MappingContext.getField("forge:entity_motionZ")?.setDouble(player, finalMotion.z)
+            MappingContext.getField("forge:entity_motionX")?.setDouble(player, motion.x)
+            MappingContext.getField("forge:entity_motionY")?.setDouble(player, motion.y)
+            MappingContext.getField("forge:entity_motionZ")?.setDouble(player, motion.z)
         } catch (_: Exception) {}
     }
 
@@ -808,8 +810,14 @@ object ForgeEventBridge : IEventBridge {
                 }
             }
 
+            val rawMotion = Vec3(motionX, motionY, motionZ)
+            // Knockback Displace — LOCAL operation (not a Netty packet rewrite): rotate the
+            // incoming knockback motion around Y by the active angle before it reaches the
+            // Velocity/module pipeline. Distance unchanged, direction displaced (vanilla flaw).
+            val displaced = applyKnockbackDisplace(rawMotion)
+
             val ctx = VelocityContext(
-                originalMotion = Vec3(motionX, motionY, motionZ),
+                originalMotion = displaced,
                 player = player,
                 target = target,
                 packetHandle = packetHandle,

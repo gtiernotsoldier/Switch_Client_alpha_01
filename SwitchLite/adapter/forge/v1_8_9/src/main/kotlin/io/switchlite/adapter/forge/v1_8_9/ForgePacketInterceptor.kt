@@ -173,11 +173,8 @@ object ForgePacketInterceptor : ChannelDuplexHandler() {
                         MappingContext.getFieldValue(player, "forge:entity_entityId") as? Int
                     } catch (_: Exception) { null }
                     if (packetEntityId == playerEntityId) {
-                        // Knockback Displace: rotate the packet's motion around Y BEFORE it lands,
-                        // so the direction change applies regardless of whether Velocity modifies
-                        // the motion (vanilla Pass included). Distance unchanged (vanilla flaw).
-                        applyDisplaceToPacket(msg)
-
+                        // Knockback Displace is applied LOCALLY inside ForgeEventBridge.onVelocityPacket
+                        // (rotates the motion before the Velocity pipeline) — not a Netty packet rewrite.
                         val command = ForgeEventBridge.onVelocityPacket(msg)
                         when (command) {
                             is io.switchlite.core.model.PlatformCommand.CancelPacket -> return
@@ -237,29 +234,6 @@ object ForgePacketInterceptor : ChannelDuplexHandler() {
             val z = MappingContext.getFieldValue(msg, "forge:velocity_motionZ") as? Int ?: return null
             Vec3(x / 8000.0, y / 8000.0, z / 8000.0)
         } catch (_: Exception) { null }
-    }
-
-    /**
-     * Knockback Displace: rotate the S12 packet's motion vector around Y by the active angle
-     * (EventBridge.knockbackDisplaceAngle), writing the rotated Int fields (1/8000) back into the
-     * packet. Runs on the Netty thread; any failure is swallowed (vanilla behaviour preserved).
-     */
-    private fun applyDisplaceToPacket(msg: Any) {
-        val angle = EventBridge.knockbackDisplaceAngle
-        if (angle == 0f) return
-        try {
-            val xRaw = MappingContext.getFieldValue(msg, "forge:velocity_motionX") as? Int ?: return
-            val yRaw = MappingContext.getFieldValue(msg, "forge:velocity_motionY") as? Int ?: return
-            val zRaw = MappingContext.getFieldValue(msg, "forge:velocity_motionZ") as? Int ?: return
-            val rad = Math.toRadians(angle.toDouble())
-            val cos = kotlin.math.cos(rad)
-            val sin = kotlin.math.sin(rad)
-            val nx = xRaw * cos - zRaw * sin
-            val nz = xRaw * sin + zRaw * cos
-            MappingContext.getField("forge:velocity_motionX")?.setInt(msg, kotlin.math.round(nx).toInt())
-            MappingContext.getField("forge:velocity_motionZ")?.setInt(msg, kotlin.math.round(nz).toInt())
-            MappingContext.getField("forge:velocity_motionY")?.setInt(msg, yRaw)
-        } catch (_: Exception) {}
     }
 
     private fun sendClickBurst(targetId: Int, times: Int) {

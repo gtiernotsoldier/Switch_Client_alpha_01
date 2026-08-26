@@ -65,6 +65,9 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
     /** Linear mode — near-linear speed, stable low-speed tracking (Slinky Linear). Off = Regular
      *  exponential ease (distance-proportional). */
     private val linear by boolean("Linear", false)
+    /** Through walls — Slinky "Not behind blocks": when OFF (default) the target selector rejects
+     *  entities behind solid blocks (line-of-sight raycast). ON = aim through walls. */
+    private val throughWalls by boolean("ThroughWalls", false)
 
     // Mode: Legit / Normal / SelfAdaptive / Linear
     private val mode by choices("Mode", arrayOf("Legit", "Normal", "SelfAdaptive", "Linear"))
@@ -180,6 +183,8 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
      * falling back to the generic tick target.
      */
     fun onClientTick(player: PlayerState, target: TargetState?) {
+        // Through-walls toggle → target selector (ForgeStateExtractor line-of-sight filter).
+        EventBridge.aimThroughWalls = throughWalls
         // Single target lock: acquire once, keep it while valid (never switch to a closer target).
         val aimTarget = resolveAimTarget(onlyCrosshairTarget, target)
 

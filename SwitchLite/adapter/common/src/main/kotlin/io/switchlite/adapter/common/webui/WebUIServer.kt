@@ -19,9 +19,9 @@ import java.util.concurrent.Executors
  * WebUI panel server — the browser-based configuration/debug surface.
  *
  * Recent hardening (release-ready):
- * - Binds 0.0.0.0 so a phone or another PC on the same LAN can open the panel
- *   (not a hard-coded 127.0.0.1). The LAN URL + access token are advertised in
- *   the game (HUD/log) so users know what to type.
+ * - Binds 0.0.0.0 so a phone or another PC on the same LAN can open the panel.
+ *   The dynamic LAN URL + access token are advertised in the game (HUD/log)
+ *   so users know what to type.
  * - Protected by a per-install access token (HTTP Bearer). The token is
  *   auto-generated once, persisted, and stable across restarts.
  * - Runs on its own daemon thread pool — never touches the MC render thread.
@@ -52,7 +52,7 @@ object WebUIServer {
 
     val isRunning: Boolean get() = server != null
 
-    /** Advertised access URLs (dynamic LAN IPs; loopback only as offline fallback). */
+    /** Advertised access URLs (dynamic LAN IPs of the current network). */
     val accessUrls: List<String> get() = LanHelper.lanUrls(PORT)
 
     /** The per-install access token (hidden once authorized from remote). */

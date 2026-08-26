@@ -47,18 +47,12 @@ object LanHelper {
         return (siteLocal + fallback).distinctBy { it.hostAddress }
     }
 
-    /** Primary LAN IPv4 to advertise, or null if none is up (offline-only). */
-    fun lanAddress(): InetAddress? = lanAddresses().firstOrNull()
-
     /**
      * Human-friendly access URL(s) for the panel.
      *
-     * Fully dynamic: every LAN IPv4 gets its own URL. Only when no LAN address
-     * is available at all do we fall back to the loopback address so the panel
-     * is still reachable from the machine itself.
+     * Fully dynamic: every LAN IPv4 gets its own URL. No loopback / hard-coded
+     * fallback — the address is whatever network the machine is on right now.
      */
-    fun lanUrls(port: Int): List<String> {
-        val urls = lanAddresses().map { "http://${it.hostAddress}:$port" }
-        return if (urls.isNotEmpty()) urls else listOf("http://127.0.0.1:$port")
-    }
+    fun lanUrls(port: Int): List<String> =
+        lanAddresses().map { "http://${it.hostAddress}:$port" }
 }

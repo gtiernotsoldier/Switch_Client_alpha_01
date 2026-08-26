@@ -71,14 +71,12 @@ class SelfAdaptiveAimStrategy : AimStrategy {
             return AimResult.Skip
         }
 
-        // 4. Target switch detection — reset alignment tracking when the target changes
+        // 4. Target switch detection
         if (target.entityId != state.lastTargetId) {
             state.lastTargetId = target.entityId
-            state.hasPreviousFrame = false
         }
 
         // 5. Aim point — Slinky Multipoint blend (center ↔ closest corner), independent axes.
-        // SelfAdaptive tracks the same stable multipoint aim point, intensity adapted by EMA.
         val aimPoint = RotationCalculator.multipointAimPoint(eyePos, target.hitbox, config.multipointX, config.multipointY)
         val targetRot = RotationCalculator.calculateRotation(eyePos, aimPoint)
 
@@ -129,14 +127,6 @@ class SelfAdaptiveAimStrategy : AimStrategy {
         val fracP = config.aimSpeedP * clickBoost * onTargetFactor
         return AimResult.ApplyRotation(finalWorld, target.hitbox, fracY, fracP)
     }
-
-    // ==================== Adaptive Math ====================
-
-    /**
-     * Convert raw mouse delta (pixels) to approximate angular displacement (degrees).
-     *
-     * Uses Minecraft's actual mouse sensitivity formula (1.8–1.21):
-     *   f(s) = s * 0.6 * (1 - s³ * 0.6)
 }
 
 

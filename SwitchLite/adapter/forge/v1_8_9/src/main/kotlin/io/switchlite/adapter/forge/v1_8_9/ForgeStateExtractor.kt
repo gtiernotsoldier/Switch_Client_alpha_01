@@ -413,8 +413,9 @@ object ForgeStateExtractor : IStateExtractor {
             if (pitchDiff > halfFov) continue
 
             // Line-of-sight: reject entities behind solid blocks unless throughWalls is on
-            // (Slinky "Not behind blocks" condition for the aim target).
-            if (!EventBridge.aimThroughWalls && !hasLineOfSight(world, player, ex, ey, ez)) continue
+            // (Slinky "Not behind blocks" condition for the aim target). Test against the
+            // entity's body center so the check matches the actual aim point (not the feet).
+            if (!EventBridge.aimThroughWalls && !hasLineOfSight(world, player, ex, entityBodyCenterY(entity, ey), ez)) continue
 
             if (distSq < nearestDistSq) {
                 nearestDistSq = distSq
@@ -424,24 +425,32 @@ object ForgeStateExtractor : IStateExtractor {
         return nearestId
     }
 
-    /** True when no solid block lies between the player's eyes and the target point. */
+    /**
+     * True when no solid block lies between the player's eyes and the target point.
+     * Casts from the player's eye position to (tx, ty, tz) — the caller must pass the entity's
+     * BODY CENTER, not its feet, so the check matches the actual aim point.
+     */
     private fun hasLineOfSight(world: Any, player: Any, tx: Double, ty: Double, tz: Double): Boolean {
         return try {
-            val playerY = MappingContext.getFieldValue(player, "forge:entity_posY") as? Double ?: return true
+            val px = MappingContext.getFieldValue(player, "forge:entity_posX") as? Double ?: return true
+            val py = MappingContext.getFieldValue(player, "forge:entity_posY") as? Double ?: return true
+            val pz = MappingContext.getFieldValue(player, "forge:entity_posZ") as? Double ?: return true
             val eyeHeight = MappingContext.invokeMethod(player, "forge:player_eyeHeight") as? Double ?: 1.62
-            val eyeVec = mcVec3(player, playerY + eyeHeight)
-            val targetVec = mcVec3(player, ty)
+            val eyeVec = vec3Constructor.newInstance(px, py + eyeHeight, pz)
+            val targetVec = vec3Constructor.newInstance(tx, ty, tz)
             val hit = MappingContext.invokeMethod(world, "forge:world_rayTraceBlocks", eyeVec, targetVec, false, true, false)
             hit == null // null = nothing blocked
         } catch (_: Exception) { true }
     }
 
-    private fun mcVec3(player: Any, y: Double): Any? {
+    /** Body-center Y of an entity (bounding box center), falling back to its feet Y. */
+    private fun entityBodyCenterY(entity: Any?, feetY: Double): Double {
         return try {
-            val x = MappingContext.getFieldValue(player, "forge:entity_posX") as? Double ?: return null
-            val z = MappingContext.getFieldValue(player, "forge:entity_posZ") as? Double ?: return null
-            vec3Constructor.newInstance(x, y, z)
-        } catch (_: Exception) { null }
+            val bb = MappingContext.getFieldValue(entity, "forge:entity_boundingBox") ?: return feetY
+            val minY = MappingContext.getFieldValue(bb, "forge:bb_minY") as? Double ?: return feetY
+            val maxY = MappingContext.getFieldValue(bb, "forge:bb_maxY") as? Double ?: return feetY
+            (minY + maxY) / 2.0
+        } catch (_: Exception) { feetY }
     }
 
     private fun isViableTarget(entity: Any?, player: Any): Boolean {

@@ -653,7 +653,15 @@ object ForgeEventBridge : IEventBridge {
                 val tx = MappingContext.getFieldValue(entity, "forge:entity_posX") as? Double ?: return@registerLineOfSightProvider true
                 val ty = MappingContext.getFieldValue(entity, "forge:entity_posY") as? Double ?: return@registerLineOfSightProvider true
                 val tz = MappingContext.getFieldValue(entity, "forge:entity_posZ") as? Double ?: return@registerLineOfSightProvider true
-                val targetVec = coreVec3ToMcVec3(Vec3(tx, ty, tz)) ?: return@registerLineOfSightProvider true
+                // Aim at the body center (bounding box center), not the feet, so the check
+                // matches where AimAssist actually points.
+                val bb = MappingContext.getFieldValue(entity, "forge:entity_boundingBox")
+                val bodyY = if (bb != null) {
+                    val minY = MappingContext.getFieldValue(bb, "forge:bb_minY") as? Double
+                    val maxY = MappingContext.getFieldValue(bb, "forge:bb_maxY") as? Double
+                    if (minY != null && maxY != null) (minY + maxY) / 2.0 else ty
+                } else ty
+                val targetVec = coreVec3ToMcVec3(Vec3(tx, bodyY, tz)) ?: return@registerLineOfSightProvider true
                 val hit = MappingContext.invokeMethod(world, "forge:world_rayTraceBlocks", eyeVec, targetVec, false, true, false)
                 hit == null
             } catch (_: Exception) { true }

@@ -158,11 +158,15 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
             lockedTargetId = -1
         }
 
-        // 2. (Re)acquire — the FOV-nearest selector already filters by line-of-sight.
+        // 2. (Re)acquire — the FOV-nearest selector already filters by line-of-sight. The
+        //    crosshair target is inherently visible (objectMouseOver never hits through blocks);
+        //    the generic fallback target must be visibility-checked too.
         val acquired = if (onlyCrosshair) {
-            EventBridge.crosshairTarget ?: genericTarget
+            EventBridge.crosshairTarget
+                ?: genericTarget?.takeIf { throughWalls || EventBridge.isEntityVisible(it.entityId) }
         } else {
-            EventBridge.getFovNearestTarget(fov, rangeMax) ?: genericTarget
+            EventBridge.getFovNearestTarget(fov, rangeMax)
+                ?: genericTarget?.takeIf { throughWalls || EventBridge.isEntityVisible(it.entityId) }
         }
         if (acquired != null) {
             lockedTargetId = acquired.entityId

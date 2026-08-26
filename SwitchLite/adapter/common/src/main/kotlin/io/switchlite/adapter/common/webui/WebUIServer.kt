@@ -52,7 +52,7 @@ object WebUIServer {
 
     val isRunning: Boolean get() = server != null
 
-    /** Advertised access URLs (loopback + primary LAN IP). */
+    /** Advertised access URLs (dynamic LAN IPs; loopback only as offline fallback). */
     val accessUrls: List<String> get() = LanHelper.lanUrls(PORT)
 
     /** The per-install access token (hidden once authorized from remote). */
@@ -72,10 +72,9 @@ object WebUIServer {
                 srv.createContext("/", ::handleAll)
                 srv.start()
                 server = srv
-                CoreLogger.info("[WebUI] Panel running on 0.0.0.0:$PORT (LAN+local). Token: $token")
-                CoreLogger.info("[WebUI]  Local: ${accessUrls[0]}")
-                LanHelper.lanAddress()?.let {
-                    CoreLogger.info("[WebUI]  LAN:   http://${it.hostAddress}:$PORT")
+                CoreLogger.info("[WebUI] Panel running on $HOST:$PORT (LAN). Token: $token")
+                for (url in accessUrls) {
+                    CoreLogger.info("[WebUI]  URL:   $url")
                 }
                 // Mirror the address + token to the payload log so the Rust
                 // injector can surface it in the user's cmd window. OVERWRITE (not append)
@@ -85,7 +84,7 @@ object WebUIServer {
                     val temp = System.getProperty("java.io.tmpdir") ?: ""
                     val pw = java.io.PrintWriter(
                         java.io.FileWriter(java.io.File(temp, "switchlite-payload.log")), true)
-                    pw.println("[WebUI] Panel: ${accessUrls[0]}  LAN: ${LanHelper.lanAddress()?.hostAddress ?: "127.0.0.1"}:$PORT  Token: $token")
+                    pw.println("[WebUI] Panel: ${accessUrls.joinToString("  ")}  Token: $token")
                     pw.close()
                 } catch (_: Exception) {}
             } catch (e: Exception) {
@@ -163,14 +162,18 @@ object WebUIServer {
     // ═══════════════════════════════════════════
 
     private fun handleInfo(exchange: HttpExchange) {
-        val isLoopback = exchange.remoteAddress.address.isLoopbackAddress ||
-            exchange.remoteAddress.address.isAnyLocalAddress
+        val remote = exchange.remoteAddress?.address
+        val isLocal = remote != null && (
+            remote.isLoopbackAddress ||
+                remote.isAnyLocalAddress ||
+                LanHelper.lanAddresses().any { it.hostAddress == remote.hostAddress }
+            )
         val info = linkedMapOf<String, Any?>(
             "urls" to accessUrls,
             "tokenRequired" to true,
-            // Only the local machine sees the actual token; remote devices must
-            // read it from the game HUD / injector log.
-            "defaultPassword" to (if (isLoopback) accessToken else null)
+            // Only a local caller (loopback or the machine's own LAN IP) sees
+            // the actual token; remote devices read it from the game HUD / log.
+            "defaultPassword" to (if (isLocal) accessToken else null)
         )
         respondJson(exchange, 200, mapper.writeValueAsString(info))
     }

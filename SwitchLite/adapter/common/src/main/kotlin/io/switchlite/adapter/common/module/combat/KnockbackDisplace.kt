@@ -14,26 +14,25 @@ import kotlin.random.Random
 /**
  * KnockbackDisplace Module (Slinky Knockback Displace, 1.8 exclusive).
  *
- * Abuses a vanilla Minecraft flaw to deal knockback at a different angle. The S12 knockback
- * motion vector is rotated around the Y axis by [angle] degrees before it lands — the knockback
- * distance stays the same, but its direction is displaced (left / right / random / strafe).
+ * Displaces the DIRECTION of the knockback YOU DEAL when you attack — not your own received
+ * knockback (that's Velocity's job). MC 1.8's server computes the knockback direction from the
+ * ATTACKER's yaw, so on each attack we briefly offset the player's yaw (a "flick") before the
+ * server sees it; the knockback then lands at the rotated angle. Distance unchanged.
  *
- * Architecture compliance:
- * 1. Logic in module: direction selection (left/right/random/strafe), cooldown gating, angle.
- * 2. Platform glue: writes the desired angle into [EventBridge.knockbackDisplaceAngle]; the Netty
- *    thread (ForgePacketInterceptor → onVelocityPacket) rotates the motion vector by it.
- * 3. Algorithm (rotation math) lives in core-free adapter glue (pure 2D rotation).
+ * "Hide rotation from players" semantics: the flick lasts exactly one tick and is applied on the
+ * main thread, so other players don't perceive a visible spin.
+ *
+ * Architecture:
+ * 1. Logic in module: direction (left/right/random/strafe), cooldown, angle, conditions.
+ * 2. On a fresh hit (EventBridge.notifyAttack) the module queues a one-tick yaw offset; the main
+ *    thread applies it via EventBridge.setPlayerRotation for exactly one tick, then restores.
  */
 object KnockbackDisplace : Module("KnockbackDisplace", Category.COMBAT) {
 
     // ========== Configuration ==========
-    /** Direction: Left / Right / Random / Strafe / Strafe (inverted). */
     private val direction by choices("Direction", arrayOf("Left", "Right", "Random", "Strafe", "StrafeInverted"))
-    /** Use the last pressed strafe direction when no strafe key is held (Strafe modes). */
     private val useLastStrafe by boolean("UseLastStrafe", true)
-    /** Cooldown between activations (ms). */
     private val cooldownMs by int("Cooldown", 100, 0..2000, "ms")
-    /** Angle to displace knockback by, relative to looking direction (degrees, 0 = vanilla). */
     private val angle by float("Angle", 90.0f, -180.0f..180.0f, "degrees")
 
     // ========== Conditions ==========
@@ -42,27 +41,53 @@ object KnockbackDisplace : Module("KnockbackDisplace", Category.COMBAT) {
 
     // ========== State ==========
     private var lastStrafeLeft = false
-    private var lastActivationNano = 0L
+    private var lastFlickNano = 0L
+    /** Non-zero while the one-tick yaw offset should be applied. */
+    private var flickRemainingTicks = 0
+    private var flickYawOffset = 0f
 
-    // ========== Tick Listener ==========
+    // ========== Listeners ==========
+    // Fresh hit (attack landed) → queue the flick.
+    private val attackListener: (TargetState?) -> Unit = {
+        if (enabled) onAttack()
+    }
     private val tickListener: (PlayerState, TargetState?) -> Unit = { p, _ ->
         if (enabled) onTick(p)
     }
 
-    private fun onTick(player: PlayerState) {
-        // Cooldown gate.
+    private fun onAttack() {
         val now = System.nanoTime()
-        if (now - lastActivationNano < cooldownMs * 1_000_000L) return
-
-        // Weapon condition.
-        if (weaponOnly && player.weaponType == io.switchlite.core.strategy.click.WeaponType.OTHER) return
-
-        // "Not taking knockback" condition (Slinky): only displace when the player isn't already
-        // being knocked back this tick (avoids fighting the incoming motion).
+        if (now - lastFlickNano < cooldownMs * 1_000_000L) return
         if (notTakingKnockback && EventBridge.velocityPacketReceivedThisTick) return
+        val dirSign = currentDirection()
+        if (dirSign == 0) return
+        // Queue a one-tick yaw offset (server sees the attacker's yaw at attack time).
+        flickYawOffset = dirSign * angle
+        flickRemainingTicks = 1
+        lastFlickNano = now
+    }
 
-        // Compute the displacement sign/direction.
-        val dirSign = when (direction) {
+    private fun onTick(player: PlayerState) {
+        // Track the last strafe direction for "use last strafe".
+        if (EventBridge.isKeyLeftDown != EventBridge.isKeyRightDown) {
+            lastStrafeLeft = EventBridge.isKeyLeftDown
+        }
+        if (flickRemainingTicks <= 0) return
+        // Weapon condition (checked with the current held item).
+        if (weaponOnly && player.weaponType == io.switchlite.core.strategy.click.WeaponType.OTHER) {
+            flickRemainingTicks = 0
+            flickYawOffset = 0f
+            return
+        }
+        // Apply the yaw offset for exactly one tick, then restore.
+        val yaw = player.rotation.yaw
+        EventBridge.setPlayerRotation(yaw + flickYawOffset, player.rotation.pitch)
+        flickRemainingTicks--
+        if (flickRemainingTicks <= 0) flickYawOffset = 0f
+    }
+
+    private fun currentDirection(): Int {
+        return when (direction) {
             "Left" -> 1
             "Right" -> -1
             "Random" -> if (Random.nextBoolean()) 1 else -1
@@ -72,39 +97,27 @@ object KnockbackDisplace : Module("KnockbackDisplace", Category.COMBAT) {
                 val base = when {
                     left && !right -> 1
                     right && !left -> -1
-                    else -> {
-                        if (useLastStrafe && lastStrafeLeft) 1 else if (useLastStrafe && !lastStrafeLeft) -1 else 0
-                    }
+                    else -> if (useLastStrafe) (if (lastStrafeLeft) 1 else -1) else 0
                 }
                 if (direction == "StrafeInverted") -base else base
             }
             else -> 1
         }
-        // Track last strafe direction for "use last strafe".
-        if (EventBridge.isKeyLeftDown != EventBridge.isKeyRightDown) {
-            lastStrafeLeft = EventBridge.isKeyLeftDown
-        }
-
-        // Strafe modes: when neither (and not using last), do nothing.
-        if (dirSign == 0) {
-            EventBridge.knockbackDisplaceAngle = 0f
-            return
-        }
-
-        // Write the active displacement angle (net, with direction sign).
-        EventBridge.knockbackDisplaceAngle = dirSign * angle
-        lastActivationNano = now
     }
 
     // ========== Lifecycle ==========
     override fun onEnable() {
-        lastActivationNano = 0L
+        lastFlickNano = 0L
         lastStrafeLeft = false
+        flickRemainingTicks = 0
+        EventBridge.registerAttackListener(attackListener)
         EventBridge.registerTickListener(tickListener)
     }
 
     override fun onDisable() {
+        EventBridge.unregisterAttackListener(attackListener)
         EventBridge.unregisterTickListener(tickListener)
-        EventBridge.knockbackDisplaceAngle = 0f
+        flickRemainingTicks = 0
+        flickYawOffset = 0f
     }
 }

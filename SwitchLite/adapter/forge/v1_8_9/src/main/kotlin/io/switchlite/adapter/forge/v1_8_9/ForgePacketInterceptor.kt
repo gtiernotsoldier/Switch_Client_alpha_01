@@ -173,8 +173,6 @@ object ForgePacketInterceptor : ChannelDuplexHandler() {
                         MappingContext.getFieldValue(player, "forge:entity_entityId") as? Int
                     } catch (_: Exception) { null }
                     if (packetEntityId == playerEntityId) {
-                        // Knockback Displace is applied LOCALLY inside ForgeEventBridge.onVelocityPacket
-                        // (rotates the motion before the Velocity pipeline) — not a Netty packet rewrite.
                         val command = ForgeEventBridge.onVelocityPacket(msg)
                         when (command) {
                             is io.switchlite.core.model.PlatformCommand.CancelPacket -> return

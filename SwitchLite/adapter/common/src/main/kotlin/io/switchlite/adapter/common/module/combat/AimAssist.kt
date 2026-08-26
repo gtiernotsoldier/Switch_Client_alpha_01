@@ -145,10 +145,12 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
      */
     private fun resolveAimTarget(onlyCrosshair: Boolean, genericTarget: TargetState?): TargetState? {
         // 1. Validate the existing lock: the locked entity must still be the generic/crosshair
-        //    target this tick (i.e. still a valid, in-range, alive target).
+        //    target this tick (i.e. still a valid, in-range, alive target) AND visible when
+        //    through-walls is off (Slinky "Not behind blocks" — don't keep aiming through walls).
         if (lockedTargetId != -1) {
             val candidates = listOfNotNull(genericTarget, EventBridge.crosshairTarget)
-            val stillValid = candidates.any { it.entityId == lockedTargetId }
+            val stillValid = candidates.any { it.entityId == lockedTargetId } &&
+                (throughWalls || EventBridge.isEntityVisible(lockedTargetId))
             if (stillValid) {
                 return candidates.first { it.entityId == lockedTargetId }
             }
@@ -156,7 +158,7 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
             lockedTargetId = -1
         }
 
-        // 2. (Re)acquire.
+        // 2. (Re)acquire — the FOV-nearest selector already filters by line-of-sight.
         val acquired = if (onlyCrosshair) {
             EventBridge.crosshairTarget ?: genericTarget
         } else {

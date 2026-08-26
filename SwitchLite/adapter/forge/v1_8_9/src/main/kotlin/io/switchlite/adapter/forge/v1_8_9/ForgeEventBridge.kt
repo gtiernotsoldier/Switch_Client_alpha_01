@@ -638,6 +638,27 @@ object ForgeEventBridge : IEventBridge {
             } catch (_: Exception) { null }
         }
 
+        // ── Line-of-sight (AimAssist ThroughWalls / Single-lock re-check) ──
+        EventBridge.registerLineOfSightProvider { entityId ->
+            try {
+                val mc = getMc() ?: return@registerLineOfSightProvider true
+                val world = getWorld() ?: return@registerLineOfSightProvider true
+                val player = getPlayer() ?: return@registerLineOfSightProvider true
+                val entity = MappingContext.invokeMethod(world, "forge:world_getEntityByID", entityId) ?: return@registerLineOfSightProvider true
+                val px = MappingContext.getFieldValue(player, "forge:entity_posX") as? Double ?: return@registerLineOfSightProvider true
+                val py = MappingContext.getFieldValue(player, "forge:entity_posY") as? Double ?: return@registerLineOfSightProvider true
+                val pz = MappingContext.getFieldValue(player, "forge:entity_posZ") as? Double ?: return@registerLineOfSightProvider true
+                val eyeHeight = MappingContext.invokeMethod(player, "forge:player_eyeHeight") as? Double ?: 1.62
+                val eyeVec = coreVec3ToMcVec3(Vec3(px, py + eyeHeight, pz)) ?: return@registerLineOfSightProvider true
+                val tx = MappingContext.getFieldValue(entity, "forge:entity_posX") as? Double ?: return@registerLineOfSightProvider true
+                val ty = MappingContext.getFieldValue(entity, "forge:entity_posY") as? Double ?: return@registerLineOfSightProvider true
+                val tz = MappingContext.getFieldValue(entity, "forge:entity_posZ") as? Double ?: return@registerLineOfSightProvider true
+                val targetVec = coreVec3ToMcVec3(Vec3(tx, ty, tz)) ?: return@registerLineOfSightProvider true
+                val hit = MappingContext.invokeMethod(world, "forge:world_rayTraceBlocks", eyeVec, targetVec, false, true, false)
+                hit == null
+            } catch (_: Exception) { true }
+        }
+
         // ── Forward ray target (HitSelect — own forward ray, not objectMouseOver) ──
         // objectMouseOver.entityHit is unreliable mid-fight (the crosshair can briefly leave the
         // entity). This casts its own ray from the player's eyes along the look direction (the same
@@ -810,14 +831,12 @@ object ForgeEventBridge : IEventBridge {
                 }
             }
 
-            val rawMotion = Vec3(motionX, motionY, motionZ)
-            // Knockback Displace — LOCAL operation (not a Netty packet rewrite): rotate the
-            // incoming knockback motion around Y by the active angle before it reaches the
-            // Velocity/module pipeline. Distance unchanged, direction displaced (vanilla flaw).
-            val displaced = applyKnockbackDisplace(rawMotion)
-
             val ctx = VelocityContext(
-                originalMotion = displaced,
+                // NOTE: Knockback Displace is applied IN THE INTERCEPTOR by rewriting the S12
+                // packet fields (applyDisplaceToPacket) BEFORE this — MC lands the packet's own
+                // values on the vanilla path, so the packet rewrite is the effective path. This
+                // originalMotion is the (already displaced) packet value.
+                originalMotion = Vec3(motionX, motionY, motionZ),
                 player = player,
                 target = target,
                 packetHandle = packetHandle,

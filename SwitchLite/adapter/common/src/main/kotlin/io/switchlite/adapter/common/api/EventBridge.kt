@@ -172,6 +172,7 @@ object EventBridge {
         velocityModified = false
         knockbackDisplaceAngle = 0f
         aimThroughWalls = false
+        lineOfSightProvider = null
         lastKnockbackNano = 0L
         lastKbOriginalSpeed = 0.0
         lastKbModifiedSpeed = 0.0
@@ -236,6 +237,12 @@ object EventBridge {
     // When false (default), the AimAssist target selector rejects entities behind solid blocks
     // (line-of-sight raycast). True = aim through walls.
     @Volatile var aimThroughWalls: Boolean = false
+
+    // Platform line-of-sight query (implemented by the adapter): true when the player can see the
+    // given entity (no solid block between the player's eyes and the entity).
+    private var lineOfSightProvider: ((Int) -> Boolean)? = null
+    fun isEntityVisible(entityId: Int): Boolean = lineOfSightProvider?.invoke(entityId) ?: true
+    fun registerLineOfSightProvider(provider: (Int) -> Boolean) { lineOfSightProvider = provider }
 
     /** Set true by notifyVelocityPacket, cleared each tick by modules. */
     @Volatile var velocityPacketReceivedThisTick: Boolean = false

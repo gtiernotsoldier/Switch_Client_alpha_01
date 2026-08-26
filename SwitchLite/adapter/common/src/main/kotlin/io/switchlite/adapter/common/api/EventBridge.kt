@@ -129,7 +129,7 @@ object EventBridge {
         isSafeWalkEnabled = false
         rotationApplier = null
         desiredTargetWorld = null
-        desiredBoxRange = null
+        desiredHitbox = null
         desiredRotationFractionY = 0.2f
         desiredRotationFractionP = 0.1f
         aimOffsetYaw = 0f
@@ -756,8 +756,8 @@ object EventBridge {
     // 20Hz tick (一顿一顿). MC's tick (20Hz) is too coarse for smooth aim.
     /** Target world point to aim at (updated by the strategy each background tick). */
     @Volatile var desiredTargetWorld: Vec3? = null
-    /** Target hitbox FULL angular extent — for the per-frame "inside the whole box" freedom check. */
-    @Volatile var desiredBoxRange: io.switchlite.core.algorithm.RotationCalculator.BoxAngleRange? = null
+    /** Target hitbox (world AABB) — for the per-frame "crosshair inside the box = free" check. */
+    @Volatile var desiredHitbox: io.switchlite.core.model.Hitbox? = null
     /** Per-frame yaw interpolation fraction (0..1, set by the strategy). */
     @Volatile var desiredRotationFractionY: Float = 0.2f
     /** Per-frame pitch interpolation fraction (0..1, set by the strategy). */
@@ -781,7 +781,7 @@ object EventBridge {
      */
     fun clearDesiredRotation() {
         desiredTargetWorld = null
-        desiredBoxRange = null
+        desiredHitbox = null
         desiredRotationFractionY = 0.2f
         desiredRotationFractionP = 0.1f
         aimOffsetYaw = 0f
@@ -823,16 +823,16 @@ object EventBridge {
         val yaw = targetRot.yaw
         val pitch = targetRot.pitch
 
-        // Per-frame "inside the WHOLE box = aim freely" check: while the crosshair's yaw AND pitch
-        // both fall inside the target hitbox's full angular extent, the player aims completely
-        // freely (the assist fully releases). Judged EVERY FRAME from the current aim, so there's
-        // no 20Hz on/off switching (no stutter) and the entire box is free at any distance.
-        val boxRange = desiredBoxRange
-        if (boxRange != null && !boxRange.isDegenerate) {
-            val inYaw = currentYaw in boxRange.yawMin..boxRange.yawMax ||
-                (boxRange.yawMin > boxRange.yawMax && (currentYaw >= boxRange.yawMin || currentYaw <= boxRange.yawMax))
-            val inPitch = currentPitch in boxRange.pitchMin..boxRange.pitchMax
-            if (inYaw && inPitch) {
+        // Per-frame "crosshair inside the box = aim freely" check: cast the player's CURRENT
+        // aim ray (from their eye along current yaw/pitch) at the target hitbox. If it hits, the
+        // crosshair is on the box — the player aims completely freely (assist fully releases).
+        // Judged EVERY FRAME with current values (no stale angles, no normalization bugs), and it
+        // covers the WHOLE box at any distance.
+        val hitbox = desiredHitbox
+        if (hitbox != null) {
+            val aim = io.switchlite.core.util.Vec2(currentYaw, currentPitch)
+            val hit = rotationCalculatorForAim().rayHitPoint(currentEye, aim, hitbox)
+            if (hit != null) {
                 aimOffsetYaw = 0f
                 aimOffsetPitch = 0f
                 aimAnimActive = false

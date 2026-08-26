@@ -79,11 +79,10 @@ class LegitAimStrategy : AimStrategy {
         // 4. Aim point — Slinky Multipoint blend (center ↔ closest corner), independent axes.
         // All modes share this stable aim point; the mode only adjusts behavior around it.
         val aimPoint = RotationCalculator.multipointAimPoint(eyePos, target.hitbox, config.multipointX, config.multipointY)
-        val boxRange = RotationCalculator.getBoxAngleRange(eyePos, target.hitbox)
         val targetRot = RotationCalculator.calculateRotation(eyePos, aimPoint)
 
-        // NOTE: the "inside the whole box = aim freely" check runs on the MAIN thread every frame
-        // using boxRange (full hitbox angular extent — any distance). We only pass the range here.
+        // NOTE: the "crosshair on the box = aim freely" check runs on the MAIN thread every frame
+        // (raycast from the player's current aim at the hitbox). We only pass the hitbox here.
 
         // 6. FOV gate — 360 = full (skip); otherwise the aim point must be inside the cone.
         if (config.fov < FULL_FOV) {
@@ -134,6 +133,6 @@ class LegitAimStrategy : AimStrategy {
         } else {
             config.aimSpeedP * clickBoost * onTargetFactor * config.smoothness
         }
-        return AimResult.ApplyRotation(finalWorld, boxRange, fracY, fracP)
+        return AimResult.ApplyRotation(finalWorld, target.hitbox, fracY, fracP)
     }
 }

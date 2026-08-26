@@ -115,11 +115,10 @@ class SelfAdaptiveAimStrategy : AimStrategy {
         // 5. Aim point — Slinky Multipoint blend (center ↔ closest corner), independent axes.
         // SelfAdaptive tracks the same stable multipoint aim point, intensity adapted by EMA.
         val aimPoint = RotationCalculator.multipointAimPoint(eyePos, target.hitbox, config.multipointX, config.multipointY)
-        val boxRange = RotationCalculator.getBoxAngleRange(eyePos, target.hitbox)
         val targetRot = RotationCalculator.calculateRotation(eyePos, aimPoint)
 
-        // NOTE: the "inside the whole box = aim freely" check runs on the MAIN thread every frame
-        // using boxRange (full hitbox angular extent — any distance). We only pass the range here.
+        // NOTE: the "crosshair on the box = aim freely" check runs on the MAIN thread every frame
+        // (raycast from the player's current aim at the hitbox). We only pass the hitbox here.
 
         // 6. FOV gate — 360 = full (skip); otherwise the aim point must be inside the cone.
         if (config.fov < FULL_FOV) {
@@ -183,7 +182,7 @@ class SelfAdaptiveAimStrategy : AimStrategy {
         val onTargetFactor = if (abs(rotationDiff.yaw) < 5f && abs(rotationDiff.pitch) < 3f) ON_TARGET_FACTOR else 1f
         val fracY = config.aimSpeedY * clickBoost * onTargetFactor * strength
         val fracP = config.aimSpeedP * clickBoost * onTargetFactor * strength
-        return AimResult.ApplyRotation(finalWorld, boxRange, fracY, fracP)
+        return AimResult.ApplyRotation(finalWorld, target.hitbox, fracY, fracP)
     }
 
     // ==================== Adaptive Math ====================

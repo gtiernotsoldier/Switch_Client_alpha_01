@@ -201,11 +201,11 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
                 )
                 val result = adaptiveStrategy.execute(config, adaptiveState, input)
                 when (result) {
-                    // Write target world point + box range + per-axis fractions; the MAIN thread
+                    // Write target world point + hitbox + per-axis fractions; the MAIN thread
                     // recomputes the rotation toward it every frame.
                     is AimResult.ApplyRotation -> {
                         EventBridge.desiredTargetWorld = result.worldPoint
-                        EventBridge.desiredBoxRange = result.boxRange
+                        EventBridge.desiredHitbox = result.hitbox
                         EventBridge.desiredRotationFractionY = result.fractionY
                         EventBridge.desiredRotationFractionP = result.fractionP
                     }
@@ -228,11 +228,11 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
                 )
                 val result = legitStrategy.execute(config, legitState, input)
                 when (result) {
-                    // Write target world point + box range + per-axis fractions; the MAIN thread
+                    // Write target world point + hitbox + per-axis fractions; the MAIN thread
                     // recomputes the rotation toward it every frame.
                     is AimResult.ApplyRotation -> {
                         EventBridge.desiredTargetWorld = result.worldPoint
-                        EventBridge.desiredBoxRange = result.boxRange
+                        EventBridge.desiredHitbox = result.hitbox
                         EventBridge.desiredRotationFractionY = result.fractionY
                         EventBridge.desiredRotationFractionP = result.fractionP
                     }

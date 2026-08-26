@@ -1,6 +1,6 @@
 package io.switchlite.core.strategy.aim
 
-import io.switchlite.core.algorithm.RotationCalculator
+import io.switchlite.core.model.Hitbox
 import io.switchlite.core.util.Vec3
 
 /**
@@ -22,15 +22,14 @@ sealed class AimResult {
      * smoothing, much smoother than the 20Hz tick).
      *
      * @property worldPoint the target point in world space to aim toward.
-     * @property boxRange the target hitbox's FULL angular extent (yaw/pitch ranges) as seen from
-     *        the eyes — the main thread uses it for the per-frame "inside the whole box = aim
-     *        freely" check. Covers the entire hitbox at any distance (not a fixed angle).
+     * @property hitbox the target hitbox — the main thread casts the player's current aim ray at
+     *        it every frame: if the crosshair is on the box, the player aims freely (no pull).
      * @property fractionY yaw fraction of the remaining gap closed per render frame (0..1).
      * @property fractionP pitch fraction of the remaining gap closed per render frame (0..1).
      */
     data class ApplyRotation(
         val worldPoint: Vec3,
-        val boxRange: RotationCalculator.BoxAngleRange?,
+        val hitbox: Hitbox?,
         val fractionY: Float = 0.2f,
         val fractionP: Float = 0.1f
     ) : AimResult()

@@ -2,6 +2,7 @@ package io.switchlite.core.strategy.aim
 
 import io.switchlite.core.algorithm.RotationCalculator
 import io.switchlite.core.condition.ConditionChecker
+import io.switchlite.core.model.Hitbox
 import io.switchlite.core.model.PlayerState
 import io.switchlite.core.model.TargetState
 import io.switchlite.core.util.Vec3
@@ -27,6 +28,8 @@ class SelfAdaptiveAimStrategy : AimStrategy {
         const val CLICK_SPEED_BOOST = 1.5f
         /** FOV value that means "full 360°" — the cone gate is skipped entirely. */
         const val FULL_FOV = 360f
+        /** Prediction lead time (seconds) — a small human-like "aim where they will be" offset. */
+        const val T_LEAD = 0.1
     }
 
     /** State — just the shared aim state (no numeric adaptation). */
@@ -76,8 +79,18 @@ class SelfAdaptiveAimStrategy : AimStrategy {
             state.lastTargetId = target.entityId
         }
 
-        // 5. Aim point — Slinky Multipoint blend (center ↔ closest corner), independent axes.
-        val aimPoint = RotationCalculator.multipointAimPoint(eyePos, target.hitbox, config.multipointX, config.multipointY)
+        // 5. Aim point — predictive lead + Slinky Multipoint blend. The target hitbox is first
+        // shifted by its velocity × T_LEAD (a small human-like "aim where they will be" offset),
+        // then the multipoint blend is applied inside that predicted box.
+        val predictedHitbox = Hitbox(
+            target.hitbox.minX + target.motionX * T_LEAD,
+            target.hitbox.minY + target.motionY * T_LEAD,
+            target.hitbox.minZ + target.motionZ * T_LEAD,
+            target.hitbox.maxX + target.motionX * T_LEAD,
+            target.hitbox.maxY + target.motionY * T_LEAD,
+            target.hitbox.maxZ + target.motionZ * T_LEAD
+        )
+        val aimPoint = RotationCalculator.multipointAimPoint(eyePos, predictedHitbox, config.multipointX, config.multipointY)
         val targetRot = RotationCalculator.calculateRotation(eyePos, aimPoint)
 
         // NOTE: the "crosshair on the box = aim freely" check runs on the MAIN thread every frame
@@ -125,7 +138,7 @@ class SelfAdaptiveAimStrategy : AimStrategy {
         val onTargetFactor = if (abs(rotationDiff.yaw) < 5f && abs(rotationDiff.pitch) < 3f) ON_TARGET_FACTOR else 1f
         val fracY = config.aimSpeedY * clickBoost * onTargetFactor
         val fracP = config.aimSpeedP * clickBoost * onTargetFactor
-        return AimResult.ApplyRotation(finalWorld, target.hitbox, fracY, fracP)
+        return AimResult.ApplyRotation(finalWorld, predictedHitbox, fracY, fracP)
     }
 }
 

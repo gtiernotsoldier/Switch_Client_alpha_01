@@ -187,6 +187,9 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
     fun onClientTick(player: PlayerState, target: TargetState?) {
         // Through-walls toggle → target selector (ForgeStateExtractor line-of-sight filter).
         EventBridge.aimThroughWalls = throughWalls
+        // SelfAdaptive uses the second-order (critically-damped) aim path; the other modes keep
+        // the legacy first-order ease so their existing presets feel unchanged.
+        EventBridge.aimSecondOrder = mode == "SelfAdaptive"
         // Single target lock: acquire once, keep it while valid (never switch to a closer target).
         val aimTarget = resolveAimTarget(onlyCrosshairTarget, target)
 
@@ -272,6 +275,7 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
         adaptiveState.reset()
         lockedTargetId = -1
         // Stop any in-flight frame interpolation immediately.
+        EventBridge.aimSecondOrder = false
         EventBridge.clearDesiredRotation()
     }
 }

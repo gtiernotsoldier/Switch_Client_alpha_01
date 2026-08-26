@@ -137,6 +137,9 @@ object EventBridge {
         aimAnimActive = false
         gcdCarryYaw = 0f
         gcdCarryPitch = 0f
+        aimVelocityYaw = 0f
+        aimVelocityPitch = 0f
+        aimSecondOrder = false
         resetHurtCamHandler = null
         resetFovModifierHandler = null
         gammaSetter = null
@@ -801,6 +804,11 @@ object EventBridge {
     /** GCD quantization remainder carried into the next frame (avoids per-frame step-loss jitter). */
     private var gcdCarryYaw: Float = 0f
     private var gcdCarryPitch: Float = 0f
+    /** Second-order damping velocity state (per-frame angular rate) for the SelfAdaptive path. */
+    private var aimVelocityYaw: Float = 0f
+    private var aimVelocityPitch: Float = 0f
+    /** When true, use second-order critically-damped easing (SelfAdaptive); false = legacy first-order. */
+    @Volatile var aimSecondOrder: Boolean = false
 
     /**
      * Clear the pending aim target. Called when the strategy decides NOT to assist this tick
@@ -817,6 +825,8 @@ object EventBridge {
         aimAnimActive = false
         gcdCarryYaw = 0f
         gcdCarryPitch = 0f
+        aimVelocityYaw = 0f
+        aimVelocityPitch = 0f
     }
 
     /**
@@ -890,12 +900,23 @@ object EventBridge {
         val gap = abs(desiredOffsetYaw) + abs(desiredOffsetPitch)
         val relax = (gap / HARD_LOCK_ANGLE).coerceIn(SOFT_MIN, 1f)
 
-        // Exponential ease of the offset toward the desired correction, scaled by soft-landing.
-        val fY = desiredRotationFractionY.coerceIn(0f, 1f) * yield * relax
-        val fP = desiredRotationFractionP.coerceIn(0f, 1f) * yield * relax
-        if (fY <= 0f && fP <= 0f) return false
-        aimOffsetYaw = normalizeAngle(aimOffsetYaw + (desiredOffsetYaw - aimOffsetYaw) * fY)
-        aimOffsetPitch = aimOffsetPitch + (desiredOffsetPitch - aimOffsetPitch) * fP
+        // Damping: SelfAdaptive uses a second-order critically-damped spring (velocity and
+        // acceleration stay continuous → silky smooth, no abrupt speed change); the other modes
+        // keep the legacy first-order exponential ease so their existing presets feel unchanged.
+        if (aimSecondOrder) {
+            val omega = AIM_OMEGA * yield * relax
+            if (omega <= 0f) return false
+            aimVelocityYaw += (omega * omega * (desiredOffsetYaw - aimOffsetYaw) - 2f * omega * aimVelocityYaw)
+            aimVelocityPitch += (omega * omega * (desiredOffsetPitch - aimOffsetPitch) - 2f * omega * aimVelocityPitch)
+            aimOffsetYaw = normalizeAngle(aimOffsetYaw + aimVelocityYaw)
+            aimOffsetPitch += aimVelocityPitch
+        } else {
+            val fY = desiredRotationFractionY.coerceIn(0f, 1f) * yield * relax
+            val fP = desiredRotationFractionP.coerceIn(0f, 1f) * yield * relax
+            if (fY <= 0f && fP <= 0f) return false
+            aimOffsetYaw = normalizeAngle(aimOffsetYaw + (desiredOffsetYaw - aimOffsetYaw) * fY)
+            aimOffsetPitch = aimOffsetPitch + (desiredOffsetPitch - aimOffsetPitch) * fP
+        }
 
         // GCD fix (Nemui author: "add gcd fix before rotating towards it so it doesnt flag").
         // Quantize the correction to the smallest rotation step the ORIGINAL Minecraft mouse math
@@ -936,6 +957,10 @@ object EventBridge {
     private const val HARD_LOCK_ANGLE = 12f
     /** Soft-est pull strength it can drop to near the target (0..1). */
     private const val SOFT_MIN = 0.3f
+
+    /** Second-order critically-damped natural frequency (per frame) for the SelfAdaptive path.
+     *  Higher = faster/snappier, lower = softer/slower. */
+    private const val AIM_OMEGA = 0.4f
 
     /** Mouse pixels/frame above which the assist fully yields to the player (they are turning). */
     private const val YIELD_PIXELS = 120f

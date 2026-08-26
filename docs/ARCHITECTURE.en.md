@@ -1,4 +1,3 @@
-```markdown
 # SwitchLite Architecture Map (for Future Maintainers)
 
 > This document is a **lookup table for the actual code**, not a pitch. It tells future maintainers: which files to touch when changing a module, which chain to follow, and where data comes from and goes to.
@@ -124,4 +123,3 @@ When adding new fields, place them in the appropriate section.
 ---
 
 *Maintenance note: This file is a mapping table to the actual code; every time you refactor EventBridge/ForgeEventBridge/the injection chain, update the corresponding sections here—don't let it go stale.*
-```

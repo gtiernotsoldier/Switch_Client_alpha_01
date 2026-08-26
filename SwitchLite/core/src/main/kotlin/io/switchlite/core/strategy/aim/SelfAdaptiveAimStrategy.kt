@@ -154,7 +154,11 @@ class SelfAdaptiveAimStrategy : AimStrategy {
             }
         }
 
-        // 7. Self-adaptive: update alignment EMA and compute dynamic factors
+        // 7. Self-adaptive: update the alignment EMA — how well the player's own mouse movement
+        //    reduces the angular error. This drives the ASSIST FREQUENCY, not a strength number:
+        //    when the player aims well the assist sometimes lets them do it alone (like a human
+        //    who occasionally lands the aim themselves); when they struggle it helps every time.
+        //    No visible numeric strength change — only whether the assist steps in this tick.
         val angularError = abs(rotationDiff.yaw) + abs(rotationDiff.pitch)
 
         if (state.hasPreviousFrame) {
@@ -173,15 +177,19 @@ class SelfAdaptiveAimStrategy : AimStrategy {
         state.previousAngularError = angularError
         state.hasPreviousFrame = true
 
-        // 8. Self-adaptive strength: the alignment EMA maps to a pull-strength multiplier —
-        //    poor aim (low alignment) → strong assist, good aim (high alignment) → weak assist.
-        //    This is what makes SelfAdaptive different from Normal: it never applies a fixed
-        //    speed, it adapts to YOUR skill every tick.
-        val strength = computeDynamicStrength(state.alignmentEma)
+        // 8. Assist frequency: high alignment (player aiming well) → lower assist probability.
+        //    pAssist = 1.0 when EMA=0 (always help), ~0.5 when EMA=1 (help half the time).
+        //    The SPEED stays at the configured value — only the FREQUENCY adapts, so there is no
+        //    numeric strength to feel; the assist just steps in more or less often, naturally.
+        val pAssist = 1.0f - state.alignmentEma * 0.5f
+        if (pAssist < 1.0f && kotlin.random.Random.nextFloat() >= pAssist) {
+            return AimResult.Skip
+        }
+
         val clickBoost = if (player.isAttackKeyDown) CLICK_SPEED_BOOST else 1f
         val onTargetFactor = if (abs(rotationDiff.yaw) < 5f && abs(rotationDiff.pitch) < 3f) ON_TARGET_FACTOR else 1f
-        val fracY = config.aimSpeedY * clickBoost * onTargetFactor * strength
-        val fracP = config.aimSpeedP * clickBoost * onTargetFactor * strength
+        val fracY = config.aimSpeedY * clickBoost * onTargetFactor
+        val fracP = config.aimSpeedP * clickBoost * onTargetFactor
         return AimResult.ApplyRotation(finalWorld, target.hitbox, fracY, fracP)
     }
 
@@ -215,24 +223,6 @@ class SelfAdaptiveAimStrategy : AimStrategy {
         val s3 = sensitivity * sensitivity * sensitivity
         val effectiveSensitivity = sensitivity * 0.6f * (1.0f - s3 * 0.6f)
         return pixelMagnitude * effectiveSensitivity * 0.15f
-    }
-
-    /**
-     * Map the alignment EMA to a pull-strength multiplier.
-     *
-     * | EMA value | strength | Behaviour          |
-     * |-----------|----------|--------------------|
-     * | 0.0       | 1.30x    | Strong assist      |
-     * | 0.5       | 1.00x    | Standard assist    |
-     * | 1.0       | 0.70x    | Gentle assist      |
-     *
-     * Gentle smooth curve (0.7..1.3) — never swings hard, glides subtly with the player's skill.
-     * Combined with the slow EMA this feels like a natural hand adjusting, not a numeric toggle.
-     */
-    internal fun computeDynamicStrength(alignmentEma: Float): Float {
-        val e = alignmentEma.coerceIn(0f, 1f)
-        // strength = 1.3 at e=0, 1.0 at e=0.5, 0.7 at e=1 → gentle linear glide.
-        return 1.3f - e * 0.6f
     }
 
     // ==================== Helpers ====================

@@ -86,7 +86,7 @@ object KnockbackDelay : Module("KnockbackDelay", Category.COMBAT) {
     // ========== Lifecycle ==========
     override fun onEnable() {
         state.reset()
-        EventBridge.registerVelocityListener(velocityListenerRef)
+        EventBridge.registerVelocityListener(velocityListenerRef, EventBridge.VELOCITY_PRIORITY_DELAY)
         EventBridge.registerTickListener(tickListener)
     }
 

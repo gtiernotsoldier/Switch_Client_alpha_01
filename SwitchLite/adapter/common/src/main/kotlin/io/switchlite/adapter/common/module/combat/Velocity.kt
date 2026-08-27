@@ -257,7 +257,7 @@ object Velocity : Module("Velocity", Category.COMBAT), HudLineProvider {
         EventBridge.registerTickListener { currentTick ->
             if (enabled) onTick(currentTick)
         }
-        EventBridge.registerVelocityListener(velocityListenerRef)
+        EventBridge.registerVelocityListener(velocityListenerRef, EventBridge.VELOCITY_PRIORITY_REDUCE)
     }
 
     override fun onDisable() {
@@ -266,8 +266,9 @@ object Velocity : Module("Velocity", Category.COMBAT), HudLineProvider {
         strategyState.reset()
     }
     /**
-     * Called on every tick to drain delayed velocity packets from the
-     * strategy's delay queue (managed by LegitVelocityStrategy/DelayVelocityStrategy).
+     * Called on every tick to drain any delayed velocity packets from the
+     * strategy's delay queue (kept for the strategy interface; DELAY mode moved
+     * to the standalone KnockbackDelay module).
      */
     fun onTick(currentTick: Int) {
         val config = cachedConfig { buildConfig() }

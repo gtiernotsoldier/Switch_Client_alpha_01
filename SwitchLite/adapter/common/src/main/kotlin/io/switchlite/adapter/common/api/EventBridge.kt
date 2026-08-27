@@ -82,7 +82,7 @@ object EventBridge {
     }
 
     fun reset() {
-        velocityListeners.clear()
+        velocityHandlers.clear()
         velocityNotifiers.clear()
         tickListeners.clear()
         simpleTickListeners.clear()
@@ -206,17 +206,32 @@ object EventBridge {
     // ========== 2. Combat: Attack & Knockback ==========
 
     // ========== Velocity ==========
-    private val velocityListeners = mutableListOf<(VelocityContext) -> PlatformCommand>()
+    /** Velocity size-reduction runs FIRST in the velocity chain. */
+    const val VELOCITY_PRIORITY_REDUCE = 0
+    /** KnockbackDelay (timing) runs AFTER size-reduction. */
+    const val VELOCITY_PRIORITY_DELAY = 10
+
+    private data class VelocityHandler(
+        val priority: Int,
+        val listener: (VelocityContext) -> PlatformCommand
+    )
+
+    private val velocityHandlers = mutableListOf<VelocityHandler>()
     private val velocityNotifiers = mutableListOf<(VelocityContext) -> Unit>()
 
-    fun registerVelocityListener(listener: (VelocityContext) -> PlatformCommand) {
-        if (velocityListeners.none { it == listener }) {
-            velocityListeners.add(listener)
+    fun registerVelocityListener(
+        listener: (VelocityContext) -> PlatformCommand,
+        priority: Int = 100
+    ) {
+        if (velocityHandlers.none { it.listener == listener }) {
+            velocityHandlers.add(VelocityHandler(priority, listener))
+            // Lower priority runs first, independent of registration order.
+            velocityHandlers.sortBy { it.priority }
         }
     }
 
     fun unregisterVelocityListener(listener: (VelocityContext) -> PlatformCommand) {
-        velocityListeners.remove(listener)
+        velocityHandlers.removeAll { it.listener == listener }
     }
 
     /** Register a passive observer of velocity packets (does not return a command). */
@@ -316,14 +331,14 @@ object EventBridge {
     }
 
     fun onVelocityPacket(ctx: VelocityContext): PlatformCommand {
-        // Chain of active velocity handlers. The FIRST handler that cancels or click-bursts wins;
-        // ModifyMotion feeds the reduced motion into the NEXT handler (e.g. Velocity reduces, then
-        // KnockbackDelay delays the already-reduced motion). A single listener behaves identically
-        // to the old single-listener path.
+        // Chain of active velocity handlers, ordered by priority (not registration order).
+        // The FIRST handler that cancels or click-bursts wins; ModifyMotion feeds the reduced
+        // motion into the NEXT handler (Velocity reduces → KnockbackDelay delays the already-
+        // reduced motion). A single handler behaves identically to the old single-listener path.
         var current = ctx
         var modified = false
-        for (listener in velocityListeners) {
-            when (val result = listener(current)) {
+        for (handler in velocityHandlers) {
+            when (val result = handler.listener(current)) {
                 is PlatformCommand.CancelPacket -> return result
                 is PlatformCommand.ClickBurst -> return result
                 is PlatformCommand.ModifyMotion -> {

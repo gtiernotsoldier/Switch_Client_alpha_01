@@ -1,0 +1,23 @@
+[package]
+name = "doppel-injector"
+version = "0.1.0-alpha"
+edition = "2021"
+description = "Doppel Rust-led injector — C++ payload.dll stays for the in-process JNI attach"
+build = "build.rs"
+
+[[bin]]
+name = "doppel-injector"
+path = "src/main.rs"
+
+[dependencies]
+# Zero third-party deps at runtime: we call the handful of kernel32 functions
+# we need via raw extern "system" FFI.
+
+[build-dependencies]
+# embed-resource: at build time, embeds agent.jar + payload.dll as RCDATA
+# resources (IDs 101/102) into the exe — resource.rs extracts them at runtime.
+# payload.dll is pre-built by CI (cmake) into resources/ before cargo build.
+embed-resource = "2"
+
+[profile.release]
+opt-level = 2

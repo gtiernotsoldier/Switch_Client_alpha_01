@@ -1,4 +1,4 @@
-# SwitchLite 架构地图（Architecture Map / 后人入门）
+# Doppel 架构地图（Architecture Map / 后人入门）
 
 > 这份文档是**实际代码的查找表**，不是理念宣传。它告诉后来的维护者：改一个模块该碰哪些文件、走哪条链、数据从哪来到哪去。
 > 理念层面的哲学见根目录 `README.md`；这里只讲**代码真相**。
@@ -6,7 +6,7 @@
 ## 1. 分层与模块目录（当前 2026 代码真相）
 
 ```
-SwitchLite/
+Doppel/
 ├── injector/            # Rust/C++ DLL 注入器：改进程、版本识别、注入 payload
 ├── agent/               # Java agent：javassist 字节码注入 + MappingContext（映射抽象）
 ├── core/                # 纯 Kotlin 算法，零 MC 依赖

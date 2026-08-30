@@ -1,4 +1,4 @@
-# SwitchLite Architecture Map (for Future Maintainers)
+# Doppel Architecture Map (for Future Maintainers)
 
 > This document is a **lookup table for the actual code**, not a pitch. It tells future maintainers: which files to touch when changing a module, which chain to follow, and where data comes from and goes to.
 > For the philosophy, see the root `README.md`; this document is only about **code reality**.
@@ -7,7 +7,7 @@
 
 ```
 
-SwitchLite/
+Doppel/
 ├── injector/            # Rust/C++ DLL injector: process detection, version identification, payload injection
 ├── agent/               # Java agent: javassist bytecode injection + MappingContext (mapping abstraction)
 ├── core/                # Pure Kotlin algorithms, zero MC dependencies

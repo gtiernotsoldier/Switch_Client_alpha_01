@@ -1,4 +1,4 @@
-🥪 SwitchLite
+🥪 Doppel
 
 > A Minecraft Ghost Client built with the Sandwich Architecture — clean separation between core logic and platform-specific code.
 
@@ -94,7 +94,7 @@ We firmly believe that a ghost client capable of long-term survival must adhere 
 📦 Project Structure
 
 ```
-SwitchLite/
+Doppel/
 ├── LICENSE                       # GPLv3
 ├── README.md                     # Reference implementation guide
 ├── build.gradle.kts              # Gradle multi-module build
@@ -104,7 +104,7 @@ SwitchLite/
 │   └── gradle-wrapper.properties
 │
 ├── core/                         # Pure Kotlin logic — zero MC dependencies
-│   └── src/main/kotlin/io/switchlite/core/
+│   └── src/main/kotlin/io/doppel/core/
 │       ├── algorithm/            # RotationCalculator, VectorOperations,
 │       │                         #   GaussianNoise, NoiseGenerator, NoiseProvider
 │       ├── condition/            # TriggerCondition, ConditionChecker
@@ -128,14 +128,14 @@ SwitchLite/
 │       │   ├── tap/              # TapStateMachine
 │       │   └── combat/           # CombatTrigger
 │       └── util/                 # Vec2, Vec3, MathUtils
-│   ├── src/main/java/io/switchlite/agent/
+│   ├── src/main/java/io/doppel/agent/
 │   │   └── MappingContext.java   # Semantic key → MC member reflection resolver
 │   └── src/test/kotlin/          # Unit tests: RotationCalculator, ConditionChecker,
 │       └── ...                   #   TriggerOptions, MathUtils, Vec2, Vec3
 │
 ├── adapter/
 │   ├── common/                   # Cross-version shared adapter layer
-│   │   └── src/main/kotlin/io/switchlite/adapter/common/
+│   │   └── src/main/kotlin/io/doppel/adapter/common/
 │   │       ├── api/              # EventBridge, IEventBridge, IStateExtractor,
 │   │       │                     #   IMappingContext, KeyCode, KeyTranslator
 │   │       ├── insight/          # BattleInsight (display-only assistance)
@@ -150,24 +150,24 @@ SwitchLite/
 │   │       │                     #   OverlayRenderer, RenderContext
 │   │       ├── ui/               # RenderUtils, Theme
 │   │       └── webui/            # WebUIServer, ConfigStore, LanHelper
-│   │   └── src/main/resources/switchlite/webui/index.html   # Aurora panel
+│   │   └── src/main/resources/doppel/webui/index.html   # Aurora panel
 │   │
 │   ├── forge/v1_8_9/             # Forge 1.8.9 translation layer
-│   │   └── src/main/kotlin/io/switchlite/adapter/forge/v1_8_9/
+│   │   └── src/main/kotlin/io/doppel/adapter/forge/v1_8_9/
 │   │       ├── ForgeBootstrap.kt / ForgeEventBridge.kt / ForgeStateExtractor.kt
 │   │       ├── ForgePacketInterceptor.kt
 │   │       └── ForgeGL11Bridge.kt / ForgeFontRendererBridge.kt
 │   │
 │   └── fabric/v1_21/             # Fabric 1.21 translation layer
 │       └── src/main/
-│           ├── kotlin/io/switchlite/adapter/fabric/v1_21/
+│           ├── kotlin/io/doppel/adapter/fabric/v1_21/
 │           │   ├── FabricBootstrap.kt / FabricEventBridge.kt / FabricStateExtractor.kt
 │           │   └── FabricVelocityInterceptor.kt
 │           ├── java/.../mixin/ClientPlayNetworkHandlerMixin.java
-│           └── resources/        # fabric.mod.json, switchlite.mixins.json
+│           └── resources/        # fabric.mod.json, doppel.mixins.json
 │
 ├── agent/                        # Java Agent (bytecode manipulation)
-│   └── src/main/java/io/switchlite/agent/
+│   └── src/main/java/io/doppel/agent/
 │       ├── Agent.java            # Instrumentation entry point
 │       ├── Transformer.java      # Class-loading-time transforms
 │       ├── MappingLoader.java    # Mapping JSON loader + cache
@@ -328,7 +328,7 @@ Configuration and module control moved from an in-game GUI to a **browser-based 
 
 - `WebUIServer` (adapter:common, JDK built-in `com.sun.net.httpserver`) — dedicated daemon thread pool, **never touches the MC render thread**; idle cost is zero
 - Serves the **Aurora** panel (`index.html`) on port `4173`, bound to `0.0.0.0` for LAN access
-- **Per-install Bearer token** (16 random chars, persisted in `switchlite-config.json`) protecting every `/api/*` endpoint
+- **Per-install Bearer token** (16 random chars, persisted in `doppel-config.json`) protecting every `/api/*` endpoint
 - Endpoints: `GET /api/modules` (full enumeration incl. disabled modules), `POST /api/modules/{name}/toggle`, `POST /api/modules/{name}/keybind`, `POST /api/options`, `GET/POST /api/config` (export/import)
 - **Config persistence**: every option change is written to disk and re-applied on next launch
 - **Keybinds**: bindable per module from the panel (GLFW key codes, Esc to clear)
@@ -403,7 +403,7 @@ Core-layer strategies are unit-tested without any Minecraft runtime:
 - `docs/ARCHITECTURE.md` — in-depth architecture walkthrough
 - `docs/CONSTITUTION.md` — the full Sandwich Constitution (four fundamental principles)
 - `docs/CONTRIBUTING.md` — contribution guidelines
-- `SwitchLite/README.md` — reference implementation guide (build & usage)
+- `Doppel/README.md` — reference implementation guide (build & usage)
 
 ---
 

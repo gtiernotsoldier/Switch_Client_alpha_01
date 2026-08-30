@@ -19,12 +19,12 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
         with: { gradle-version: '8.5' }
       - name: Compile
-        run: cd SwitchLite && gradle :core:compileKotlin :agent:classes :adapter:common:compileKotlin :adapter:forge:v1_8_9:compileKotlin --no-daemon
+        run: cd Doppel && gradle :core:compileKotlin :agent:classes :adapter:common:compileKotlin :adapter:forge:v1_8_9:compileKotlin --no-daemon
       - name: Build agent fat jar
-        run: cd SwitchLite && gradle :agent:jar --no-daemon
+        run: cd Doppel && gradle :agent:jar --no-daemon
       - name: Validate agent.jar
         run: |
-          JAR=$(ls SwitchLite/agent/build/libs/switchlite-agent-*.jar | head -1)
+          JAR=$(ls Doppel/agent/build/libs/doppel-agent-*.jar | head -1)
           echo "Validating: $JAR"
           SIZE=$(wc -c < "$JAR")
           echo "Size: $SIZE bytes"
@@ -32,19 +32,19 @@ jobs:
             echo "ERROR: agent.jar is too small ($SIZE bytes). Fat jar likely broken."
             exit 1
           fi
-          if ! jar tf "$JAR" | grep -q "io/switchlite/adapter/common/api/EventBridge"; then
+          if ! jar tf "$JAR" | grep -q "io/doppel/adapter/common/api/EventBridge"; then
             echo "ERROR: EventBridge.class not found in fat jar. Class merging broken."
             exit 1
           fi
-          if ! jar tf "$JAR" | grep -q "io/switchlite/core/model/PlayerState"; then
+          if ! jar tf "$JAR" | grep -q "io/doppel/core/model/PlayerState"; then
             echo "ERROR: PlayerState.class not found in fat jar. Core not included."
             exit 1
           fi
-          if ! jar tf "$JAR" | grep -q "io/switchlite/adapter/forge/v1_8_9/ForgeBootstrap"; then
+          if ! jar tf "$JAR" | grep -q "io/doppel/adapter/forge/v1_8_9/ForgeBootstrap"; then
             echo "ERROR: ForgeBootstrap.class not found in fat jar. Forge adapter not included!"
             exit 1
           fi
-          if ! jar tf "$JAR" | grep -q "io/switchlite/agent/MappingContext"; then
+          if ! jar tf "$JAR" | grep -q "io/doppel/agent/MappingContext"; then
             echo "ERROR: MappingContext.class not found in fat jar. Core mapping broken."
             exit 1
           fi
@@ -52,7 +52,7 @@ jobs:
           # Transformer injects a call to RenderBridge; RenderBridge delegates to
           # ForgeBootstrap.render(). If RenderBridge is missing, the hook compiles but
           # fails at runtime with ClassNotFoundException (silently swallowed).
-          if ! jar tf "$JAR" | grep -q "io/switchlite/agent/RenderBridge"; then
+          if ! jar tf "$JAR" | grep -q "io/doppel/agent/RenderBridge"; then
             echo "ERROR: RenderBridge.class not found in fat jar. Render bridge missing!"
             exit 1
           fi
@@ -65,7 +65,7 @@ jobs:
           fi
           echo "agent.jar validation passed. All modules + render bridge present."
       - name: Run tests
-        run: cd SwitchLite && gradle :core:test :adapter:common:test --no-daemon
+        run: cd Doppel && gradle :core:test :adapter:common:test --no-daemon
       - name: Compile summary
         if: always()
         run: |
@@ -79,8 +79,8 @@ jobs:
       - name: Upload agent.jar artifact
         uses: actions/upload-artifact@v4
         with:
-          name: switchlite-agent-jar
-          path: SwitchLite/agent/build/libs/switchlite-agent-*.jar
+          name: doppel-agent-jar
+          path: Doppel/agent/build/libs/doppel-agent-*.jar
 
   # ─── Injector (Windows) ───
   injector:
@@ -91,7 +91,7 @@ jobs:
       - name: Download agent.jar from jvm job
         uses: actions/download-artifact@v4
         with:
-          name: switchlite-agent-jar
+          name: doppel-agent-jar
           path: _temp_agent_jar
       - name: Copy agent.jar into injector resources (overwrite 0-byte git placeholder)
         shell: pwsh
@@ -100,8 +100,8 @@ jobs:
           if (-not $src) { Write-Error "No jar found in downloaded artifact"; exit 1 }
           Write-Host "Found artifact jar: $($src.FullName) ($($src.Length) bytes)"
           # Overwrite the 0-byte git placeholder
-          Copy-Item $src.FullName -Destination "SwitchLite\injector\resources\agent.jar" -Force
-          $dest = Get-Item "SwitchLite\injector\resources\agent.jar"
+          Copy-Item $src.FullName -Destination "Doppel\injector\resources\agent.jar" -Force
+          $dest = Get-Item "Doppel\injector\resources\agent.jar"
           Write-Host "agent.jar ready: $($dest.Length) bytes"
           if ($dest.Length -lt 1000000) { Write-Error "agent.jar too small"; exit 1 }
           Remove-Item _temp_agent_jar -Recurse -Force
@@ -113,7 +113,7 @@ jobs:
       - name: Build C++ payload.dll (cmake)
         shell: pwsh
         run: |
-          cd SwitchLite/injector
+          cd Doppel/injector
           mkdir -Force -Path payload-build | Out-Null
           cmake -S src/payload -B payload-build -DCMAKE_BUILD_TYPE=Release
           cmake --build payload-build --config Release
@@ -123,17 +123,17 @@ jobs:
           Write-Host "payload.dll ready: $((Get-Item 'resources\payload.dll').Length) bytes"
       - name: Build Rust injector (cargo)
         run: |
-          cd SwitchLite/injector
+          cd Doppel/injector
           cargo build --release
       - name: Show build info
         shell: pwsh
         run: |
           echo "Commit: ${{ github.sha }}"
           echo "Build time: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss UTC')"
-          $exe = "SwitchLite\injector\target\release\switchlite-injector.exe"
-          if (Test-Path $exe) { echo "switchlite-injector.exe: $((Get-Item $exe).Length) bytes" } else { echo "WARNING: switchlite-injector.exe not found" }
+          $exe = "Doppel\injector\target\release\doppel-injector.exe"
+          if (Test-Path $exe) { echo "doppel-injector.exe: $((Get-Item $exe).Length) bytes" } else { echo "WARNING: doppel-injector.exe not found" }
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: switchlite-injector
-          path: SwitchLite/injector/target/release/switchlite-injector.exe
+          name: doppel-injector
+          path: Doppel/injector/target/release/doppel-injector.exe

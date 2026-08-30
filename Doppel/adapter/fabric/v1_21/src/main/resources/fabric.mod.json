@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "id": "doppel",
+  "version": "0.1.0-alpha",
+  "name": "Doppel",
+  "description": "A Minecraft Ghost Client built with Sandwich Architecture",
+  "authors": ["Doppel Team"],
+  "license": "GPL-3.0",
+  "environment": "client",
+  "entrypoints": {
+    "client": [
+      "io.doppel.adapter.fabric.v1_21.FabricBootstrap"
+    ]
+  },
+  "mixins": [
+    "doppel.mixins.json"
+  ],
+  "depends": {
+    "fabric-api": "*",
+    "minecraft": ">=1.21"
+  }
+}

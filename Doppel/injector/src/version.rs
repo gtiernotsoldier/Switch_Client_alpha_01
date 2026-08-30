@@ -298,6 +298,31 @@ fn detect_platform(mc_dir: &str) -> String {
         }
     }
 
+    // Check versions/<v>/<v>.json contents. Third-party launchers (FPSMaster,
+    // PCL2, etc.) install Forge under a PLAIN "1.8.9" folder name — the forge
+    // marker only exists inside the version JSON (net.minecraftforge libraries,
+    // net.minecraftforge.fml.common.Loader tweaker args). Without this scan the
+    // install is misdetected as Vanilla; the payload's config rewrite used to
+    // paper over that, but never assume the safety net is the only line of
+    // defense.
+    for v in list_dir_names(&versions_dir) {
+        let vdir = path_join(&versions_dir, &v);
+        if !dir_exists(&vdir) {
+            continue;
+        }
+        for f in list_dir_names(&vdir) {
+            if !f.to_lowercase().ends_with(".json") {
+                continue;
+            }
+            if let Ok(content) = std::fs::read_to_string(path_join(&vdir, &f)) {
+                let lower = content.to_lowercase();
+                if lower.contains("forge") {
+                    return "Forge".to_string();
+                }
+            }
+        }
+    }
+
     "Vanilla".to_string()
 }
 

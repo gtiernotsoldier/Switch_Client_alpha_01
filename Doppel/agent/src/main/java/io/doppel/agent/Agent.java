@@ -175,7 +175,45 @@ public class Agent {
             log("[Agent] No config path provided, using defaults");
         }
 
-        log("[Agent] Platform: " + platform + " | Version: " + version);
+        log("[Agent] Platform (config): " + platform + " | Version: " + version);
+
+        // Belt & braces (2026-08-31 regression fix): the injector's filesystem
+        // platform detection can misdetect a Forge install as Vanilla/Fabric/
+        // Unknown (mods folder without 'forge'-named files, plain "1.8.9"
+        // version folder under third-party launchers). The payload-side config
+        // rewrite is supposed to fix the config, but it depends on a strncmp
+        // that the SwitchLite→Doppel rename silently broke (prefix shortened,
+        // hardcoded length constants left stale). Without Forge, the agent
+        // falls back to the smaller AgentBridge path: 35 instead of 43
+        // modules, HUD never enabled, forge:* mappings unresolved → blank HUD.
+        //
+        // launchwrapper is on the launch classpath of EVERY Forge instance and
+        // absent on Vanilla — its presence is the authoritative JVM-side truth.
+        if (!"Forge".equals(platform)) {
+            boolean launchFound = false;
+            ClassLoader[] probes = {
+                Thread.currentThread().getContextClassLoader(),
+                Agent.class.getClassLoader(),
+                ClassLoader.getSystemClassLoader()
+            };
+            for (ClassLoader cl : probes) {
+                if (cl == null) continue;
+                try {
+                    Class.forName("net.minecraft.launchwrapper.Launch", false, cl);
+                    launchFound = true;
+                    break;
+                } catch (Throwable ignored) {
+                    // ClassNotFoundException / NoClassDefFoundError — not a Forge launch path
+                }
+            }
+            if (launchFound) {
+                log("[Agent] Config said platform=" + platform
+                    + " but launchwrapper is on the classpath — forcing Forge");
+                platform = "Forge";
+            }
+        }
+
+        log("[Agent] Platform (final): " + platform + " | Version: " + version);
 
         // 2. Load mappings
         String mappingsDir = detectMappingsDir();

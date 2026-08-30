@@ -5,6 +5,7 @@
 #include <jni.h>
 #include <cstdio>
 #include <cstring>
+#include <cerrno>
 #include "attach_pipe.h"
 
 HMODULE g_hModule = NULL;
@@ -209,33 +210,63 @@ static void signalDone() {
 
 // ── updateConfigPlatform: fix Vanilla→Forge when Launch class detected ──
 //
-// Preserves ALL existing properties — only updates platform and version.
-// Previous version truncated the file to only two properties, losing any
-// other config entries (e.g., doppel.module.X.enabled=true).
+// This function is ONLY called when the Launch class was detected in the
+// target JVM (g_isForge). Its contract is therefore absolute: after it runs,
+// the config MUST say platform=Forge — the injector's filesystem detection
+// (mods/versions folder scan) can legitimately misdetect a Forge install as
+// Vanilla/Fabric/Unknown (e.g. third-party launchers whose versions/<v>
+// folder is named "1.8.9" with forge only inside the JSON).
+//
+// RENAME REGRESSION FIX (2026-08-31): the SwitchLite→Doppel rename shortened
+// the key prefixes ("switchlite.platform=" 20 chars → "doppel.platform=" 16)
+// but left the hardcoded strncmp length constants at 19/20. strncmp(prefix,
+// n) with n > strlen(prefix) only matches when the line is EXACTLY the
+// prefix, so every comparison here silently failed. The stale
+// "doppel.platform=Vanilla" line was preserved while a fresh
+// "doppel.platform=Forge" line was PREPENDED — and java.util.Properties
+// keeps the LAST duplicate key, so the agent read platform=Vanilla, skipped
+// ForgeBootstrap.init() entirely and fell back to the smaller AgentBridge
+// registration path (35 instead of 43 modules, HUD never enabled, forge:*
+// mappings unresolved → blank HUD).
+//
+// Prefix lengths are now computed with strlen() so they can never drift
+// again. Stale platform/version lines are DROPPED and rewritten in one
+// canonical position — never duplicated.
 
 static void updateConfigPlatform(const char* configDir) {
     char cfgPath[MAX_PATH];
     _snprintf(cfgPath, sizeof(cfgPath), "%s\\doppel-config.properties", configDir);
 
-    // Read all lines, updating platform and version in-place
+    const char* platformPrefix = "doppel.platform=";
+    const char* versionPrefix  = "doppel.version=";
+    const size_t platformPrefixLen = strlen(platformPrefix);
+    const size_t versionPrefixLen  = strlen(versionPrefix);
+
+    // Read all lines EXCEPT stale platform/version entries.
     char lines[64][256];
     int lineCount = 0;
     char version[64] = "1.8.9";
-    bool foundPlatform = false;
     bool foundVersion = false;
 
     FILE* f = fopen(cfgPath, "r");
     if (f) {
         char line[256];
         while (fgets(line, sizeof(line), f) && lineCount < 64) {
-            if (strncmp(line, "doppel.version=", 19) == 0) {
-                strncpy(version, line + 19, sizeof(version) - 1);
+            if (strncmp(line, platformPrefix, platformPrefixLen) == 0) {
+                continue; // drop stale platform lines — fresh one is written below
+            }
+            if (strncmp(line, versionPrefix, versionPrefixLen) == 0) {
+                const char* p = line + versionPrefixLen;
+                strncpy(version, p, sizeof(version) - 1);
+                version[sizeof(version) - 1] = '\0';
                 char* nl = strchr(version, '\n'); if (nl) *nl = '\0';
                 char* cr = strchr(version, '\r'); if (cr) *cr = '\0';
+                // Legacy artifact: some older payloads wrote "=1.8.9".
+                if (version[0] == '=') {
+                    memmove(version, version + 1, sizeof(version) - 1);
+                }
                 foundVersion = true;
-            }
-            if (strncmp(line, "doppel.platform=", 20) == 0) {
-                foundPlatform = true;
+                continue; // rewritten at the end in canonical form
             }
             strncpy(lines[lineCount], line, sizeof(lines[lineCount]) - 1);
             lines[lineCount][sizeof(lines[lineCount]) - 1] = '\0';
@@ -244,29 +275,25 @@ static void updateConfigPlatform(const char* configDir) {
         fclose(f);
     }
 
-    // Write back all lines, updating/adding platform and version
+    if (version[0] == '\0') {
+        // Empty version in the file — fall back to the safe default.
+        _snprintf(version, sizeof(version), "1.8.9");
+        foundVersion = false;
+    }
+
+    // Write back: canonical platform first, preserved lines, canonical version last.
     f = fopen(cfgPath, "w");
     if (f) {
-        // Write platform first if not already in file
-        if (!foundPlatform) {
-            fprintf(f, "doppel.platform=Forge\n");
-        }
-        // Write all original lines, replacing platform/version as needed
+        fprintf(f, "doppel.platform=Forge\n");
         for (int i = 0; i < lineCount; i++) {
-            if (strncmp(lines[i], "doppel.platform=", 20) == 0) {
-                fprintf(f, "doppel.platform=Forge\n");
-            } else if (strncmp(lines[i], "doppel.version=", 19) == 0) {
-                fprintf(f, "doppel.version=%s\n", version);
-            } else {
-                fputs(lines[i], f);
-            }
+            fputs(lines[i], f);
         }
-        // Add version if not already in file
-        if (!foundVersion) {
-            fprintf(f, "doppel.version=%s\n", version);
-        }
+        fprintf(f, "doppel.version=%s\n", version);
         fclose(f);
-        payloadLog("[Doppel] Config updated: platform=Forge, version=%s (%d lines preserved)", version, lineCount);
+        payloadLog("[Doppel] Config rewritten: platform=Forge, version=%s%s (%d other lines preserved)",
+                   version, foundVersion ? "" : " (default)", lineCount);
+    } else {
+        payloadLog("[Doppel] WARNING: could not rewrite config %s (errno=%d)", cfgPath, errno);
     }
 }
 

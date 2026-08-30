@@ -26,6 +26,7 @@ object AgentBridge {
         "HitSelect" to "combat",
         "JumpReset" to "combat",
         "KeepSprint" to "combat",
+        "KnockbackDelay" to "combat",
         "KnockbackDisplace" to "combat",
         "Reach" to "combat",
         "SprintReset" to "combat",
@@ -48,11 +49,18 @@ object AgentBridge {
         "Eagle" to "player",
         "ParallaxStrike" to "player",
         "Teams" to "player",
+        "TargetFilter" to "player",
         // Render
         "Fullbright" to "render",
         "HUD" to "render",
         "NoFOV" to "render",
         "NoHurtCam" to "render",
+        "Keystrokes" to "render",
+        "Speedometer" to "render",
+        "VelocityDisplay" to "render",
+        "JumpStatus" to "render",
+        "JumpTiming" to "render",
+        "KnockbackDisplay" to "render",
         "WebUI" to "render",
         // World
         "FastPlace" to "world",
@@ -130,6 +138,9 @@ object AgentBridge {
         }
 
         try { ModuleRegistry.initSafetyIntegration() } catch (_: Exception) {}
+        // Parity with ForgeBootstrap: the fallback path must enable HUD too,
+        // otherwise the render pipeline draws nothing even when it is alive.
+        try { if (ModuleRegistry.isRegistered("HUD")) ModuleRegistry.enable("HUD") } catch (_: Exception) {}
         try { if (ModuleRegistry.isRegistered("WebUI")) ModuleRegistry.enable("WebUI") } catch (_: Exception) {}
 
         val msg = "$ok registered, $failed failed" +

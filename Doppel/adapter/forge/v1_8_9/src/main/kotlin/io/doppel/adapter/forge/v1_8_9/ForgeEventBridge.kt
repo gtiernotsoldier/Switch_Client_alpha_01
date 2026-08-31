@@ -974,6 +974,22 @@ object ForgeEventBridge : IEventBridge {
                     else EventBridge.syntheticBack || readKeyPressed("forge:gs_keyBindBack")
                 )
             }
+            // Strafe keys (ADTap) — keyboard only, always OR-ed with the physical key
+            // so the player's own strafing is never stolen. No override path by design.
+            val keyBindLeft = MappingContext.getFieldValue(gs, "forge:gs_keyBindLeft")
+            if (keyBindLeft != null) {
+                keybindingPressedField?.setBoolean(
+                    keyBindLeft,
+                    EventBridge.syntheticLeft || readKeyPressed("forge:gs_keyBindLeft")
+                )
+            }
+            val keyBindRight = MappingContext.getFieldValue(gs, "forge:gs_keyBindRight")
+            if (keyBindRight != null) {
+                keybindingPressedField?.setBoolean(
+                    keyBindRight,
+                    EventBridge.syntheticRight || readKeyPressed("forge:gs_keyBindRight")
+                )
+            }
             val keyBindUse = MappingContext.getFieldValue(gs, "forge:gs_keyBindUseItem") ?: return
             if (EventBridge.syntheticUseOverride) {
                 val nowUse = EventBridge.syntheticUse

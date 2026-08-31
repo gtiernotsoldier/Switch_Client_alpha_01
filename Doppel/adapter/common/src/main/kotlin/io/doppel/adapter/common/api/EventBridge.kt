@@ -121,6 +121,8 @@ object EventBridge {
         syntheticBack = false
         syntheticForwardOverride = false
         syntheticBackOverride = false
+        syntheticLeft = false
+        syntheticRight = false
         switchSlotHandler = null
         getBestSlotHandler = null
         pressSneakHandler = null
@@ -582,6 +584,16 @@ object EventBridge {
     @Volatile var syntheticBackOverride: Boolean = false
 
     /**
+     * Synthetic strafe key states (A/D), written by ADTap on the background tick
+     * thread and applied to the real A/D KeyBindings on the render thread (in the
+     * adapter's applySyntheticInput). Keyboard only — ADTap never touches the
+     * mouse. No override flag: ADTap always ORs with the physical key so the
+     * player's own strafing is never stolen.
+     */
+    @Volatile var syntheticLeft: Boolean = false
+    @Volatile var syntheticRight: Boolean = false
+
+    /**
      * Whether a fully-automatic clicker (AutoClicker/TriggerBot) is active.
      * When true, the attack key is fully driven by [syntheticAttack] (creating the
      * CPS press/release rhythm) and is NOT OR-ed with the physical mouse button —
@@ -739,6 +751,12 @@ object EventBridge {
      */
     @Volatile var physicalForwardDown: Boolean = false
     @Volatile var physicalBackDown: Boolean = false
+
+    /** TRUE physical A/D state via LWJGL Keyboard.isKeyDown — unaffected by the
+     *  synthetic strafe writes. ADTap uses these to never fight the player's own
+     *  strafing fingers. */
+    @Volatile var physicalLeftDown: Boolean = false
+    @Volatile var physicalRightDown: Boolean = false
 
     /** Jump (space) key state — used by the Keystrokes HUD. */
     @Volatile var isKeyJumpDown: Boolean = false

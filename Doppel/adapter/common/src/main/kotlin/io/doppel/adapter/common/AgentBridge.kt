@@ -17,6 +17,7 @@ object AgentBridge {
     /** Module entries: (simple class name, package suffix under io.doppel.adapter.common.module) */
     private val moduleEntries = listOf(
         // Combat
+        "ADTap" to "combat",
         "AimAssist" to "combat",
         "AutoBlock" to "combat",
         "AutoClicker" to "combat",

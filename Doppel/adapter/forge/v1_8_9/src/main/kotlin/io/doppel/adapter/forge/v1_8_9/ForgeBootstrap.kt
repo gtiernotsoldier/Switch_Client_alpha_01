@@ -115,7 +115,7 @@ object ForgeBootstrap {
         ForgePacketInterceptor.inject()
 
         ModuleRegistry.registerAll(
-            AimAssist, AutoBlock, AutoClicker, BlockHit, ClickAssist,
+            ADTap, AimAssist, AutoBlock, AutoClicker, BlockHit, ClickAssist,
             DelayRemover, HitSelect, JumpReset, KeepSprint, KnockbackDelay, KnockbackDisplace, Reach,
             SprintReset, STap, SuperKnockback, TriggerBot, Velocity, WTap,
             NoJumpDelay, NoKeyboardFix, NoMouseFix, Sprint, Strafe, StrafeFix,
@@ -201,6 +201,14 @@ object ForgeBootstrap {
                             val backKey = backKb?.let { MappingContext.invokeMethod(it, "forge:keybinding_keyCode") as? Int } ?: 0
                             EventBridge.physicalForwardDown = fwdKey != 0 && ((keyboardIsKeyDown.invoke(null, fwdKey) as? Boolean) ?: false)
                             EventBridge.physicalBackDown = backKey != 0 && ((keyboardIsKeyDown.invoke(null, backKey) as? Boolean) ?: false)
+                            // TRUE physical A/D via LWJGL — same mechanism as W/S above. ADTap
+                            // reads these to never fight the player's own strafing fingers.
+                            val leftKb = MappingContext.getFieldValue(gs, "forge:gs_keyBindLeft")
+                            val rightKb = MappingContext.getFieldValue(gs, "forge:gs_keyBindRight")
+                            val leftKey = leftKb?.let { MappingContext.invokeMethod(it, "forge:keybinding_keyCode") as? Int } ?: 0
+                            val rightKey = rightKb?.let { MappingContext.invokeMethod(it, "forge:keybinding_keyCode") as? Int } ?: 0
+                            EventBridge.physicalLeftDown = leftKey != 0 && ((keyboardIsKeyDown.invoke(null, leftKey) as? Boolean) ?: false)
+                            EventBridge.physicalRightDown = rightKey != 0 && ((keyboardIsKeyDown.invoke(null, rightKey) as? Boolean) ?: false)
                         }
                     } catch (_: Exception) {}
 

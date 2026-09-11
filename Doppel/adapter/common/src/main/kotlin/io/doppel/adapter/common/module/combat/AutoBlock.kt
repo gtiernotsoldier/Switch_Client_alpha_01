@@ -178,12 +178,12 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
         val nowNs = System.nanoTime()
 
         when (mode) {
-            // ── Srg: hold-style — block continuously while the player is attacking.
+            // ── Sag: hold-style — block continuously while the player is attacking.
             // Long-hold left-click (or AutoClicker working) keeps the block up. Debounced:
             // the block only releases once attacking has been absent for ~250ms. Without this,
             // a fast AutoClick cadence sampled on the 20Hz background thread flickers the
-            // attack state true/false → the block drops mid-combat (the "防砍" the user saw).
-            "Srg" -> {
+            // attack state true/false → the block drops mid-combat (the "blockhit" the user saw).
+            "Sag" -> {
                 if (isAttacking && conditionsMet && inRange && probPass) {
                     lastAttackNano = nowNs
                     if (!blockHeld) {

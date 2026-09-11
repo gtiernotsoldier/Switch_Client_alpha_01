@@ -45,7 +45,7 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
     // Switch = AutoBlock maintains the block; each fresh left-click attack (physical or
     //          AutoClick) briefly cancels the block, then re-blocks after [delayMs].
     // Srg    = hold-style: block continuously while the player keeps attacking.
-    private val mode by choices("Mode", arrayOf("Normal", "Switch", "Srg"))
+    private val mode by choices("Mode", arrayOf("Normal", "Switch", "Sag"))
 
     // ========== Distance Range ==========
     private val maxDistance by float("MaxDistance", 3.0f, 0.0f..6.0f, "blocks")

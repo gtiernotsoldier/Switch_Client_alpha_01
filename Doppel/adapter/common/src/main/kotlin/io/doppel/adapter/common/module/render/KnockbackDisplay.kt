@@ -259,7 +259,7 @@ object KnockbackDisplay : Module("KnockbackDisplay", Category.RENDER) {
         val lineH = f.fontHeight + 2
         val ls = lines()
         // IN line is accent-colored when Velocity modified the last packet, else white.
-        val inColor = if (EventBridge.velocityModified) 0xFF7A00 else 0xFFFFFF
+        val inColor = if (EventBridge.velocityModified) 0xFF22D3EE.toInt() else 0xFFFFFF
         // Apply the Scale option for real: scale the modelview, draw at posX/scale so the text
         // lands at posX..posX+width*scale (matching the drag hitbox).
         g.glPushMatrix()

@@ -49,8 +49,17 @@ object Theme {
     /** Warning gold. */
     const val WARN: Int = 0xFFFFB300.toInt()
 
-    /** Legacy single accent (kept for callers that don't use per-category). */
-    const val ACCENT: Int = 0xFFFF6A00.toInt()
+    /** Primary accent — spectral cyan (matches the WebUI rebrand, #22D3EE). */
+    const val ACCENT: Int = 0xFF22D3EE.toInt()
+
+    /** Secondary accent — aurora violet (#A78BFA). Spine gradients end here. */
+    const val ACCENT2: Int = 0xFFA78BFA.toInt()
+
+    /** "Module is working" flash red (legacy isRed family, #FF5A5A). */
+    const val FLASH_RED: Int = 0xFFFF5A5A.toInt()
+
+    /** Text color at the peak of a work flash (#FF6B6B). */
+    const val FLASH_RED_TEXT: Int = 0xFFFF6B6B.toInt()
 
     // ── Aurora depth / light ──
 
@@ -148,5 +157,34 @@ object Theme {
     /** Named brightness presets for the HUD. */
     enum class Brightness(val factor: Float) {
         DARKER(0.55f), DARK(0.75f), NORMAL(1.0f), BRIGHT(1.25f), BRIGHTER(1.5f)
+    }
+
+    // ── HUD v3 (concept-faithful) color math ──
+
+    /**
+     * Linear-interpolate two ARGB colors (all four channels).
+     * Pure function — unit-tested.
+     */
+    fun lerpArgb(a: Int, b: Int, t: Float): Int {
+        val tt = t.coerceIn(0f, 1f)
+        fun mix(x: Int, y: Int) = (x + ((y - x) * tt).toInt()).coerceIn(0, 255)
+        val aa = ((a ushr 24) and 0xFF)
+        val ar = ((a shr 16) and 0xFF)
+        val ag = ((a shr 8) and 0xFF)
+        val ab = (a and 0xFF)
+        val ba = ((b ushr 24) and 0xFF)
+        val br = ((b shr 16) and 0xFF)
+        val bg = ((b shr 8) and 0xFF)
+        val bb = (b and 0xFF)
+        return (mix(aa, ba) shl 24) or (mix(ar, br) shl 16) or (mix(ag, bg) shl 8) or mix(ab, bb)
+    }
+
+    /**
+     * Arraylist spine color — row [index] of [count], cyan→violet top-to-bottom.
+     * Pure function — unit-tested.
+     */
+    fun spineColor(index: Int, count: Int): Int {
+        val t = if (count <= 1) 0f else index.toFloat() / (count - 1).coerceAtLeast(1)
+        return lerpArgb(ACCENT, ACCENT2, t)
     }
 }

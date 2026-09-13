@@ -14,6 +14,25 @@ object FontFactory {
     private const val REGULAR_PATH = "/doppel/fonts/regular.ttf"
     private const val ICON_PATH = "/doppel/fonts/icon.ttf"
 
+    /** Brand UI face — Inter SemiBold (#HUD v3: wordmark + module rows). */
+    private const val INTER_PATH = "/doppel/fonts/inter-semibold.ttf"
+
+    /** Numeric face — JetBrains Mono SemiBold (#HUD v3: badge digits). */
+    private const val MONO_PATH = "/doppel/fonts/jbmono-semibold.ttf"
+
+    /**
+     * Brand UI font (Inter SemiBold) at [size]. Falls back to the legacy
+     * bundled regular face, then to the logical sans-serif.
+     */
+    fun loadBrand(size: Float): Font {
+        return loadFromResource(INTER_PATH)?.deriveFont(Font.PLAIN, size) ?: loadRegular(size)
+    }
+
+    /** Numeric/mono font (JetBrains Mono SemiBold) at [size]. */
+    fun loadMono(size: Float): Font {
+        return loadFromResource(MONO_PATH)?.deriveFont(Font.PLAIN, size) ?: loadBrand(size)
+    }
+
     /**
      * Load [regular.ttf] at the given point size (default 18, which keeps
      * glyph height near vanilla's 9 so ClickGUI geometry still fits).

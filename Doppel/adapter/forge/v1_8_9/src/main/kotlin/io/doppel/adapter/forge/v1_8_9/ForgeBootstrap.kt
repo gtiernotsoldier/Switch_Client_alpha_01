@@ -20,8 +20,7 @@ import io.doppel.adapter.common.module.render.WebUI
 import io.doppel.adapter.common.module.world.FastPlace
 import io.doppel.adapter.common.render.OverlayRenderer
 import io.doppel.adapter.common.render.RenderContext
-import io.doppel.adapter.common.render.FontFactory
-import io.doppel.adapter.common.render.SmoothFontRenderer
+import io.doppel.adapter.common.render.HudFonts
 import io.doppel.core.logging.CoreLogger
 import io.doppel.agent.MappingContext
 
@@ -69,16 +68,22 @@ object ForgeBootstrap {
     private val mouseGetX by lazy { try { mouseClass.getMethod("getX") } catch (_: Exception) { null } }
     private val mouseGetY by lazy { try { mouseClass.getMethod("getY") } catch (_: Exception) { null } }
 
-    // Smooth font for the HUD. DISABLED: its manual/reflected GL glyph-atlas
-    // upload does not reliably render. The vanilla font renderer is what we use
-    // for the HUD (known-good). Rolled back from attempting smooth font.
-    private var smoothFont: SmoothFontRenderer? = null
-    private var smoothFontFailed = true   // disabled → use vanilla font
+    // Smooth (TTF atlas) fonts for the HUD v3 card. Built lazily on the render
+    // thread; rebuilt when the GUI scale factor changes (raster crispness).
+    // If construction or atlas upload fails, HUD falls back to the vanilla
+    // pixel font with the same v3 layout — never crashes, never blank.
+    private var hudFontsCache: HudFonts? = null
+    private var hudFontsScale: Int = 0
+    private var hudFontsFailed: Boolean = false
 
-    private fun resolveFont(fallback: io.doppel.adapter.common.render.FontRendererBridge): io.doppel.adapter.common.render.FontRendererBridge {
-        val sf = smoothFont
-        if (smoothFontFailed || sf == null) return fallback
-        return sf
+    private fun hudFontsFor(scale: Int): HudFonts? {
+        if (hudFontsFailed) return null
+        if (hudFontsCache == null || hudFontsScale != scale) {
+            hudFontsCache = HudFonts.create(glBridge, scale)
+            hudFontsScale = scale
+            if (hudFontsCache == null) hudFontsFailed = true
+        }
+        return hudFontsCache
     }
 
     // ── Keyboard state polling for module keybinds (state, edge-detected) ──
@@ -368,8 +373,10 @@ object ForgeBootstrap {
             val ctx = RenderContext(
                 scaledWidth = scaledWidth,
                 scaledHeight = scaledHeight,
-                fontRenderer = resolveFont(ForgeFontRendererBridge(fontRendererObj)),
-                gl = glBridge
+                fontRenderer = ForgeFontRendererBridge(fontRendererObj),
+                gl = glBridge,
+                guiScale = scale,
+                hudFonts = hudFontsFor(scale)
             )
 
             OverlayRenderer.render(ctx)

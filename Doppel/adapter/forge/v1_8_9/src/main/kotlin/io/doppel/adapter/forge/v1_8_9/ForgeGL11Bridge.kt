@@ -1,6 +1,7 @@
 package io.doppel.adapter.forge.v1_8_9
 
 import io.doppel.adapter.common.render.GL11Bridge
+import io.doppel.adapter.common.render.GLConstants
 import io.doppel.core.logging.CoreLogger
 
 /**
@@ -97,6 +98,14 @@ class ForgeGL11Bridge : GL11Bridge {
     }
     private val glTranslatefMethod by lazy {
         gl11Class.getMethod("glTranslatef", Float::class.javaPrimitiveType, Float::class.javaPrimitiveType, Float::class.javaPrimitiveType)
+    }
+
+    private val glCopyTexSubImage2DMethod by lazy {
+        gl11Class.getMethod("glCopyTexSubImage2D",
+            Int::class.javaPrimitiveType, Int::class.javaPrimitiveType,
+            Int::class.javaPrimitiveType, Int::class.javaPrimitiveType,
+            Int::class.javaPrimitiveType, Int::class.javaPrimitiveType,
+            Int::class.javaPrimitiveType, Int::class.javaPrimitiveType)
     }
 
     /** Track which methods have already logged errors to avoid spam. */
@@ -211,26 +220,100 @@ class ForgeGL11Bridge : GL11Bridge {
         safeInvoke("glTexImage2D", glTexImage2DMethod, GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels)
     }
 
-    // ── Font atlas upload via Minecraft's TextureUtil (reliable, nemui-style) ──
+    // ── Font atlas upload (v3 reliability ladder) ──
+    //
+    // The first SmoothFontRenderer attempt was rolled back because its upload
+    // path "did not reliably render". Root causes addressed here:
+    //   1. manual glTexImage2D with a HEAP ByteBuffer → LWJGL throws
+    //      IllegalArgumentException("direct buffer required") → nothing draws;
+    //   2. no retry/re-assert → a resource reload (F3+T) deletes raw GL textures
+    //      and the font silently vanishes.
+    //
+    // Ladder: PRIMARY = manual upload with a DIRECT ByteBuffer and explicit
+    // ARGB→RGBA byte order (fully ours, no MC classes); FALLBACK = MC's
+    // TextureUtil.uploadTextureImageAllocate (method-name verified, with a
+    // one-shot diagnostic dump of TextureUtil's declared methods if missing).
 
     private val textureUtilClass by lazy { Class.forName("net.minecraft.client.renderer.texture.TextureUtil") }
-    private val tuGlGenTextures by lazy { textureUtilClass.getMethod("glGenTextures") }
     private val tuUploadImage by lazy {
-        textureUtilClass.getMethod("uploadTextureImageAllocate",
-            Int::class.javaPrimitiveType, java.awt.image.BufferedImage::class.java,
-            Boolean::class.javaPrimitiveType, Boolean::class.javaPrimitiveType)
+        textureUtilClass.methods.firstOrNull {
+            it.name == "uploadTextureImageAllocate" &&
+                it.parameterTypes.size == 4 &&
+                it.parameterTypes[0] == Int::class.javaPrimitiveType &&
+                it.parameterTypes[1] == java.awt.image.BufferedImage::class.java
+        }
     }
 
     override fun uploadFontTexture(image: java.awt.image.BufferedImage): Int {
-        return try {
-            val id = tuGlGenTextures.invoke(null) as? Int ?: return 0
-            tuUploadImage.invoke(null, id, image, true, false)
-            id
-        } catch (e: Exception) {
-            if (loggedErrors.add("uploadFontTexture")) {
-                CoreLogger.error("[ForgeGL11Bridge] uploadFontTexture failed: ${e.javaClass.simpleName}: ${e.message}")
+        val id = glGenTextures()
+        if (id <= 0) return 0
+        return if (uploadFontTextureInto(id, image)) id else 0
+    }
+
+    override fun uploadFontTextureInto(id: Int, image: java.awt.image.BufferedImage): Boolean {
+        // PRIMARY: manual, fully-controlled path. AWT TYPE_INT_ARGB is
+        // NON-premultiplied ARGB ints; push bytes in RGBA order into a DIRECT
+        // native-order buffer (LWJGL rejects heap buffers).
+        try {
+            val w = image.width
+            val h = image.height
+            val argb = IntArray(w * h)
+            image.getRGB(0, 0, w, h, argb, 0, w)
+            val buf = java.nio.ByteBuffer.allocateDirect(w * h * 4).order(java.nio.ByteOrder.nativeOrder())
+            for (p in argb) {
+                buf.put(((p shr 16) and 0xFF).toByte())  // R
+                buf.put(((p shr 8) and 0xFF).toByte())   // G
+                buf.put((p and 0xFF).toByte())           // B
+                buf.put(((p ushr 24) and 0xFF).toByte()) // A
             }
-            0
+            buf.flip()
+            glBindTexture(id)
+            glTexParameteri(GLConstants.GL_TEXTURE_2D, GLConstants.GL_TEXTURE_MIN_FILTER, GLConstants.GL_LINEAR)
+            glTexParameteri(GLConstants.GL_TEXTURE_2D, GLConstants.GL_TEXTURE_MAG_FILTER, GLConstants.GL_LINEAR)
+            glTexParameteri(GLConstants.GL_TEXTURE_2D, GLConstants.GL_TEXTURE_WRAP_S, GLConstants.GL_CLAMP_TO_EDGE)
+            glTexParameteri(GLConstants.GL_TEXTURE_2D, GLConstants.GL_TEXTURE_WRAP_T, GLConstants.GL_CLAMP_TO_EDGE)
+            glTexImage2DRGBA(w, h, buf)
+            return true
+        } catch (e: Exception) {
+            if (loggedErrors.add("uploadFontTexture.manual")) {
+                CoreLogger.error("[ForgeGL11Bridge] manual atlas upload failed: ${e.javaClass.simpleName}: ${e.message}")
+            }
+        }
+        // FALLBACK: MC TextureUtil (blur=true → GL_LINEAR, clamp=false).
+        return try {
+            val m = tuUploadImage
+            if (m == null) {
+                if (loggedErrors.add("uploadFontTexture.tu.missing")) {
+                    CoreLogger.error(
+                        "[ForgeGL11Bridge] TextureUtil.uploadTextureImageAllocate(Int,BufferedImage,Z,Z) not found; methods=" +
+                            textureUtilClass.methods.map { it.name }.filter { it.startsWith("upload") || it == "glGenTextures" }.sorted()
+                    )
+                }
+                false
+            } else {
+                m.invoke(null, id, image, true, false)
+                true
+            }
+        } catch (e: Exception) {
+            if (loggedErrors.add("uploadFontTexture.tu")) {
+                CoreLogger.error("[ForgeGL11Bridge] TextureUtil upload failed: ${e.javaClass.simpleName}: ${e.message}")
+            }
+            false
+        }
+    }
+
+    override fun glCopyTexSubImage2D(x: Int, y: Int, width: Int, height: Int): Boolean {
+        return try {
+            glCopyTexSubImage2DMethod.invoke(
+                null,
+                GLConstants.GL_TEXTURE_2D, 0, 0, 0, x, y, width, height
+            )
+            true
+        } catch (e: Exception) {
+            if (loggedErrors.add("glCopyTexSubImage2D")) {
+                CoreLogger.error("[ForgeGL11Bridge] glCopyTexSubImage2D failed: ${e.javaClass.simpleName}: ${e.message}")
+            }
+            false
         }
     }
 

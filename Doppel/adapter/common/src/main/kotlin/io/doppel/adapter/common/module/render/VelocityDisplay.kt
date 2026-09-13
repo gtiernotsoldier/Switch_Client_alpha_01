@@ -130,7 +130,7 @@ object VelocityDisplay : Module("VelocityDisplay", Category.RENDER) {
         val lineH = f.fontHeight + 2
 
         // Accent when Velocity modified the last packet; white when vanilla.
-        val color = if (modified) 0xFF7A00 else 0xFFFFFF
+        val color = if (modified) 0xFF22D3EE.toInt() else 0xFFFFFF
 
         // Apply the Scale option for real: scale the modelview, draw at posX/scale so the text
         // lands at posX..posX+width*scale (matching the drag hitbox).

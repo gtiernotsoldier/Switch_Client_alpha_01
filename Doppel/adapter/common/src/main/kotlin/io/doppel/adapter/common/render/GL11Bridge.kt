@@ -74,7 +74,22 @@ interface GL11Bridge {
      * failure. Implementations should use MC's TextureUtil/DynamicTexture so the
      * upload always works (manual glTexImage2D has proven unreliable here).
      */
-    fun uploadFontTexture(image: java.awt.image.BufferedImage): Int
+    fun uploadFontTexture(image: java.awt.image.BufferedImage): Int = 0
+
+    /**
+     * Re-upload [image] into an ALREADY-CREATED texture [id] (used to re-assert
+     * font atlases after MC resource reloads delete raw GL textures).
+     * Returns true on success. Default: unsupported.
+     */
+    fun uploadFontTextureInto(id: Int, image: java.awt.image.BufferedImage): Boolean = false
+
+    /**
+     * Copy a region of the current read framebuffer (origin bottom-left) into
+     * the currently bound 2D texture at (0,0). Used by the HUD glass badge's
+     * downsample blur. Returns false when the platform cannot do it — callers
+     * must fall back to a flat translucent panel.
+     */
+    fun glCopyTexSubImage2D(x: Int, y: Int, width: Int, height: Int): Boolean = false
 
     /** Set the 2D texture coordinate for the next vertex. */
     fun glTexCoord2f(u: Float, v: Float)

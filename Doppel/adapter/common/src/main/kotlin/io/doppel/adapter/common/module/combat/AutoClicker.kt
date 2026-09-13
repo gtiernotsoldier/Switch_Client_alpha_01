@@ -152,7 +152,7 @@ object AutoClicker : Module("AutoClicker", Category.COMBAT), HudLineProvider {
         // the platform adapter's time-based cadence generate the smooth CPS press/release
         // rhythm. The probability result is ignored for the output; a Skip means "stop".
         when (result) {
-            is ClickResult.Click -> EventBridge.syntheticAttack = true
+            is ClickResult.Click -> { EventBridge.syntheticAttack = true; markWorked() }
             is ClickResult.Skip -> {
                 // Distinguish "probability miss" (keep clicking, cadence still runs) from
                 // "condition blocked" (stop). Re-check the gate directly.
@@ -226,7 +226,7 @@ object AutoClicker : Module("AutoClicker", Category.COMBAT), HudLineProvider {
 
     private fun applyResult19(result: ClickResult) {
         when (result) {
-            is ClickResult.Click -> EventBridge.syntheticAttack = true
+            is ClickResult.Click -> { EventBridge.syntheticAttack = true; markWorked() }
             is ClickResult.StopSprint -> EventBridge.setSprinting(false)
             is ClickResult.RestoreSprint -> EventBridge.setSprinting(result.wasSprinting)
             is ClickResult.Skip -> EventBridge.syntheticAttack = false

@@ -61,6 +61,9 @@ abstract class Module(
          * Individual modules can override this via showRedIndicator.
          */
         val silentCategories = setOf(Category.COMBAT)
+
+        /** How long one work pulse takes to decay, in ms. */
+        const val WORK_FLASH_MS: Long = 420L
     }
 
     fun enable() {
@@ -94,6 +97,30 @@ abstract class Module(
         if (keybind != keyCode) return false
         toggle()
         return true
+    }
+
+    // ── Work flash (HUD red pulse while the module actively does something) ──
+    // Modules call [markWorked] at the exact instant they act (a tap starts, a
+    // click fires, motion is modified). The HUD reads [flashStrength] per frame
+    // and pulses the row red — the modernized successor of the legacy isRed bar.
+    // Pure time math — unit-tested.
+
+    @Volatile private var flashUntilMs: Long = 0L
+
+    /**
+     * Signal "this module just did something" — the HUD row will flash red and
+     * decay over [durationMs]. Respects [showRedIndicator] (stealth modules
+     * opting out never pulse).
+     */
+    fun markWorked(durationMs: Long = WORK_FLASH_MS) {
+        if (!showRedIndicator) return
+        flashUntilMs = System.currentTimeMillis() + durationMs
+    }
+
+    /** 1.0 right after [markWorked], linearly decaying to 0.0 when idle. */
+    fun flashStrength(nowMs: Long = System.currentTimeMillis()): Float {
+        val remain = flashUntilMs - nowMs
+        return if (remain <= 0L) 0f else (remain.toFloat() / WORK_FLASH_MS).coerceIn(0f, 1f)
     }
 
     // ── Config caching ──

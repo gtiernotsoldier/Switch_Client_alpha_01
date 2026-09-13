@@ -240,7 +240,7 @@ object Velocity : Module("Velocity", Category.COMBAT), HudLineProvider {
     // ========== Result Mapping ==========
 
     private fun mapResultToCommand(result: VelocityResult): PlatformCommand = when (result) {
-        is VelocityResult.Modify -> PlatformCommand.ModifyMotion(result.motion)
+        is VelocityResult.Modify -> { markWorked(); PlatformCommand.ModifyMotion(result.motion) }
         is VelocityResult.Cancel -> PlatformCommand.CancelPacket(result.packetHandle)
         is VelocityResult.ClickBurst -> PlatformCommand.ClickBurst(result.targetEntityId, result.times)
         is VelocityResult.Pass -> PlatformCommand.Pass(result.originalMotion)

@@ -125,6 +125,7 @@ object ADTap : Module("ADTap", Category.COMBAT) {
         lastSide = pendingSide
         val duration = Random.nextInt(tapMinMs, tapMaxMs + 1)
         setSide(pendingSide, true)
+        markWorked()                      // HUD work flash — the module just acted
         machine.beginTap(nowNs, duration)
     }
 

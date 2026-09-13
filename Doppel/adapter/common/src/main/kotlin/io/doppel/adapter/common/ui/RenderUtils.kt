@@ -185,6 +185,35 @@ object RenderUtils {
         }
     }
 
+    /** Horizontal gradient rectangle drawn as [bands] vertical strips (HUD hairline). */
+    fun horizontalGradient(
+        ctx: RenderContext,
+        x: Float, y: Float, w: Float, h: Float,
+        leftColor: Int,
+        rightColor: Int,
+        bands: Int = 24
+    ) {
+        val step = w / bands
+        for (i in 0 until bands) {
+            val t = i.toFloat() / (bands - 1).coerceAtLeast(1)
+            rect(ctx, x + i * step, y, step + 0.5f, h, lerpColor(leftColor, rightColor, t))
+        }
+    }
+
+    /** Solid circle via triangle fan (HUD badge pulse dot). */
+    fun circle(ctx: RenderContext, cx: Float, cy: Float, r: Float, color: Int, segments: Int = 14) {
+        val g = ctx.gl
+        prepareColor(g, color)
+        g.glBegin(GLConstants.GL_TRIANGLE_FAN)
+        g.glVertex2f(cx, cy)
+        for (i in 0..segments) {
+            val th = Math.PI * 2.0 * i / segments
+            g.glVertex2f((cx + kotlin.math.cos(th) * r).toFloat(), (cy + kotlin.math.sin(th) * r).toFloat())
+        }
+        g.glEnd()
+        restoreColor(g)
+    }
+
     private fun lerpColor(a: Int, b: Int, t: Float): Int {
         val ta = t.coerceIn(0f, 1f)
         val ar = (a shr 16) and 0xFF

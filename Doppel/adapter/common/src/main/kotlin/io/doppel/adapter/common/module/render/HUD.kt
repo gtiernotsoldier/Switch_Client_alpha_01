@@ -47,8 +47,8 @@ object HUD : Module("HUD", Category.RENDER) {
     var posY: Int = 20
         private set
 
-    /** "Left" or "Right" — anchored side of the list (WebUI config). */
-    var position by choices("Position", arrayOf("Left", "Right"))
+    /** "Right" or "Left" — anchored side of the list (WebUI config). Default Right (concept anchor). */
+    var position by choices("Position", arrayOf("Right", "Left"))
 
     // ── Configurable display options ──
 

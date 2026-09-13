@@ -171,6 +171,7 @@ object WTap : Module("WTap", Category.COMBAT) {
     // ================================================================
     private fun startTap(nowNs: Long) {
         EventBridge.syntheticForward = false  // release W for the tap
+        markWorked()                          // HUD work flash — the module just acted
         val ms = when (combatVersion) {
             "1.8" -> Random.nextInt(actionMin18, actionMax18 + 1)
             "1.9+" -> Random.nextInt(actionMin19, actionMax19 + 1)

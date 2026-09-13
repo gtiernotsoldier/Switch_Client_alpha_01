@@ -102,7 +102,7 @@ object JumpStatus : Module("JumpStatus", Category.RENDER) {
     private fun draw(ctx: RenderContext) {
         val f = ctx.fontRenderer
         val g = ctx.gl
-        val color = if (EventBridge.isKeyJumpDown) 0xFF7A00 else 0xFFFFFF
+        val color = if (EventBridge.isKeyJumpDown) 0xFF22D3EE.toInt() else 0xFFFFFF
         // Apply the Scale option for real: scale the modelview, draw at posX/scale so the text
         // lands at posX..posX+width*scale (matching the drag hitbox).
         g.glPushMatrix()

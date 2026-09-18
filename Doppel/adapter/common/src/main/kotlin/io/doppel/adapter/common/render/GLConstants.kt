@@ -35,4 +35,7 @@ object GLConstants {
 
     // ── Alpha test (GuiScreen enables alpha discard — must disable for quads) ──
     const val GL_ALPHA_TEST = 0x0B20
+
+    // ── State queries (GL state hygiene — frame-boundary save/restore) ──
+    const val GL_TEXTURE_BINDING_2D = 0x8069
 }

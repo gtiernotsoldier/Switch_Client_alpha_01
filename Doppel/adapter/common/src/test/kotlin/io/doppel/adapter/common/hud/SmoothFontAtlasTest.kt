@@ -1,8 +1,10 @@
 package io.doppel.adapter.common.hud
 
 import io.doppel.adapter.common.render.GL11Bridge
+import io.doppel.adapter.common.render.GLConstants
 import io.doppel.adapter.common.render.SmoothFontRenderer
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.awt.Font
@@ -13,20 +15,30 @@ import java.awt.Font
  */
 class SmoothFontAtlasTest {
 
-    /** Minimal recording fake: textures "upload" fine, GL calls are no-ops. */
+    /** Minimal recording fake: textures "upload" fine, GL calls are recorded. */
     private open class FakeGL : GL11Bridge {
         var uploads = 0
         var binds = 0
         var nextId = 1
+        val enabledCaps = mutableListOf<Int>()
+        val disabledCaps = mutableListOf<Int>()
+        var lastBound = -1
+        val deletedTex = mutableListOf<Int>()
         override fun glGenTextures(): Int = nextId++
-        override fun glBindTexture(id: Int) { binds++ }
+        override fun glBindTexture(id: Int) { binds++; lastBound = id }
         override fun glTexParameteri(target: Int, pname: Int, param: Int) {}
+        override fun glEnable(cap: Int) { enabledCaps.add(cap) }
+        override fun glDisable(cap: Int) { disabledCaps.add(cap) }
+        override fun glDeleteTextures(id: Int) { deletedTex.add(id) }
         override fun uploadFontTexture(image: java.awt.image.BufferedImage): Int {
             uploads++
-            return nextId++
+            val id = nextId++
+            lastBound = id // mirror the real bridge: upload binds the atlas
+            return id
         }
         override fun uploadFontTextureInto(id: Int, image: java.awt.image.BufferedImage): Boolean {
             uploads++
+            lastBound = id // mirror the real bridge: upload binds the atlas
             return true
         }
         override fun glPushAttrib(mask: Int) {}
@@ -36,8 +48,6 @@ class SmoothFontAtlasTest {
         override fun glPopMatrix() {}
         override fun glLoadIdentity() {}
         override fun glOrtho(left: Double, right: Double, bottom: Double, top: Double, near: Double, far: Double) {}
-        override fun glEnable(cap: Int) {}
-        override fun glDisable(cap: Int) {}
         override fun glDepthMask(flag: Boolean) {}
         override fun glBlendFunc(sfactor: Int, dfactor: Int) {}
         override fun glColor4f(red: Float, green: Float, blue: Float, alpha: Float) {}
@@ -98,5 +108,36 @@ class SmoothFontAtlasTest {
         f.prepare()
         val w = f.drawCharMirrored('D', 0f, 0f, 0xFF22D3EE.toInt())
         assertEquals(f.getStringWidth("D").toFloat(), w, 0.01f)
+    }
+
+    @Test
+    fun `drawing restores alpha test and never re-enables depth (state hygiene)`() {
+        val gl = FakeGL()
+        val f = newFont(gl)
+        f.prepare()
+        val before = gl.enabledCaps.size
+        f.drawStringWithShadow("AutoClicker", 0, 0, 0xFFFFFFFF.toInt())
+        // v3.3 contract: the renderer restores what IT touched — alpha test
+        // back ON, atlas UNBOUND (texture bindings are not in glPushAttrib),
+        // and depth test must NEVER be enabled mid-frame (the old hardcoded
+        // restore broke untextured quads drawn after text).
+        assertTrue(gl.enabledCaps.contains(GLConstants.GL_ALPHA_TEST), "alpha test must be restored")
+        assertFalse(gl.enabledCaps.contains(GLConstants.GL_DEPTH_TEST), "depth test must not be re-enabled")
+        assertEquals(0, gl.lastBound, "atlas binding must be released after drawing")
+        assertTrue(gl.enabledCaps.size > before || gl.enabledCaps.isNotEmpty())
+    }
+
+    @Test
+    fun `release deletes the atlas texture and clears readiness`() {
+        val gl = FakeGL()
+        val f = newFont(gl)
+        f.prepare()
+        val tex = gl.lastBound
+        assertTrue(f.ready)
+        f.release()
+        assertEquals(listOf(tex), gl.deletedTex, "release must delete the atlas texture")
+        assertFalse(f.ready, "readiness must clear after release")
+        // A released font can prepare() again (fresh upload) — the rebuild path.
+        assertTrue(f.prepare())
     }
 }

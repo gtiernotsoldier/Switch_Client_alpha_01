@@ -79,15 +79,42 @@ object ForgeBootstrap {
     private var hudFontsLastFailMs: Long = 0
 
     private fun hudFontsFor(scale: Int): HudFonts? {
-        if (hudFontsCache != null && hudFontsScale == scale) return hudFontsCache
-        if (hudFontsCache == null) {
-            val now = System.currentTimeMillis()
-            if (hudFontsLastFailMs != 0L && now - hudFontsLastFailMs < 5000) return null
-            hudFontsCache = HudFonts.create(glBridge, scale)
-            if (hudFontsCache == null) hudFontsLastFailMs = now
+        // v3.3: rebuild when there is no cache OR the GUI scale factor changed.
+        // The old logic only rebuilt when the cache was NULL while still
+        // stamping hudFontsScale to the new value — so after the first
+        // successful build, a GUI scale change silently mismatched the atlas
+        // rasterization to the layout scale FOREVER (blurry/stretched HUD text
+        // until restart), and the cache never rebuilt again.
+        val cached = hudFontsCache
+        if (cached != null && hudFontsScale == scale) return cached
+
+        // Throttle (re)build attempts to once per 5s — a transient GL state
+        // while the world is still loading must not thrash atlas uploads.
+        val now = System.currentTimeMillis()
+        if (hudFontsLastFailMs != 0L && now - hudFontsLastFailMs < 5000) {
+            // Serve the old bundle (possibly wrong scale) rather than dropping
+            // to the vanilla font for the throttle window — better than blank.
+            return cached
         }
-        hudFontsScale = scale
-        return hudFontsCache
+
+        val built = HudFonts.create(glBridge, scale)
+        return if (built != null) {
+            cached?.release() // free the old bundle's 4 atlases (VRAM leak fix)
+            hudFontsCache = built
+            hudFontsScale = scale
+            hudFontsLastFailMs = 0L
+            built
+        } else {
+            hudFontsLastFailMs = now
+            if (cached != null) {
+                io.doppel.core.logging.CoreLogger.warn(
+                    "[ForgeBootstrap] HudFonts rebuild failed for scale=$scale — keeping previous bundle"
+                )
+                cached
+            } else {
+                null // vanilla font fallback for now; retried after the throttle
+            }
+        }
     }
 
     // ── Keyboard state polling for module keybinds (state, edge-detected) ──

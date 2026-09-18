@@ -157,6 +157,18 @@ class SmoothFontRenderer(
         return true
     }
 
+    /**
+     * Free the GPU texture. Called when the owning bundle is rebuilt
+     * (GUI scale change) — without this, every rebuild leaks 4 MB of
+     * VRAM per atlas (no other owner can delete the texture name).
+     */
+    fun release() {
+        if (textureId > 0) {
+            gl.glDeleteTextures(textureId)
+            textureId = -1
+        }
+    }
+
     override fun drawStringWithShadow(text: String, x: Int, y: Int, color: Int): Int {
         if (!ensureTexture()) return getStringWidth(text)
         val alpha = (color ushr 24) and 0xFF
@@ -170,8 +182,7 @@ class SmoothFontRenderer(
         drawGlyphs(text, x + 1f, y + 1f)
         gl.glColor4f(r / 255f, g / 255f, b / 255f, alpha / 255f)
         drawGlyphs(text, x.toFloat(), y.toFloat())
-        gl.glDepthMask(true)
-        gl.glEnable(GLConstants.GL_DEPTH_TEST)
+        endGlyphs()
         return getStringWidth(text)
     }
 
@@ -195,8 +206,7 @@ class SmoothFontRenderer(
         )
         drawGlyphs(ch.toString(), 0f, 0f)
         gl.glPopMatrix()
-        gl.glDepthMask(true)
-        gl.glEnable(GLConstants.GL_DEPTH_TEST)
+        endGlyphs()
         return w
     }
 
@@ -207,10 +217,26 @@ class SmoothFontRenderer(
         gl.glEnable(GLConstants.GL_BLEND)
         gl.glBlendFunc(GLConstants.GL_SRC_ALPHA, GLConstants.GL_ONE_MINUS_SRC_ALPHA)
         gl.glDisable(GLConstants.GL_DEPTH_TEST)
-        gl.glDepthMask(false)
         gl.glDisable(GLConstants.GL_ALPHA_TEST)
         // glColor4f must tint the atlas (white glyphs = color mask), not replace it.
         gl.glTexEnv(GLConstants.GL_TEXTURE_ENV, GLConstants.GL_TEXTURE_ENV_MODE, GLConstants.GL_MODULATE)
+    }
+
+    /**
+     * Symmetric tail of [bindForGlyphs] — restores exactly what it changed.
+     *
+     * v3.3: the old tail hardcoded `depthMask(true) + enable(DEPTH_TEST)`
+     * after every string — re-enabling depth test MID-HUD-FRAME (the outer
+     * OverlayRenderer had just disabled it), so untextured quads drawn after
+     * text could be occluded by world geometry. Depth state belongs to the
+     * frame owner; this renderer now only restores what IT touched:
+     * alpha test and the atlas binding (texture bindings are NOT covered by
+     * glPushAttrib — a leaked atlas binding would be sampled by whatever
+     * textured draw comes next, vanilla FontRenderer included).
+     */
+    private fun endGlyphs() {
+        gl.glEnable(GLConstants.GL_ALPHA_TEST)
+        gl.glBindTexture(0)
     }
 
     private fun drawGlyphs(text: String, startX: Float, startY: Float) {

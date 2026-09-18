@@ -24,6 +24,19 @@ class HudFonts private constructor(
     val usable: Boolean
         get() = brand.ready && ui.ready && slogan.ready && mono.ready
 
+    /**
+     * Free every atlas texture in the bundle (called when a new bundle
+     * replaces this one, e.g. after a GUI scale change). Without this,
+     * each rebuild leaks 4 x 4 MB of VRAM and the dead texture names
+     * accumulate for the whole session.
+     */
+    fun release() {
+        brand.release()
+        ui.release()
+        slogan.release()
+        mono.release()
+    }
+
     companion object {
 
         /** GUI-space font sizes (px) — proportions mirror the approved HTML concept. */

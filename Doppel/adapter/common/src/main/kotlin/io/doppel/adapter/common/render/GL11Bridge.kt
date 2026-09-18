@@ -99,4 +99,20 @@ interface GL11Bridge {
 
     /** Translate the current matrix by (x, y, z). */
     fun glTranslatef(x: Float, y: Float, z: Float)
+
+    // ── State queries / cleanup (GL state hygiene, v3.3) ──
+    //
+    // The HUD mutates GL state that glPushAttrib does NOT cover — texture
+    // bindings are not part of the attribute stack. Each adapter must let
+    // callers query and restore them, and release textures they no longer
+    // use, or the game's own (cached) state tracking desyncs from reality.
+
+    /** Query a single integer GL state value (e.g. GL_TEXTURE_BINDING_2D). Returns 0 when unsupported. */
+    fun glGetInteger(pname: Int): Int = 0
+
+    /** Read and clear the GL error flag (GL11.glGetError). Returns GL_NO_ERROR (0) when unsupported. */
+    fun glGetError(): Int = 0
+
+    /** Delete a texture name (GL11.glDeleteTextures). No-op when unsupported. */
+    fun glDeleteTextures(id: Int) {}
 }

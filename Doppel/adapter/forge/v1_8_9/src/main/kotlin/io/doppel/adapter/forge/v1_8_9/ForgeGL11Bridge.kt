@@ -108,6 +108,23 @@ class ForgeGL11Bridge : GL11Bridge {
             Int::class.javaPrimitiveType, Int::class.javaPrimitiveType)
     }
 
+    // ── State queries / cleanup (v3.3) ──
+
+    private val glGetErrorMethod by lazy {
+        gl11Class.getMethod("glGetError")
+    }
+    private val glGetIntegerMethod by lazy {
+        gl11Class.getMethod("glGetInteger", Int::class.javaPrimitiveType, java.nio.IntBuffer::class.java)
+    }
+    private val glDeleteTexturesMethod by lazy {
+        gl11Class.getMethod("glDeleteTextures", Int::class.javaPrimitiveType)
+    }
+
+    /** Reusable direct buffer for single-value glGetInteger queries. */
+    private val queryBuffer by lazy {
+        java.nio.ByteBuffer.allocateDirect(16).order(java.nio.ByteOrder.nativeOrder()).asIntBuffer()
+    }
+
     /** Track which methods have already logged errors to avoid spam. */
     private val loggedErrors = mutableSetOf<String>()
 
@@ -272,7 +289,22 @@ class ForgeGL11Bridge : GL11Bridge {
             glTexParameteri(GLConstants.GL_TEXTURE_2D, GLConstants.GL_TEXTURE_MAG_FILTER, GLConstants.GL_LINEAR)
             glTexParameteri(GLConstants.GL_TEXTURE_2D, GLConstants.GL_TEXTURE_WRAP_S, GLConstants.GL_CLAMP_TO_EDGE)
             glTexParameteri(GLConstants.GL_TEXTURE_2D, GLConstants.GL_TEXTURE_WRAP_T, GLConstants.GL_CLAMP_TO_EDGE)
+            // Drain any stale error from earlier in the frame, then upload and
+            // VERIFY: safeInvoke swallows GL-level failures, so without this
+            // check an unuploaded atlas still returned "true" — ready==true,
+            // yet sampling garbage/undefined storage (invisible text).
+            while (glGetError() != 0) { /* clear pending flag */ }
             glTexImage2DRGBA(w, h, buf)
+            val err = glGetError()
+            if (err != 0) {
+                if (loggedErrors.add("uploadFontTexture.glerror")) {
+                    CoreLogger.error("[ForgeGL11Bridge] manual atlas upload left GL error 0x${Integer.toHexString(err)} — falling back to TextureUtil")
+                }
+                throw IllegalStateException("glTexImage2D error 0x${Integer.toHexString(err)}")
+            }
+            // Leave NO binding behind: the atlas texture must not leak into
+            // whatever MC draws next (texture binding is not in glPushAttrib).
+            glBindTexture(0)
             return true
         } catch (e: Exception) {
             if (loggedErrors.add("uploadFontTexture.manual")) {
@@ -292,6 +324,8 @@ class ForgeGL11Bridge : GL11Bridge {
                 false
             } else {
                 m.invoke(null, id, image, true, false)
+                // TextureUtil leaves the atlas bound — unbind (no leaks policy).
+                glBindTexture(0)
                 true
             }
         } catch (e: Exception) {
@@ -327,6 +361,30 @@ class ForgeGL11Bridge : GL11Bridge {
 
     override fun glTranslatef(x: Float, y: Float, z: Float) {
         safeInvoke("glTranslatef", glTranslatefMethod, x, y, z)
+    }
+
+    // ── State queries / cleanup (v3.3) ──
+
+    override fun glGetError(): Int {
+        return try {
+            (glGetErrorMethod.invoke(null) as? Int) ?: 0
+        } catch (e: Exception) {
+            0
+        }
+    }
+
+    override fun glGetInteger(pname: Int): Int {
+        return try {
+            queryBuffer.clear()
+            glGetIntegerMethod.invoke(null, pname, queryBuffer)
+            queryBuffer.get(0)
+        } catch (e: Exception) {
+            0
+        }
+    }
+
+    override fun glDeleteTextures(id: Int) {
+        safeInvoke("glDeleteTextures", glDeleteTexturesMethod, id)
     }
 
     /** GL_TEXTURE_2D constant for [glBindTexture]. */

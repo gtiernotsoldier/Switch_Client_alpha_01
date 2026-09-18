@@ -29,6 +29,13 @@ object OverlayRenderer {
     fun render(ctx: RenderContext) {
         val g = ctx.gl
 
+        // Texture bindings are NOT part of the attribute stack: save the
+        // game's current binding so the HUD can hand it back EXACTLY when
+        // done. Without this, any texture we leave bound desyncs MC's own
+        // cached state — MC then skips its "redundant" rebind and samples
+        // OUR texture (garbled/invisible game UI after a HUD frame).
+        val prevTextureBinding = g.glGetInteger(GLConstants.GL_TEXTURE_BINDING_2D)
+
         // GL State: Save
         g.glPushAttrib(GLConstants.GL_ALL_ATTRIB_BITS)
         g.glMatrixMode(GLConstants.GL_PROJECTION)
@@ -74,6 +81,7 @@ object OverlayRenderer {
             g.glPopMatrix()
             g.glMatrixMode(GLConstants.GL_MODELVIEW)
             g.glPopMatrix()
+            g.glBindTexture(prevTextureBinding)
             g.glPopAttrib()
         }
     }
@@ -104,6 +112,9 @@ object OverlayRenderer {
     private var badgeTexId: Int = -1
     private var badgeTexAllocated = false
     private var badgeBlurDisabled = false
+
+    /** Consecutive glass copy failures → texture name likely dead, regenerate. */
+    private var badgeCopyFails = 0
 
     private fun drawHudCard(ctx: RenderContext) {
         if (!HUD.enabled) {
@@ -307,6 +318,7 @@ object OverlayRenderer {
                     val glY = ((ctx.scaledHeight - y - h) * gs).toInt()
                     gl.glBindTexture(badgeTexId)
                     if (gl.glCopyTexSubImage2D(glX, glY, pw, ph)) {
+                        badgeCopyFails = 0
                         gl.glEnable(GLConstants.GL_TEXTURE_2D)
                         gl.glEnable(GLConstants.GL_BLEND)
                         gl.glBlendFunc(GLConstants.GL_SRC_ALPHA, GLConstants.GL_ONE_MINUS_SRC_ALPHA)
@@ -322,10 +334,25 @@ object OverlayRenderer {
                         gl.glTexCoord2f(0f, ph / 128f); gl.glVertex2f(x, y + h)
                         gl.glEnd()
                         blurred = true
+                    } else if (++badgeCopyFails >= 20) {
+                        // Copy keeps failing (dead texture name after a context
+                        // reset / resource reload): regenerate from scratch.
+                        badgeTexId = -1
+                        badgeTexAllocated = false
+                        badgeCopyFails = 0
                     }
                 }
             } catch (_: Exception) {
                 badgeBlurDisabled = true
+            } finally {
+                // Leave NO trace (v3.3): the capture texture must never stay
+                // bound — the next textured draw (vanilla FontRenderer
+                // included) would sample the SCREENSHOT as its source. And
+                // depth-write/alpha-test return to the HUD frame baseline;
+                // bindings are not covered by the outer glPushAttrib.
+                ctx.gl.glBindTexture(0)
+                ctx.gl.glDepthMask(true)
+                ctx.gl.glEnable(GLConstants.GL_ALPHA_TEST)
             }
         }
         val base = Theme.withAlpha(0x0D111C.toInt(), if (blurred) 0.42f else 0.66f)
@@ -432,7 +459,7 @@ object OverlayRenderer {
     // ── Toasts ──
 
     private fun drawToasts(ctx: RenderContext) {
-        val font = ctx.fontRenderer
+        val font = ctx.hudFonts?.takeIf { it.usable }?.ui ?: ctx.fontRenderer
         val notifications = EventBridge.drainNotifications()
         if (notifications.isEmpty()) return
 

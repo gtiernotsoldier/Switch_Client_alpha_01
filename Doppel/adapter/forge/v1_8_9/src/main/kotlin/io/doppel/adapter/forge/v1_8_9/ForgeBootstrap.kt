@@ -72,17 +72,21 @@ object ForgeBootstrap {
     // thread; rebuilt when the GUI scale factor changes (raster crispness).
     // If construction or atlas upload fails, HUD falls back to the vanilla
     // pixel font with the same v3 layout — never crashes, never blank.
+    // Failed builds RETRY (throttled to once per 5s): a transient GL state
+    // while the world is still loading must not strip smooth fonts forever.
     private var hudFontsCache: HudFonts? = null
     private var hudFontsScale: Int = 0
-    private var hudFontsFailed: Boolean = false
+    private var hudFontsLastFailMs: Long = 0
 
     private fun hudFontsFor(scale: Int): HudFonts? {
-        if (hudFontsFailed) return null
-        if (hudFontsCache == null || hudFontsScale != scale) {
+        if (hudFontsCache != null && hudFontsScale == scale) return hudFontsCache
+        if (hudFontsCache == null) {
+            val now = System.currentTimeMillis()
+            if (hudFontsLastFailMs != 0L && now - hudFontsLastFailMs < 5000) return null
             hudFontsCache = HudFonts.create(glBridge, scale)
-            hudFontsScale = scale
-            if (hudFontsCache == null) hudFontsFailed = true
+            if (hudFontsCache == null) hudFontsLastFailMs = now
         }
+        hudFontsScale = scale
         return hudFontsCache
     }
 
@@ -382,9 +386,21 @@ object ForgeBootstrap {
             OverlayRenderer.render(ctx)
 
         } catch (e: Exception) {
-            // HUD rendering must never crash the game — swallow and continue.
+            // HUD rendering must never crash the game — but it must not fail
+            // silently either: a swallowed exception here was exactly the
+            // "header drawn, list missing forever" class of bug. Log throttled
+            // (once per exception type per 10s) so reports are diagnosable.
+            val now = System.currentTimeMillis()
+            if (e.javaClass != lastRenderExcClass || now - lastRenderExcMs > 10000) {
+                lastRenderExcClass = e.javaClass
+                lastRenderExcMs = now
+                CoreLogger.error("[ForgeBootstrap] HUD render failed: ${e.javaClass.simpleName}: ${e.message}")
+            }
         }
     }
+
+    private var lastRenderExcClass: Class<out Exception>? = null
+    private var lastRenderExcMs: Long = 0
 
     /**
      * MC 1.8.9 ScaledResolution scaling algorithm (mirrors vanilla logic).

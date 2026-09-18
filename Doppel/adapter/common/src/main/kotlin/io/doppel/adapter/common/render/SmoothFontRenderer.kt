@@ -57,8 +57,13 @@ class SmoothFontRenderer(
     override val fontHeight: Int
 
     private var textureId: Int = -1
-    private var uploadTries: Int = 0
+    private var uploadFails: Int = 0
     private var framesSinceAssert: Int = 0
+
+    private companion object {
+        /** Throttled retry cadence (prepare() calls between upload attempts). */
+        const val RETRY_CALLS = 120
+    }
 
     /** True once the atlas texture is live on the GPU. */
     val ready: Boolean get() = textureId > 0
@@ -115,14 +120,29 @@ class SmoothFontRenderer(
      */
     fun prepare(): Boolean {
         if (textureId > 0) return true
-        if (uploadTries > 10) return false
-        val id = gl.uploadFontTexture(atlasImage)
+        // Retry FOREVER, throttled: after a failed attempt, wait [RETRY_CALLS]
+        // calls before the next try. A transient GL state (world still loading,
+        // context busy) must never kill smooth text for the whole session —
+        // the old "10 tries then permanent give-up" made fonts silently
+        // vanish forever with zero log (the "header but no list" bug).
+        if (uploadFails > 0 && uploadFails % RETRY_CALLS != 0) return false
+        val id = try {
+            gl.uploadFontTexture(atlasImage)
+        } catch (e: Exception) {
+            uploadFails++
+            if (uploadFails == 1) io.doppel.core.logging.CoreLogger.warn(
+                "[SmoothFont] atlas upload threw ${e.javaClass.simpleName}: ${e.message} — retrying throttled")
+            return false
+        }
         if (id <= 0) {
-            uploadTries++
+            uploadFails++
+            if (uploadFails == 1) io.doppel.core.logging.CoreLogger.warn(
+                "[SmoothFont] atlas upload refused (guiSize=$guiSize) — retrying throttled")
             return false
         }
         textureId = id
-        uploadTries = 0
+        uploadFails = 0
+        io.doppel.core.logging.CoreLogger.info("[SmoothFont] atlas uploaded (guiSize=$guiSize, tex=$id)")
         return true
     }
 

@@ -24,6 +24,7 @@ object OverlayRenderer {
     /** Diagnostic — log HUD visibility issue once, not every frame. */
     private var hudDiagLogged = false
     private var renderEntryDiagLogged = false
+    private var rowDrawErrLogged = false
 
     fun render(ctx: RenderContext) {
         val g = ctx.gl
@@ -77,21 +78,20 @@ object OverlayRenderer {
         }
     }
 
-    // ── HUD card (v3.1 — split layout) ──
+    // ── HUD card (v3.2 — split layout, compact brand pill) ──
     //
-    //   AutoClicker ▏              ┌──────────────────┐
-    //   KeepSprint  ▏              │ [ᗡD DOPPEL]      │ ← glass brand card:
-    //   WTap        ▏              │ ──────────────── │   mirrored-D mark + tracked
-    //   ...                        │ statistically you.│   wordmark, cyan→violet
-    //                              └──────────────────┘   hairline, mono slogan
+    //   AutoClicker ▏              ╭───────────────────╮
+    //   KeepSprint  ▏              │ ᗡD DOPPEL (alpha) │ ← compact glass pill:
+    //   WTap        ▏              ╰───────────────────╯   mirrored-D mark + tracked
+    //   ...                                                 wordmark + version chip
     //   module list: width-sorted staircase, per-row spine bar
     //   lerped cyan→violet; rows flash red while their module works
     //                              [● DOPPEL | 8 ON]  ← glass badge, bottom-right
     //
-    // HUD.position picks the LIST side ("Left" default); the brand card always
+    // HUD.position picks the LIST side ("Left" default); the brand pill always
     // takes the opposite top corner.
 
-    private const val SLOGAN = "statistically you."
+    private const val VERSION_CHIP = "alpha"
     private const val WORDMARK = "DOPPEL"
     private const val ENTRANCE_MS = 350L
     private const val ENTRANCE_SLIDE = 10f
@@ -116,14 +116,16 @@ object OverlayRenderer {
             return
         }
         if (!hudDiagLogged) {
-            io.doppel.core.logging.CoreLogger.info("[Overlay] drawHudCard v3.1: ${all.size} entries, fonts=${if (ctx.hudFonts != null) "smooth" else "vanilla"}")
+            io.doppel.core.logging.CoreLogger.info("[Overlay] drawHudCard v3.2: ${all.size} entries, fonts=${if (ctx.hudFonts?.usable == true) "smooth" else "vanilla"}")
             hudDiagLogged = true
         }
 
-        val fonts = ctx.hudFonts
+        // All-or-nothing font gate: if ANY smooth atlas is not live this frame,
+        // the WHOLE HUD falls back to the vanilla font — text is always visible,
+        // never a mix of smooth header + silently-invisible rows.
+        val fonts = ctx.hudFonts?.takeIf { it.usable }
         val font = fonts?.ui ?: ctx.fontRenderer
         val brandFont = fonts?.brand ?: ctx.fontRenderer
-        val sloganFont = fonts?.slogan ?: ctx.fontRenderer
         val monoFont = fonts?.mono ?: ctx.fontRenderer
         val mirroredMark = fonts?.brand as? SmoothFontRenderer
 
@@ -143,29 +145,24 @@ object OverlayRenderer {
         val rowStep = rowH + 2f
         val widths = FloatArray(n) { font.getStringWidth(sorted[it].name).toFloat() }
 
-        // ── brand card metrics ──
+        // ── brand pill metrics (compact single-row, reference-style) ──
         val track = 2f
         val markW = if (mirroredMark != null) brandFont.getStringWidth("D") + 4f else 0f
         val wordmarkW = measureTracked(brandFont, WORDMARK, track) + markW
-        val sloganW = sloganFont.getStringWidth(SLOGAN).toFloat()
-        val padX = 8f
-        val padY = 6f
-        val innerW = maxOf(wordmarkW, sloganW)
-        val cardW = innerW + padX * 2f
+        val chipW = monoFont.getStringWidth(VERSION_CHIP) + 10f
+        val padX = 7f
+        val padY = 5f
         val brandLineH = brandFont.fontHeight
-        val cardH = padY + brandLineH + 3f + 1f + 3f + sloganFont.fontHeight + padY
+        val cardW = wordmarkW + 7f + chipW + padX * 2f
+        val cardH = brandLineH + 4f + padY * 2f
 
-        // ── brand card (glass panel, top corner opposite the list) ──
+        // ── brand pill (glass, top corner opposite the list) ──
         val cardX = if (listRight) margin.toFloat() else (ctx.scaledWidth - margin).toFloat() - cardW
         val cardY = HUD.posY.toFloat()
-        drawGlass(ctx, cardX, cardY, cardW, cardH, 5f)
-        val cardAlignRight = !listRight
-        val innerL = cardX + padX
-        val innerR = cardX + cardW - padX
+        drawGlass(ctx, cardX, cardY, cardW, cardH, 4f)
 
-        // Row 1: mirrored-ᗡ mark + tracked DOPPEL wordmark (twin P in accent cyan).
-        var hx = if (cardAlignRight) innerR - wordmarkW else innerL
-        val textY = cardY + padY - 1f
+        var hx = cardX + padX
+        val textY = cardY + padY + 1f
         if (mirroredMark != null) {
             val dW = brandFont.getStringWidth("D").toFloat()
             // Cyan mirrored ᗡ behind + white D in front (the doppelgänger mark).
@@ -176,60 +173,64 @@ object OverlayRenderer {
         drawTracked(brandFont, WORDMARK, hx, textY, track) { i, _ ->
             if (i == 2 || i == 3) Theme.ACCENT else Theme.TEXT
         }
-        // Row 2: cyan→violet hairline.
-        val hairY = cardY + padY + brandLineH + 2f
-        RenderUtils.horizontalGradient(
-            ctx, if (cardAlignRight) innerR - innerW else innerL, hairY, innerW, 1f,
-            Theme.withAlpha(Theme.ACCENT, 0.70f), 0x00A78BFA
-        )
-        // Row 3: slogan.
-        sloganFont.drawStringWithShadow(
-            SLOGAN, Math.round(if (cardAlignRight) innerR - sloganW else innerL),
-            Math.round(hairY + 3f), Theme.TEXT_FAINT
-        )
+        // Version chip — subtle accent sub-pill (the reference's "v3.3" slot).
+        val chipX = cardX + cardW - padX - chipW
+        val chipY = cardY + padY - 1f
+        RenderUtils.roundedRect(ctx, chipX, chipY, chipW, brandLineH + 4f, (brandLineH + 4f) / 2f, Theme.withAlpha(Theme.ACCENT, 0.13f))
+        monoFont.drawStringWithShadow(VERSION_CHIP, Math.round(chipX + 5f), Math.round(textY), Theme.ACCENT)
 
         // ── module list (staircase, opposite corner) ──
         val anchorX = if (listRight) (ctx.scaledWidth - margin).toFloat() else margin.toFloat()
         var y = HUD.posY.toFloat()
         for (i in 0 until n) {
-            val entry = sorted[i]
-            val w = widths[i]
-            val ease = entranceEase(entry.name, i, now)
-            if (ease <= 0f) continue
-            val alphaMul = 0.25f + 0.75f * ease
-            val slide = (1f - ease) * ENTRANCE_SLIDE
+            // Per-row isolation: one bad row must never kill the rest of the list
+            // (a mid-loop exception used to be swallowed by the outer catch and
+            // took every subsequent row + badge with it, silently).
+            try {
+                val entry = sorted[i]
+                val w = widths[i]
+                val ease = entranceEase(entry.name, i, now)
+                if (ease <= 0f) { y += rowStep; continue }
+                val alphaMul = 0.25f + 0.75f * ease
+                val slide = (1f - ease) * ENTRANCE_SLIDE
 
-            val module = io.doppel.adapter.common.module.ModuleRegistry.get(entry.name)
-            val k = module?.flashStrength(now) ?: 0f
+                val module = io.doppel.adapter.common.module.ModuleRegistry.get(entry.name)
+                val k = module?.flashStrength(now) ?: 0f
 
-            // Row geometry — left list: [bar][gap][text]; right list: [text][gap][bar].
-            // Bars stay flush to the screen edge → vertical cyan→violet spine.
-            val rowW = barW + textBarGap + w
-            val barX: Float
-            val textX: Float
-            val rowL: Float
-            if (listRight) {
-                barX = anchorX - slide - barW
-                textX = barX - textBarGap - w
-                rowL = textX
-            } else {
-                barX = anchorX + slide
-                textX = barX + barW + textBarGap
-                rowL = barX
+                // Row geometry — left list: [bar][gap][text]; right list: [text][gap][bar].
+                // Bars stay flush to the screen edge → vertical cyan→violet spine.
+                val rowW = barW + textBarGap + w
+                val barX: Float
+                val textX: Float
+                val rowL: Float
+                if (listRight) {
+                    barX = anchorX - slide - barW
+                    textX = barX - textBarGap - w
+                    rowL = textX
+                } else {
+                    barX = anchorX + slide
+                    textX = barX + barW + textBarGap
+                    rowL = barX
+                }
+                val baseText = Theme.withAlpha(Theme.TEXT, 0.92f * alphaMul)
+                val textCol = if (k > 0f) Theme.lerpArgb(baseText, Theme.FLASH_RED_TEXT, k) else baseText
+                val baseBar = Theme.withAlpha(Theme.spineColor(i, n), alphaMul)
+                val barCol = if (k > 0f) Theme.lerpArgb(baseBar, Theme.FLASH_RED, k) else baseBar
+
+                if (k > 0f) {
+                    // Work flash: soft red halo + row tint (successor of the isRed bar).
+                    RenderUtils.glow(ctx, rowL - 2f, y, rowW + 4f, rowH, 3f, Theme.FLASH_RED, spread = 2.5f, layers = 2)
+                    RenderUtils.roundedRect(ctx, rowL - 2f, y - 1f, rowW + 4f, rowH + 2f, 3f, Theme.withAlpha(0x66FF5A5A.toInt(), k * 0.16f))
+                }
+
+                font.drawStringWithShadow(entry.name, Math.round(textX), Math.round(y), textCol)
+                RenderUtils.roundedRect(ctx, barX, y + 1f, barW, rowH - 4f, 1f, barCol)
+            } catch (e: Exception) {
+                if (!rowDrawErrLogged) {
+                    rowDrawErrLogged = true
+                    io.doppel.core.logging.CoreLogger.error("[Overlay] row draw failed: ${e.javaClass.simpleName}: ${e.message}")
+                }
             }
-            val baseText = Theme.withAlpha(Theme.TEXT, 0.92f * alphaMul)
-            val textCol = if (k > 0f) Theme.lerpArgb(baseText, Theme.FLASH_RED_TEXT, k) else baseText
-            val baseBar = Theme.withAlpha(Theme.spineColor(i, n), alphaMul)
-            val barCol = if (k > 0f) Theme.lerpArgb(baseBar, Theme.FLASH_RED, k) else baseBar
-
-            if (k > 0f) {
-                // Work flash: soft red halo + row tint (successor of the isRed bar).
-                RenderUtils.glow(ctx, rowL - 2f, y, rowW + 4f, rowH, 3f, Theme.FLASH_RED, spread = 2.5f, layers = 2)
-                RenderUtils.roundedRect(ctx, rowL - 2f, y - 1f, rowW + 4f, rowH + 2f, 3f, Theme.withAlpha(0x66FF5A5A.toInt(), k * 0.16f))
-            }
-
-            font.drawStringWithShadow(entry.name, Math.round(textX), Math.round(y), textCol)
-            RenderUtils.roundedRect(ctx, barX, y + 1f, barW, rowH - 4f, 1f, barCol)
             y += rowStep
         }
 

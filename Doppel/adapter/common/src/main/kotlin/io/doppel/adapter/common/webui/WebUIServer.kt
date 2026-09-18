@@ -193,6 +193,9 @@ object WebUIServer {
                 path.endsWith("/toggle") && name.isNotBlank() -> {
                     if (exchange.requestMethod != "POST") return methodNotAllowed(exchange)
                     synchronized(lock) { ModuleRegistry.toggle(name) }
+                    // Poke the HUD so the arraylist reflects the toggle instantly
+                    // (the tick-diff safety net would also catch it, one tick later).
+                    try { io.doppel.adapter.common.module.render.HUD.notifyModuleToggled() } catch (_: Throwable) {}
                     val mod = ModuleRegistry.get(name)
                     respondJson(exchange, 200, mapper.writeValueAsString(
                         mapOf("name" to name, "enabled" to (mod?.enabled ?: false))

@@ -77,16 +77,19 @@ object OverlayRenderer {
         }
     }
 
-    // ── HUD card (v3 — concept-faithful) ──
+    // ── HUD card (v3.1 — split layout) ──
     //
-    // Layout mirrors the approved HTML concept (download/doppel-hud-concept.html):
-    //   [ᗡD DOPPEL]        ← mirrored-D mark + tracked wordmark, twin P in cyan
-    //   ───────────────    ← cyan→violet hairline
-    //   statistically you.  ← mono slogan
-    //   AutoClicker  ▏      ← arraylist, width-sorted staircase (widest top),
-    //   KeepSprint    ▏     ← right-edge spine bars lerped cyan→violet,
-    //   ...                 ← rows flash red while their module is working
-    //   [● DOPPEL | 8 ON]   ← glass badge, bottom-right, pulsing dot + live count
+    //   AutoClicker ▏              ┌──────────────────┐
+    //   KeepSprint  ▏              │ [ᗡD DOPPEL]      │ ← glass brand card:
+    //   WTap        ▏              │ ──────────────── │   mirrored-D mark + tracked
+    //   ...                        │ statistically you.│   wordmark, cyan→violet
+    //                              └──────────────────┘   hairline, mono slogan
+    //   module list: width-sorted staircase, per-row spine bar
+    //   lerped cyan→violet; rows flash red while their module works
+    //                              [● DOPPEL | 8 ON]  ← glass badge, bottom-right
+    //
+    // HUD.position picks the LIST side ("Left" default); the brand card always
+    // takes the opposite top corner.
 
     private const val SLOGAN = "statistically you."
     private const val WORDMARK = "DOPPEL"
@@ -113,7 +116,7 @@ object OverlayRenderer {
             return
         }
         if (!hudDiagLogged) {
-            io.doppel.core.logging.CoreLogger.info("[Overlay] drawHudCard v3: ${all.size} entries, fonts=${if (ctx.hudFonts != null) "smooth" else "vanilla"}")
+            io.doppel.core.logging.CoreLogger.info("[Overlay] drawHudCard v3.1: ${all.size} entries, fonts=${if (ctx.hudFonts != null) "smooth" else "vanilla"}")
             hudDiagLogged = true
         }
 
@@ -126,55 +129,68 @@ object OverlayRenderer {
 
         val now = System.currentTimeMillis()
         val margin = HUD.posX.coerceAtLeast(2)
-        val right = HUD.position != "Left"
+        val listRight = HUD.position != "Left" // list side; brand card takes the opposite corner
 
         val rows = all.filter { it.name != "Doppel" }
         pruneAppear(rows)
         val sorted = sortRows(font, rows)
         val n = sorted.size
 
-        // ── metrics ──
+        // ── shared metrics ──
         val barW = 2f
         val textBarGap = 4f
         val rowH = (font.fontHeight + 5).toFloat()
         val rowStep = rowH + 2f
         val widths = FloatArray(n) { font.getStringWidth(sorted[it].name).toFloat() }
-        val listW = widths.maxOrNull() ?: 0f
-        val rowW = listW + textBarGap + barW
 
+        // ── brand card metrics ──
         val track = 2f
         val markW = if (mirroredMark != null) brandFont.getStringWidth("D") + 4f else 0f
         val wordmarkW = measureTracked(brandFont, WORDMARK, track) + markW
         val sloganW = sloganFont.getStringWidth(SLOGAN).toFloat()
-        val headerW = maxOf(rowW, wordmarkW, sloganW).coerceAtLeast(40f)
-
-        val anchorX: Float = if (right) (ctx.scaledWidth - margin).toFloat() else margin.toFloat()
+        val padX = 8f
+        val padY = 6f
+        val innerW = maxOf(wordmarkW, sloganW)
+        val cardW = innerW + padX * 2f
         val brandLineH = brandFont.fontHeight
-        val hairY = HUD.posY + brandLineH + 2f
-        val sloganY = hairY + 3f
-        var y = sloganY + sloganFont.fontHeight + 5f
+        val cardH = padY + brandLineH + 3f + 1f + 3f + sloganFont.fontHeight + padY
 
-        // ── header ──
-        var hx = if (right) anchorX - wordmarkW else anchorX
+        // ── brand card (glass panel, top corner opposite the list) ──
+        val cardX = if (listRight) margin.toFloat() else (ctx.scaledWidth - margin).toFloat() - cardW
+        val cardY = HUD.posY.toFloat()
+        drawGlass(ctx, cardX, cardY, cardW, cardH, 5f)
+        val cardAlignRight = !listRight
+        val innerL = cardX + padX
+        val innerR = cardX + cardW - padX
+
+        // Row 1: mirrored-ᗡ mark + tracked DOPPEL wordmark (twin P in accent cyan).
+        var hx = if (cardAlignRight) innerR - wordmarkW else innerL
+        val textY = cardY + padY - 1f
         if (mirroredMark != null) {
             val dW = brandFont.getStringWidth("D").toFloat()
             // Cyan mirrored ᗡ behind + white D in front (the doppelgänger mark).
-            mirroredMark.drawCharMirrored('D', hx + dW * 0.45f, HUD.posY - 1f, Theme.ACCENT)
-            brandFont.drawStringWithShadow("D", Math.round(hx), HUD.posY - 1, Theme.TEXT)
+            mirroredMark.drawCharMirrored('D', hx + dW * 0.45f, textY, Theme.ACCENT)
+            brandFont.drawStringWithShadow("D", Math.round(hx), Math.round(textY), Theme.TEXT)
             hx += dW + 4f
         }
-        drawTracked(brandFont, WORDMARK, hx, (HUD.posY - 1).toFloat(), track) { i, _ ->
+        drawTracked(brandFont, WORDMARK, hx, textY, track) { i, _ ->
             if (i == 2 || i == 3) Theme.ACCENT else Theme.TEXT
         }
-        val hairX = if (right) anchorX - headerW else anchorX
+        // Row 2: cyan→violet hairline.
+        val hairY = cardY + padY + brandLineH + 2f
         RenderUtils.horizontalGradient(
-            ctx, hairX, hairY, headerW, 1f,
+            ctx, if (cardAlignRight) innerR - innerW else innerL, hairY, innerW, 1f,
             Theme.withAlpha(Theme.ACCENT, 0.70f), 0x00A78BFA
         )
-        val sloganX = if (right) anchorX - sloganW else anchorX
-        sloganFont.drawStringWithShadow(SLOGAN, Math.round(sloganX), Math.round(sloganY), Theme.TEXT_FAINT)
+        // Row 3: slogan.
+        sloganFont.drawStringWithShadow(
+            SLOGAN, Math.round(if (cardAlignRight) innerR - sloganW else innerL),
+            Math.round(hairY + 3f), Theme.TEXT_FAINT
+        )
 
-        // ── module rows ──
+        // ── module list (staircase, opposite corner) ──
+        val anchorX = if (listRight) (ctx.scaledWidth - margin).toFloat() else margin.toFloat()
+        var y = HUD.posY.toFloat()
         for (i in 0 until n) {
             val entry = sorted[i]
             val w = widths[i]
@@ -186,8 +202,21 @@ object OverlayRenderer {
             val module = io.doppel.adapter.common.module.ModuleRegistry.get(entry.name)
             val k = module?.flashStrength(now) ?: 0f
 
-            val barX = if (right) anchorX - slide - barW else anchorX + w + textBarGap + slide
-            val textX = if (right) barX - textBarGap - w else barX + barW + textBarGap
+            // Row geometry — left list: [bar][gap][text]; right list: [text][gap][bar].
+            // Bars stay flush to the screen edge → vertical cyan→violet spine.
+            val rowW = barW + textBarGap + w
+            val barX: Float
+            val textX: Float
+            val rowL: Float
+            if (listRight) {
+                barX = anchorX - slide - barW
+                textX = barX - textBarGap - w
+                rowL = textX
+            } else {
+                barX = anchorX + slide
+                textX = barX + barW + textBarGap
+                rowL = barX
+            }
             val baseText = Theme.withAlpha(Theme.TEXT, 0.92f * alphaMul)
             val textCol = if (k > 0f) Theme.lerpArgb(baseText, Theme.FLASH_RED_TEXT, k) else baseText
             val baseBar = Theme.withAlpha(Theme.spineColor(i, n), alphaMul)
@@ -195,8 +224,8 @@ object OverlayRenderer {
 
             if (k > 0f) {
                 // Work flash: soft red halo + row tint (successor of the isRed bar).
-                RenderUtils.glow(ctx, barX - w - textBarGap, y, w + textBarGap + barW, rowH, 3f, Theme.FLASH_RED, spread = 2.5f, layers = 2)
-                RenderUtils.roundedRect(ctx, barX - w - textBarGap - 2f, y - 1f, w + textBarGap + barW + 4f, rowH + 2f, 3f, Theme.withAlpha(0x66FF5A5A.toInt(), k * 0.16f))
+                RenderUtils.glow(ctx, rowL - 2f, y, rowW + 4f, rowH, 3f, Theme.FLASH_RED, spread = 2.5f, layers = 2)
+                RenderUtils.roundedRect(ctx, rowL - 2f, y - 1f, rowW + 4f, rowH + 2f, 3f, Theme.withAlpha(0x66FF5A5A.toInt(), k * 0.16f))
             }
 
             font.drawStringWithShadow(entry.name, Math.round(textX), Math.round(y), textCol)

@@ -47,8 +47,10 @@ object HUD : Module("HUD", Category.RENDER) {
     var posY: Int = 20
         private set
 
-    /** "Right" or "Left" — anchored side of the list (WebUI config). Default Right (concept anchor). */
-    var position by choices("Position", arrayOf("Right", "Left"))
+    /** "Left" or "Right" — anchored side of the module list (WebUI config).
+     *  The brand card takes the opposite top corner. Default Left (v3.1:
+     *  module list top-left, glass brand card top-right). */
+    var position by choices("Position", arrayOf("Left", "Right"))
 
     // ── Configurable display options ──
 

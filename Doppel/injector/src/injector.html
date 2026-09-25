@@ -238,6 +238,7 @@
   var T = new URLSearchParams(location.search).get('t') || '';
   var selectedPid = 0;
   var lastSig = '';
+  var busyNow = false;
   var polling = { procs: null, state: null };
 
   // ── api ──
@@ -320,15 +321,27 @@
   function syncSelection() {
     var btn = el('injectBtn');
     var who = el('who');
+    if (busyNow) {
+      btn.disabled = true;
+      btn.textContent = 'Working…';
+      return;
+    }
+    btn.textContent = 'Inject';
     if (!selectedPid) {
       btn.disabled = true;
       who.textContent = 'No process selected';
       return;
     }
     var row = document.querySelector('.row[data-pid="' + selectedPid + '"]');
+    // The agent cannot be unloaded from a running JVM, so a second injection
+    // into the same process would silently do nothing. Block it here.
+    if (row && row.dataset.injected === '1') {
+      btn.disabled = true;
+      who.textContent = 'PID ' + selectedPid + ' already has Doppel — restart Minecraft first';
+      return;
+    }
     btn.disabled = false;
-    who.textContent = 'Selected PID ' + selectedPid +
-      (row && row.dataset.injected === '1' ? ' (already injected)' : '');
+    who.textContent = 'Selected PID ' + selectedPid;
   }
 
   el('rows').addEventListener('click', function (e) {
@@ -406,8 +419,8 @@
     log.scrollTop = log.scrollHeight;
 
     var busy = s.phase === 'injecting';
-    el('injectBtn').disabled = busy || !selectedPid;
-    el('injectBtn').textContent = busy ? 'Working…' : 'Inject';
+    busyNow = busy;
+    syncSelection();
     el('refreshBtn').disabled = busy;
     el('verTag').textContent = busy ? 'injecting…' : 'local panel';
   }
@@ -471,8 +484,10 @@
       el('resultHead').textContent = 'Could not start the injection';
       el('resultBody').innerHTML =
         '<div class="kv"><span class="k">REASON</span><span class="v">' + esc(err.message) + '</span></div>';
-      el('injectBtn').disabled = false;
-      el('injectBtn').textContent = 'Inject';
+      lastSig = '';          // force a fresh process scan
+      syncSelection();       // restores the right button state for the row
+      clearTimeout(polling.procs);
+      pollProcesses();
     });
   });
 

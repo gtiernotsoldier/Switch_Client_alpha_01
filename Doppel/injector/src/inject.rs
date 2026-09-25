@@ -8,7 +8,6 @@
 // CreateRemoteThread(LoadLibraryA), CreateEventA, WaitForSingleObject.
 
 use std::ffi::c_void;
-use std::ffi::CString;
 use std::ptr;
 
 use crate::process::ProcessInfo;
@@ -74,15 +73,29 @@ const MEM_RELEASE: u32 = 0x8000;
 const PAGE_READWRITE: u32 = 0x04;
 const WAIT_OBJECT_0: u32 = 0x00000000;
 const WAIT_TIMEOUT: u32 = 0x00000102;
+/// CreateEventA sets this when the named object already existed — for our done
+/// event that means a previous payload is still resident in the target.
+const ERROR_ALREADY_EXISTS: u32 = 183;
+
+/// Why an injection attempt stopped. The string is shown to the user as-is,
+/// so it must say what actually went wrong — never a bare "failed".
+pub type InjectResult = Result<(), String>;
 
 /// Inject payload.dll into the target process and wait for it to finish
 /// attaching the Java agent. Mirrors injectJavaAgent() from the C++ injector.
+///
+/// IMPORTANT: this returns Ok ONLY when the payload confirmed it loaded. The
+/// old version returned true whenever the WinAPI calls did not error, so a
+/// payload that never ran (the DLL already resident in the target — the
+/// loader only bumps its refcount and never re-enters DllMain) was reported
+/// as a success. That made the injector lie to the user. Every early exit
+/// below carries a reason.
 pub fn inject_java_agent(
     proc: &ProcessInfo,
     agent_path: &str,
     platform: &str,
     version: &str,
-) -> bool {
+) -> InjectResult {
     ui::detail(&format!("DLL + JNI attach into PID {}", proc.pid));
 
     // 1. Write config file next to agent.jar
@@ -104,8 +117,7 @@ pub fn inject_java_agent(
     // 2. Extract payload.dll from embedded resource.
     let dll_path = crate::resource::get_embedded_payload_path();
     if dll_path.is_empty() {
-        ui::error("payload.dll could not be extracted from the exe");
-        return false;
+        return Err("payload.dll could not be extracted from this exe".to_string());
     }
 
     // 3. Open target process
@@ -116,11 +128,18 @@ pub fn inject_java_agent(
         | PROCESS_VM_READ;
     let h_process = unsafe { OpenProcess(desired, 0, proc.pid) };
     if h_process.is_null() {
-        ui::error(&format!(
-            "cannot open the game process (WinAPI error {})",
-            unsafe { GetLastError() }
+        let err = unsafe { GetLastError() };
+        // 5 = access denied: the game is elevated, or an anti-cheat/AV is
+        // guarding the process. 87 = the pid is already gone.
+        let hint = match err {
+            5 => " (access denied — try running the injector as administrator)",
+            87 => " (the process exited)",
+            _ => "",
+        };
+        return Err(format!(
+            "cannot open PID {} for injection — WinAPI error {}{}",
+            proc.pid, err, hint
         ));
-        return false;
     }
 
     // 4. Allocate memory in target for DLL path
@@ -136,12 +155,9 @@ pub fn inject_java_agent(
         )
     };
     if p_remote_mem.is_null() {
-        ui::error(&format!(
-            "VirtualAllocEx failed (WinAPI error {})",
-            unsafe { GetLastError() }
-        ));
+        let err = unsafe { GetLastError() };
         unsafe { CloseHandle(h_process) };
-        return false;
+        return Err(format!("VirtualAllocEx failed — WinAPI error {}", err));
     }
 
     // 5. Write DLL path into target
@@ -156,36 +172,42 @@ pub fn inject_java_agent(
         )
     };
     if ok == 0 {
-        ui::error(&format!(
-            "WriteProcessMemory failed (WinAPI error {})",
-            unsafe { GetLastError() }
-        ));
+        let err = unsafe { GetLastError() };
         unsafe {
             VirtualFreeEx(h_process, p_remote_mem, 0, MEM_RELEASE);
             CloseHandle(h_process);
         }
-        return false;
+        return Err(format!("WriteProcessMemory failed — WinAPI error {}", err));
     }
 
     // 6. Find LoadLibraryA in target
     let h_kernel32 = unsafe { GetModuleHandleA(b"kernel32.dll\0".as_ptr()) };
     if h_kernel32.is_null() {
-        ui::error("GetModuleHandleA(kernel32) failed");
         unsafe {
             VirtualFreeEx(h_process, p_remote_mem, 0, MEM_RELEASE);
             CloseHandle(h_process);
         }
-        return false;
+        return Err("GetModuleHandleA(kernel32.dll) failed".to_string());
     }
     let p_load_library = unsafe { GetProcAddress(h_kernel32, b"LoadLibraryA\0".as_ptr()) };
     if p_load_library.is_null() {
-        ui::error("GetProcAddress(LoadLibraryA) failed");
         unsafe {
             VirtualFreeEx(h_process, p_remote_mem, 0, MEM_RELEASE);
             CloseHandle(h_process);
         }
-        return false;
+        return Err("GetProcAddress(LoadLibraryA) failed".to_string());
     }
+
+    // Snapshot the payload log length BEFORE anything can be appended: the log
+    // is opened append-only, so a completion line from an earlier injection is
+    // still in the file and would otherwise be mistaken for this run's.
+    let payload_log = format!(
+        "{}\\doppel-payload.log",
+        std::env::var("TEMP").unwrap_or_default()
+    );
+    let log_offset = std::fs::metadata(&payload_log)
+        .map(|m| m.len() as usize)
+        .unwrap_or(0);
 
     // 7. Create the named done event BEFORE spawning the remote thread, so the
     //    payload's OpenEventA always finds it (avoids a race where the payload
@@ -196,6 +218,31 @@ pub fn inject_java_agent(
     if h_done_event.is_null() {
         ui::warn("could not create the completion event — falling back to a timed wait");
     } else {
+        // payload.cpp opens this event with OpenEventA and NEVER closes it (the
+        // handle lives in a static and the DLL never unloads), so after one
+        // successful injection the object stays alive AND SIGNALED inside the
+        // target process. CreateEventA would hand back that stale object —
+        // bInitialState is ignored for an object that already exists — and
+        // WaitForSingleObject would return immediately, so the injector would
+        // report "agent loaded" for an injection that never happened.
+        //
+        // ERROR_ALREADY_EXISTS is therefore positive proof that a previous
+        // payload is still resident in this process. Do not inject twice: a
+        // second agent means a second WebUI, a second HUD and doubled packet
+        // hooks. Stop here, before the remote thread is created.
+        let existed = unsafe { GetLastError() } == ERROR_ALREADY_EXISTS;
+        if existed {
+            unsafe {
+                CloseHandle(h_done_event);
+                VirtualFreeEx(h_process, p_remote_mem, 0, MEM_RELEASE);
+                CloseHandle(h_process);
+            }
+            return Err(format!(
+                "PID {} already has Doppel loaded — nothing was injected; \
+restart Minecraft and inject the fresh process",
+                proc.pid
+            ));
+        }
         ui::detail(&format!("done event · DoppelPayloadDone_{}", proc.pid));
     }
 
@@ -215,63 +262,77 @@ pub fn inject_java_agent(
         )
     };
     if h_thread.is_null() {
-        ui::error(&format!(
-            "CreateRemoteThread failed (WinAPI error {})",
-            unsafe { GetLastError() }
-        ));
+        let err = unsafe { GetLastError() };
         unsafe {
             VirtualFreeEx(h_process, p_remote_mem, 0, MEM_RELEASE);
             CloseHandle(h_process);
         }
-        return false;
+        return Err(format!(
+            "CreateRemoteThread failed — WinAPI error {} (an anti-cheat or AV may be blocking it)",
+            err
+        ));
     }
 
     // 9. Wait for LoadLibraryA thread (DLL load)
     unsafe { WaitForSingleObject(h_thread, 10_000) };
     unsafe { CloseHandle(h_thread) };
 
-    // 10. Wait for payload to signal real completion. Poll in short slices and
+    // 10. Wait for the payload to confirm it loaded. Poll in short slices and
     //     also watch the payload log for "bootstrap() completed" so we finish
-    //     as soon as the agent is actually loaded instead of waiting the full
-    //     timeout (the payload logs every step to %TEMP%\doppel-payload.log).
+    //     as soon as the agent is really in, instead of burning the timeout.
+    //
+    //     Only text appended AFTER we started counts: the log is append-only,
+    //     so an earlier run's success line must not be read as ours.
+    let mut confirmed = false;
     if !h_done_event.is_null() {
-        let payload_log = format!(
-            "{}\\doppel-payload.log",
-            std::env::var("TEMP").unwrap_or_default()
-        );
         ui::detail("waiting for the payload to finish attaching (up to 8s)");
-        let mut done = false;
         for _ in 0..16 {
             // Event signaled?
             let wait = unsafe { WaitForSingleObject(h_done_event, 500) };
             if wait == WAIT_OBJECT_0 {
                 ui::detail("payload signaled completion — agent loaded");
-                done = true;
+                confirmed = true;
                 break;
             }
             // Or payload log shows completion?
             if let Ok(log) = std::fs::read_to_string(&payload_log) {
-                if log.contains("Agent.bootstrap() completed successfully") {
+                let fresh = if log.len() >= log_offset {
+                    &log[log_offset..]
+                } else {
+                    &log[..]
+                };
+                if fresh.contains("Agent.bootstrap() completed successfully") {
                     ui::detail("payload log shows agent loaded");
-                    done = true;
+                    confirmed = true;
                     break;
                 }
-                if log.contains("FATAL") || log.contains("JVM not found")
-                    || log.contains("AttachCurrentThread failed")
+                if fresh.contains("FATAL")
+                    || fresh.contains("JVM not found")
+                    || fresh.contains("AttachCurrentThread failed")
                 {
-                    ui::warn(&format!("payload log reports an error — see {}", payload_log));
-                    done = true;
-                    break;
+                    unsafe {
+                        CloseHandle(h_done_event);
+                        VirtualFreeEx(h_process, p_remote_mem, 0, MEM_RELEASE);
+                        CloseHandle(h_process);
+                    }
+                    return Err(format!("the payload reported an error — see {}", payload_log));
                 }
             }
         }
-        if !done {
-            ui::warn(&format!("payload still attaching after 8s — see {}", payload_log));
-        }
         unsafe { CloseHandle(h_done_event) };
     } else {
+        // Without an event we cannot tell, so give the payload a short window
+        // and then judge by the log.
         ui::detail("no completion event — waiting 3s as fallback");
         std::thread::sleep(std::time::Duration::from_secs(3));
+        if let Ok(log) = std::fs::read_to_string(&payload_log) {
+            let fresh = if log.len() >= log_offset {
+                &log[log_offset..]
+            } else {
+                &log[..]
+            };
+            confirmed = fresh.contains("Agent.bootstrap() completed successfully");
+        }
     }
 
     // 11. Cleanup
@@ -280,5 +341,16 @@ pub fn inject_java_agent(
         CloseHandle(h_process);
     }
 
-    true
+    if !confirmed {
+        // The remote thread ran, but the payload never reported in. Most often
+        // the loader found the DLL already resident and therefore never called
+        // DllMain at all. Saying "success" here is what made the injector lie.
+        return Err(format!(
+            "the payload never confirmed a load — nothing was injected. \
+Check {} (if the DLL was already resident in that process, restart Minecraft first)",
+            payload_log
+        ));
+    }
+
+    Ok(())
 }

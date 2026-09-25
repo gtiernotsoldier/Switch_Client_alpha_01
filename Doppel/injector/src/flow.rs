@@ -63,6 +63,7 @@ pub struct Outcome {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FlowError {
     NoProcess,
+    AlreadyInjected,
     BadVersion,
     NoAgent,
     InjectFailed,
@@ -72,6 +73,7 @@ impl FlowError {
     pub fn reason(self) -> &'static str {
         match self {
             FlowError::NoProcess => "no running Minecraft window found",
+            FlowError::AlreadyInjected => "that process already has Doppel loaded",
             FlowError::BadVersion => "could not identify the Minecraft version",
             FlowError::NoAgent => "embedded agent.jar missing from this exe",
             FlowError::InjectFailed => "the JVM rejected the payload",
@@ -81,6 +83,9 @@ impl FlowError {
     pub fn hint(self) -> &'static str {
         match self {
             FlowError::NoProcess => "launch Minecraft first, then pick its process",
+            FlowError::AlreadyInjected => {
+                "the agent cannot be unloaded — restart Minecraft and inject the fresh process"
+            }
             FlowError::BadVersion => "unsupported launcher layout — see %TEMP%\\doppel-payload.log",
             FlowError::NoAgent => "rebuild via CI — the fat jar step must run before cargo build",
             FlowError::InjectFailed => "check %TEMP%\\doppel-payload.log and doppel-agent.log",
@@ -90,7 +95,7 @@ impl FlowError {
     /// Which step index failed (used to mark the timeline red).
     pub fn step_index(self) -> usize {
         match self {
-            FlowError::NoProcess => 0,
+            FlowError::NoProcess | FlowError::AlreadyInjected => 0,
             FlowError::BadVersion | FlowError::NoAgent => 1,
             FlowError::InjectFailed => 2,
         }
@@ -114,6 +119,15 @@ pub fn run(target_pid: Option<u32>, rep: &dyn Reporter) -> Result<Outcome, FlowE
         rep.step_fail(0, FlowError::NoProcess.reason());
         rep.hint(FlowError::NoProcess.hint());
         return Err(FlowError::NoProcess);
+    }
+    // The payload DLL never unloads itself once it is inside a JVM, so a second
+    // injection into the same process would either be an invisible no-op or put
+    // a second agent in the game. Catch it here — before anything is written —
+    // and say so, instead of reporting a success that did not happen.
+    if mc.injected {
+        rep.step_fail(0, FlowError::AlreadyInjected.reason());
+        rep.hint(FlowError::AlreadyInjected.hint());
+        return Err(FlowError::AlreadyInjected);
     }
     rep.detail(&format!("PID {} · window \"{}\"", mc.pid, mc.window_title));
     rep.step_ok(0, t0.elapsed().as_secs_f32());
@@ -139,12 +153,19 @@ pub fn run(target_pid: Option<u32>, rep: &dyn Reporter) -> Result<Outcome, FlowE
     rep.detail(&format!("agent ready · {}", agent_path));
     rep.step_ok(1, t1.elapsed().as_secs_f32());
 
+    // Snapshot the log length BEFORE injecting: step 4 must only accept a
+    // broadcast written after this point, never a leftover from a past run.
+    let log_before = payload_log_len();
+
     // ── Step 3 · Injecting ──
     let t2 = Instant::now();
     rep.step_begin(2);
     rep.step_note(&format!("{} · {}", info.platform, info.version));
-    if !inject::inject_java_agent(&mc, &agent_path, &info.platform, &info.version) {
-        rep.step_fail(2, FlowError::InjectFailed.reason());
+    if let Err(why) = inject::inject_java_agent(&mc, &agent_path, &info.platform, &info.version) {
+        // `why` already says what actually went wrong (WinAPI error, already
+        // resident payload, no confirmation...). Show it rather than a generic
+        // "the JVM rejected the payload".
+        rep.step_fail(2, &why);
         rep.hint(FlowError::InjectFailed.hint());
         return Err(FlowError::InjectFailed);
     }
@@ -154,7 +175,7 @@ pub fn run(target_pid: Option<u32>, rep: &dyn Reporter) -> Result<Outcome, FlowE
     let t3 = Instant::now();
     rep.step_begin(3);
     rep.step_note("waiting for panel");
-    let (panel_url, panel_token) = wait_panel_broadcast(6);
+    let (panel_url, panel_token) = wait_panel_broadcast(6, log_before);
     if panel_url.is_some() {
         rep.detail("panel broadcast captured");
     } else {
@@ -174,13 +195,22 @@ pub fn run(target_pid: Option<u32>, rep: &dyn Reporter) -> Result<Outcome, FlowE
 
 /// Poll %TEMP%\doppel-payload.log for the WebUI broadcast line:
 ///   "[WebUI] Panel: <url...>  Token: <token>"
+///
+/// `min_offset` is the length of the log before this injection started. The log
+/// is append-only, so without it a broadcast from an EARLIER run would still be
+/// found and reported as this run's panel — the injector would hand the user a
+/// stale address and token while nothing had actually happened.
+///
 /// Returns (first url, token). Empty strings when not broadcast within budget.
-pub fn wait_panel_broadcast(max_secs: u64) -> (Option<String>, String) {
+pub fn wait_panel_broadcast(max_secs: u64, min_offset: usize) -> (Option<String>, String) {
     let log_path = format!("{}doppel-payload.log", resource::temp_dir());
     let deadline = Instant::now() + std::time::Duration::from_secs(max_secs);
     while Instant::now() < deadline {
         if let Ok(log) = std::fs::read_to_string(&log_path) {
-            if let Some(line) = log.lines().rev().find(|l| l.contains("[WebUI] Panel:")) {
+            // If the file was recreated it is shorter than our offset — then
+            // everything in it is new.
+            let fresh = if log.len() >= min_offset { &log[min_offset..] } else { &log[..] };
+            if let Some(line) = fresh.lines().rev().find(|l| l.contains("[WebUI] Panel:")) {
                 let rest = match line.find("[WebUI] Panel:") {
                     Some(i) => line[i + "[WebUI] Panel:".len()..].trim(),
                     None => "",
@@ -201,6 +231,15 @@ pub fn wait_panel_broadcast(max_secs: u64) -> (Option<String>, String) {
         std::thread::sleep(std::time::Duration::from_millis(400));
     }
     (None, String::new())
+}
+
+/// Current size of the payload log — snapshot this before injecting so step 4
+/// can ignore anything an earlier run left behind.
+pub fn payload_log_len() -> usize {
+    let log_path = format!("{}doppel-payload.log", resource::temp_dir());
+    std::fs::metadata(&log_path)
+        .map(|m| m.len() as usize)
+        .unwrap_or(0)
 }
 
 /// The candidate list the web panel shows. Re-scanned on every call so a

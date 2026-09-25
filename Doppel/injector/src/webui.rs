@@ -361,6 +361,23 @@ fn handle(mut stream: TcpStream) {
                 );
                 return;
             }
+            // The payload never unloads once it is inside a JVM, so injecting
+            // the same process again can only be an invisible no-op or a doubled
+            // agent. The page greys the row out, but it re-polls every few
+            // seconds — this is the authoritative check.
+            if let Some(p) = flow::candidates().into_iter().find(|p| p.pid == pid) {
+                if p.injected {
+                    BUSY.store(false, Ordering::SeqCst);
+                    let _ = respond(
+                        &mut stream,
+                        409,
+                        "application/json",
+                        "{\"error\":\"that process already has Doppel loaded — restart \
+Minecraft, then inject the fresh process\"}",
+                    );
+                    return;
+                }
+            }
             {
                 let mut st = state();
                 st.phase = "injecting";

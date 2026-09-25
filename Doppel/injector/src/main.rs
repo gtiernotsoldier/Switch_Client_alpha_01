@@ -1,141 +1,172 @@
 // main.rs — Doppel Rust-led injector entry point
 //
-// Sandwich Architecture — Layer 1 (injector). The console experience follows
-// the approved v4 fluid design: gradient banner, braille spinner + flowing
-// segmented bar per step, quiet by default, --verbose for details.
+// Sandwich Architecture — Layer 1 (injector).
 //
-// Responsibilities (migrated from the old C++ main.cpp):
-//   1. Linking with Minecraft — find the javaw process + window
-//   2. Preparing runtime     — detect version/platform, extract agent.jar
-//   3. Injecting             — payload.dll performs the in-process JNI attach
-//   4. Handoff               — wait for the WebUI panel broadcast, show summary
+// Two ways in, one pipeline:
 //
-// The C++ payload.dll stays C++ (it must run inside javaw.exe and talk JNI /
-// the Windows Attach pipe); everything around it is Rust.
+//   doppel-injector                 → starts the local web panel, opens the
+//                                     browser, and waits. You pick the PID.
+//   doppel-injector --pid 1234      → headless: inject that PID right away,
+//                                     console timeline only (scripts / CI).
+//
+// The console timeline is not gone — it runs in parallel with the page, so a
+// double-clicked exe still shows what is happening, and there is always a
+// usable path when no browser is available.
+//
+// The pipeline itself lives in flow.rs and is UI-agnostic; ui.rs paints the
+// terminal, webui.rs serves the page. The C++ payload.dll stays C++ (it must
+// run inside javaw.exe and talk JNI / the Windows Attach pipe).
 
+mod flow;
 mod inject;
 mod process;
 mod resource;
 mod ui;
 mod version;
+mod webui;
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
-const STEPS: [&str; 4] = [
-    "Linking with Minecraft",
-    "Preparing runtime",
-    "Injecting",
-    "Handoff",
-];
+use flow::{Reporter, STEPS};
+
+/// The terminal timeline, wrapped as a Reporter so flow.rs can drive it.
+struct ConsoleReporter;
+
+impl Reporter for ConsoleReporter {
+    fn step_begin(&self, idx: usize) {
+        ui::step_begin(idx, STEPS.get(idx).copied().unwrap_or(""));
+    }
+    fn step_note(&self, note: &str) {
+        ui::step_note(note);
+    }
+    fn step_ok(&self, idx: usize, secs: f32) {
+        let started = Instant::now() - Duration::from_secs_f32(secs.max(0.0));
+        ui::step_ok(idx, STEPS.get(idx).copied().unwrap_or(""), started);
+    }
+    fn step_fail(&self, idx: usize, reason: &str) {
+        ui::step_fail(idx, STEPS.get(idx).copied().unwrap_or(""), reason);
+    }
+    fn detail(&self, msg: &str) {
+        ui::detail(msg);
+    }
+    fn warn(&self, msg: &str) {
+        ui::warn(msg);
+    }
+    fn hint(&self, msg: &str) {
+        ui::hint(msg);
+    }
+}
 
 fn main() {
-    let verbose = std::env::args().any(|a| a == "--verbose" || a == "-v");
+    let args: Vec<String> = std::env::args().skip(1).collect();
+
+    if flag(&args, "--help") || flag(&args, "-h") {
+        help();
+        return;
+    }
+
+    let verbose = flag(&args, "--verbose") || flag(&args, "-v");
     ui::init(verbose);
     ui::banner(env!("CARGO_PKG_VERSION"));
 
-    // ── Step 1 · Linking with Minecraft ──
-    let t0 = Instant::now();
-    ui::step_begin(0, STEPS[0]);
-    let mc = process::find_minecraft_process();
-    if !mc.valid {
-        ui::step_fail(0, STEPS[0], "no running Minecraft window found");
-        ui::hint("launch Minecraft first, then re-run the injector");
-        ui::shutdown();
-        pause_exit();
-        std::process::exit(1);
+    // ── Headless path: an explicit PID, console only, no server ──
+    if let Some(pid) = value(&args, "--pid").and_then(|v| v.parse::<u32>().ok()) {
+        run_headless(pid);
+        return;
     }
-    ui::detail(&format!("PID {} · window \"{}\"", mc.pid, mc.window_title));
-    ui::step_ok(0, STEPS[0], t0);
 
-    // ── Step 2 · Preparing runtime ──
-    let t1 = Instant::now();
-    ui::step_begin(1, STEPS[1]);
-    let info = version::parse_minecraft_version(&mc.path, &mc.window_title);
-    if !info.valid {
-        ui::step_fail(1, STEPS[1], "could not identify the Minecraft version");
-        ui::hint("unsupported launcher layout — see %TEMP%\\doppel-payload.log");
-        ui::shutdown();
-        pause_exit();
-        std::process::exit(1);
-    }
-    ui::detail(&format!("version {} · platform {}", info.version, info.platform));
-    ui::step_note(&format!("mc {}", info.version));
-    let agent_path = resource::get_embedded_agent_path();
-    if agent_path.is_empty() {
-        ui::step_fail(1, STEPS[1], "embedded agent.jar missing from this exe");
-        ui::hint("rebuild via CI — the fat jar step must run before cargo build");
-        ui::shutdown();
-        pause_exit();
-        std::process::exit(1);
-    }
-    ui::detail(&format!("agent ready · {}", agent_path));
-    ui::step_ok(1, STEPS[1], t1);
+    // ── Panel path: pick the process in the browser ──
+    let port = value(&args, "--port")
+        .and_then(|v| v.parse::<u16>().ok())
+        .unwrap_or(0);
+    let open_browser = !flag(&args, "--no-browser");
 
-    // ── Step 3 · Injecting ──
-    let t2 = Instant::now();
-    ui::step_begin(2, STEPS[2]);
-    ui::step_note(&format!("{} · {}", info.platform, info.version));
-    let ok = inject::inject_java_agent(&mc, &agent_path, &info.platform, &info.version);
-    if !ok {
-        ui::step_fail(2, STEPS[2], "the JVM rejected the payload");
-        ui::hint("check %TEMP%\\doppel-payload.log and doppel-agent.log");
-        ui::shutdown();
-        pause_exit();
-        std::process::exit(1);
-    }
-    ui::step_ok(2, STEPS[2], t2);
+    let panel = match webui::start(port, open_browser) {
+        Ok(p) => p,
+        Err(e) => {
+            ui::error(&format!("could not start the local panel: {}", e));
+            ui::hint("try another port: doppel-injector --port 8765");
+            ui::shutdown();
+            pause_exit();
+            std::process::exit(1);
+        }
+    };
 
-    // ── Step 4 · Handoff ──
-    let t3 = Instant::now();
-    ui::step_begin(3, STEPS[3]);
-    ui::step_note("waiting for panel");
-    let (panel_url, token) = wait_panel_broadcast(6);
-    if panel_url.is_some() {
-        ui::detail("panel broadcast captured");
-    } else {
-        ui::warn("panel not broadcast yet — it keeps starting in the background");
-        ui::hint("the address will appear in %TEMP%\\doppel-payload.log");
+    println!();
+    ui::note(&format!("panel   {}", panel.url()));
+    ui::note("token   included in the URL above — the page sends it on every request");
+    if !open_browser {
+        ui::hint("open that URL yourself (--no-browser was set)");
     }
-    ui::step_ok(3, STEPS[3], t3);
+    ui::hint("pick the Minecraft process in the page · press Enter here to quit");
+    println!();
 
-    ui::summary(panel_url.as_deref(), &token);
-    ui::detail("done — the agent keeps running inside the game process");
+    // Enter in this console closes the injector too, for people who never look
+    // at the browser tab.
+    std::thread::spawn(|| {
+        let mut line = String::new();
+        let _ = std::io::stdin().read_line(&mut line);
+        webui::request_exit();
+    });
+
+    webui::wait_for_exit();
     ui::shutdown();
-    pause_exit();
+    ui::note("injector closed — the agent keeps running inside the game");
 }
 
-/// Poll %TEMP%\doppel-payload.log for the WebUI broadcast line:
-///   "[WebUI] Panel: <url...>  Token: <token>"
-/// Returns (first url, token). Empty strings when not broadcast within budget.
-fn wait_panel_broadcast(max_secs: u64) -> (Option<String>, String) {
-    let log_path = format!(
-        "{}doppel-payload.log",
-        resource::temp_dir()
-    );
-    let deadline = Instant::now() + std::time::Duration::from_secs(max_secs);
-    while Instant::now() < deadline {
-        if let Ok(log) = std::fs::read_to_string(&log_path) {
-            if let Some(line) = log.lines().rev().find(|l| l.contains("[WebUI] Panel:")) {
-                let rest = match line.find("[WebUI] Panel:") {
-                    Some(i) => line[i + "[WebUI] Panel:".len()..].trim(),
-                    None => "",
-                };
-                let (urls_part, token) = match rest.find("Token:") {
-                    Some(i) => (rest[..i].trim(), rest[i + "Token:".len()..].trim()),
-                    None => (rest, ""),
-                };
-                let url = urls_part
-                    .split_whitespace()
-                    .find(|s| s.starts_with("http"))
-                    .unwrap_or("")
-                    .to_string();
-                let url_opt = if url.is_empty() { None } else { Some(url) };
-                return (url_opt, token.to_string());
-            }
+/// Inject one known PID with the console timeline only.
+fn run_headless(pid: u32) {
+    ui::note(&format!("headless mode · target PID {}", pid));
+    match flow::run(Some(pid), &ConsoleReporter) {
+        Ok(outcome) => {
+            ui::summary(outcome.panel_url.as_deref(), &outcome.panel_token);
+            ui::detail("done — the agent keeps running inside the game process");
+            ui::shutdown();
+            pause_exit();
         }
-        std::thread::sleep(std::time::Duration::from_millis(400));
+        Err(e) => {
+            let idx = e.step_index();
+            ui::step_fail(idx, STEPS.get(idx).copied().unwrap_or(""), e.reason());
+            ui::hint(e.hint());
+            ui::shutdown();
+            pause_exit();
+            std::process::exit(1);
+        }
     }
-    (None, String::new())
+}
+
+fn help() {
+    println!(
+        "doppel-injector {}\n\n\
+USAGE:\n  \
+doppel-injector [OPTIONS]\n\n\
+OPTIONS:\n  \
+--pid <PID>      inject this PID immediately (headless, no web panel)\n  \
+--port <PORT>    fixed port for the panel (default: an ephemeral free port)\n  \
+--no-browser     serve the panel but do not open a browser\n  \
+-v, --verbose    print detail lines\n  \
+-h, --help       this text\n\n\
+Without --pid the injector starts a local panel on 127.0.0.1, opens it, and\n\
+lists every javaw/java process so you can pick which one to inject.\n",
+        env!("CARGO_PKG_VERSION")
+    );
+}
+
+fn flag(args: &[String], name: &str) -> bool {
+    args.iter().any(|a| a == name)
+}
+
+fn value(args: &[String], name: &str) -> Option<String> {
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        if a == name {
+            return it.next().cloned();
+        }
+        if let Some(rest) = a.strip_prefix(&format!("{}=", name)) {
+            return Some(rest.to_string());
+        }
+    }
+    None
 }
 
 fn pause_exit() {

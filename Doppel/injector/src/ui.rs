@@ -361,6 +361,12 @@ pub fn error(msg: &str) {
     print_line(msg, RED, false);
 }
 
+/// Always-visible plain line (soft white) — used for the panel address, which
+/// has to be readable without --verbose.
+pub fn note(msg: &str) {
+    print_line(msg, TEXT, false);
+}
+
 /// Always-visible actionable hint (amber, indented).
 pub fn hint(msg: &str) {
     let _g = io_lock();

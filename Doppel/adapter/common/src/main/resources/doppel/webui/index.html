@@ -333,10 +333,14 @@
         .sub-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 9px 16px; }
         .sub-row {
             display: flex; justify-content: space-between; align-items: center; gap: 10px;
-            font-size: 13px; color: rgba(255,255,255,0.85); padding: 3px 0;
+            font-size: 13px; color: rgba(255,255,255,0.85); padding: 3px 0; min-width: 0;
         }
-        .sub-label { display: flex; align-items: center; gap: 6px; white-space: nowrap; min-width: 0; }
-        .sub-label .opt-name { overflow: hidden; text-overflow: ellipsis; }
+        .sub-label {
+            display: flex; align-items: center; gap: 6px; white-space: nowrap;
+            min-width: 0; flex: 1 1 auto; overflow: hidden;
+        }
+        .sub-label .opt-name { overflow: hidden; text-overflow: ellipsis; flex: 0 1 auto; min-width: 0; }
+        .sub-row .sub-select, .sub-row .toggle-switch { flex: 0 0 auto; }
         .sub-actions { grid-column: 1 / -1; display: flex; gap: 8px; flex-wrap: wrap; margin-top: 2px; }
         .mini-btn { font-size: 10px; padding: 3px 10px; border-radius: 30px; border: 1px solid rgba(34,211,238,0.15); color: rgba(34,211,238,0.7); background: rgba(34,211,238,0.06); cursor: pointer; }
         .mini-btn:hover { background: rgba(34,211,238,0.12); }
@@ -355,15 +359,26 @@
         .sub-select:focus { outline: none; border-color: rgba(34,211,238,0.55); box-shadow: 0 0 0 3px rgba(34,211,238,0.08); }
         .sub-select option { background: #12151d; color:#fff; }
         .num-input {
-            width: 64px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.08);
+            width: 64px; flex: 0 0 auto; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.08);
             border-radius: 6px; color: #fff; padding: 3px 6px; font-size: 12px; text-align: center; transition: 0.2s;
         }
         .num-input:focus { outline: none; border-color: rgba(34, 211, 238, 0.5); box-shadow: 0 0 0 3px rgba(34,211,238,0.07); }
-        .text-input { flex: 1; min-width: 90px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.08); border-radius: 6px; color: #fff; padding: 3px 8px; font-size: 12px; }
+        .text-input { flex: 1 1 90px; min-width: 90px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.08); border-radius: 6px; color: #fff; padding: 3px 8px; font-size: 12px; }
         /* Slider */
         .slider-row { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 4px; margin: 2px 0; }
-        .slider-label-row { display: flex; justify-content: space-between; font-size: 13px; color: rgba(255,255,255,0.6); gap: 8px; }
-        .slider-label-row .slider-value { color: rgba(34, 211, 238, 0.85); font-weight: 500; white-space: nowrap; }
+        .slider-label-row {
+            display: flex; align-items: center; justify-content: flex-start;
+            font-size: 13px; color: rgba(255,255,255,0.6); gap: 8px; min-width: 0;
+        }
+        .slider-label-row .opt-name {
+            flex: 1 1 auto; min-width: 0;
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        }
+        .slider-label-row .ver-tag { flex: 0 0 auto; }
+        .slider-label-row .slider-value {
+            flex: 0 0 auto; margin-left: auto;
+            color: rgba(34, 211, 238, 0.85); font-weight: 500; white-space: nowrap;
+        }
         .slider-track { width: 100%; height: 6px; background: rgba(255,255,255,0.08); border-radius: 6px; position: relative; cursor: pointer; }
         .slider-fill { height: 100%; border-radius: 6px; background: linear-gradient(90deg, #22D3EE, #A78BFA); transition: width 0.25s cubic-bezier(0.22, 1, 0.36, 1); box-shadow: 0 0 14px rgba(34, 211, 238, 0.3); }
         .empty { font-size: 12px; color: rgba(255,255,255,0.25); padding: 16px; text-align: center; animation: colIn 0.4s ease backwards; }
@@ -508,11 +523,11 @@
         <div class="col">
             <div class="profile-bar">
                 <div class="profile-main">
-                    <div class="profile-name" id="profName">Doppel 配置</div>
+                    <div class="profile-name" id="profName">Doppel Config</div>
                     <div class="profile-sub" id="profSub">LOCAL PROFILE · AUTO-SAVE</div>
                 </div>
                 <div class="spacer"></div>
-                <div class="eye-chip" id="eyeChip" title="开关游戏内 HUD">
+                <div class="eye-chip" id="eyeChip" title="Toggle in-game HUD">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 12c2.5-4.2 5.9-6.3 9.5-6.3s7 2.1 9.5 6.3c-2.5 4.2-5.9 6.3-9.5 6.3S5 16.2 2.5 12z"/><circle cx="12" cy="12" r="2.7"/></svg>
                 </div>
                 <div class="header-status" id="conn">● Connecting…</div>
@@ -522,17 +537,17 @@
 
             <div class="panic-bar" id="panicBar">
                 <span class="p-label">PANIC</span>
-                <span class="p-sub" id="panicSub">一键全关 · 恢复原版外观</span>
+                <span class="p-sub" id="panicSub">Panic · Restore vanilla look</span>
                 <kbd>RSHIFT + DELETE</kbd>
             </div>
 
             <div class="cat-row" id="catRow">
                 <div style="display:flex; gap:10px; flex-wrap:wrap;" id="tabBar"></div>
                 <div class="spacer"></div>
-                <div class="icon-btn" id="cfgBtn" title="配置管理（导出 / 导入）">
+                <div class="icon-btn" id="cfgBtn" title="Config manager (export / import)">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.7 1.7 0 00.34 1.87l.04.05a2 2 0 11-2.83 2.83l-.05-.05a1.7 1.7 0 00-1.87-.34 1.7 1.7 0 00-1.03 1.56V21a2 2 0 11-4 0v-.09a1.7 1.7 0 00-1.03-1.56 1.7 1.7 0 00-1.87.34l-.05.05a2 2 0 11-2.83-2.83l.05-.05A1.7 1.7 0 004.6 15a1.7 1.7 0 00-1.56-1.03H3a2 2 0 110-4h.09A1.7 1.7 0 004.6 9a1.7 1.7 0 00-.34-1.87l-.05-.05A2 2 0 117.04 4.25l.05.05A1.7 1.7 0 008.96 4.6 1.7 1.7 0 0010 3.04V3a2 2 0 114 0v.09c0 .68.4 1.3 1.03 1.56.62.27 1.35.14 1.87-.34l.05-.05a2 2 0 112.83 2.83l-.05.05A1.7 1.7 0 0019.4 9c.26.62.88 1.03 1.56 1.03H21a2 2 0 110 4h-.09c-.68 0-1.3.4-1.51 1.03z"/></svg>
                 </div>
-                <div class="icon-btn" id="marketBtn" title="配置市场（需要服务端）">
+                <div class="icon-btn" id="marketBtn" title="Config market (server required)">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 19a4.5 4.5 0 100-9 6 6 0 00-11.7 1.5A3.75 3.75 0 006.5 19z"/></svg>
                 </div>
             </div>
@@ -547,14 +562,14 @@
     <!-- Config manager modal -->
     <div class="modal-mask" id="cfgModal">
         <div class="modal-card">
-            <h3>配置管理</h3>
-            <div class="m-hint">EXPORT · 本地配置实时快照，可复制保存或导入回填（立即热载）</div>
-            <textarea id="cfgText" spellcheck="false" placeholder="GET /api/config 的 JSON 会出现在这里…"></textarea>
+            <h3>Config Manager</h3>
+            <div class="m-hint">EXPORT · Live snapshot of the local config — copy it to save, or paste and import to apply (hot-reloads instantly)</div>
+            <textarea id="cfgText" spellcheck="false" placeholder="JSON from GET /api/config shows up here…"></textarea>
             <div class="modal-actions">
-                <div class="m-btn" id="cfgReload">重新载入</div>
-                <div class="m-btn" id="cfgCopy">复制</div>
-                <div class="m-btn danger" id="cfgImport">导入上方内容</div>
-                <div class="m-btn ghost" id="cfgClose">关闭</div>
+                <div class="m-btn" id="cfgReload">Reload</div>
+                <div class="m-btn" id="cfgCopy">Copy</div>
+                <div class="m-btn danger" id="cfgImport">Import above</div>
+                <div class="m-btn ghost" id="cfgClose">Close</div>
             </div>
         </div>
     </div>
@@ -563,7 +578,7 @@
         const $ = s => document.querySelector(s);
         const $$ = s => Array.from(document.querySelectorAll(s));
         const CATS = ['COMBAT','PLAYER','MOVEMENT','WORLD','RENDER','MISC'];
-        const CAT_TAB = { COMBAT:'战斗', PLAYER:'玩家', MOVEMENT:'运动', WORLD:'世界', RENDER:'视觉', MISC:'杂项' };
+        const CAT_TAB = { COMBAT:'Combat', PLAYER:'Player', MOVEMENT:'Movement', WORLD:'World', RENDER:'Render', MISC:'Misc' };
         const SVGO = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">';
         const CAT_NAV = {
             COMBAT:'<circle cx="12" cy="12" r="7"/><path d="M12 2.5V6M12 18v3.5M2.5 12H6M18 12h3.5"/>',
@@ -647,11 +662,11 @@
         // Rail pages — only the panel is real today; the rest are shells for
         // server-backed features (market/stats/license/help), per the reference layout.
         const PAGES = [
-            { id:'panel',  label:'模块配置', icon:'panel',   real:true },
-            { id:'market', label:'配置市场', icon:'market',  badge:'SOON' },
-            { id:'stats',  label:'使用统计', icon:'stats',   badge:'SOON' },
-            { id:'license',label:'授权更新', icon:'license', badge:'SOON' },
-            { id:'help',   label:'帮助中心', icon:'help',    badge:'SOON' }
+            { id:'panel',  label:'Modules',  icon:'panel',   real:true },
+            { id:'market', label:'Market',   icon:'market',  badge:'SOON' },
+            { id:'stats',  label:'Stats',    icon:'stats',   badge:'SOON' },
+            { id:'license',label:'License',  icon:'license', badge:'SOON' },
+            { id:'help',   label:'Help',     icon:'help',    badge:'SOON' }
         ];
 
         let toastTimer = null;
@@ -717,7 +732,7 @@
             $$('#sideNav .nav-item').forEach(el => {
                 el.addEventListener('click', () => {
                     if(el.dataset.page==='panel') return;
-                    toast('该页面需要服务端支持 · Coming soon');
+                    toast('This page needs the server · Coming soon');
                 });
             });
         }
@@ -858,7 +873,7 @@
                 const disp = isDec ? Number(v).toFixed(1) : v;
                 return `<div class="slider-row">
                     <div class="slider-label-row">
-                        <span class="opt-name" style="overflow:hidden;text-overflow:ellipsis">${o.name}</span>${versionTag(o)}${rule?modeTag(o,rule):''}
+                        <span class="opt-name">${o.name}</span>${versionTag(o)}${rule?modeTag(o,rule):''}
                         <span class="slider-value">${disp}${unit}</span>
                     </div>
                     <div class="slider-track" data-key="${key}" data-min="${min}" data-max="${max}" data-int="${isDec?0:1}" data-unit="${unit}" data-dec="${isDec?1:0}">
@@ -874,8 +889,8 @@
 
         // ----- Card builder -----
         function controlsHtml(m){
-            return `<span class="kb-chip" data-kb="${m.name}" title="点击后按任意键绑定（Esc 清除）">⏵ ${m.keyName||'未绑定'}</span>` +
-                (m.hudEnabled ? `<span class="hud-chip ${m.hudHidden?'off':''}" data-hud="${m.name}" title="游戏内 HUD 显示开关">◉</span>` : '');
+            return `<span class="kb-chip" data-kb="${m.name}" title="Click, then press any key to bind (Esc clears)">⏵ ${m.keyName||'Unbound'}</span>` +
+                (m.hudEnabled ? `<span class="hud-chip ${m.hudHidden?'off':''}" data-hud="${m.name}" title="Toggle in-game HUD visibility">◉</span>` : '');
         }
         function moduleCard(m){
             const rule = MODE_RULES[m.name];
@@ -899,7 +914,7 @@
                 <div class="sub-options">
                     <div class="sub-grid" data-options="${m.name}" data-optsig="${optionsForModule(m).map(o=>o.key).join('|')}">
                         <div class="sub-actions">${controls}</div>
-                        ${opts || '<span class="noopts">该模块没有可调参数</span>'}
+                        ${opts || '<span class="noopts">No tunable options</span>'}
                     </div>
                 </div>
             </div>`;
@@ -916,10 +931,10 @@
             $('#tabContent').innerHTML = `
                 <div class="module-grid${entering ? ' enter' : ''}">
                     <div class="module-column">
-                        <div class="setting-grid">${col(left) || '<div class="empty">该分类暂无模块</div>'}</div>
+                        <div class="setting-grid">${col(left) || '<div class="empty">No modules in this category</div>'}</div>
                     </div>
                     <div class="module-column">
-                        <div class="setting-grid">${col(right) || '<div class="empty">该分类暂无模块</div>'}</div>
+                        <div class="setting-grid">${col(right) || '<div class="empty">No modules in this category</div>'}</div>
                     </div>
                 </div>`;
         }
@@ -945,7 +960,7 @@
                 // drawer controls (keybind / hud) — never touch a capturing chip
                 const kb = card.querySelector('.kb-chip[data-kb]');
                 if(kb && !kb.classList.contains('capturing') && !capturingKey)
-                    kb.textContent = '⏵ ' + (m.keyName||'未绑定');
+                    kb.textContent = '⏵ ' + (m.keyName||'Unbound');
                 const hudc = card.querySelector('.hud-chip[data-hud]');
                 if(hudc) hudc.classList.toggle('off', !!m.hudHidden);
                 // options: rebuild only when the VISIBLE option set changed (mode swap etc.)
@@ -957,7 +972,7 @@
                     grid.dataset.optsig = wantSig;
                     grid.innerHTML =
                         `<div class="sub-actions">${controlsHtml(m)}</div>` +
-                        (optionsForModule(m).map(o => optionWidget(o, rule)).join('') || '<span class="noopts">该模块没有可调参数</span>');
+                        (optionsForModule(m).map(o => optionWidget(o, rule)).join('') || '<span class="noopts">No tunable options</span>');
                     if(card.classList.contains('expanded')){
                         const so = card.querySelector('.sub-options');
                         so.style.maxHeight = (so.scrollHeight + 80) + 'px';
@@ -1051,7 +1066,7 @@
                 capturingKey = kb.dataset.kb;
                 $$('.kb-chip').forEach(c=>c.classList.remove('capturing'));
                 kb.classList.add('capturing');
-                kb.textContent = '⏵ 按任意键… (Esc 清除)';
+                kb.textContent = '⏵ Press any key… (Esc clears)';
                 return;
             }
             // Panic bar (two-step arm, no accidental wipes)
@@ -1059,8 +1074,8 @@
                 const bar = $('#panicBar');
                 if(!bar.classList.contains('arm')){
                     bar.classList.add('arm');
-                    $('#panicSub').textContent = '再点一次确认 · 关闭全部模块';
-                    setTimeout(() => { bar.classList.remove('arm'); $('#panicSub').textContent = '一键全关 · 恢复原版外观'; }, 2600);
+                    $('#panicSub').textContent = 'Click again to confirm · disable every module';
+                    setTimeout(() => { bar.classList.remove('arm'); $('#panicSub').textContent = 'Panic · Restore vanilla look'; }, 2600);
                 } else {
                     panic();
                 }
@@ -1069,32 +1084,32 @@
             // Eye — toggle HUD module
             if(e.target.closest('#eyeChip')){
                 const hud = modules.find(m=>m.name==='HUD');
-                if(!hud){ toast('未找到 HUD 模块'); return; }
+                if(!hud){ toast('HUD module not found'); return; }
                 await api('/api/modules/HUD/toggle', {method:'POST'});
                 refresh(); return;
             }
             // Config manager / market buttons
             if(e.target.closest('#cfgBtn')){ openCfg(); return; }
-            if(e.target.closest('#marketBtn')){ toast('配置市场需要服务端支持 · Coming soon'); return; }
+            if(e.target.closest('#marketBtn')){ toast('The config market needs the server · Coming soon'); return; }
             // Modal close paths
             if(e.target.closest('#cfgClose') || e.target.id === 'cfgModal'){ $('#cfgModal').classList.remove('show'); return; }
             if(e.target.closest('#cfgReload')){ fillCfg(); return; }
             if(e.target.closest('#cfgCopy')){
                 const ta = $('#cfgText');
                 ta.select();
-                try { await navigator.clipboard.writeText(ta.value); toast('配置已复制到剪贴板'); }
-                catch(err){ document.execCommand('copy'); toast('配置已复制'); }
+                try { await navigator.clipboard.writeText(ta.value); toast('Config copied to clipboard'); }
+                catch(err){ document.execCommand('copy'); toast('Config copied'); }
                 return;
             }
             if(e.target.closest('#cfgImport')){
                 const body = $('#cfgText').value;
-                if(!body.trim()){ toast('先粘贴配置 JSON'); return; }
+                if(!body.trim()){ toast('Paste config JSON first'); return; }
                 try {
                     await api('/api/config', {method:'POST', body});
-                    toast('配置已导入 · 热载完成');
+                    toast('Config imported · hot-reload done');
                     $('#cfgModal').classList.remove('show');
                     refresh();
-                } catch(err){ toast('导入失败 · JSON 无效?'); }
+                } catch(err){ toast('Import failed · invalid JSON?'); }
                 return;
             }
             // Sub-option toggle
@@ -1236,7 +1251,7 @@
             if(panicking) return;
             panicking = true;
             const on = modules.filter(m => m.enabled);
-            toast('PANIC · 关闭 ' + on.length + ' 个模块');
+            toast('PANIC · disabled ' + on.length + ' modules');
             for(const m of on){
                 try { await api('/api/modules/'+encodeURIComponent(m.name)+'/toggle', {method:'POST'}); } catch(err){}
             }
@@ -1265,7 +1280,7 @@
                 try {
                     const r = await api('/api/modules/'+encodeURIComponent(name)+'/keybind', {method:'POST', body:JSON.stringify({key:code})});
                     const chip = document.querySelector(`.kb-chip[data-kb="${name}"]`);
-                    if(chip){ chip.classList.remove('capturing'); chip.textContent = '⏵ ' + (r.keyName||(code<=0?'未绑定':'键'+code)); }
+                    if(chip){ chip.classList.remove('capturing'); chip.textContent = '⏵ ' + (r.keyName||(code<=0?'Unbound':'Key '+code)); }
                     refresh();
                 } catch(err){}
             })();
@@ -1278,7 +1293,7 @@
                 let pretty = txt;
                 try { pretty = JSON.stringify(JSON.parse(txt), null, 2); } catch(err){}
                 $('#cfgText').value = pretty;
-            } catch(err){ $('#cfgText').value = '// 载入失败（连接断开?）'; }
+            } catch(err){ $('#cfgText').value = '// Load failed (connection lost?)'; }
         }
         async function openCfg(){
             $('#cfgModal').classList.add('show');

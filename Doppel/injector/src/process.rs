@@ -1,20 +1,68 @@
-// process.rs — Minecraft process detection
+// process.rs — Java process enumeration + Minecraft detection
 //
 // Ported from C++ process.cpp: Toolhelp32 snapshot to find javaw.exe/java.exe,
 // then EnumWindows to find a visible window whose title contains "minecraft",
 // then OpenProcess + EnumProcessModulesEx + GetModuleFileNameExA for the exe
 // path. Raw FFI to kernel32/psapi/user32 — zero deps.
+//
+// Two entry points:
+//   list_java_processes()     — every javaw/java process, for the web picker
+//   find_minecraft_process()  — the first one that looks like Minecraft
+//
+// The injector no longer guesses by itself: the panel lists these and the user
+// picks the PID. Auto-pick stays as the headless/`--pid`-less fallback.
 
 use std::ffi::c_void;
 use std::ptr;
 
-/// Information about a detected Minecraft process.
+/// Information about a detected Java process.
 #[derive(Debug, Clone, Default)]
 pub struct ProcessInfo {
     pub pid: u32,
     pub valid: bool,
     pub window_title: String,
     pub path: String,
+    /// Executable file name, lowercased ("javaw.exe" / "java.exe").
+    pub exe: String,
+    /// Full command line, when the PEB read succeeds. Empty otherwise.
+    pub cmdline: String,
+    /// True when the cmdline or the window title says this is Minecraft.
+    pub is_minecraft: bool,
+    /// True when a doppel payload module is already loaded in this process.
+    pub injected: bool,
+}
+
+impl ProcessInfo {
+    /// A short, panel-friendly rendering of the command line: the version id
+    /// or main class, without the -D flags and classpath noise.
+    pub fn cmdline_hint(&self) -> String {
+        // Slice the *lowercased* copy, never `self.cmdline`: to_lowercase() can
+        // change a string's byte length (`İ` -> `i̇`), so an index found in one
+        // is not guaranteed to be a char boundary in the other, and slicing
+        // there would panic.
+        let lower = self.cmdline.to_lowercase();
+        // Forge/OptiFine installs put the interesting token in --version.
+        for flag in ["--version ", "--gamedir "] {
+            if let Some(i) = lower.find(flag) {
+                let rest = &lower[i + flag.len()..];
+                let token = rest
+                    .trim_start_matches('"')
+                    .split(['"', ' '])
+                    .next()
+                    .unwrap_or("");
+                if !token.is_empty() {
+                    return token.to_string();
+                }
+            }
+        }
+        if let Some(i) = lower.find("net.minecraft") {
+            return lower[i..].split_whitespace().next().unwrap_or("").to_string();
+        }
+        if let Some(i) = lower.find(".minecraft") {
+            return lower[i..].split_whitespace().next().unwrap_or("").to_string();
+        }
+        String::new()
+    }
 }
 
 // ── Win32 types ──
@@ -77,6 +125,12 @@ extern "system" {
         lp_filename: *mut u16,
         n_size: u32,
     ) -> u32;
+    fn GetModuleBaseNameW(
+        h_process: *mut c_void,
+        h_module: *mut c_void,
+        lp_base_name: *mut u16,
+        n_size: u32,
+    ) -> u32;
 }
 
 #[link(name = "user32")]
@@ -118,6 +172,7 @@ unsafe extern "system" fn find_minecraft_window(h_wnd: *mut c_void, l_param: isi
         if title.to_lowercase().contains("minecraft") {
             st.found_title = title;
             st.found = true;
+            st.titled = true;
             return 0; // stop — clear minecraft title
         }
         // Any visible window on a javaw process counts as a hit too, but keep
@@ -137,6 +192,8 @@ unsafe extern "system" fn find_minecraft_window(h_wnd: *mut c_void, l_param: isi
 struct WindowSearch {
     target_pid: u32,
     found: bool,
+    /// True when the hit came from a title that literally says minecraft.
+    titled: bool,
     found_title: String,
 }
 
@@ -281,13 +338,57 @@ fn read_process_command_line(pid: u32) -> String {
     }
 }
 
-pub fn find_minecraft_process() -> ProcessInfo {
-    let mut result = ProcessInfo::default();
+/// Fill in `path` (image path) and `injected` (does a doppel module live in
+/// this process?) by walking the target's loaded modules.
+fn probe_modules(pid: u32, info: &mut ProcessInfo) {
+    unsafe {
+        let h_proc = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, 0, pid);
+        if h_proc.is_null() {
+            return;
+        }
+        let mut h_mods: [*mut c_void; 1024] = [ptr::null_mut(); 1024];
+        let mut cb_needed: u32 = 0;
+        if EnumProcessModulesEx(
+            h_proc,
+            h_mods.as_mut_ptr(),
+            (h_mods.len() * std::mem::size_of::<*mut c_void>()) as u32,
+            &mut cb_needed,
+            0x03, // LIST_MODULES_32BIT | LIST_MODULES_64BIT
+        ) != 0
+        {
+            let count = (cb_needed as usize / std::mem::size_of::<*mut c_void>()).min(h_mods.len());
+            if count > 0 {
+                let mut mod_name = [0u16; MAX_PATH];
+                let got = GetModuleFileNameExW(h_proc, h_mods[0], mod_name.as_mut_ptr(), MAX_PATH as u32);
+                if got > 0 {
+                    info.path = String::from_utf16_lossy(&mod_name[..got as usize]);
+                }
+            }
+            // Any module whose base name mentions doppel means we are already in.
+            for m in h_mods.iter().take(count) {
+                let mut base = [0u16; MAX_PATH];
+                let got = GetModuleBaseNameW(h_proc, *m, base.as_mut_ptr(), MAX_PATH as u32);
+                if got > 0 {
+                    let name = String::from_utf16_lossy(&base[..got as usize]).to_lowercase();
+                    if name.contains("doppel") {
+                        info.injected = true;
+                    }
+                }
+            }
+        }
+        CloseHandle(h_proc);
+    }
+}
+
+/// Every javaw.exe / java.exe process on the machine, most useful first
+/// (Minecraft candidates, then the rest). This is what the web panel lists.
+pub fn list_java_processes() -> Vec<ProcessInfo> {
+    let mut out: Vec<ProcessInfo> = Vec::new();
 
     unsafe {
         let h_snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
         if h_snapshot as isize == INVALID_HANDLE_VALUE || h_snapshot.is_null() {
-            return result;
+            return out;
         }
 
         let mut pe: PROCESSENTRY32W = std::mem::zeroed();
@@ -302,53 +403,39 @@ pub fn find_minecraft_process() -> ProcessInfo {
                 let len = exe_raw.iter().position(|&c| c == 0).unwrap_or(exe_raw.len());
                 let exe = String::from_utf16_lossy(&exe_raw[..len]);
                 let exe_lower = exe.to_lowercase();
+
                 if exe_lower == "javaw.exe" || exe_lower == "java.exe" {
-                    // Confirm it's Minecraft via command line (".minecraft" or
-                    // net.minecraft.client.main.Main). Falls back to window
-                    // title scan if cmdline can't be read.
-                    let cmdline = read_process_command_line(pe.th32_process_id);
+                    let pid = pe.th32_process_id;
+                    let mut info = ProcessInfo {
+                        pid,
+                        valid: true,
+                        exe: exe_lower.clone(),
+                        ..Default::default()
+                    };
+
+                    // Command line is the reliable Minecraft signal.
+                    let cmdline = read_process_command_line(pid);
                     let cmd_lower = cmdline.to_lowercase();
                     let is_mc_cmdline =
                         cmd_lower.contains(".minecraft") || cmd_lower.contains("net.minecraft");
+                    info.cmdline = cmdline;
+
+                    // Window title is the fallback signal (and the nicer label).
                     let mut search = WindowSearch {
-                        target_pid: pe.th32_process_id,
+                        target_pid: pid,
                         found: false,
+                        titled: false,
                         found_title: String::new(),
                     };
                     EnumWindows(
                         Some(find_minecraft_window),
                         &mut search as *mut WindowSearch as isize,
                     );
-                    let has_window = search.found;
+                    info.window_title = search.found_title;
+                    info.is_minecraft = is_mc_cmdline || search.titled;
 
-                    if is_mc_cmdline || has_window {
-                        result.pid = pe.th32_process_id;
-                        result.valid = true;
-                        result.window_title = search.found_title;
-
-                        // Get exe path
-                        let h_proc = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, 0, pe.th32_process_id);
-                        if !h_proc.is_null() {
-                            let mut h_mods: [*mut c_void; 1024] = [ptr::null_mut(); 1024];
-                            let mut cb_needed: u32 = 0;
-                            if EnumProcessModulesEx(
-                                h_proc,
-                                h_mods.as_mut_ptr(),
-                                (h_mods.len() * std::mem::size_of::<*mut c_void>()) as u32,
-                                &mut cb_needed,
-                                0x03, // LIST_MODULES_32BIT | LIST_MODULES_64BIT
-                            ) != 0
-                            {
-                                let mut mod_name = [0u16; MAX_PATH];
-                                let got = GetModuleFileNameExW(h_proc, h_mods[0], mod_name.as_mut_ptr(), MAX_PATH as u32);
-                                if got > 0 {
-                                    result.path = String::from_utf16_lossy(&mod_name[..got as usize]);
-                                }
-                            }
-                            CloseHandle(h_proc);
-                        }
-                        break;
-                    }
+                    probe_modules(pid, &mut info);
+                    out.push(info);
                 }
 
                 if Process32NextW(h_snapshot, &mut pe) == 0 {
@@ -359,5 +446,35 @@ pub fn find_minecraft_process() -> ProcessInfo {
         CloseHandle(h_snapshot);
     }
 
-    result
+    // Minecraft first, then by pid so the list is stable between polls.
+    out.sort_by(|a, b| {
+        b.is_minecraft
+            .cmp(&a.is_minecraft)
+            .then(a.pid.cmp(&b.pid))
+    });
+    out
+}
+
+/// Auto-pick: the first process that looks like Minecraft.
+pub fn find_minecraft_process() -> ProcessInfo {
+    list_java_processes()
+        .into_iter()
+        .find(|p| p.is_minecraft)
+        .unwrap_or_default()
+}
+
+/// Look up one specific PID from the java process list. Used when the user
+/// picked a row in the panel — `valid` stays false if that PID is gone.
+pub fn find_process_by_pid(pid: u32) -> ProcessInfo {
+    let mut found = list_java_processes()
+        .into_iter()
+        .find(|p| p.pid == pid)
+        .unwrap_or_default();
+    if found.pid == 0 {
+        return ProcessInfo::default();
+    }
+    // A hand-picked process is a valid target even if our heuristics didn't
+    // label it as Minecraft — the user knows what they clicked.
+    found.valid = true;
+    found
 }

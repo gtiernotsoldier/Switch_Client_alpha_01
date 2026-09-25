@@ -59,6 +59,11 @@ extern "system" {
     fn WaitForSingleObject(h_handle: *mut c_void, dw_milliseconds: u32) -> u32;
     fn CloseHandle(h_object: *mut c_void) -> i32;
     fn GetLastError() -> u32;
+    /// Non-zero result + `wow64 == TRUE` means a 32-bit process on 64-bit Windows.
+    fn IsWow64Process(h_process: *mut c_void, wow64_process: *mut i32) -> i32;
+    /// What the remote thread returned — for a LoadLibraryA thread that is the
+    /// module handle, or 0 when the loader refused the DLL.
+    fn GetExitCodeThread(h_thread: *mut c_void, lp_exit_code: *mut u32) -> i32;
 }
 
 // Constants (kernel32 / winnt)
@@ -140,6 +145,22 @@ pub fn inject_java_agent(
             "cannot open PID {} for injection — WinAPI error {}{}",
             proc.pid, err, hint
         ));
+    }
+
+    // 3b. Bitness guard. A 64-bit payload DLL cannot be loaded into a 32-bit
+    //     JVM: LoadLibraryA would simply return NULL inside the target and the
+    //     injector would sit waiting for a payload that can never run. Say so
+    //     up front instead of timing out.
+    if cfg!(target_pointer_width = "64") {
+        let mut wow64: i32 = 0;
+        if unsafe { IsWow64Process(h_process, &mut wow64) } != 0 && wow64 != 0 {
+            unsafe { CloseHandle(h_process) };
+            return Err(format!(
+                "PID {} is a 32-bit process and this injector is 64-bit, so the payload \
+DLL can never load. Point the launcher at a 64-bit Java for this profile.",
+                proc.pid
+            ));
+        }
     }
 
     // 4. Allocate memory in target for DLL path
@@ -273,9 +294,31 @@ restart Minecraft and inject the fresh process",
         ));
     }
 
-    // 9. Wait for LoadLibraryA thread (DLL load)
+    // 9. Wait for LoadLibraryA thread (DLL load) and read what it returned.
+    //    For a LoadLibraryA remote thread the exit code IS the result: a module
+    //    handle on success, 0 when the loader refused the DLL. Zero means the
+    //    DLL never executed a single instruction — so nothing can be reported
+    //    as loaded, whatever the event says.
     unsafe { WaitForSingleObject(h_thread, 10_000) };
+    let mut thread_result: u32 = 0;
+    let got_exit = unsafe { GetExitCodeThread(h_thread, &mut thread_result) } != 0;
     unsafe { CloseHandle(h_thread) };
+
+    if got_exit && thread_result == 0 {
+        if !h_done_event.is_null() {
+            unsafe { CloseHandle(h_done_event) };
+        }
+        unsafe {
+            VirtualFreeEx(h_process, p_remote_mem, 0, MEM_RELEASE);
+            CloseHandle(h_process);
+        }
+        return Err(format!(
+            "LoadLibraryA returned NULL inside PID {} — the DLL was written but never \
+loaded. Usual causes: a 32/64-bit mismatch with the game's Java, or a dependency the \
+payload needs that is not present in the game process. Nothing was injected.",
+            proc.pid
+        ));
+    }
 
     // 10. Wait for the payload to confirm it loaded. Poll in short slices and
     //     also watch the payload log for "bootstrap() completed" so we finish
@@ -346,8 +389,11 @@ restart Minecraft and inject the fresh process",
         // the loader found the DLL already resident and therefore never called
         // DllMain at all. Saying "success" here is what made the injector lie.
         return Err(format!(
-            "the payload never confirmed a load — nothing was injected. \
-Check {} (if the DLL was already resident in that process, restart Minecraft first)",
+            "the payload never confirmed a load — nothing was injected (LoadLibraryA \
+returned {}, thread result {}). Check {} (if the DLL was already resident in that \
+process, restart Minecraft first)",
+            if got_exit { "a module handle" } else { "an unknown value" },
+            thread_result,
             payload_log
         ));
     }

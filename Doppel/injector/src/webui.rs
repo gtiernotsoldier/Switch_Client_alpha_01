@@ -110,12 +110,41 @@ fn token() -> &'static str {
 }
 
 fn push_event(kind: &'static str, text: String) {
+    // Mirror every panel event into %TEMP%\doppel-injector.log. Without this the
+    // only copy of a failure lived in the browser tab and the console window,
+    // both of which are gone by the time anyone looks into it.
+    append_injector_log(&format!("[{}] {}", kind, text));
     let mut st = state();
     st.events.push((kind, text));
     // Keep the page light; the newest lines are the interesting ones.
     let len = st.events.len();
     if len > 240 {
         st.events.drain(0..len - 240);
+    }
+}
+
+/// Timestamp for the log file — HH:MM:SS from the wall clock, no dependencies.
+fn hms() -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    // Seconds since midnight, UTC. Close enough for a local log.
+    let day = secs % 86_400;
+    format!("{:02}:{:02}:{:02}", day / 3600, (day % 3600) / 60, day % 60)
+}
+
+/// Append one line to the injector's own log. Best-effort: a log that cannot be
+/// written must never break an injection.
+fn append_injector_log(line: &str) {
+    use std::io::Write;
+    let path = format!("{}doppel-injector.log", crate::resource::temp_dir());
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
+        let _ = writeln!(f, "[{}] {}", hms(), line);
     }
 }
 
@@ -133,6 +162,8 @@ impl WebReporter {
 
 impl Reporter for WebReporter {
     fn step_begin(&self, idx: usize) {
+        let label = STEPS.get(idx).copied().unwrap_or("");
+        append_injector_log(&format!("[step {}] begin · {}", idx + 1, label));
         {
             let mut st = state();
             if let Some(s) = st.steps.get_mut(idx) {
@@ -162,6 +193,7 @@ impl Reporter for WebReporter {
     }
 
     fn step_ok(&self, idx: usize, secs: f32) {
+        append_injector_log(&format!("[step {}] ok · {:.2}s", idx + 1, secs));
         {
             let mut st = state();
             if let Some(s) = st.steps.get_mut(idx) {
@@ -513,6 +545,11 @@ fn extract_pid(json: &str) -> u32 {
 // ── injection worker ────────────────────────────────────────────────────────
 
 fn run_injection(pid: u32) {
+    append_injector_log(&format!(
+        "=== injection start · target PID {} · injector {} ===",
+        pid,
+        env!("CARGO_PKG_VERSION")
+    ));
     let rep = WebReporter::new();
     let result = flow::run(Some(pid), &rep);
 
@@ -532,6 +569,7 @@ fn run_injection(pid: u32) {
                 "ok",
                 format!("agent loaded into PID {} ({})", outcome.pid, outcome.version),
             );
+            append_injector_log("=== injection OK · agent loaded ===");
         }
         Err(e) => {
             {
@@ -539,6 +577,7 @@ fn run_injection(pid: u32) {
                 st.phase = "failed";
                 st.headline = e.reason().to_string();
             }
+            append_injector_log(&format!("=== injection FAILED · {} ===", e.reason()));
             if matches!(e, FlowError::NoProcess) {
                 push_event("error", "that process is gone — refresh the list".to_string());
             }

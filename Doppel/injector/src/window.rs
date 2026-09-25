@@ -193,6 +193,8 @@ const WM_TIMER: u32 = 0x0113;
 const WM_MOUSEMOVE: u32 = 0x0200;
 const WM_LBUTTONDOWN: u32 = 0x0201;
 const WM_SETCURSOR: u32 = 0x0020;
+const WM_SYSCOMMAND: u32 = 0x0112;
+const SC_MINIMIZE: u32 = 0xF020;
 const WM_CTLCOLORLISTBOX: u32 = 0x0134;
 
 const LB_ADDSTRING: u32 = 0x0180;
@@ -258,6 +260,8 @@ const HINT_Y: i32 = BTN_Y + BTN_H + 18;
 
 const CLOSE_RECT: Rect = Rect { left: CLIENT_W - PAD - 110, top: CLIENT_H - PAD - 24, right: CLIENT_W - PAD, bottom: CLIENT_H - PAD + 6 };
 const BACK_RECT: Rect = Rect { left: PAD, top: CLIENT_H - PAD - 24, right: PAD + 110, bottom: CLIENT_H - PAD + 6 };
+const OPEN_RECT: Rect = Rect { left: PAD + 122, top: BACK_RECT.top, right: PAD + 122 + 138, bottom: BACK_RECT.bottom };
+const HIDE_RECT: Rect = Rect { left: PAD + 272, top: BACK_RECT.top, right: PAD + 272 + 138, bottom: BACK_RECT.bottom };
 
 const STEP_Y0: i32 = 128;
 const STEP_DY: i32 = 38;
@@ -362,6 +366,27 @@ fn list_hwnd() -> Hwnd {
 
 fn repaint() {
     unsafe { InvalidateRect(main_hwnd(), std::ptr::null(), 0) };
+}
+
+/// Hand a URL to the shell. `start` needs the empty first argument, otherwise
+/// it treats the URL as the window title and opens nothing.
+fn open_url(url: &str) {
+    if url.is_empty() {
+        return;
+    }
+    let _ = std::process::Command::new("cmd")
+        .args(["/C", "start", "", url])
+        .spawn();
+    crate::log::append(&format!("opened {url} in the default browser"));
+}
+
+/// Minimise the launcher. The game is in front now; the launcher stays on the
+/// taskbar so it can be brought back.
+fn hide_launcher() {
+    let hwnd = main_hwnd();
+    if !hwnd.is_null() {
+        unsafe { SendMessageW(hwnd, WM_SYSCOMMAND, SC_MINIMIZE as Wparam, 0) };
+    }
 }
 
 // ── the reporter that drives the window ─────────────────────────────────────
@@ -507,6 +532,14 @@ fn run_injection(pid: u32) {
             push_event("ok", format!("agent loaded into PID {} ({})", outcome.pid, outcome.version));
             crate::log::append("=== injection OK · agent loaded ===");
             unsafe { MessageBeep(0) };
+
+            // Same finish as OpenCommunity's launcher: the game is running and
+            // the in-game panel is the thing the user actually wants, so open it
+            // and get the launcher out of the way.
+            if !outcome.panel_url.as_deref().unwrap_or("").is_empty() {
+                open_url(outcome.panel_url.as_deref().unwrap_or(""));
+            }
+            hide_launcher();
         }
         Err(e) => {
             {
@@ -824,7 +857,10 @@ unsafe fn paint(hdc: Hdc) {
             }
 
             let can_close = state.app != App::Running;
+            let has_panel = !state.panel_url.is_empty();
             draw_button(hdc, f.body, BACK_RECT, "Back", false, can_close, point_in(hover, BACK_RECT));
+            draw_button(hdc, f.body, OPEN_RECT, "Open WebUI", true, can_close && has_panel, point_in(hover, OPEN_RECT));
+            draw_button(hdc, f.body, HIDE_RECT, "Hide", false, can_close, point_in(hover, HIDE_RECT));
             draw_button(hdc, f.body, CLOSE_RECT, "Close", false, can_close, point_in(hover, CLOSE_RECT));
         }
     }
@@ -1020,6 +1056,11 @@ unsafe extern "system" fn wnd_proc(hwnd: Hwnd, msg: u32, wp: Wparam, lp: Lparam)
                 _ => {
                     if point_in(p, CLOSE_RECT) {
                         PostQuitMessage(0);
+                    } else if point_in(p, OPEN_RECT) {
+                        let url = lock(&shared().state).panel_url.clone();
+                        open_url(&url);
+                    } else if point_in(p, HIDE_RECT) {
+                        hide_launcher();
                     } else if point_in(p, BACK_RECT) {
                         let s = shared();
                         let mut st = lock(&s.state);

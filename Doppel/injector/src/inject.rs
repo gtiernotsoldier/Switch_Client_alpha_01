@@ -267,42 +267,69 @@ restart Minecraft and inject the fresh process",
         ui::detail(&format!("done event · DoppelPayloadDone_{}", proc.pid));
     }
 
-    // 8. Create remote thread to load the DLL
+    // 8. Create the remote LoadLibraryA thread and read what it returned.
+    //
+    //    For a LoadLibraryA remote thread the exit code IS the result: a module
+    //    handle on success, 0 when the loader refused the DLL. Zero means the
+    //    DLL never executed a single instruction.
+    //
+    //    Zero is also transient. The DLL was just written to %TEMP% and an
+    //    antivirus that opens the fresh file to scan it holds a lock for a few
+    //    hundred milliseconds — a real run of this injector failed twice in a
+    //    row with NULL and succeeded four seconds later. Since NULL provably
+    //    means "not loaded", retrying is safe: it cannot double-inject.
+    //
     // LPTHREAD_START_ROUTINE = fn(LPVOID) -> DWORD; LoadLibraryA has signature
     // fn(LPCSTR) -> HMODULE — both are one-pointer-arg functions, so the raw
     // address is compatible.
-    let h_thread = unsafe {
-        CreateRemoteThread(
-            h_process,
-            ptr::null(),
-            0,
-            p_load_library,
-            p_remote_mem,
-            0,
-            ptr::null_mut(),
-        )
-    };
-    if h_thread.is_null() {
-        let err = unsafe { GetLastError() };
-        unsafe {
-            VirtualFreeEx(h_process, p_remote_mem, 0, MEM_RELEASE);
-            CloseHandle(h_process);
-        }
-        return Err(format!(
-            "CreateRemoteThread failed — WinAPI error {} (an anti-cheat or AV may be blocking it)",
-            err
-        ));
-    }
-
-    // 9. Wait for LoadLibraryA thread (DLL load) and read what it returned.
-    //    For a LoadLibraryA remote thread the exit code IS the result: a module
-    //    handle on success, 0 when the loader refused the DLL. Zero means the
-    //    DLL never executed a single instruction — so nothing can be reported
-    //    as loaded, whatever the event says.
-    unsafe { WaitForSingleObject(h_thread, 10_000) };
+    const LOAD_ATTEMPTS: u32 = 4;
     let mut thread_result: u32 = 0;
-    let got_exit = unsafe { GetExitCodeThread(h_thread, &mut thread_result) } != 0;
-    unsafe { CloseHandle(h_thread) };
+    let mut got_exit = false;
+    let mut attempt = 0;
+    while attempt < LOAD_ATTEMPTS {
+        attempt += 1;
+        let h_thread = unsafe {
+            CreateRemoteThread(
+                h_process,
+                ptr::null(),
+                0,
+                p_load_library,
+                p_remote_mem,
+                0,
+                ptr::null_mut(),
+            )
+        };
+        if h_thread.is_null() {
+            let err = unsafe { GetLastError() };
+            if !h_done_event.is_null() {
+                unsafe { CloseHandle(h_done_event) };
+            }
+            unsafe {
+                VirtualFreeEx(h_process, p_remote_mem, 0, MEM_RELEASE);
+                CloseHandle(h_process);
+            }
+            return Err(format!(
+                "CreateRemoteThread failed — WinAPI error {} (an anti-cheat or AV may be blocking it)",
+                err
+            ));
+        }
+
+        unsafe { WaitForSingleObject(h_thread, 10_000) };
+        thread_result = 0;
+        got_exit = unsafe { GetExitCodeThread(h_thread, &mut thread_result) } != 0;
+        unsafe { CloseHandle(h_thread) };
+
+        if !got_exit || thread_result != 0 {
+            break; // the loader accepted it (or we cannot tell — fall through)
+        }
+        if attempt < LOAD_ATTEMPTS {
+            ui::detail(&format!(
+                "the loader refused the DLL (attempt {}/{}) — the file is probably still being scanned, retrying",
+                attempt, LOAD_ATTEMPTS
+            ));
+            std::thread::sleep(std::time::Duration::from_millis(600));
+        }
+    }
 
     if got_exit && thread_result == 0 {
         if !h_done_event.is_null() {
@@ -313,10 +340,11 @@ restart Minecraft and inject the fresh process",
             CloseHandle(h_process);
         }
         return Err(format!(
-            "LoadLibraryA returned NULL inside PID {} — the DLL was written but never \
-loaded. Usual causes: a 32/64-bit mismatch with the game's Java, or a dependency the \
-payload needs that is not present in the game process. Nothing was injected.",
-            proc.pid
+            "LoadLibraryA returned NULL inside PID {} after {} attempts — the DLL was written \
+but never loaded. If the game is still running with Doppel already inside it, restart the game. \
+Otherwise the loader is refusing the file: check for a 32/64-bit mismatch with the game's Java, \
+or a dependency the payload needs that is missing in the game process. Nothing was injected.",
+            proc.pid, attempt
         ));
     }
 

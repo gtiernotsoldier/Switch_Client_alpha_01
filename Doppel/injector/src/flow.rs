@@ -153,9 +153,9 @@ pub fn run(target_pid: Option<u32>, rep: &dyn Reporter) -> Result<Outcome, FlowE
     rep.detail(&format!("agent ready · {}", agent_path));
     rep.step_ok(1, t1.elapsed().as_secs_f32());
 
-    // Snapshot the log length BEFORE injecting: step 4 must only accept a
-    // broadcast written after this point, never a leftover from a past run.
-    let log_before = payload_log_len();
+    // Snapshot the log BEFORE injecting: step 4 must only accept a broadcast
+    // written after this point, never a leftover from a past run.
+    let log_mark = payload_log_mark();
 
     // ── Step 3 · Injecting ──
     let t2 = Instant::now();
@@ -175,7 +175,7 @@ pub fn run(target_pid: Option<u32>, rep: &dyn Reporter) -> Result<Outcome, FlowE
     let t3 = Instant::now();
     rep.step_begin(3);
     rep.step_note("waiting for panel");
-    let (panel_url, panel_token) = wait_panel_broadcast(6, log_before);
+    let (panel_url, panel_token) = wait_panel_broadcast(8, log_mark);
     if panel_url.is_some() {
         rep.detail("panel broadcast captured");
     } else {
@@ -193,53 +193,110 @@ pub fn run(target_pid: Option<u32>, rep: &dyn Reporter) -> Result<Outcome, FlowE
     })
 }
 
+/// Where the payload log stood before this injection started.
+///
+/// Step 4 must not read a broadcast an EARLIER run left behind — that is how the
+/// injector used to hand the user a stale panel address and token while nothing
+/// had happened. Size alone is not enough to tell: the agent TRUNCATES this log
+/// when it starts the WebUI, so it can briefly shrink and then grow back past
+/// the old length between two polls.
+#[derive(Clone, Copy)]
+pub struct LogMark {
+    pub len: usize,
+    pub mtime: Option<std::time::SystemTime>,
+}
+
+/// Snapshot the payload log. Call this immediately before injecting.
+pub fn payload_log_mark() -> LogMark {
+    let log_path = format!("{}doppel-payload.log", resource::temp_dir());
+    match std::fs::metadata(&log_path) {
+        Ok(m) => LogMark { len: m.len() as usize, mtime: m.modified().ok() },
+        Err(_) => LogMark { len: 0, mtime: None },
+    }
+}
+
+/// Does something actually accept TCP connections at this http URL? Reporting a
+/// panel that is not listening is exactly the kind of lie this whole rework is
+/// about, so the address is verified before it is believed.
+fn panel_reachable(url: &str) -> bool {
+    let rest = match url.strip_prefix("http://") {
+        Some(r) => r,
+        None => return false,
+    };
+    let hostport = rest.split('/').next().unwrap_or("");
+    if !hostport.contains(':') {
+        return false;
+    }
+    use std::net::ToSocketAddrs;
+    let addr = match hostport.to_socket_addrs() {
+        Ok(mut it) => match it.next() {
+            Some(a) => a,
+            None => return false,
+        },
+        Err(_) => return false,
+    };
+    std::net::TcpStream::connect_timeout(&addr, std::time::Duration::from_millis(400)).is_ok()
+}
+
 /// Poll %TEMP%\doppel-payload.log for the WebUI broadcast line:
 ///   "[WebUI] Panel: <url...>  Token: <token>"
 ///
-/// `min_offset` is the length of the log before this injection started. The log
-/// is append-only, so without it a broadcast from an EARLIER run would still be
-/// found and reported as this run's panel — the injector would hand the user a
-/// stale address and token while nothing had actually happened.
-///
-/// Returns (first url, token). Empty strings when not broadcast within budget.
-pub fn wait_panel_broadcast(max_secs: u64, min_offset: usize) -> (Option<String>, String) {
+/// Only a broadcast written after `mark` counts, and the address must answer on
+/// TCP before it is returned. Returns (url, token); empty when the panel did not
+/// come up within the budget.
+pub fn wait_panel_broadcast(max_secs: u64, mark: LogMark) -> (Option<String>, String) {
     let log_path = format!("{}doppel-payload.log", resource::temp_dir());
     let deadline = Instant::now() + std::time::Duration::from_secs(max_secs);
+    // Latched: once the log has been seen shorter than before, we know it was
+    // rewritten and everything in it belongs to this run.
+    let mut truncated = false;
+
     while Instant::now() < deadline {
-        if let Ok(log) = std::fs::read_to_string(&log_path) {
-            // If the file was recreated it is shorter than our offset — then
-            // everything in it is new.
-            let fresh = if log.len() >= min_offset { &log[min_offset..] } else { &log[..] };
-            if let Some(line) = fresh.lines().rev().find(|l| l.contains("[WebUI] Panel:")) {
-                let rest = match line.find("[WebUI] Panel:") {
-                    Some(i) => line[i + "[WebUI] Panel:".len()..].trim(),
-                    None => "",
-                };
-                let (urls_part, token) = match rest.find("Token:") {
-                    Some(i) => (rest[..i].trim(), rest[i + "Token:".len()..].trim()),
-                    None => (rest, ""),
-                };
-                let url = urls_part
-                    .split_whitespace()
-                    .find(|s| s.starts_with("http"))
-                    .unwrap_or("")
-                    .to_string();
-                let url_opt = if url.is_empty() { None } else { Some(url) };
-                return (url_opt, token.to_string());
+        let meta = std::fs::metadata(&log_path).ok();
+        if let Some(m) = &meta {
+            if (m.len() as usize) < mark.len {
+                truncated = true;
             }
         }
-        std::thread::sleep(std::time::Duration::from_millis(400));
+        let touched = match (meta.as_ref().and_then(|m| m.modified().ok()), mark.mtime) {
+            // Newer than when we started injecting.
+            (Some(now), Some(before)) => now > before,
+            // There was no log before, so all of it is from this run.
+            (Some(_), None) => true,
+            _ => false,
+        };
+
+        if touched || truncated {
+            if let Ok(log) = std::fs::read_to_string(&log_path) {
+                let fresh = if truncated { &log[..] } else { &log[mark.len.min(log.len())..] };
+                if let Some(line) = fresh.lines().rev().find(|l| l.contains("[WebUI] Panel:")) {
+                    let rest = match line.find("[WebUI] Panel:") {
+                        Some(i) => line[i + "[WebUI] Panel:".len()..].trim(),
+                        None => "",
+                    };
+                    let (urls_part, token) = match rest.find("Token:") {
+                        Some(i) => (rest[..i].trim(), rest[i + "Token:".len()..].trim()),
+                        None => (rest, ""),
+                    };
+                    let url = urls_part
+                        .split_whitespace()
+                        .find(|s| s.starts_with("http"))
+                        .unwrap_or("")
+                        .to_string();
+                    if url.is_empty() {
+                        return (None, String::new());
+                    }
+                    if panel_reachable(&url) {
+                        return (Some(url), token.to_string());
+                    }
+                    // Broadcast happened but nothing is listening yet — keep
+                    // waiting rather than report a panel that does not answer.
+                }
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(300));
     }
     (None, String::new())
-}
-
-/// Current size of the payload log — snapshot this before injecting so step 4
-/// can ignore anything an earlier run left behind.
-pub fn payload_log_len() -> usize {
-    let log_path = format!("{}doppel-payload.log", resource::temp_dir());
-    std::fs::metadata(&log_path)
-        .map(|m| m.len() as usize)
-        .unwrap_or(0)
 }
 
 /// The candidate list the web panel shows. Re-scanned on every call so a

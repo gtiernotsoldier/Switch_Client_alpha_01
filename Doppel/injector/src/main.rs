@@ -9,15 +9,17 @@
 //   doppel-injector --pid 1234   → headless: inject that PID right away,
 //                                  console timeline only (scripts / CI).
 //
-// The launcher is a real window, not a page: an injector that needs a browser
-// tab, a local HTTP port and a per-run token to do its one job was the wrong
-// shape. The form follows OpenCommunity's launcher — choose the instance, then
-// watch the injection — and the console timeline still runs in parallel, so a
-// terminal is all you need when something goes wrong.
+// This is a GUI-subsystem binary on purpose: the launcher must be ONE window.
+// A console subsystem would put a second, black window next to it. The console
+// timeline still works when there is one to write to — AttachConsole at startup
+// reuses the terminal that launched us, so `--pid` and `--help` from a shell
+// print normally, and a double-click from Explorer shows nothing extra.
 //
 // The pipeline itself lives in flow.rs and is UI-agnostic; ui.rs paints the
 // terminal, window.rs paints the launcher. The C++ payload.dll stays C++ (it
 // must run inside javaw.exe and talk JNI / the Windows Attach pipe).
+
+#![cfg_attr(windows, windows_subsystem = "windows")]
 
 mod flow;
 mod inject;
@@ -31,6 +33,24 @@ mod window;
 use std::time::{Duration, Instant};
 
 use flow::{Reporter, STEPS};
+
+#[link(name = "kernel32")]
+extern "system" {
+    /// Reattach to the console of the process that launched us, if there is one.
+    fn AttachConsole(process_id: u32) -> i32;
+}
+
+const ATTACH_PARENT_PROCESS: u32 = 0xFFFF_FFFF;
+
+/// A GUI-subsystem process starts without stdio. If it was launched from a
+/// terminal we want the console timeline there, so attach to the parent's
+/// console before anything writes. Must run before the first stdout use, or
+/// Rust caches the (null) handle.
+fn attach_parent_console() {
+    unsafe {
+        AttachConsole(ATTACH_PARENT_PROCESS);
+    }
+}
 
 /// The terminal timeline, wrapped as a Reporter so flow.rs can drive it.
 struct ConsoleReporter;
@@ -61,6 +81,8 @@ impl Reporter for ConsoleReporter {
 }
 
 fn main() {
+    attach_parent_console();
+
     let args: Vec<String> = std::env::args().skip(1).collect();
 
     if flag(&args, "--help") || flag(&args, "-h") {

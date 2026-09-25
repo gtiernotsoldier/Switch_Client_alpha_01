@@ -4,26 +4,29 @@
 //
 // Two ways in, one pipeline:
 //
-//   doppel-injector                 → starts the local web panel, opens the
-//                                     browser, and waits. You pick the PID.
-//   doppel-injector --pid 1234      → headless: inject that PID right away,
-//                                     console timeline only (scripts / CI).
+//   doppel-injector              → opens the native launcher window: it lists
+//                                  the java processes, you pick one and inject.
+//   doppel-injector --pid 1234   → headless: inject that PID right away,
+//                                  console timeline only (scripts / CI).
 //
-// The console timeline is not gone — it runs in parallel with the page, so a
-// double-clicked exe still shows what is happening, and there is always a
-// usable path when no browser is available.
+// The launcher is a real window, not a page: an injector that needs a browser
+// tab, a local HTTP port and a per-run token to do its one job was the wrong
+// shape. The form follows OpenCommunity's launcher — choose the instance, then
+// watch the injection — and the console timeline still runs in parallel, so a
+// terminal is all you need when something goes wrong.
 //
 // The pipeline itself lives in flow.rs and is UI-agnostic; ui.rs paints the
-// terminal, webui.rs serves the page. The C++ payload.dll stays C++ (it must
-// run inside javaw.exe and talk JNI / the Windows Attach pipe).
+// terminal, window.rs paints the launcher. The C++ payload.dll stays C++ (it
+// must run inside javaw.exe and talk JNI / the Windows Attach pipe).
 
 mod flow;
 mod inject;
+mod log;
 mod process;
 mod resource;
 mod ui;
 mod version;
-mod webui;
+mod window;
 
 use std::time::{Duration, Instant};
 
@@ -68,50 +71,28 @@ fn main() {
     let verbose = flag(&args, "--verbose") || flag(&args, "-v");
     ui::init(verbose);
     ui::banner(env!("CARGO_PKG_VERSION"));
+    log::append(&format!(
+        "=== doppel-injector v{} started{} ===",
+        env!("CARGO_PKG_VERSION"),
+        if verbose { " (verbose)" } else { "" }
+    ));
 
-    // ── Headless path: an explicit PID, console only, no server ──
+    // ── Headless path: an explicit PID, console only, no window ──
     if let Some(pid) = value(&args, "--pid").and_then(|v| v.parse::<u32>().ok()) {
         run_headless(pid);
         return;
     }
 
-    // ── Panel path: pick the process in the browser ──
-    let port = value(&args, "--port")
-        .and_then(|v| v.parse::<u16>().ok())
-        .unwrap_or(0);
-    let open_browser = !flag(&args, "--no-browser");
+    // ── Launcher path: pick the process in the window ──
+    ui::note(&format!("log     {}\\doppel-injector.log", resource::temp_dir()));
+    ui::hint("pick the Minecraft process in the launcher window");
 
-    let panel = match webui::start(port, open_browser) {
-        Ok(p) => p,
-        Err(e) => {
-            ui::error(&format!("could not start the local panel: {}", e));
-            ui::hint("try another port: doppel-injector --port 8765");
-            ui::shutdown();
-            pause_exit();
-            std::process::exit(1);
-        }
-    };
+    let code = window::run();
 
-    println!();
-    ui::note(&format!("panel   {}", panel.url()));
-    ui::note("token   included in the URL above — the page sends it on every request");
-    if !open_browser {
-        ui::hint("open that URL yourself (--no-browser was set)");
-    }
-    ui::hint("pick the Minecraft process in the page · press Enter here to quit");
-    println!();
-
-    // Enter in this console closes the injector too, for people who never look
-    // at the browser tab.
-    std::thread::spawn(|| {
-        let mut line = String::new();
-        let _ = std::io::stdin().read_line(&mut line);
-        webui::request_exit();
-    });
-
-    webui::wait_for_exit();
     ui::shutdown();
+    log::append("=== launcher closed ===");
     ui::note("injector closed — the agent keeps running inside the game");
+    std::process::exit(code);
 }
 
 /// Inject one known PID with the console timeline only.
@@ -121,6 +102,7 @@ fn run_headless(pid: u32) {
         Ok(outcome) => {
             ui::summary(outcome.panel_url.as_deref(), &outcome.panel_token);
             ui::detail("done — the agent keeps running inside the game process");
+            log::append("=== headless injection OK ===");
             ui::shutdown();
             pause_exit();
         }
@@ -128,6 +110,7 @@ fn run_headless(pid: u32) {
             let idx = e.step_index();
             ui::step_fail(idx, STEPS.get(idx).copied().unwrap_or(""), e.reason());
             ui::hint(e.hint());
+            log::append(&format!("=== headless injection FAILED · {} ===", e.reason()));
             ui::shutdown();
             pause_exit();
             std::process::exit(1);
@@ -141,13 +124,12 @@ fn help() {
 USAGE:\n  \
 doppel-injector [OPTIONS]\n\n\
 OPTIONS:\n  \
---pid <PID>      inject this PID immediately (headless, no web panel)\n  \
---port <PORT>    fixed port for the panel (default: an ephemeral free port)\n  \
---no-browser     serve the panel but do not open a browser\n  \
--v, --verbose    print detail lines\n  \
+--pid <PID>      inject this PID immediately (headless, no launcher window)\n  \
+-v, --verbose    print detail lines in the console\n  \
 -h, --help       this text\n\n\
-Without --pid the injector starts a local panel on 127.0.0.1, opens it, and\n\
-lists every javaw/java process so you can pick which one to inject.\n",
+Without --pid the injector opens its launcher window, lists every javaw/java\n\
+process on the machine and lets you pick which one to inject. Every run is\n\
+also written to %TEMP%\\doppel-injector.log.\n",
         env!("CARGO_PKG_VERSION")
     );
 }

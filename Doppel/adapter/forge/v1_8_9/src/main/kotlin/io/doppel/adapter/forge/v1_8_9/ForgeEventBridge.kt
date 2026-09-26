@@ -515,7 +515,11 @@ object ForgeEventBridge : IEventBridge {
                 for (entity in entities) {
                     // TargetFilter (Player category): skip entity types the user filtered out.
                     if (!isTargetTypeAllowed(entity)) continue
-                    val collidable = try { MappingContext.invokeMethod(entity, "forge:entity_canBeCollidedWith") as? Boolean ?: false } catch (_: Exception) { false }
+                    // Fail-open on purpose: if the mapping cannot be resolved we
+                    // treat the entity as collidable and keep it. Dropping a
+                    // target because a reflection call threw is how a broken
+                    // mapping silently eats the whole feature.
+                    val collidable = try { MappingContext.invokeMethod(entity, "forge:entity_canBeCollidedWith") as? Boolean ?: true } catch (_: Exception) { true }
                     if (!collidable) continue
                     val box = MappingContext.invokeMethod(entity, "forge:entity_getEntityBoundingBox") ?: continue
                     val bMin = bbMin(box) ?: continue
@@ -710,7 +714,8 @@ object ForgeEventBridge : IEventBridge {
                 var bestT = reach
                 for (e in entities) {
                     if (!isTargetTypeAllowed(e)) continue
-                    val collidable = try { MappingContext.invokeMethod(e, "forge:entity_canBeCollidedWith") as? Boolean ?: false } catch (_: Exception) { false }
+                    // Same fail-open rule as the forward raycast above.
+                    val collidable = try { MappingContext.invokeMethod(e, "forge:entity_canBeCollidedWith") as? Boolean ?: true } catch (_: Exception) { true }
                     if (!collidable) continue
                     val box = MappingContext.invokeMethod(e, "forge:entity_getEntityBoundingBox") ?: continue
                     val bMin = bbMin(box) ?: continue

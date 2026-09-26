@@ -227,6 +227,16 @@ public class Agent {
         MappingContext.initialize();
         log("[Agent] MappingContext initialized");
 
+        // Resolve every mapping entry once and say so in the log. A dead key
+        // used to be invisible: the caller caught the failure and treated it as
+        // "no", so the feature just stopped working. One line here makes that
+        // impossible to miss.
+        try {
+            log("[Agent] " + MappingContext.selfCheck());
+        } catch (Throwable t) {
+            log("[Agent] mapping self-check failed: " + t);
+        }
+
         // 3. Initialize platform adapter FIRST (registers modules + platform handlers)
         //    Direct call — cut reflection bridge #4. agent.jar bundles ForgeBootstrap,
         //    so we can import it directly. Exceptions no longer wrapped in

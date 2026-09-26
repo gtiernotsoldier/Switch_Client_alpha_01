@@ -341,6 +341,58 @@ public class MappingContext {
     }
 
     /**
+     * Resolve every entry in the mapping table once and report how many are
+     * actually usable.
+     *
+     * This exists because the table silently rotted: five entries named SRG
+     * members that do not exist in 1.8.9 at all, and two more named members
+     * that exist but are a DIFFERENT method (func_72945_a is
+     * getCollidingBoundingBoxes, func_70027_ad is not canBeCollidedWith). Every
+     * one of them failed closed — the caller caught the exception, treated it
+     * as "no", and the feature died without a word. Nothing surfaced until the
+     * raw log was read line by line.
+     *
+     * Resolution only: classes and members are looked up, nothing is invoked,
+     * so this is deterministic and safe to run at startup.
+     *
+     * @return a one-line health summary, plus the dead keys when there are any
+     */
+    public static String selfCheck() {
+        int ok = 0;
+        int dead = 0;
+        StringBuilder deadKeys = new StringBuilder();
+        for (String key : new java.util.ArrayList<>(MAPPINGS.keySet())) {
+            Object raw = MAPPINGS.get(key);
+            if (!(raw instanceof Map)) continue;
+            @SuppressWarnings("unchecked")
+            Map<String, String> entry = (Map<String, String>) raw;
+            boolean isField = entry.get("field") != null;
+            boolean isMethod = entry.get("method") != null;
+            if (!isField && !isMethod) continue;
+            boolean resolved;
+            try {
+                resolved = isField ? (getField(key) != null) : (getMethod(key) != null);
+            } catch (Throwable t) {
+                resolved = false;
+            }
+            if (resolved) {
+                ok++;
+            } else {
+                dead++;
+                if (deadKeys.length() < 600) {
+                    if (deadKeys.length() > 0) deadKeys.append(", ");
+                    deadKeys.append(key);
+                }
+            }
+        }
+        int total = ok + dead;
+        if (dead == 0) {
+            return "MAPPINGS " + ok + "/" + total + " resolved — every key usable";
+        }
+        return "MAPPINGS " + ok + "/" + total + " resolved — DEAD KEYS: " + deadKeys;
+    }
+
+    /**
      * Clear all caches (for hot-reloading)
      */
     public static void clearCache() {

@@ -18,6 +18,14 @@ jobs:
       - name: Setup Gradle 8.5
         uses: gradle/actions/setup-gradle@v4
         with: { gradle-version: '8.5' }
+      # The mapping table rotted silently once: ten entries named SRG members
+      # that do not exist in 1.8.9, or named a member that exists but is a
+      # DIFFERENT method (func_72945_a is getCollidingBoundingBoxes, not
+      # getEntitiesWithinAABBExcludingEntity). Every one of them failed closed,
+      # so the features died without a symptom. This check is why that cannot
+      # happen again unnoticed.
+      - name: Verify Forge 1.8.9 mapping table
+        run: node Doppel/scripts/verify_mappings.mjs
       - name: Compile
         run: cd Doppel && gradle :core:compileKotlin :agent:classes :adapter:common:compileKotlin :adapter:forge:v1_8_9:compileKotlin --no-daemon
       - name: Build agent fat jar

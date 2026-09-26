@@ -1,0 +1,9 @@
+# Mapping entries whose MCP name legitimately differs from verify/methods.csv or
+# verify/fields.csv, because those CSVs are from an earlier MCP version than the
+# 1.8.9 install this table targets. One key per line; anything after '#' is a
+# comment. Every entry needs a reason — this is an escape hatch, not a bin.
+#
+# forge:mc_fontRendererObj — MCP renamed Minecraft.fontRenderer to
+#   fontRendererObj during the 1.7.10 -> 1.8 cycle. field_71466_p is the right
+#   field for 1.8.9; the CSV still carries the old readable name.
+forge:mc_fontRendererObj

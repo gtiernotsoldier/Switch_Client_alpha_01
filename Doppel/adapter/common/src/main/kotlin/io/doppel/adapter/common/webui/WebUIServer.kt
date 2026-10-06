@@ -5,6 +5,7 @@ import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpServer
 import io.doppel.adapter.common.module.Module
 import io.doppel.adapter.common.module.ModuleRegistry
+import io.doppel.adapter.common.option.COLOR_MAX
 import io.doppel.adapter.common.option.ConfigManager
 import io.doppel.adapter.common.option.OptionDescriptor
 import io.doppel.adapter.common.option.OptionType
@@ -161,6 +162,7 @@ object WebUIServer {
 
             when {
                 path.startsWith("/api/modules") -> handleModules(exchange)
+                path.startsWith("/api/hud/order") -> handleHudOrder(exchange)
                 path.startsWith("/api/options") -> handleOptions(exchange)
                 path.startsWith("/api/config") -> handleConfig(exchange)
                 else -> handleStatic(exchange)
@@ -210,6 +212,28 @@ object WebUIServer {
     // ═══════════════════════════════════════════
     //  Modules
     // ═══════════════════════════════════════════
+
+    /**
+     * `POST /api/hud/order` — move one module a slot up or down in the HUD list order.
+     *
+     * The order is the user's, not the module's: it decides what the overlay draws on top when the
+     * header's `orderPublished` flag is set (the HUD module's `OverlayOrder` option), so the WebUI
+     * is where the dragging happens (B2 round 2).
+     */
+    private fun handleHudOrder(exchange: HttpExchange) {
+        if (exchange.requestMethod != "POST") return methodNotAllowed(exchange)
+        val body = String(exchange.requestBody.readBytes(), StandardCharsets.UTF_8)
+        @Suppress("UNCHECKED_CAST")
+        val req = mapper.readValue(body, Map::class.java) as Map<String, Any?>
+        val name = (req["name"] as? String).orEmpty()
+        val direction = (req["direction"] as? String)?.lowercase().orEmpty()
+        val hud = io.doppel.adapter.common.module.render.HUD
+        val ok = name.isNotBlank() && (direction == "up" || direction == "down") &&
+            hud.moveInHud(name, direction)
+        respondJson(exchange, 200, mapper.writeValueAsString(
+            mapOf("ok" to ok, "order" to hud.hudOrderedNames())
+        ))
+    }
 
     private fun handleModules(exchange: HttpExchange) {
         try {
@@ -373,6 +397,9 @@ object WebUIServer {
             "keybind" to module.keybind,
             "keyName" to keyName(module.keybind),
             "hudHidden" to module.hudHidden,
+            "hudShown" to !module.hudHidden,
+            // Where the module sits in the user's HUD order — the WebUI's HUD panel sorts by this.
+            "hudIndex" to io.doppel.adapter.common.module.render.HUD.hudIndexOf(module.name),
             "hudEnabled" to (module is io.doppel.adapter.common.module.HudLineProvider),
             // The module's OWN published HUD string (B2). The external overlay draws exactly this
             // text; publishing it to the panel is what stops the two from showing two different
@@ -383,24 +410,40 @@ object WebUIServer {
         )
     }
 
-    /** GLFW key code → human name for the WebUI keybind display. */
+    /**
+     * GLFW key code → the key's name for the WebUI keybind display.
+     *
+     * English on purpose. The panel used to print `未绑定` / `空格` / `键A`, while Minecraft's own
+     * controls screen names the same keys `Space` / `A` / `LSHIFT` — two vocabularies for one
+     * keyboard is how a user ends up binding a module to a key the game already uses and not
+     * noticing. These strings are also what the module keybind poll compares against mentally, so
+     * they follow the game's own spelling (`LShift`, `Space`, `F1`).
+     */
     fun keyName(code: Int): String {
-        if (code <= 0) return "未绑定"
+        if (code <= 0) return "Unbound"
         return when (code) {
-            io.doppel.adapter.common.api.KeyCode.LEFT_SHIFT -> "左Shift"
-            io.doppel.adapter.common.api.KeyCode.RIGHT_SHIFT -> "右Shift"
-            io.doppel.adapter.common.api.KeyCode.LEFT_CONTROL -> "左Ctrl"
-            io.doppel.adapter.common.api.KeyCode.RIGHT_CONTROL -> "右Ctrl"
-            io.doppel.adapter.common.api.KeyCode.LEFT_ALT -> "左Alt"
-            io.doppel.adapter.common.api.KeyCode.RIGHT_ALT -> "右Alt"
-            io.doppel.adapter.common.api.KeyCode.SPACE -> "空格"
-            io.doppel.adapter.common.api.KeyCode.ENTER -> "回车"
-            io.doppel.adapter.common.api.KeyCode.TAB -> "Tab"
             io.doppel.adapter.common.api.KeyCode.ESC -> "Esc"
-            in 48..57 -> "键${(code - 48)}"
-            in 65..90 -> "键${((code - 65) + 'A'.code).toChar()}"
-            in 290..301 -> "F${(code - 290 + 1)}"
-            else -> "键$code"
+            io.doppel.adapter.common.api.KeyCode.ENTER -> "Enter"
+            io.doppel.adapter.common.api.KeyCode.TAB -> "Tab"
+            io.doppel.adapter.common.api.KeyCode.BACKSPACE -> "Backspace"
+            io.doppel.adapter.common.api.KeyCode.SPACE -> "Space"
+            io.doppel.adapter.common.api.KeyCode.LEFT_SHIFT -> "LShift"
+            io.doppel.adapter.common.api.KeyCode.RIGHT_SHIFT -> "RShift"
+            io.doppel.adapter.common.api.KeyCode.LEFT_CONTROL -> "LCtrl"
+            io.doppel.adapter.common.api.KeyCode.RIGHT_CONTROL -> "RCtrl"
+            io.doppel.adapter.common.api.KeyCode.LEFT_ALT -> "LAlt"
+            io.doppel.adapter.common.api.KeyCode.RIGHT_ALT -> "RAlt"
+            in 48..57 -> "" + (code - 48)
+            in 65..90 -> "" + ((code - 65) + 'A'.code).toChar()
+            in 290..301 -> "F${code - 290 + 1}"
+            // GLFW's arrow keys, which a module keybind may well use.
+            265 -> "Up"
+            264 -> "Down"
+            263 -> "Left"
+            262 -> "Right"
+            // GLFW's numpad block.
+            in 320..329 -> "Num ${code - 320}"
+            else -> "Key $code"
         }
     }
 
@@ -415,11 +458,14 @@ object WebUIServer {
             "min" to when (meta.type) {
                 OptionType.FLOAT -> meta.rangeMin
                 OptionType.INT, OptionType.PROBABILITY -> meta.intRangeMin
+                // The colour picker clamps against these; without them the panel would guess.
+                OptionType.COLOR -> 0
                 else -> null
             },
             "max" to when (meta.type) {
                 OptionType.FLOAT -> meta.rangeMax
                 OptionType.INT, OptionType.PROBABILITY -> meta.intRangeMax
+                OptionType.COLOR -> COLOR_MAX
                 else -> null
             },
             "unit" to meta.unit,

@@ -221,6 +221,84 @@
         .icon-btn:hover { color: #fff; border-color: rgba(34,211,238,0.4); box-shadow: 0 0 20px rgba(34,211,238,0.12); }
 
         /* =========================================================
+           HUD list — compact, collapsible overlay-order panel.
+           Lives above the category tabs, so the card grid is untouched.
+           ========================================================= */
+        .hud-panel {
+            margin-top: 10px;
+            background: rgba(13, 18, 28, 0.66);
+            backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+            border: 1px solid rgba(255,255,255,0.07); border-radius: 13px; overflow: hidden;
+            transition: border-color 0.35s ease, box-shadow 0.35s ease;
+        }
+        .hud-panel:hover { border-color: rgba(34,211,238,0.18); }
+        .hud-panel.open { border-color: rgba(34,211,238,0.22); box-shadow: 0 8px 34px rgba(0,0,0,0.32); }
+        .hud-head { display: flex; align-items: center; gap: 9px; padding: 9px 13px; cursor: pointer; }
+        .hud-head:hover { background: rgba(255,255,255,0.03); }
+        .hud-caret {
+            color: rgba(255,255,255,0.28); font-size: 11px; line-height: 1; flex: 0 0 auto;
+            transition: transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1), color 0.3s ease;
+        }
+        .hud-panel.open .hud-caret { transform: rotate(180deg); color: rgba(34,211,238,0.7); }
+        .hud-title { font-size: 12.5px; color: rgba(255,255,255,0.85); font-weight: 500; flex: 0 0 auto; }
+        .hud-count {
+            font-size: 9px; color: rgba(34,211,238,0.7); background: rgba(34,211,238,0.07);
+            padding: 1px 7px; border-radius: 30px; border: 1px solid rgba(34,211,238,0.14);
+            font-family: 'SF Mono', monospace; flex: 0 0 auto;
+        }
+        .hud-head .spacer { flex: 1; }
+        .hud-search {
+            width: 150px; padding: 4px 9px; font-size: 11.5px; color: #fff; flex: 0 0 auto;
+            background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 7px; outline: none; user-select: text; cursor: text;
+            transition: border-color 0.2s, background 0.2s;
+        }
+        .hud-search:focus { border-color: rgba(34,211,238,0.45); background: rgba(34,211,238,0.07); }
+        .hud-search::placeholder { color: rgba(255,255,255,0.24); }
+        .hud-body {
+            max-height: 0; opacity: 0; visibility: hidden; overflow: hidden;
+            border-top: 1px solid transparent;
+            transition: max-height 0.45s cubic-bezier(0.33, 1, 0.68, 1),
+                        opacity 0.35s ease, border-color 0.3s ease, visibility 0s linear 0.45s;
+        }
+        .hud-panel.open .hud-body {
+            max-height: 236px; opacity: 1; visibility: visible; overflow-y: auto;
+            border-top: 1px solid rgba(34,211,238,0.10);
+            transition: max-height 0.45s cubic-bezier(0.33, 1, 0.68, 1),
+                        opacity 0.35s ease, border-color 0.3s ease, visibility 0s;
+        }
+        .hud-rows { padding: 6px 8px 8px 8px; display: flex; flex-direction: column; gap: 3px; }
+        .hud-row {
+            display: flex; align-items: center; gap: 9px; padding: 4px 7px; border-radius: 8px;
+            background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.04);
+            transition: background 0.25s ease, border-color 0.25s ease;
+        }
+        .hud-row:hover { background: rgba(34,211,238,0.05); border-color: rgba(34,211,238,0.16); }
+        .hud-dot {
+            width: 18px; height: 18px; flex: 0 0 auto; border-radius: 30px; cursor: pointer;
+            display: flex; align-items: center; justify-content: center; font-size: 10px;
+            color: rgba(52,211,153,0.9); background: rgba(52,211,153,0.09);
+            border: 1px solid rgba(52,211,153,0.2); transition: 0.2s;
+        }
+        .hud-dot:hover { background: rgba(52,211,153,0.2); }
+        .hud-dot.off { color: rgba(255,255,255,0.28); background: rgba(255,255,255,0.04); border-color: rgba(255,255,255,0.08); }
+        .hud-name { font-size: 12.5px; color: rgba(255,255,255,0.88); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .hud-val {
+            font-size: 9.5px; color: rgba(167,139,250,0.85); background: rgba(167,139,250,0.08);
+            padding: 1px 8px; border-radius: 30px; border: 1px solid rgba(167,139,250,0.16);
+            font-family: 'SF Mono', monospace; white-space: nowrap; flex: 0 0 auto;
+        }
+        .hud-order { margin-left: auto; display: flex; gap: 3px; flex: 0 0 auto; }
+        .hud-mv {
+            width: 20px; height: 20px; padding: 0; line-height: 1; font-size: 8px; cursor: pointer;
+            display: flex; align-items: center; justify-content: center; border-radius: 6px;
+            background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1);
+            color: rgba(255,255,255,0.6); transition: background 0.2s, color 0.2s, border-color 0.2s;
+        }
+        .hud-mv:hover { background: rgba(34,211,238,0.14); color: #22D3EE; border-color: rgba(34,211,238,0.3); }
+        .hud-empty { font-size: 11px; color: rgba(255,255,255,0.22); font-style: italic; padding: 8px 6px; }
+
+        /* =========================================================
            Module grid — two columns of cards
            ========================================================= */
         .module-grid { display: flex; gap: 14px; align-items: flex-start; margin-top: 14px; }
@@ -377,16 +455,9 @@
             overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
         }
         .slider-label-row .ver-tag { flex: 0 0 auto; }
-        /* Numeric field: typed exact value, with -/+ nudges that respect the declared step (B2) */
+        /* Numeric field: keyboard only. The typed value snaps to the declared step on commit;
+           the slider stays the one coarse control, so the old +/- nudge buttons are gone (B2). */
         .num-group { flex: 0 0 auto; margin-left: auto; display: flex; align-items: center; gap: 4px; }
-        .num-btn {
-            width: 20px; height: 20px; line-height: 1; padding: 0; flex: 0 0 auto;
-            background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1);
-            border-radius: 6px; color: rgba(255,255,255,0.65); font-size: 13px; cursor: pointer;
-            transition: background 0.2s, color 0.2s, border-color 0.2s;
-        }
-        .num-btn:hover { background: rgba(34,211,238,0.14); color:#22D3EE; border-color: rgba(34,211,238,0.3); }
-        .num-btn:active { background: rgba(34,211,238,0.24); }
         .num-input {
             width: 64px; flex: 0 0 auto; text-align: right; padding: 3px 8px; font-size: 12px;
             font-family: 'SF Mono', monospace; color: rgba(34,211,238,0.9);
@@ -395,6 +466,25 @@
         }
         .num-input:focus { border-color: rgba(34,211,238,0.45); background: rgba(34,211,238,0.07); }
         .num-unit { flex: 0 0 auto; font-size: 11px; color: rgba(255,255,255,0.4); }
+        /* Colour option (COLOR): swatch + hex twin, same sub-grid cell as any other option.
+           The server keeps an int 0x00RRGGBB; the panel only ever speaks #RRGGBB. */
+        .color-group { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; }
+        .color-swatch {
+            width: 28px; height: 22px; padding: 0; flex: 0 0 auto; cursor: pointer;
+            background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12);
+            border-radius: 6px; transition: border-color 0.2s, box-shadow 0.2s;
+        }
+        .color-swatch:hover { border-color: rgba(34,211,238,0.4); box-shadow: 0 0 14px rgba(34,211,238,0.12); }
+        .color-swatch::-webkit-color-swatch-wrapper { padding: 2px; }
+        .color-swatch::-webkit-color-swatch { border: none; border-radius: 4px; }
+        .color-hex {
+            width: 76px; flex: 0 0 auto; text-align: right; padding: 3px 8px; font-size: 12px;
+            font-family: 'SF Mono', monospace; color: rgba(34,211,238,0.9); text-transform: lowercase;
+            background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 6px; outline: none; user-select: text;
+            transition: border-color 0.2s, background 0.2s;
+        }
+        .color-hex:focus { border-color: rgba(34,211,238,0.45); background: rgba(34,211,238,0.07); }
         .slider-track { width: 100%; height: 6px; background: rgba(255,255,255,0.08); border-radius: 6px; position: relative; cursor: pointer; }
         .slider-fill { height: 100%; border-radius: 6px; background: linear-gradient(90deg, #22D3EE, #A78BFA); transition: width 0.25s cubic-bezier(0.22, 1, 0.36, 1); box-shadow: 0 0 14px rgba(34, 211, 238, 0.3); }
         .empty { font-size: 12px; color: rgba(255,255,255,0.25); padding: 16px; text-align: center; animation: colIn 0.4s ease backwards; }
@@ -414,6 +504,12 @@
         }
         .hud-chip.off { color: rgba(255,255,255,0.3); background: rgba(255,255,255,0.04); border-color: rgba(255,255,255,0.08); }
         .hud-chip:hover { background: rgba(52,211,153,0.18); }
+        /* Vanilla-key cheat sheet that drops in under the chip while a bind is being captured */
+        .kb-hint {
+            flex: 1 1 100%; margin-top: 2px;
+            font-size: 9.5px; color: rgba(255,255,255,0.32);
+            font-family: 'SF Mono', monospace; letter-spacing: 0.02em;
+        }
 
         /* ===== Toast ===== */
         #toast {
@@ -555,6 +651,20 @@
                 <span class="p-label">PANIC</span>
                 <span class="p-sub" id="panicSub">Panic · Restore vanilla look</span>
                 <kbd>RSHIFT + DELETE</kbd>
+            </div>
+
+            <!-- ===== HUD list: every module that can draw a line on the overlay ===== -->
+            <div class="hud-panel open" id="hudPanel">
+                <div class="hud-head" id="hudHead">
+                    <span class="hud-caret">⌄</span>
+                    <span class="hud-title">HUD list</span>
+                    <span class="hud-count" id="hudCount">0</span>
+                    <div class="spacer"></div>
+                    <input class="hud-search" id="hudSearch" placeholder="Search modules…" autocomplete="off" spellcheck="false">
+                </div>
+                <div class="hud-body">
+                    <div class="hud-rows" id="hudRows"></div>
+                </div>
             </div>
 
             <div class="cat-row" id="catRow">
@@ -777,6 +887,52 @@
             const eye = $('#eyeChip');
             if(eye && hud) eye.classList.toggle('off', !hud.enabled);
         }
+
+        // ----- HUD list panel -----
+        // Every module can appear in the HUD list: the overlay draws each enabled, non-hidden
+        // module, with the module's own published value when it has one and an auto-derived value
+        // otherwise. (`hudEnabled` only says the module defines its own HUD string — it is not
+        // "can be shown".) Order is the user's, by hudIndex.
+        function hudShown(m){ return typeof m.hudShown === 'boolean' ? m.hudShown : !m.hudHidden; }
+        function hudListModules(){
+            return modules.slice().sort((a,b) =>
+                ((a.hudIndex|0) - (b.hudIndex|0)) || String(a.name).localeCompare(String(b.name)));
+        }
+        function hudRowHtml(m){
+            const name = m.name;
+            return `<div class="hud-row" data-hud-row="${name}">
+                <span class="hud-dot ${hudShown(m)?'':'off'}" data-hud-toggle="${name}" title="Show / hide this line on the HUD">◉</span>
+                <span class="hud-name">${name}</span>
+                ${m.hudValue?`<span class="hud-val">${m.hudValue}</span>`:''}
+                <span class="hud-order">
+                    <button type="button" class="hud-mv" data-hud-move="${name}" data-dir="up" title="Move up">▲</button>
+                    <button type="button" class="hud-mv" data-hud-move="${name}" data-dir="down" title="Move down">▼</button>
+                </span>
+            </div>`;
+        }
+        let hudQuery = '';
+        let hudSig = null;
+        // orderOverride = the exact order /api/hud/order just returned, so a click reorders the rows
+        // immediately instead of waiting for the next poll. The signature guard keeps the 3s poll
+        // from rebuilding rows under the pointer when nothing actually changed.
+        function renderHudList(orderOverride){
+            const rows = $('#hudRows');
+            if(!rows) return;
+            const all = hudListModules();
+            if(orderOverride && orderOverride.length){
+                const pos = new Map(orderOverride.map((n,i)=>[n,i]));
+                all.sort((a,b) => (pos.has(a.name)?pos.get(a.name):1e9) - (pos.has(b.name)?pos.get(b.name):1e9));
+            }
+            const q = hudQuery.trim().toLowerCase();
+            const view = q ? all.filter(m => String(m.name).toLowerCase().indexOf(q) >= 0) : all;
+            const sig = all.length + '#' + view.map(m => m.name + (hudShown(m)?'1':'0') + (m.hudValue||'')).join('|');
+            if(sig === hudSig) return;
+            hudSig = sig;
+            rows.innerHTML = view.length ? view.map(hudRowHtml).join('')
+                : `<div class="hud-empty">${all.length ? 'No matching HUD modules' : 'No HUD modules yet'}</div>`;
+            const cnt = $('#hudCount');
+            if(cnt) cnt.textContent = q ? view.length + '/' + all.length : String(all.length);
+        }
         function setStatus(ok, n){
             $('#conn').textContent = ok ? '● Online · ' + (n!=null?n:modules.length) + ' modules' : '● Disconnected';
             const sc = $('#sideConn');
@@ -852,7 +1008,7 @@
         // ----- Numeric precision (B2) -----
         // The server declares a step per option (OptionMeta.effectiveStep) and the number of
         // decimal places that implies. Everything numeric goes through these four helpers, so the
-        // displayed value, the +/- nudge, the slider snap and the value that gets saved can never
+        // displayed value, the typed commit, the slider snap and the value that gets saved can never
         // disagree about precision — the panel used to round every float to one decimal on its own
         // while the module published the option's real value.
         function isDecType(t){ return t === 'FLOAT'; }
@@ -870,6 +1026,22 @@
         function snapToStep(v, step, dec){
             if(!(step > 0)) return v;
             return Number((Math.round(v / step) * step).toFixed(Math.min(6, dec + 2)));
+        }
+        // ----- Colour precision (COLOR) -----
+        // The server keeps an int 0x00RRGGBB (0..16777215); the picker and the hex field speak
+        // #RRGGBB, so every round trip goes through these two.
+        function colorToHex(v){
+            const n = (typeof v === 'number' && isFinite(v)) ? Math.round(v) : 0;
+            let h = Math.max(0, Math.min(0xFFFFFF, n)).toString(16);
+            while(h.length < 6) h = '0' + h;
+            return '#' + h;
+        }
+        function hexToColor(s){
+            const m = /^#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.exec(String(s == null ? '' : s).trim());
+            if(!m) return null;
+            let h = m[1];
+            if(h.length === 3) h = h.charAt(0)+h.charAt(0)+h.charAt(1)+h.charAt(1)+h.charAt(2)+h.charAt(2);
+            return parseInt(h, 16) & 0xFFFFFF;
         }
 
         function modeChipOf(m){
@@ -915,17 +1087,26 @@
                     <div class="slider-label-row">
                         <span class="opt-name">${o.name}</span>${tag}
                         <span class="num-group">
-                            <button type="button" class="num-btn" data-key="${key}" data-nudge="-1" tabindex="-1" title="−${step}${unit}">−</button>
                             <input class="num-input" data-key="${key}" data-min="${min}" data-max="${max}"
                                    data-int="${isDecType(t)?0:1}" data-dec="${dec}" data-step="${step}" data-unit="${unit}"
                                    inputmode="decimal" autocomplete="off" value="${disp}">
-                            <button type="button" class="num-btn" data-key="${key}" data-nudge="1" tabindex="-1" title="+${step}${unit}">+</button>
                             ${unit?`<span class="num-unit">${unit}</span>`:''}
                         </span>
                     </div>
                     <div class="slider-track" data-key="${key}" data-min="${min}" data-max="${max}" data-int="${isDecType(t)?0:1}" data-unit="${unit}" data-dec="${dec}" data-step="${step}">
                         <div class="slider-fill" style="width:${pct}%;"></div>
                     </div>
+                </div>`;
+            }
+            if(t === 'COLOR'){
+                const hex = colorToHex(val);
+                const tag = versionTag(o) + (rule ? modeTag(o, rule) : '');
+                return `<div class="sub-row">
+                    <span class="sub-label"><span class="opt-name">${o.name}</span>${tag}</span>
+                    <span class="color-group">
+                        <input type="color" class="color-swatch" data-key="${key}" value="${hex}">
+                        <input class="color-hex" data-key="${key}" data-color="1" spellcheck="false" autocomplete="off" value="${hex}">
+                    </span>
                 </div>`;
             }
             if(t === 'STRING'){
@@ -935,9 +1116,31 @@
         }
 
         // ----- Card builder -----
+        // What vanilla Minecraft already uses a key for. A module bind does not steal the key from
+        // the game, so the panel says out loud what the key does: once on the chip's tooltip and,
+        // while capturing, as a one-line cheat sheet under it (never a modal).
+        const KEY_USES = {
+            'W':'move forward', 'A':'move left', 'S':'move back', 'D':'move right',
+            'Space':'jump', 'LShift':'sneak', 'LCtrl':'sprint',
+            'E':'inventory', 'Q':'drop item', 'F':'swap to offhand',
+            'T':'chat', '/':'command chat', 'Tab':'player list', 'Enter':'chat',
+            'Esc':'pause menu', '1':'hotbar 1', '2':'hotbar 2', '3':'hotbar 3', '4':'hotbar 4',
+            '5':'hotbar 5', '6':'hotbar 6', '7':'hotbar 7', '8':'hotbar 8', '9':'hotbar 9',
+            'F1':'hide HUD', 'F2':'screenshot', 'F3':'debug screen', 'F5':'perspective',
+            'F11':'fullscreen'
+        };
+        const CAPTURE_HINT = 'Vanilla: W/A/S/D move · Space jump · LShift sneak · E inventory · Q drop · F offhand · Tab player list · T chat · 1-9 hotbar';
+        function keyUse(keyName){ return KEY_USES[keyName] || ''; }
+        function kbTitle(keyName){
+            const u = keyUse(keyName);
+            return 'Click, then press any key to bind (Esc clears)' + (u ? ' · vanilla: ' + u : '');
+        }
         function controlsHtml(m){
-            return `<span class="kb-chip" data-kb="${m.name}" title="Click, then press any key to bind (Esc clears)">⏵ ${m.keyName||'Unbound'}</span>` +
-                (m.hudEnabled ? `<span class="hud-chip ${m.hudHidden?'off':''}" data-hud="${m.name}" title="Toggle in-game HUD visibility">◉</span>` : '');
+            const kn = m.keyName || 'Unbound';
+            // The ◉ chip is on every card: any module can be hidden from the HUD list, so the
+            // per-card shortcut and the HUD panel must agree about what is adjustable.
+            return `<span class="kb-chip" data-kb="${m.name}" title="${kbTitle(kn)}">⏵ ${kn}</span>` +
+                `<span class="hud-chip ${m.hudHidden?'off':''}" data-hud="${m.name}" title="Show / hide this line on the HUD list">◉</span>`;
         }
         function moduleCard(m){
             const rule = MODE_RULES[m.name];
@@ -1017,8 +1220,10 @@
                 } else if(!hudTag && hudTagEl) hudTagEl.remove();
                 // drawer controls (keybind / hud) — never touch a capturing chip
                 const kb = card.querySelector('.kb-chip[data-kb]');
-                if(kb && !kb.classList.contains('capturing') && !capturingKey)
+                if(kb && !kb.classList.contains('capturing') && !capturingKey){
                     kb.textContent = '⏵ ' + (m.keyName||'Unbound');
+                    kb.title = kbTitle(m.keyName||'Unbound');
+                }
                 const hudc = card.querySelector('.hud-chip[data-hud]');
                 if(hudc) hudc.classList.toggle('off', !!m.hudHidden);
                 // options: rebuild only when the VISIBLE option set changed (mode swap etc.)
@@ -1046,6 +1251,13 @@
                     } else if(w.tagName === 'SELECT'){
                         const label = (o.value && o.value.name) ? o.value.name : o.value;
                         if(w.value !== label) w.value = label;
+                    } else if(w.classList.contains('color-swatch')){
+                        // COLOR: `w` is the swatch (it carries data-key and comes first); the hex
+                        // twin follows it unless the user is typing in that field right now.
+                        const hex = colorToHex(o.value);
+                        if(w.value !== hex) w.value = hex;
+                        const twin = grid.querySelector(`.color-hex[data-key="${o.key}"]`);
+                        if(twin && twin !== document.activeElement && twin.value !== hex) twin.value = hex;
                     }
                     const row = w.closest('.slider-row');
                     if(row){
@@ -1089,11 +1301,12 @@
             } else {
                 patchContent();
             }
+            renderHudList();
         }
 
         // ----- Interaction guard -----
         window.addEventListener('pointerdown', e => {
-            if(e.target.closest('.setting-item, .slider-track, select, input, textarea')){
+            if(e.target.closest('.setting-item, .hud-panel, .slider-track, select, input, textarea')){
                 interacting = true;
                 clearTimeout(interactTimer);
             }
@@ -1109,6 +1322,21 @@
 
         // ----- Clicks -----
         let capturingKey = null;
+        // Disarm a capture without binding anything: drop the highlight, the vanilla hint and put
+        // every chip back to its own keyName (English, straight from the server).
+        function cancelCapture(){
+            capturingKey = null;
+            $$('.kb-chip[data-kb]').forEach(c => {
+                const m = modules.find(x => x.name === c.dataset.kb);
+                c.classList.remove('capturing');
+                if(m){ c.textContent = '⏵ ' + (m.keyName||'Unbound'); c.title = kbTitle(m.keyName||'Unbound'); }
+            });
+            $$('.kb-hint').forEach(h=>h.remove());
+        }
+        // Typing into the HUD search box must not turn into a keybind.
+        document.addEventListener('focusin', e => {
+            if(capturingKey && !e.target.closest('.kb-chip')) cancelCapture();
+        });
         document.addEventListener('click', async e => {
             // HUD visibility chip (inside drawer)
             const hudChip = e.target.closest('.hud-chip[data-hud]');
@@ -1120,13 +1348,41 @@
                 refresh();
                 e.stopPropagation(); return;
             }
+            // HUD list row: show / hide
+            const hdot = e.target.closest('.hud-dot[data-hud-toggle]');
+            if(hdot){
+                const m = modules.find(x => x.name === hdot.dataset.hudToggle);
+                if(!m) return;
+                const hide = hudShown(m);
+                m.hudShown = !hide; m.hudHidden = hide;   // optimistic flip; the poll corrects it
+                hudSig = null; renderHudList();
+                try { await api('/api/modules/'+encodeURIComponent(m.name)+'/hud', {method:'POST', body:JSON.stringify({hidden:hide})}); } catch(err){}
+                refresh(); return;
+            }
+            // HUD list row: one slot up/down in the overlay draw order
+            const hmv = e.target.closest('.hud-mv[data-hud-move]');
+            if(hmv){
+                e.preventDefault();
+                try {
+                    const r = await api('/api/hud/order', {method:'POST', body:JSON.stringify({name:hmv.dataset.hudMove, direction:hmv.dataset.dir})});
+                    if(r && r.ok && Array.isArray(r.order)){ hudSig = null; renderHudList(r.order); }
+                    else if(r && r.error) toast(r.error);
+                } catch(err){}
+                refresh(); return;
+            }
+            // HUD list: collapse / expand (the search box stays live)
+            if(e.target.closest('#hudHead')){
+                if(!e.target.closest('#hudSearch')) $('#hudPanel').classList.toggle('open');
+                return;
+            }
             // Keybind chip
             const kb = e.target.closest('.kb-chip[data-kb]');
             if(kb){
+                cancelCapture();
                 capturingKey = kb.dataset.kb;
-                $$('.kb-chip').forEach(c=>c.classList.remove('capturing'));
                 kb.classList.add('capturing');
                 kb.textContent = '⏵ Press any key… (Esc clears)';
+                kb.insertAdjacentHTML('afterend', `<span class="kb-hint">${CAPTURE_HINT}</span>`);
                 return;
             }
             // Panic bar (two-step arm, no accidental wipes)
@@ -1224,6 +1480,10 @@
                 await api('/api/options', {method:'POST', body:JSON.stringify({key:sel.dataset.key, value:sel.value})});
                 refresh(); return;
             }
+            const csw = e.target.closest('.color-swatch[data-key]');
+            if(csw){ await commitColorSwatch(csw); refresh(); return; }
+            const chx = e.target.closest('.color-hex[data-key]');
+            if(chx){ await commitColorHex(chx); refresh(); return; }
             const num = e.target.closest('.num-input[data-key]');
             if(num){ await commitNumber(num); refresh(); return; }
             const txt = e.target.closest('.text-input[data-key]');
@@ -1236,13 +1496,26 @@
         // While typing, only the slider preview follows the keystrokes and the value is sent
         // UNCLAMPED at the declared precision: clamping mid-edit fights the user (typing "1" on the
         // way to "150" against a max of 100) and the server already rejects out-of-range values.
-        // Clamping and rewriting the field happen on commit — blur, Enter or the +/- buttons.
-        let numTimers = {};
+        // Clamping and rewriting the field happen on commit — blur or Enter, never mid-keystroke.
+        let numTimers = {};   // per-option-key debounce timers (numeric fields and colour swatches)
         function parseNumField(inp){
             const v = parseFloat(String(inp.value).replace(',', '.'));
             return isFinite(v) ? v : null;
         }
         document.addEventListener('input', e => {
+            // HUD list search — filters rows only, never the card grid
+            const hs = e.target.closest('.hud-search');
+            if(hs){ hudQuery = hs.value; renderHudList(); return; }
+            // Colour picker: preview the hex twin live, POST on a short debounce
+            const cs = e.target.closest('.color-swatch[data-key]');
+            if(cs){
+                const row = cs.closest('.sub-row');
+                const hexInp = row && row.querySelector('.color-hex');
+                if(hexInp && hexInp !== document.activeElement) hexInp.value = cs.value;
+                clearTimeout(numTimers[cs.dataset.key]);
+                numTimers[cs.dataset.key] = setTimeout(() => commitColorSwatch(cs), 200);
+                return;
+            }
             const num = e.target.closest('.num-input[data-key]');
             if(!num) return;
             const row = num.closest('.slider-row');
@@ -1275,27 +1548,30 @@
             return v;
         }
 
-        // ----- Step nudges (B2) -----
-        // One declared step per click, clamped, never below/above the option's own range.
-        document.addEventListener('click', async e => {
-            const btn = e.target.closest('.num-btn[data-key]');
-            if(!btn) return;
-            e.preventDefault();
-            const row = btn.closest('.slider-row');
-            const inp = row && row.querySelector('.num-input');
-            if(!inp) return;
-            const min = +inp.dataset.min, max = +inp.dataset.max;
-            const dec = +inp.dataset.dec, step = +inp.dataset.step;
-            let v = parseNumField(inp);
-            if(v === null) v = min;
-            const delta = btn.dataset.nudge === '1' ? step : -step;
-            v = Math.min(max, Math.max(min, snapToStep(v + delta, step, dec)));
-            inp.value = fmtNum(v, dec);
-            const fill = row.querySelector('.slider-fill');
-            if(fill && max > min) fill.style.width = (Math.min(1, Math.max(0, (v - min) / (max - min))) * 100) + '%';
+        // ----- Colour options (COLOR) -----
+        // The picker and the hex field are two views of one int; both commit to /api/options as the
+        // integer the server stores (0x00RRGGBB), never as a "#RRGGBB" string.
+        async function commitColorSwatch(sw){
+            const v = hexToColor(sw.value);
+            if(v === null) return;
+            const row = sw.closest('.sub-row');
+            const hexInp = row && row.querySelector('.color-hex');
+            if(hexInp && hexInp !== document.activeElement) hexInp.value = colorToHex(v);
+            await api('/api/options', {method:'POST', body:JSON.stringify({key:sw.dataset.key, value:v})});
+        }
+        /** Normalise a typed hex value, rewrite both fields, and save the integer. */
+        async function commitColorHex(inp){
+            const row = inp.closest('.sub-row');
+            const sw = row && row.querySelector('.color-swatch');
+            let v = hexToColor(inp.value);
+            if(v === null) v = hexToColor(sw ? sw.value : '');
+            if(v === null) v = 0;
+            const hex = colorToHex(v);
+            inp.value = hex;
+            if(sw) sw.value = hex;
             await api('/api/options', {method:'POST', body:JSON.stringify({key:inp.dataset.key, value:v})});
-            refresh();
-        });
+            return v;
+        }
 
         // ----- Slider drag (live; throttled POST; refresh only on release) -----
         function commitSlider(srow, x){
@@ -1373,11 +1649,17 @@
             else if(/^F([1-9]|1[0-2])$/.test(e.key)) code = 290 + (parseInt(e.key.slice(1),10) - 1);
             else return;
             capturingKey = null;
+            $$('.kb-hint').forEach(h=>h.remove());   // the vanilla cheat sheet goes with the capture
             (async () => {
                 try {
                     const r = await api('/api/modules/'+encodeURIComponent(name)+'/keybind', {method:'POST', body:JSON.stringify({key:code})});
                     const chip = document.querySelector(`.kb-chip[data-kb="${name}"]`);
-                    if(chip){ chip.classList.remove('capturing'); chip.textContent = '⏵ ' + (r.keyName||(code<=0?'Unbound':'Key '+code)); }
+                    if(chip){
+                        const kn = r.keyName || (code<=0 ? 'Unbound' : 'Key '+code);
+                        chip.classList.remove('capturing');
+                        chip.textContent = '⏵ ' + kn;
+                        chip.title = kbTitle(kn);
+                    }
                     refresh();
                 } catch(err){}
             })();

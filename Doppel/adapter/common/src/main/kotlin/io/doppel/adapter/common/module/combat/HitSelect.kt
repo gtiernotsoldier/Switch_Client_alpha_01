@@ -169,6 +169,7 @@ object HitSelect : Module("HitSelect", Category.COMBAT) {
         ) {
             lastCounterNano = now
             EventBridge.syntheticAttack = true
+            markWorked() // the HUD row flashes while it is counter-hitting
             counterPulse = true
         }
     }

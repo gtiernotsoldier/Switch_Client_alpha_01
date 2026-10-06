@@ -143,6 +143,10 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
         if (reblockPending) {
             if (elapsedNs(reblockStartNano) >= delayMs * 1_000_000L) {
                 EventBridge.syntheticUse = true
+                // Every call below is a *transition* (a block starting, or a re-block), never the
+                // steady hold, so the HUD row flashes when the module does something instead of
+                // glowing red for as long as a target stands nearby.
+                markWorked()
                 blockHeld = true
                 reblockPending = false
             }
@@ -198,6 +202,7 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
                     lastAttackNano = nowNs
                     if (!blockHeld) {
                         EventBridge.syntheticUse = true
+                        markWorked() // block starting — a transition, not the steady hold
                         blockHeld = true
                     }
                     // Keep blocking while attacking.
@@ -226,6 +231,7 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
                     // Not attacking, or cancel not allowed → maintain the block.
                     if (!blockHeld) {
                         EventBridge.syntheticUse = true
+                        markWorked() // block starting — a transition, not the steady hold
                         blockHeld = true
                     }
                 } else if (blockHeld) {
@@ -244,6 +250,7 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
                     }
                 } else if (shouldBlock) {
                     EventBridge.syntheticUse = true
+                    markWorked()
                     blockHeld = true
                     blockStartNano = nowNs
                 }

@@ -78,8 +78,10 @@ object TriggerBot : Module("TriggerBot", Category.COMBAT) {
                 ) }
                 val input = ClickInput(player = player, target = target)
                 val result = strategy18.execute(config, state18, input)
-                if (result is ClickResult.Click) EventBridge.syntheticAttack = true
-                else EventBridge.syntheticAttack = false
+                if (result is ClickResult.Click) {
+                    EventBridge.syntheticAttack = true
+                    markWorked() // the HUD row flashes while the bot is actually clicking
+                } else EventBridge.syntheticAttack = false
             }
             "1.9+" -> {
                 val config = cachedConfig("19") { CooldownClickConfig(
@@ -94,8 +96,10 @@ object TriggerBot : Module("TriggerBot", Category.COMBAT) {
                     isFalling = player.motionY < 0.0 && !player.onGround
                 )
                 val result = strategy19.processTick(config, state19, input)
-                if (result is ClickResult.Click) EventBridge.syntheticAttack = true
-                else EventBridge.syntheticAttack = false
+                if (result is ClickResult.Click) {
+                    EventBridge.syntheticAttack = true
+                    markWorked()
+                } else EventBridge.syntheticAttack = false
             }
         }
     }

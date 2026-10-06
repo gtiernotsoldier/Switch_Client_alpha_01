@@ -194,6 +194,7 @@ object BlockHit : Module("BlockHit", Category.COMBAT) {
 
     private fun pressBlock(nowNs: Long) {
         EventBridge.syntheticUse = true
+        markWorked() // the HUD row flashes on each block press
         blockEndNano = nowNs + currentWaitMs * 1_000_000L
     }
 

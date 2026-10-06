@@ -70,6 +70,8 @@ object KnockbackDelay : Module("KnockbackDelay", Category.COMBAT) {
         val config = cachedConfig { buildConfig() }
         val swallowed = strategy.enqueue(config, state, ctx)
         return if (swallowed) {
+            // The packet was actually held back: that is the module working.
+            markWorked()
             PlatformCommand.CancelPacket(ctx.packetHandle)
         } else {
             PlatformCommand.Pass(ctx.originalMotion)

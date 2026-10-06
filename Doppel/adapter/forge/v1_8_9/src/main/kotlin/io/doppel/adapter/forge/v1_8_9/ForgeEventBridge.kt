@@ -1320,7 +1320,29 @@ object ForgeEventBridge : IEventBridge {
      * enabling the module in a menu cannot poison it for the whole session.
      */
     @Volatile private var cachedRenderViewEntityField: java.lang.reflect.Field? = null
+    @Volatile private var renderViewEntityFailureLogged = false
 
+    /**
+     * Why a resolution attempt failed — logged once per module enable with enough detail to act on,
+     * because "not resolvable" on its own is what made the last three rounds guesswork.
+     */
+    private fun logRenderViewEntityFailure(detail: String) {
+        if (renderViewEntityFailureLogged) return
+        renderViewEntityFailureLogged = true
+        io.doppel.core.logging.CoreLogger.error("[Freelook] renderViewEntity unresolved: $detail")
+    }
+
+    /**
+     * `Minecraft.renderViewEntity`, found without trusting a name.
+     *
+     * Two rounds were spent on names: the SRG name from the repo's MCP table does not resolve on the
+     * real client, and the first shape-based fallback asked Class.forName for the Minecraft class, which
+     * our ClassLoader cannot load. This one asks the INSTANCE for its class and identifies the field by
+     * what it is — the `Entity`-typed field that currently holds the player.
+     *
+     * Every failure path now says what it saw. A failure is never cached, so enabling the module in a
+     * menu cannot poison the session.
+     */
     private fun resolveRenderViewEntityField(): java.lang.reflect.Field? {
         cachedRenderViewEntityField?.let { return it }
         MappingContext.getField("forge:mc_renderViewEntity")?.let {
@@ -1329,8 +1351,12 @@ object ForgeEventBridge : IEventBridge {
             return it
         }
         return try {
-            val mc = getMc() ?: return null
-            val player = getPlayer() ?: return null
+            val mc = getMc()
+            val player = getPlayer()
+            if (mc == null || player == null) {
+                logRenderViewEntityFailure("mc=$mc player=$player")
+                return null
+            }
             val candidates = generateSequence(mc.javaClass as Class<*>) { it.superclass }
                 .takeWhile { it != null }
                 .flatMap { cls -> cls.declaredFields.asSequence() }
@@ -1340,15 +1366,23 @@ object ForgeEventBridge : IEventBridge {
                 try { it.get(mc) === player } catch (_: Exception) { false }
             }
             val chosen = byIdentity ?: candidates.singleOrNull()
-            if (chosen != null) {
+            if (chosen == null) {
+                val names = candidates.joinToString { f ->
+                    f.name + "(" + f.type.name + "=" + (try { f.get(mc)?.javaClass?.simpleName } catch (_: Exception) { "?" }) + ")"
+                }
+                logRenderViewEntityFailure(
+                    "no Entity field holds the player; mcClass=${mc.javaClass.name} " +
+                        "playerClass=${player.javaClass.name} candidates=[$names]"
+                )
+            } else {
                 cachedRenderViewEntityField = chosen
                 io.doppel.core.logging.CoreLogger.info(
-                    "[Freelook] renderViewEntity resolved by shape: ${chosen.name} " +
-                        "(identity=${byIdentity != null}, candidates=${candidates.map { c -> c.name }})"
+                    "[Freelook] renderViewEntity resolved by shape: ${chosen.name} (identity=${byIdentity != null})"
                 )
             }
             chosen
-        } catch (_: Exception) {
+        } catch (t: Throwable) {
+            logRenderViewEntityFailure("${t.javaClass.simpleName}: ${t.message}")
             null
         }
     }
@@ -1424,6 +1458,7 @@ object ForgeEventBridge : IEventBridge {
                 }
                 freeLookLogged = false
                 freeLookStickLogged = false
+                renderViewEntityFailureLogged = false
                 return
             }
             // Raven's trick, and the reason their camera feels natural: freelook puts the game into

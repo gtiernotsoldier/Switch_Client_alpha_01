@@ -43,6 +43,7 @@ object AgentBridge {
         "Sprint" to "movement",
         "Strafe" to "movement",
         "StrafeFix" to "movement",
+        "InvMove" to "movement",
         // Player
         "AntiBot" to "player",
         "AutoTool" to "player",

@@ -148,6 +148,14 @@ object EventBridge {
         aimTrackInsideBox = false
         resetHurtCamHandler = null
         resetFovModifierHandler = null
+        // Render/GUI hook contract — a stale "on" flag here would outlive the module that set it.
+        suppressHurtCam = false
+        lockFovModifier = false
+        keepMovementInGui = false
+        guiMovementKeepSprint = false
+        guiMovementOnlyInventory = false
+        cameraYawOverride = null
+        cameraPitchOverride = null
         gammaSetter = null
         rightClickDelayHandler = null
         scoreboardTeamChecker = null
@@ -1214,6 +1222,12 @@ object EventBridge {
     @Volatile var targetFilterMobs: Boolean = true
 
     // ========== Render Overrides (NoFOV, NoHurtCam — Render) ==========
+    // The two "reset" handlers are legacy: the render modules used to call them on the 20 Hz tick.
+    // That was wrong twice over — zeroing `hurtTime` hides the "I was just hit" signal HitSelect and
+    // Velocity read (and kills the red damage tint), and re-writing the FOV modifier at 20 Hz raced
+    // the renderer, which recomputes it from sprint/speed inside Minecraft.runTick(). The modules now
+    // publish intent through the two flags below and the platform applies it on the render frame.
+    // The handlers are kept registered-callable because the Fabric adapter still registers them.
     private var resetHurtCamHandler: (() -> Unit)? = null
     private var resetFovModifierHandler: (() -> Unit)? = null
 
@@ -1221,6 +1235,69 @@ object EventBridge {
     fun resetFovModifier() { resetFovModifierHandler?.invoke() }
     fun registerResetHurtCamHandler(handler: () -> Unit) { resetHurtCamHandler = handler }
     fun registerResetFovModifierHandler(handler: () -> Unit) { resetFovModifierHandler = handler }
+
+    /**
+     * NoHurtCam — true while a module wants the vanilla hurt *camera tilt* cancelled.
+     *
+     * The platform applies this on the render frame, and it must do so WITHOUT touching
+     * `hurtTime`: that field is the "just got hit" signal (HitSelect/Velocity test `hurtTime > 0`)
+     * and it also drives the red damage overlay. Cancelling the tilt is a camera-transform concern,
+     * not an entity-state one — see ForgeEventBridge for the 1.8.9 lever it uses.
+     *
+     * False (default) = the platform writes nothing, so a disabled module cannot leave any
+     * hurt-cam state behind.
+     */
+    @Volatile var suppressHurtCam: Boolean = false
+
+    /**
+     * NoFOV — true while a module wants the dynamic FOV (sprint, speed potion, flight) suppressed.
+     *
+     * Applied on the render frame for the same reason: `EntityRenderer.updateFovModifierHand()` runs
+     * inside `Minecraft.runTick()` and rebuilds the FOV modifier from the player's current
+     * sprint/speed multiplier, so a 20 Hz background write either lost the race or was pulled back
+     * halfway. The platform both writes the modifier and neutralises the value that per-tick
+     * recompute reads (see ForgeEventBridge), then simply stops and restores it when this flag is
+     * cleared — the renderer's own smoothing returns the FOV to vanilla with no stuck value.
+     */
+    @Volatile var lockFovModifier: Boolean = false
+
+    // ========== GUI Movement (InvMove — Movement) ==========
+    /**
+     * InvMove — true while a module wants the movement keys re-applied while a screen is open.
+     *
+     * The module states the intent only; the **platform** performs the re-application, on the MC main
+     * thread (Forge: `ForgeEventBridge.applyGuiMovement()`, called from the render hook), because
+     * KeyBinding writes and the sprint re-assert belong there. Re-applying the key *state* is what
+     * keeps the player walking; no key event is ever consumed, so a screen that owns the keyboard
+     * (chat, inventory search) still receives every press.
+     */
+    @Volatile var keepMovementInGui: Boolean = false
+
+    /** InvMove "KeepSprint": keep sprinting while a screen is open (Raven's `allowSprinting`). */
+    @Volatile var guiMovementKeepSprint: Boolean = false
+
+    /**
+     * InvMove "OnlyInventory": re-apply only for container screens (inventory/chest/… —
+     * `GuiContainer` and subclasses). Chat and the other non-container screens keep their input to
+     * themselves, which is the behaviour Raven's InvMove has (it skips `GuiChat`).
+     */
+    @Volatile var guiMovementOnlyInventory: Boolean = false
+
+    // ========== Camera Rotation Override (Freelook — Render, contract only) ==========
+    /**
+     * Camera yaw/pitch the camera render hook should use instead of the render view entity's
+     * rotation; null = use the entity's own rotation (inert, the default).
+     *
+     * ⚠️ CONTRACT ONLY — nothing consumes these yet, on purpose. Their consumer is a hook inside
+     * `EntityRenderer.orientCamera` (Raven redirects `Entity.rotationYaw/rotationPitch` there), and
+     * the only injection point this adapter has today is the `Display.update()` frame hook, which
+     * runs *after* the world has already been rendered. Overriding the camera from there would be a
+     * one-frame-late, half-wired effect, so the fields are published for the next round's renderer
+     * hook instead of being faked. A 360° freelook keeps the real rotation underneath exactly
+     * because the override never writes `player.rotationYaw/rotationPitch`.
+     */
+    @Volatile var cameraYawOverride: Float? = null
+    @Volatile var cameraPitchOverride: Float? = null
 
     // ========== Gamma (Fullbright — Render) ==========
     private var gammaSetter: ((Float) -> Unit)? = null

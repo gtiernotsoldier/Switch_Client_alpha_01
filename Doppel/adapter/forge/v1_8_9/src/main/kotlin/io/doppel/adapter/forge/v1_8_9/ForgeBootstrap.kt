@@ -125,7 +125,7 @@ object ForgeBootstrap {
             ADTap, AimAssist, AutoBlock, AutoClicker, BlockHit, ClickAssist,
             DelayRemover, HitSelect, JumpReset, KeepSprint, KnockbackDelay, KnockbackDisplace, Reach,
             SprintReset, STap, SuperKnockback, TriggerBot, Velocity, WTap,
-            NoJumpDelay, NoKeyboardFix, NoMouseFix, Sprint, Strafe, StrafeFix,
+            NoJumpDelay, NoKeyboardFix, NoMouseFix, Sprint, Strafe, StrafeFix, InvMove,
             AntiBot, AutoTool, BridgeAssist, Eagle, ParallaxStrike, Teams, TargetFilter,
             Fullbright, HUD, NoFOV, NoHurtCam, Keystrokes, Speedometer, VelocityDisplay, JumpStatus,
             JumpTiming, KnockbackDisplay,
@@ -294,6 +294,13 @@ object ForgeBootstrap {
             // only place that writes the real KeyBinding fields (race-free).
             try { ForgeEventBridge.applySyntheticInput() } catch (_: Exception) {}
 
+            // NoHurtCam / NoFOV: apply on the render frame, not the 20 Hz tick. Both fields the game
+            // reads (hurt-cam divisor, FOV modifier) are consumed by the renderer during its own
+            // pass, and the FOV modifier is additionally recomputed inside Minecraft.runTick() — the
+            // module tick lost that race, which is why the FOV "did not work" and why zeroing
+            // hurtTime broke HitSelect. No-op unless a module set its flag.
+            try { ForgeEventBridge.applyFrameOverrides() } catch (_: Exception) {}
+
             // ClickAssist: emit the extra clicks as real OS clicks (AWT Robot) on physical press
             // edges. Runs per frame on this thread, same as Raven's MouseEvent handler.
             try { ForgeEventBridge.applyClickAssistFrame() } catch (_: Exception) {}
@@ -350,6 +357,14 @@ object ForgeBootstrap {
             // Refresh Keystrokes key mirrors on the main thread — the 20Hz background sample could
             // miss the ~80ms JumpReset jump pulse, so read the real key state every render frame.
             try { ForgeEventBridge.refreshKeyDisplayState() } catch (_: Exception) {}
+
+            // InvMove: while a screen is open, re-apply the movement key states (W/A/S/D, space,
+            // shift) from the module layer's effective keys so the player keeps walking — and keep
+            // sprinting if the module says so. Vanilla drops every KeyBinding when a screen opens, so
+            // this has to be re-done every frame; a no-op unless InvMove set the flag. Runs after the
+            // key mirrors above so it re-applies this frame's physical keys, not the previous
+            // frame's.
+            try { ForgeEventBridge.applyGuiMovement() } catch (_: Exception) {}
 
             // KeepSprint — pure module-layer, main thread. When the player is attacking + moving,
             // scale motionX/Z back up so the attack slowdown doesn't reduce speed (no inject needed).

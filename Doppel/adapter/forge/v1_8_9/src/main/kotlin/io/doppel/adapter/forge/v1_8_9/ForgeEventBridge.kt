@@ -2,6 +2,7 @@ package io.doppel.adapter.forge.v1_8_9
 
 import io.doppel.adapter.common.api.EventBridge
 import io.doppel.adapter.common.api.IEventBridge
+import io.doppel.adapter.common.module.movement.InvMoveRules
 import io.doppel.core.model.*
 import io.doppel.core.strategy.reach.ReachRaycast
 import io.doppel.core.util.Vec2
@@ -98,6 +99,28 @@ object ForgeEventBridge : IEventBridge {
     private val playerRotationYawField by lazy { MappingContext.getField("forge:player_rotationYaw") }
     private val playerRotationPitchField by lazy { MappingContext.getField("forge:player_rotationPitch") }
     private val playerHurtTimeField by lazy { MappingContext.getField("forge:entity_hurtTime") }
+    // Members the render-frame overrides need that have no entry in the mapping table. Resolved by
+    // SRG name (the runtime name under Forge 1.8.9) with the MCP name as the dev-env fallback —
+    // same fallback order MappingContext uses. See resolveField().
+    private val playerMaxHurtTimeField by lazy {
+        resolveField("net.minecraft.entity.EntityLivingBase", "field_70738_aO", "maxHurtTime")
+    }
+    private val entityRendererFovPrevField by lazy {
+        resolveField("net.minecraft.client.renderer.EntityRenderer", "field_78506_S", "fovModifierHandPrev")
+    }
+    private val playerCapabilitiesField by lazy {
+        resolveField("net.minecraft.entity.player.EntityPlayer", "field_71075_bZ", "capabilities")
+    }
+    private val capabilitiesWalkSpeedField by lazy {
+        resolveField("net.minecraft.entity.player.PlayerCapabilities", "field_75097_g", "walkSpeed")
+    }
+    private val capabilitiesAllowFlyingField by lazy {
+        resolveField("net.minecraft.entity.player.PlayerCapabilities", "field_75101_c", "allowFlying")
+    }
+    /** `net.minecraft.client.gui.inventory.GuiContainer` — the container-screen base class. */
+    private val guiContainerClass by lazy {
+        try { Class.forName("net.minecraft.client.gui.inventory.GuiContainer") } catch (_: Exception) { null }
+    }
     private val mcLeftClickCounterField by lazy { MappingContext.getField("forge:mc_leftClickCounter") }
     private val mcRightClickDelayField by lazy { MappingContext.getField("forge:mc_rightClickDelayTimer") }
     private val entityRendererFovField by lazy { MappingContext.getField("forge:entityRenderer_fovModifierHand") }
@@ -393,20 +416,13 @@ object ForgeEventBridge : IEventBridge {
         }
 
         // ── Render ──
-        EventBridge.registerResetHurtCamHandler {
-            try {
-                val player = getPlayer() ?: return@registerResetHurtCamHandler
-                playerHurtTimeField?.setInt(player, 0)
-            } catch (_: Exception) {}
-        }
-
-        EventBridge.registerResetFovModifierHandler {
-            try {
-                val mc = getMc() ?: return@registerResetFovModifierHandler
-                val er = MappingContext.getFieldValue(mc, "forge:mc_entityRenderer") ?: return@registerResetFovModifierHandler
-                entityRendererFovField?.setFloat(er, 1.0f)
-            } catch (_: Exception) {}
-        }
+        // NoHurtCam / NoFOV are NOT driven from here any more. Writing `hurtTime` (what the old
+        // resetHurtCam handler did) hides the "just got hit" signal HitSelect and Velocity read and
+        // kills the red damage tint; re-writing the FOV modifier at 20 Hz raced the renderer, which
+        // rebuilds it inside Minecraft.runTick(). Both modules now publish intent on EventBridge and
+        // the values are applied per RENDER FRAME in applyFrameOverrides(), called from
+        // ForgeBootstrap.render(). EventBridge's reset* handler API stays for the Fabric adapter,
+        // which still registers it; nothing on Forge calls it.
 
         EventBridge.registerGammaSetter { gamma ->
             try {
@@ -476,12 +492,20 @@ object ForgeEventBridge : IEventBridge {
             val posY = MappingContext.getFieldValue(player, "forge:entity_posY") as? Double ?: 0.0
             val posZ = MappingContext.getFieldValue(player, "forge:entity_posZ") as? Double ?: 0.0
             try {
+                // "On an edge" means the block carrying the player is AIR — Raven's
+                // `isAirBlock(pos)` rule. This was negated, so Eagle pressed sneak on solid ground
+                // and released at the drop, and BridgeAssist assisted everywhere except the edge.
+                //
+                // The Y offset is the reference's too: on a full block the support is the block at
+                // posY-1, but with the feet at a fractional height (slab, stair, snow layer) the
+                // block at posY is the support.
+                val yOffset = if (posY % 1.0 == 0.0) 1.0 else 0.0
                 val blockPosClass = Class.forName("net.minecraft.util.BlockPos")
                 val blockPos = blockPosClass.getConstructor(Double::class.java, Double::class.java, Double::class.java)
-                    .newInstance(posX, posY - 1.0, posZ)
+                    .newInstance(posX, posY - yOffset, posZ)
                 val bs = MappingContext.invokeMethod(world, "forge:world_getBlockState", blockPos)
                 val b = MappingContext.invokeMethod(bs, "forge:iblockstate_block")
-                b !== blocksAir
+                b === blocksAir
             } catch (_: Exception) { false }
         }
 
@@ -1156,6 +1180,261 @@ object ForgeEventBridge : IEventBridge {
                 setMouseButtonPhysical(1, EventBridge.syntheticUse || isMouseButtonDown(1))
             }
         } catch (_: Exception) {}
+    }
+
+    // ═══════════════════════════════════════════
+    //  Render-frame overrides — NoHurtCam / NoFOV
+    // ═══════════════════════════════════════════
+    //
+    // Both modules used to write entity/renderer fields from the 20 Hz tick. That is the wrong clock
+    // for either of them: the game reads both fields during its own per-frame render pass, and the
+    // FOV modifier is additionally rebuilt once per game tick. Everything below runs on the MC main
+    // thread from ForgeBootstrap.render() (the Display.update() hook = once per rendered frame,
+    // after MC has drawn), and every write is guarded by an EventBridge flag that defaults to false,
+    // so with the modules off these functions do nothing at all.
+
+    /** `maxHurtTime` written while NoHurtCam is on — see [applyHurtCamOverride]. */
+    private const val HURT_CAM_NEUTRAL_MAX_HURT_TIME = 1_000_000
+
+    /** The only value vanilla ever assigns to `maxHurtTime` (`hurtTime = maxHurtTime = 10`). */
+    private const val VANILLA_MAX_HURT_TIME = 10
+
+    /** `capabilities.walkSpeed` captured when NoFOV went on; null = not suppressing the FOV. */
+    @Volatile private var savedWalkSpeed: Float? = null
+
+    /** Whether the previous frame re-applied the movement keys (InvMove) — see [applyGuiMovement]. */
+    private var guiMovementApplied = false
+
+    /**
+     * NoHurtCam — cancel the vanilla hurt-camera *tilt* at render time.
+     *
+     * 1.8.9 source (`EntityRenderer.hurtCameraEffect`):
+     * ```
+     * float f = (float) entitylivingbase.hurtTime - partialTicks;
+     * if (f < 0.0F) return;
+     * f = f / (float) entitylivingbase.maxHurtTime;
+     * f = MathHelper.sin(f * f * f * f * (float) Math.PI);
+     * float f2 = entitylivingbase.attackedAtYaw;
+     * GlStateManager.rotate(-f2, 0, 1, 0);
+     * GlStateManager.rotate(-f * 14.0F, 0, 0, 1);   // ← the shake
+     * GlStateManager.rotate(f2, 0, 1, 0);           // ← these two cancel out
+     * ```
+     * `maxHurtTime` is the divisor of the shake angle and nothing else: raising it drives the roll to
+     * ~0°, which is what "cancel the camera tilt" means here. This deliberately does **not** touch
+     * `hurtTime` — that is the "just got hit" signal (`hurtTime > 0`) HitSelect and Velocity read,
+     * and it drives the red damage overlay. The large value also cannot leak into `hurtTime`: every
+     * assignment in vanilla is the chained `this.hurtTime = this.maxHurtTime = 10;` (three sites in
+     * `EntityLivingBase` plus `EntityPlayerSP.setPlayerSPHealth`), so `hurtTime` is always set from
+     * the fresh vanilla 10 before our value could be read.
+     *
+     * Only written while `hurtTime > 0` (i.e. only when the renderer could draw a tilt at all) and
+     * only when the field still holds the vanilla 10, so nothing of ours is left lying around between
+     * fights, and cleared back to 10 on the disable edge. One frame per hit can still carry the
+     * vanilla kick — the hit resets `maxHurtTime` inside the game tick that precedes that frame's
+     * render, and no hook of ours runs in between; a fully seamless cancel needs the same
+     * `GlStateManager.rotate` redirect Raven uses, which lives in the agent's Transformer.
+     */
+    private fun applyHurtCamOverride() {
+        try {
+            val field = playerMaxHurtTimeField ?: return
+            val player = getPlayer()
+            if (EventBridge.suppressHurtCam) {
+                if (player == null) return
+                val hurtTime = playerHurtTimeField?.getInt(player) ?: return
+                if (hurtTime <= 0) return
+                if (field.getInt(player) == VANILLA_MAX_HURT_TIME) {
+                    field.setInt(player, HURT_CAM_NEUTRAL_MAX_HURT_TIME)
+                }
+            } else if (player != null && field.getInt(player) == HURT_CAM_NEUTRAL_MAX_HURT_TIME) {
+                field.setInt(player, VANILLA_MAX_HURT_TIME)
+            }
+        } catch (_: Exception) {}
+    }
+
+    /**
+     * NoFOV — hold the FOV at `fovSetting` (modifier = 1) on the render frame.
+     *
+     * Two levers, both needed:
+     *  1. `EntityRenderer.fovModifierHand` / `fovModifierHandPrev` — the pair the renderer
+     *     interpolates into this frame's projection (`getFOVModifier`: `fovSetting * (prev +
+     *     (hand - prev) * partialTicks)`). Writing both = the frame renders at exactly `fovSetting`.
+     *  2. `capabilities.walkSpeed = 0` — the value the **per-tick** recompute reads. `Minecraft
+     *     .runTick()` calls `EntityRenderer.updateFovModifierHand()` between two rendered frames, and
+     *     that method rebuilds the modifier from `AbstractClientPlayer.getFovModifier()`, which
+     *     returns exactly `1.0F` for `walkSpeed == 0` (vanilla's own escape hatch:
+     *     `if (walkSpeed == 0.0F || NaN || Infinite) f = 1.0F;`). Without it the tick would pull the
+     *     modifier halfway back to the sprint/speed multiplier and one frame per tick would show the
+     *     FOV step again at 20 Hz.
+     *
+     * `walkSpeed` is FOV-only on the client, which is why this is safe: the client player's movement
+     * speed comes from the `movementSpeed` attribute (`EntityPlayer.onLivingUpdate` re-bases that
+     * attribute from `walkSpeed` only when `!worldObj.isRemote`), and 1.8.9's
+     * `NetHandlerPlayServer.processPlayerAbilities(C13PacketPlayerAbilities)` applies only `isFlying`
+     * from the packet, never the walking speed it carries. The captured value is restored on the
+     * disable edge (never 0), and `fovModifierHand` needs no restore: the next tick's update runs
+     * against the restored multiplier and the FOV eases back to vanilla on its own.
+     */
+    private fun applyFovOverride() {
+        try {
+            val mc = getMc() ?: return
+            val er = MappingContext.getFieldValue(mc, "forge:mc_entityRenderer") ?: return
+            val player = getPlayer()
+            val caps = playerCapabilitiesField?.let { f -> player?.let { f.get(it) } }
+            val walkField = capabilitiesWalkSpeedField
+
+            if (EventBridge.lockFovModifier) {
+                entityRendererFovField?.setFloat(er, 1.0f)
+                entityRendererFovPrevField?.setFloat(er, 1.0f)
+                if (caps != null && walkField != null) {
+                    val current = walkField.getFloat(caps)
+                    if (savedWalkSpeed == null && current != 0f) savedWalkSpeed = current
+                    if (current != 0f) walkField.setFloat(caps, 0f)
+                }
+            } else if (savedWalkSpeed != null) {
+                // Disable edge — restore exactly once. The `== 0f` guard keeps us from overwriting a
+                // value the game set for its own reasons while we were not looking.
+                if (caps != null && walkField != null && walkField.getFloat(caps) == 0f) {
+                    walkField.setFloat(caps, savedWalkSpeed ?: 0.1f)
+                }
+                savedWalkSpeed = null
+            }
+        } catch (_: Exception) {}
+    }
+
+    /**
+     * Called once per rendered frame from ForgeBootstrap.render() (MC main thread).
+     * No-op unless a render module asked for it.
+     */
+    fun applyFrameOverrides() {
+        applyHurtCamOverride()
+        applyFovOverride()
+    }
+
+    // ═══════════════════════════════════════════
+    //  GUI movement — InvMove
+    // ═══════════════════════════════════════════
+
+    /**
+     * InvMove — re-apply the movement key states while a screen is open (MC main thread, per frame).
+     *
+     * Vanilla drops movement with a screen open because opening it calls `KeyBinding.unPressAllKeys()`
+     * and, for every screen that is not chat, `Minecraft.runTick()` skips its keyboard loop entirely —
+     * so the KeyBindings `MovementInputFromOptions.updatePlayerMoveState()` reads stay down. Writing the
+     * *state* back (never consuming a key event, so the screen still gets every press) is what keeps
+     * the player walking; MC's own next-tick movement-input update then sees the same keys it would
+     * have seen without the screen, which is the "refresh the movement input" part — no extra call is
+     * needed.
+     *
+     * The states come from the module layer's *effective* accessors, so a WTap/STap/ADTap synthetic
+     * key or a live JumpReset pulse behaves inside the screen exactly as it does outside, and the
+     * Keystrokes HUD keeps telling the truth. Nothing here runs unless [EventBridge.keepMovementInGui]
+     * is set by InvMove, and the module's options decide the screen filter and the sprint handling.
+     */
+    fun applyGuiMovement() {
+        try {
+            val mc = getMc() ?: return
+            val screen = MappingContext.getFieldValue(mc, "forge:mc_currentScreen")
+            val containerScreen = screen != null && guiContainerClass?.isInstance(screen) == true
+            if (!InvMoveRules.shouldReapplyMovement(
+                    keepMovementInGui = EventBridge.keepMovementInGui,
+                    screenOpen = screen != null,
+                    onlyInventory = EventBridge.guiMovementOnlyInventory,
+                    containerScreen = containerScreen
+                )
+            ) {
+                // We were holding keys we own, and now we must not (module switched off, or the
+                // screen filter changed under us): release them, because MC will not — with a
+                // container screen open its keyboard loop is skipped, so a press left behind here
+                // would survive until the screen closes and then walk the player on its own.
+                // The screen==null case is deliberately NOT released: on the frame the screen closes
+                // the state we wrote is still the player's real key state (it tracks the physical
+                // keys every frame), and clearing it would drop a W the player is still holding.
+                if (guiMovementApplied && screen != null) releaseGuiMovementKeys()
+                guiMovementApplied = false
+                return
+            }
+
+            guiMovementApplied = true
+            setKeyBindPressed("forge:gs_keyBindForward", EventBridge.isKeyForwardActive)
+            setKeyBindPressed("forge:gs_keyBindBack", EventBridge.isKeyBackActive)
+            setKeyBindPressed("forge:gs_keyBindLeft", EventBridge.isKeyLeftActive)
+            setKeyBindPressed("forge:gs_keyBindRight", EventBridge.isKeyRightActive)
+            setKeyBindPressed("forge:gs_keyBindJump", EventBridge.isKeyJumpActive)
+            // Shift is part of "keep walking": unPressAllKeys() drops sneaking as well.
+            setKeyBindPressed("forge:gs_keyBindSneak", physicalKeyDown("forge:gs_keyBindSneak"))
+
+            val player = getPlayer() ?: return
+            val sprinting = try {
+                MappingContext.invokeMethod(player, "forge:player_isSprinting") as? Boolean ?: false
+            } catch (_: Exception) { false }
+
+            if (InvMoveRules.shouldSuppressSprinting(
+                    EventBridge.guiMovementKeepSprint, sprinting
+                )
+            ) {
+                // "Keep sprint" off: a re-applied move input would let vanilla's own
+                // `!isSprinting() && moveForward >= 0.8 && sprintKey` rule hold the sprint state,
+                // so force it off like the reference does.
+                EventBridge.setSprinting(false)
+            } else {
+                val caps = playerCapabilitiesField?.let { f -> f.get(player) }
+                val allowFlying = caps?.let { capabilitiesAllowFlyingField?.getBoolean(it) } == true
+                if (InvMoveRules.shouldKeepSprinting(
+                        keepSprint = EventBridge.guiMovementKeepSprint,
+                        alreadySprinting = sprinting,
+                        forwardActive = EventBridge.isKeyForwardActive,
+                        foodLevel = EventBridge.foodLevel,
+                        allowFlying = allowFlying
+                    )
+                ) {
+                    EventBridge.setSprinting(true)
+                }
+            }
+        } catch (_: Exception) {}
+    }
+
+    /**
+     * Release every movement KeyBinding InvMove may have pressed. Used only on the transition out of
+     * the re-application while a screen is still open (module off / screen filter changed), where
+     * nothing else will clear them: MC skips its keyboard loop for those screens, so a press left
+     * behind would keep the player walking as soon as the screen closes.
+     */
+    private fun releaseGuiMovementKeys() {
+        setKeyBindPressed("forge:gs_keyBindForward", false)
+        setKeyBindPressed("forge:gs_keyBindBack", false)
+        setKeyBindPressed("forge:gs_keyBindLeft", false)
+        setKeyBindPressed("forge:gs_keyBindRight", false)
+        setKeyBindPressed("forge:gs_keyBindJump", false)
+        setKeyBindPressed("forge:gs_keyBindSneak", false)
+    }
+
+    /**
+     * Resolve a member that has no entry in the mapping table: SRG name first (the runtime name under
+     * Forge 1.8.9), MCP name second (deobfuscated/dev environments) — the same fallback order
+     * MappingContext uses. The declaring class is walked up the hierarchy, because a member can sit on
+     * a superclass in one mapping and on the subclass in another. Returns null rather than throwing,
+     * so an unresolvable name degrades the feature to "off" instead of crashing the render loop.
+     */
+    private fun resolveField(className: String, srgName: String, mcpName: String): java.lang.reflect.Field? {
+        return try {
+            var clazz: Class<*>? = Class.forName(className)
+            var found: java.lang.reflect.Field? = null
+            while (clazz != null && found == null) {
+                found = try {
+                    clazz.getDeclaredField(srgName)
+                } catch (_: NoSuchFieldException) {
+                    try {
+                        clazz.getDeclaredField(mcpName)
+                    } catch (_: NoSuchFieldException) {
+                        null
+                    }
+                }
+                clazz = clazz.superclass
+            }
+            found?.also { it.isAccessible = true }
+        } catch (_: Exception) {
+            null
+        }
     }
 
     // ========== Click Cadence Engine ==========

@@ -41,6 +41,23 @@ class BobHookTransformTest {
         System.clearProperty("doppel.skipViewBobbing");
     }
 
+    /**
+     * The transformer installs each hook once and then returns null for that class (there is only ever
+     * one EntityRenderer in a JVM), so the flag has to be cleared between cases here.
+     */
+    @org.junit.jupiter.api.BeforeEach
+    void resetHookFlag() throws Exception {
+        for (String name : new String[] { "bobHooked", "hooked" }) {
+            try {
+                Field f = Transformer.class.getDeclaredField(name);
+                f.setAccessible(true);
+                f.setBoolean(null, false);
+            } catch (NoSuchFieldException ignored) {
+                // fine — the field may be named differently in a future revision
+            }
+        }
+    }
+
     @Test
     void theBobHookTransformsVerifiesAndIsDrivenByTheProperty() throws Exception {
         byte[] original = syntheticEntityRenderer();
@@ -89,6 +106,29 @@ class BobHookTransformTest {
     }
 
     @Test
+    void theObfuscatedSpellingIsHookedToo() throws Exception {
+        // `e` is setupViewBobbing's obfuscated name (verified: it is the private (float) method of
+        // EntityRenderer that reads EntityPlayer.cameraYaw). A class can reach the transformer before
+        // FML has renamed anything, and matching only the MCP/SRG spellings is what made the first
+        // version of this hook silently do nothing on a real client.
+        byte[] transformed = new Transformer().transform(
+                getClass().getClassLoader(), OWNER, null, null, syntheticEntityRenderer("e"));
+        assertNotNull(transformed, "the obfuscated spelling must be hooked");
+
+        Class<?> rewritten = new ByteLoader().define(OWNER, transformed);
+        Object instance = rewritten.getDeclaredConstructor().newInstance();
+        Method bob = rewritten.getDeclaredMethod("e", float.class);
+        bob.setAccessible(true);
+        Field calls = rewritten.getDeclaredField("calls");
+
+        bob.invoke(instance, 0f);
+        assertEquals(1, calls.getInt(instance), "vanilla body runs with no property set");
+        System.setProperty("doppel.skipViewBobbing", "true");
+        bob.invoke(instance, 0f);
+        assertEquals(1, calls.getInt(instance), "and is skipped when the property is set");
+    }
+
+    @Test
     void aClassWithoutTheMethodIsLeftAlone() {
         ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS | ClassWriter.COMPUTE_FRAMES);
         cw.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC, OWNER, null, "java/lang/Object", null);
@@ -100,6 +140,11 @@ class BobHookTransformTest {
 
     /** A class that looks like EntityRenderer for the purposes of the hook. */
     private static byte[] syntheticEntityRenderer() {
+        return syntheticEntityRenderer("setupViewBobbing");
+    }
+
+    /** A class that looks like EntityRenderer for the purposes of the hook. */
+    private static byte[] syntheticEntityRenderer(String methodName) {
         ClassWriter cw = new ClassWriter(ClassWriter.COMPUTE_MAXS | ClassWriter.COMPUTE_FRAMES);
         cw.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC, OWNER, null, "java/lang/Object", null);
         cw.visitField(Opcodes.ACC_PUBLIC, "calls", "I", null, null).visitEnd();
@@ -112,7 +157,7 @@ class BobHookTransformTest {
         ctor.visitMaxs(0, 0);
         ctor.visitEnd();
 
-        MethodVisitor m = cw.visitMethod(Opcodes.ACC_PRIVATE, "setupViewBobbing", "(F)V", null, null);
+        MethodVisitor m = cw.visitMethod(Opcodes.ACC_PRIVATE, methodName, "(F)V", null, null);
         m.visitCode();
         m.visitVarInsn(Opcodes.ALOAD, 0);
         m.visitInsn(Opcodes.DUP);

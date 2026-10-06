@@ -392,13 +392,20 @@ public class Transformer implements ClassFileTransformer {
             ClassReader reader = new ClassReader(classfileBuffer);
             final boolean needsFrames = (reader.readShort(6) & 0xffff) >= 50;
             final boolean[] injected = new boolean[] { false };
+            final StringBuilder seenFloat = new StringBuilder();
             ClassWriter writer = new ClassWriter(reader, ClassWriter.COMPUTE_MAXS);
             ClassVisitor injector = new ClassVisitor(COMPAT_API, writer) {
                 @Override
                 public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
                     MethodVisitor mv = super.visitMethod(access, name, descriptor, signature, exceptions);
                     if (mv == null) return null;
-                    boolean isBob = ("setupViewBobbing".equals(name) || "func_78475_f".equals(name))
+                    if ("(F)V".equals(descriptor)) seenFloat.append(name).append(' ');
+                    // Three spellings, because the class reaches us at different remap stages: the MCP
+                    // name, the SRG name, and the obfuscated name `e`. The third one is the reason the
+                    // first version of this hook did nothing on a real client — verified against the
+                    // official jar, `e` is the private (float) method of EntityRenderer that reads
+                    // EntityPlayer.cameraYaw, which is setupViewBobbing before anything renames it.
+                    boolean isBob = ("setupViewBobbing".equals(name) || "func_78475_f".equals(name) || "e".equals(name))
                             && "(F)V".equals(descriptor);
                     if (!injected[0] && isBob) {
                         injected[0] = true;
@@ -418,7 +425,7 @@ public class Transformer implements ClassFileTransformer {
             };
             reader.accept(injector, 0);
             if (!injected[0]) {
-                Agent.log("[Transformer] EntityRenderer: setupViewBobbing (F)V not found — bob hook NOT installed");
+                Agent.log("[Transformer] EntityRenderer: setupViewBobbing (F)V not found — bob hook NOT installed. (F)V methods present: " + seenFloat);
                 return null;
             }
             byte[] out = writer.toByteArray();

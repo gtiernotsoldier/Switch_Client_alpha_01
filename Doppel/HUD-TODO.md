@@ -1,17 +1,18 @@
 # Doppel HUD — open work (handoff)
 
-Written after the session that closed every item the previous handoff listed, plus the round-2 pass
-below. Everything under "Done" is verified by the build/test commands and the commits named with it;
-everything under "Still open" is scoped so it can be picked up without re-deriving anything.
+Written after the session that closed every item the previous handoff listed, plus the round-2,
+3 and 4 passes below (newest first). Everything under "Done" is verified by the build/test commands
+and the commits named with it; everything under "Still open" is scoped so it can be picked up
+without re-deriving anything.
 
 ## Where things stand
 
 | Item | State |
 | --- | --- |
-| Local `main` | round 1: `2f9451e`, `9f03f5a`, `c489f73`, `19f267c`, `6429935`. Round 2: `a29fb8e`, `75b1c6a`, `0d946be`, `e7ad03b`. Round 3 (this pass) adds the commits listed under "Round 3". **Not pushed to GitLab yet** |
-| Testable binary | `C:\Users\Administrator\Desktop\swl\doppel-injector-fixed.exe`, rebuilt 18:02:51 with the current agent jar and overlay; both embedded RCDATA blobs hash-match their sources |
-| Kotlin build | `:core:test` (94 tests), `:adapter:common:compileKotlin`, `:adapter:common:test` (88 tests, 17 classes), `:adapter:forge:v1_8_9:compileKotlin`, `:agent:jar` all green |
-| Rust builds | `hud`: 72 tests green. `injector`: 10 tests green, only the 3 pre-existing warnings (`flow.rs` platform, `inject.rs` WAIT_TIMEOUT, `process.rs` GetLastError) |
+| Local `main` | round 1: `2f9451e`, `9f03f5a`, `c489f73`, `19f267c`, `6429935`. Round 2: `a29fb8e`, `75b1c6a`, `0d946be`, `e7ad03b`. Round 3: `3f720f5`, `c2fbcfc`, `c660949`, `ea8e9e1`. Round 4 (this pass) adds the commits listed under "Round 4". **Not pushed to GitLab yet** |
+| Testable binary | `C:\Users\Administrator\Desktop\swl\doppel-injector-fixed.exe`, rebuilt 18:21:51 with the current agent jar and overlay; both embedded RCDATA blobs hash-match their sources |
+| Kotlin build | `:core:test` (94 tests), `:adapter:common:compileKotlin`, `:adapter:common:test` (97 tests, 19 classes), `:adapter:forge:v1_8_9:compileKotlin`, `:agent:jar` all green |
+| Rust builds | `hud`: 80 tests green. `injector`: 10 tests green, only the 3 pre-existing warnings (`flow.rs` platform, `inject.rs` WAIT_TIMEOUT, `process.rs` GetLastError) |
 | State contract | **v3**, writer and reader, verified against each other across the two languages; v1 and v2 are still read so a stale file cannot break the overlay |
 | Overlay | always-on-top click-through layered window anchored to the game window's **client area** (below the title bar) and following it (`--follow-pid`); **five** modes (Default/Rise/VapeV4/Tesseract/**Modern**); row entrance **and exit** animation; decaying red **work flash**; user-set scale, line spacing, background opacity and row order |
 | In-game Keystrokes | reads *effective* key states, so WTap/STap/ADTap/JumpReset light the boxes; Rainbow no longer touches AWT |
@@ -19,7 +20,52 @@ everything under "Still open" is scoped so it can be picked up without re-derivi
 | Launcher | restyled to the OpenCommunity dark palette with a short intro fade |
 | Option sanity | Min/Max option pairs are kept ordered on every write, so `Random.nextInt(min, max + 1)` can no longer be handed an inverted range |
 
-## Round 3 — the user's second round of feedback
+## Round 4 — world-load exits, keybinds that did not stick, and the phone
+
+### The keybind was never saved (that is what "keybind does not work" was)
+`Module.keybind` was a plain field, and only *registered options* are written to `doppel-config.json`
+— so every key the user bound was silently forgotten on the next start. The keybind and the red
+work-flash flag are now registered as **hidden options**: persisted, validated and reloaded through
+the normal path, but filtered out of the option list so the panel does not grow a "Keybind: -1"
+slider. `ModuleKeybindPersistenceTest` pins the round trip. The poll also stopped swallowing its
+exceptions silently — a broken poll now leaves one line per 10 s in `doppel-agent.log`, and a
+successful toggle was already logged by `Module.enable/disable`, so the two cases are
+distinguishable.
+
+### The HUD stopped dying during a world load
+The overlay decided "the game is gone" purely from the state file's mtime, so Minecraft's
+multi-second terrain generation (no rendered frame, no publish) looked exactly like a dead game and
+the overlay faded out and exited. With `--follow-pid` — which the injector always passes — the game
+**process** is now the verdict: alive means stay on screen with the last frame, gone means exit.
+Without a pid the old three-second stale rule is untouched.
+
+Independently verified by A/B on one hand-built stale (30 s old) block with an off-screen rect:
+with `--follow-pid <live pid>` the overlay was still drawing after 5 s (and still re-asserting
+topmost); without a pid the same file ends it in 0.4 s. A pid that cannot be opened (access denied)
+counts as alive — never kill a live game over a permissions quirk.
+
+### Min/Max HUD values, for every module
+The round-3 fix was Velocity's own string; the reported behaviour ("more than Velocity") was the
+*derived* path, where a module without a `HudLineProvider` showed only the first number of its
+range. `HUD.autoHudValue` now looks for a Min/Max pair first and renders both ends (`25-55 ms`,
+`3.00-3.20 blocks`), collapsing to one value when they are equal.
+
+### The HUD list panel, and the red flash
+The panel hid and ordered HUD lines, but nothing said so and the user reasonably asked what it was
+for. Its header and hint now say it: shown = listed on the HUD, the pill lists/unlists a line (not
+the module), ▲▼ is the draw order. It also gained the control the user guessed at — a per-module
+**red work-flash** toggle, backed by the same endpoint (`{"red": bool}`) and the persisted
+`RedIndicator` option.
+
+### Phone pass
+One narrow-viewport query (≤720 px) collapses the grid to one column, stacks the chrome, gives every
+control a ≥40 px touch target and drops the expensive looks (no `backdrop-filter`, no glow shadows,
+no infinite animations, transitions capped at 0.12 s) while keeping the same palette at higher alpha.
+A separate `prefers-reduced-motion` query does the same for motion-sensitive users — including
+`body::before`, which the old `*`-only rule never matched, so the 24 s aurora drift used to keep
+running for them. Desktop rules are untouched (all scoped to the queries).
+
+## Round 3 — the users second round of feedback
 
 ### A Min above its Max was a crash, not just a bad number
 Every ranged module feeds its two options straight into `Random.nextInt(min, max + 1)`, which
@@ -193,16 +239,18 @@ pixel-sampling evidence are in commit `6429935`.
 Scoped, all of it cosmetic or environmental rather than broken:
 
 1. **Push to GitLab.** Every commit above is local only.
-2. **Not verified against a running game.** Nothing in this pass could be exercised against Minecraft
-   on this machine: the client-area rect, the follow poll, the keybind guard, the work flash and the
-   Modern mode are all verified by unit tests, by the `--dump` renderer and by pixel analysis of its
-   BMP output. The first in-game run should confirm the HUD now clears the title bar.
-3. **The WebUI panel's DOM behaviour is reasoned, not observed** — there is no browser here. The
-   script passes `node --check` and its pure helpers have a scratch test harness, but the HUD panel's
-   re-render timing, the colour picker and the keybind clash hint have not been clicked.
+2. **Not verified against a running game.** Nothing in these passes could be exercised against
+   Minecraft on this machine: the client-area rect, the follow poll, the liveness rule, the keybind
+   end-to-end path, the work flash and the Modern mode are verified by unit tests, by the `--dump`
+   renderer, by pixel analysis of its BMP output, and — for the liveness rule — by an A/B run of the
+   real binary against a hand-built stale state file. A real world load and a real keypress are still
+   the last mile.
+3. **The WebUI's DOM and phone rendering are reasoned, not observed** — there is no browser here.
+   The script passes `node --check`, its helpers were exercised against a DOM shim, and the CSS was
+   audited for balance, but the ≤720 px layout, the touch targets, the `prefers-reduced-motion` path
+   and the `:has()` progressive rule have not been seen on a device.
 4. **Owner-drawn list rows are unverified against live data** — there was no running `javaw.exe` on
-   this machine, so `WM_DRAWITEM`/`WM_MEASUREITEM` never fired with real rows. One look on a box with
-   Minecraft running would close it.
+   this machine, so `WM_DRAWITEM`/`WM_MEASUREITEM` never fired with real rows.
 5. **The stock list scrollbar is still OS-drawn** (light next to `#0B0E13`); marked `TODO(B3)` in
    `window.rs` along with rounded *window* corners, per-row hover and DPI awareness.
 4. **The injector is still DPI-unaware**, so its fixed 900x550 client is bitmap-stretched at 125/150%.

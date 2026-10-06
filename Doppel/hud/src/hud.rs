@@ -220,6 +220,69 @@ pub struct Config {
     pub alpha: f32,
 }
 
+// ── the screen rect the window covers ───────────────────────────────────────
+//
+// This is the fix for "the overlay does not appear on the window": the thing the
+// HUD is laid out inside is a monitor rect, not a 520x400 stage parked at (0, 0).
+// The window is created at `(rect.x, rect.y)` with `rect.w x rect.h` and the
+// canvas is its surface, so an element measured `anchor_x(rect, ..)` from an edge
+// of the rect lands on the corresponding edge of the screen. `--rect` supplies
+// the rect directly (a caller following the game window on a multi-monitor setup
+// will use it); by default it is the primary monitor, via `GetSystemMetrics`.
+
+/// A rectangle in physical screen pixels.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Rect {
+    pub x: i32,
+    pub y: i32,
+    pub w: i32,
+    pub h: i32,
+}
+
+impl Rect {
+    pub const fn new(x: i32, y: i32, w: i32, h: i32) -> Rect {
+        Rect { x, y, w, h }
+    }
+
+    /// The exclusive right edge, `x + w`.
+    pub const fn right(&self) -> i32 {
+        self.x + self.w
+    }
+
+    /// The exclusive bottom edge, `y + h`.
+    pub const fn bottom(&self) -> i32 {
+        self.y + self.h
+    }
+
+    /// No pixels at all: the caller falls back to a sane default rather than
+    /// creating a zero-sized window.
+    pub const fn is_empty(&self) -> bool {
+        self.w <= 0 || self.h <= 0
+    }
+}
+
+/// Screen x of a `block_w`-wide block hung `margin` inside `rect`: the rect's
+/// right edge for `Position::Right` — the mockup's own layout, `.wm-col { right:
+/// 16px }` — and its left edge for the mirrored `Position::Left`.
+pub fn anchor_x(rect: Rect, position: Position, margin: i32, block_w: i32) -> i32 {
+    match position {
+        Position::Right => rect.right() - margin - block_w,
+        Position::Left => rect.x + margin,
+    }
+}
+
+/// Screen y of a block hung off the rect's top margin (`.wm-col { top: 16px }`).
+pub fn anchor_top(rect: Rect, margin: i32) -> i32 {
+    rect.y + margin
+}
+
+/// Screen y of a block hung off the rect's bottom margin (`bottom: 16px`) — the
+/// status pill's corner. Not drawn while `SHOW_STATUS_PILL` is false; its geometry
+/// is still the spec for it.
+pub fn anchor_bottom(rect: Rect, margin: i32, block_h: i32) -> i32 {
+    rect.bottom() - margin - block_h
+}
+
 // ── colour maths ────────────────────────────────────────────────────────────
 
 /// Colour with its alpha channel scaled (Theme.withAlpha).
@@ -609,34 +672,39 @@ struct Layout {
 
 /// Measure the whole HUD for the current text metrics. Shared by `paint` and
 /// `describe`, so the picture and the printed numbers cannot disagree.
-fn measure_layout(
-    text: &TextEngine,
-    entries: &[Entry],
-    cfg: &Config,
-    canvas_w: u32,
-    canvas_h: u32,
-) -> Layout {
+///
+/// `rect` is the screen rectangle the layered window covers (the whole primary
+/// monitor, or whatever `--rect` chose). Every origin is taken from one of the
+/// `anchor_*` helpers in *screen* coordinates and then shifted back by the rect's
+/// origin, because the canvas is the window's own surface and painting is
+/// surface-local. Anchoring to the rect is the whole point: a 1920-wide rect puts
+/// the right-hand blocks at x = 1920 - 16 - w, a 520-wide one at 520 - 16 - w,
+/// and only the first of those is on the screen's edge.
+fn measure_layout(text: &TextEngine, entries: &[Entry], cfg: &Config, rect: Rect) -> Layout {
     let margin = cfg.margin;
     let bars_left = cfg.position == Position::Left;
+    // The blocks in the top corner hang off the top margin; `WATERMARK_TOP` is
+    // that margin, kept as the constant the `--dump` description prints.
+    let top = anchor_top(rect, WATERMARK_TOP) - rect.y;
 
     // ── watermark ──
     let word_track = WORD_TRACK_EM * text.em_px(FontId::UiBold);
     let word_w = wordmark_width(text);
     let (wm_w, wm_h) = watermark_size(text);
-    let wm_x = if bars_left { margin } else { canvas_w as i32 - margin - wm_w };
+    let wm_x = anchor_x(rect, cfg.position, margin, wm_w) - rect.x;
     let mark_x = wm_x;
-    let mark_y = WATERMARK_TOP + (wm_h - text.height(FontId::Mark)) / 2;
+    let mark_y = top + (wm_h - text.height(FontId::Mark)) / 2;
     let word_x = wm_x + MARK_W + WM_GAP;
-    let word_y = WATERMARK_TOP + (wm_h - text.height(FontId::UiBold)) / 2;
-    let rule_y = watermark_rule_y(WATERMARK_TOP, wm_h);
+    let word_y = top + (wm_h - text.height(FontId::UiBold)) / 2;
+    let rule_y = watermark_rule_y(top, wm_h);
     let slogan_track = SLOGAN_TRACK_EM * text.em_px(FontId::Slogan);
     let slogan_w = text.measure_tracked(FontId::Slogan, SLOGAN, slogan_track);
     let slogan_y = rule_y + RULE_H + SLOGAN_GAP;
     // `.wm-col { align-items: flex-end }`: the slogan hangs off the same edge the
     // whole block does, so it ends where the wordmark ends.
     let slogan_x = wm_x + wm_w - slogan_w;
-    let block_h = slogan_y + text.height(FontId::Slogan) - WATERMARK_TOP;
-    let list_y = WATERMARK_TOP + block_h + LIST_TOP_GAP;
+    let block_h = slogan_y + text.height(FontId::Slogan) - top;
+    let list_y = top + block_h + LIST_TOP_GAP;
 
     // ── rows: everything with a name, sorted width-descending (the mockup's
     // `measure()` staircase). ──
@@ -652,7 +720,9 @@ fn measure_layout(
     }
     measured.sort_by(|a, b| b.1.cmp(&a.1));
 
-    let edge_x = if bars_left { margin } else { canvas_w as i32 - margin };
+    // The edge the rows' chips are flushed against: the rect's right or left edge,
+    // whichever corner this layout occupies.
+    let edge_x = anchor_x(rect, cfg.position, margin, 0) - rect.x;
     let rows: Vec<RowLayout> = measured
         .iter()
         .map(|&(index, name_w, value_w)| {
@@ -681,8 +751,8 @@ fn measure_layout(
         text.height(FontId::UiTiny),
         text.height(FontId::MonoBold),
     );
-    let pill_x = if bars_left { margin } else { canvas_w as i32 - margin - pill_w };
-    let pill_y = canvas_h as i32 - margin - pill_h;
+    let pill_x = anchor_x(rect, cfg.position, margin, pill_w) - rect.x;
+    let pill_y = anchor_bottom(rect, margin, pill_h) - rect.y;
     let dot_x = pill_x + PILL_PAD_X;
     let label_x = dot_x + DOT_D + PILL_GAP;
     let sep_x = label_x + label_w + PILL_GAP;
@@ -732,6 +802,14 @@ fn measure_layout(
 
 // ── painting ────────────────────────────────────────────────────────────────
 
+/// The screen rect a canvas covers — the layered window's own surface. The canvas
+/// carries where the window was created, so the layout anchors to the monitor (or
+/// to whatever `--rect` asked for) instead of to the surface's own origin.
+fn canvas_rect(canvas: &Canvas) -> Rect {
+    let (x, y) = canvas.screen_origin();
+    Rect::new(x, y, canvas.width() as i32, canvas.height() as i32)
+}
+
 /// Compose one frame of the HUD. Returns true while something is still moving,
 /// which the caller uses to decide whether the next frame needs to be pushed to
 /// the compositor. With the status pill on screen its ring pulses forever and a
@@ -752,7 +830,7 @@ pub fn paint(
         return false;
     }
 
-    let layout = measure_layout(text, entries, cfg, canvas.width(), canvas.height());
+    let layout = measure_layout(text, entries, cfg, canvas_rect(canvas));
     let count = layout.rows.len();
 
     let rows_moving = paint_rows(canvas, text, entries, anim, now, &layout, count, global);
@@ -1204,7 +1282,10 @@ pub fn describe(
     canvas_h: u32,
 ) -> String {
     let cfg = Config { position, margin: MARGIN, alpha: 1.0 };
-    let layout = measure_layout(text, entries, &cfg, canvas_w, canvas_h);
+    // `--dump` renders on the fixed review canvas, whose surface starts at the
+    // origin: the numbers below are canvas-local, and the live runtime rect is
+    // printed separately by the dump (it is what the window actually covers).
+    let layout = measure_layout(text, entries, &cfg, Rect::new(0, 0, canvas_w as i32, canvas_h as i32));
     let mut out = String::new();
 
     out.push_str(&format!(
@@ -1380,6 +1461,94 @@ mod tests {
         assert_eq!(watermark_height(15, 12), 15);
         assert_eq!(watermark_rule_y(16, 19), 16 + 19 + 8);
         assert_eq!((MARK_W, WM_GAP, MARK_ECHO_X), (21, 11, 7));
+    }
+
+    /// The bug this fixes: the HUD used to be laid out inside a 520x400 stage
+    /// parked at (0, 0), so the mockup's right-anchored blocks landed around
+    /// x = 400 — the middle of a 1920-wide screen, with everything else
+    /// transparent. Anchored to the rect the window actually covers, the same
+    /// block sits on the screen's own right edge.
+    #[test]
+    fn the_hud_hangs_off_the_rects_corner() {
+        let stage = Rect::new(0, 0, 520, 400);
+        let monitor = Rect::new(0, 0, 1920, 1080);
+        let wm_w = 112; // the 21px mark box, the 11px gap and the tracked wordmark
+
+        assert_eq!(anchor_x(stage, Position::Right, MARGIN, wm_w), 520 - MARGIN - wm_w);
+        assert_eq!(anchor_x(monitor, Position::Right, MARGIN, wm_w), 1920 - MARGIN - wm_w);
+        assert_eq!(
+            anchor_x(monitor, Position::Left, MARGIN, wm_w),
+            MARGIN,
+            "mirrored, the same block hangs off the screen's left edge"
+        );
+        assert_eq!(anchor_top(monitor, MARGIN), MARGIN);
+        assert_eq!(anchor_bottom(monitor, MARGIN, 29), 1080 - MARGIN - 29);
+        assert_eq!((monitor.right(), monitor.bottom()), (1920, 1080));
+        assert!(!monitor.is_empty() && Rect::new(0, 0, 0, 1080).is_empty());
+    }
+
+    /// `--rect` (the multi-monitor hook) moves the whole HUD with the rect: a
+    /// monitor at x = 1920 gets the same layout 1920 px to the right, and one
+    /// *below* the first moves the top blocks down instead.
+    #[test]
+    fn a_rect_override_moves_the_whole_hud() {
+        let second = Rect::new(1920, 0, 1920, 1080);
+        assert_eq!(anchor_x(second, Position::Right, MARGIN, 112), 1920 + 1920 - MARGIN - 112);
+        assert_eq!(anchor_x(second, Position::Left, MARGIN, 112), 1920 + MARGIN);
+        assert_eq!(anchor_bottom(second, MARGIN, 29), 1080 - MARGIN - 29);
+
+        let below = Rect::new(0, 1080, 1920, 1080);
+        assert_eq!(anchor_top(below, MARGIN), 1080 + MARGIN);
+        assert_eq!(anchor_bottom(below, MARGIN, 29), 1080 + 1080 - MARGIN - 29);
+    }
+
+    /// The same HUD measured in a monitor-sized rect lands in that rect's corners,
+    /// and the surface-local layout does not move when the rect does — only where
+    /// the window is created moves.
+    #[test]
+    fn the_layout_lands_in_the_rects_corners() {
+        let text = TextEngine::new().expect("GDI text engine (--dump needs it too)");
+        let entries = vec![
+            Entry {
+                id: 1,
+                enabled: true,
+                flash: false,
+                highlight: true,
+                name: "Velocity".to_string(),
+                value: "82%".to_string(),
+            },
+            Entry {
+                id: 2,
+                enabled: true,
+                flash: false,
+                highlight: false,
+                name: "Reach".to_string(),
+                value: "3.1-3.3".to_string(),
+            },
+        ];
+        let (wm_w, _) = watermark_size(&text);
+        let monitor = Rect::new(0, 0, 1920, 1080);
+        let right = Config { position: Position::Right, margin: MARGIN, alpha: 1.0 };
+        let r = measure_layout(&text, &entries, &right, monitor);
+
+        assert_eq!(r.wm_x, anchor_x(monitor, Position::Right, MARGIN, wm_w));
+        assert_eq!(r.wm_x + r.wm_w, 1920 - MARGIN, "the block ends 16px inside the screen edge");
+        assert_eq!(r.rows[0].row_x + r.rows[0].row_w, 1920 - MARGIN, "the chips are flushed to it");
+        assert_eq!(r.pill.x + r.pill.w, 1920 - MARGIN);
+        assert_eq!(r.pill.y + r.pill.h, 1080 - MARGIN);
+
+        let left = Config { position: Position::Left, margin: MARGIN, alpha: 1.0 };
+        let l = measure_layout(&text, &entries, &left, monitor);
+        assert_eq!(l.wm_x, MARGIN, "mirrored: the block starts on the screen's left edge");
+        assert_eq!(l.rows[0].row_x, MARGIN);
+        assert_eq!(l.rows[0].bar_x, MARGIN + ROW_PAD_X, "the spine moves to the outside edge");
+
+        // A rect further right changes where the surface sits, not how it is laid
+        // out: the local origin is identical and the screen origin moves with it.
+        let shifted = Rect::new(1920, 0, 1920, 1080);
+        let s = measure_layout(&text, &entries, &right, shifted);
+        assert_eq!(s.wm_x, r.wm_x);
+        assert_eq!(1920 + s.wm_x, anchor_x(shifted, Position::Right, MARGIN, wm_w));
     }
 
     /// The pill is its pieces: pad, dot, three 9 px gaps, label, separator, count,

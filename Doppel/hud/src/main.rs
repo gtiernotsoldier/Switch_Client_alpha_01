@@ -38,6 +38,7 @@
 
 mod draw;
 mod hud;
+mod log;
 mod preview;
 mod state;
 mod text;
@@ -48,7 +49,7 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use draw::{argb, Canvas};
-use hud::{Anim, Config, Position};
+use hud::{Anim, Config, Position, Rect};
 use state::Entry;
 use text::TextEngine;
 use win::*;
@@ -59,21 +60,30 @@ const CLASS_NAME: &str = "WndClsA1";
 
 // ── window geometry ─────────────────────────────────────────────────────────
 //
-// The window is the *stage*: the HUD is drawn inside it at MARGIN from the corner
-// it occupies and everything else stays fully transparent. It is click-through
-// and never visible as a surface, so a stage larger than the HUD costs nothing
-// but the DIB it needs.
+// The window covers a whole monitor rect — the primary monitor by default, or
+// whatever `--rect` names — and the HUD is drawn inside it at MARGIN from the
+// corner it occupies. Every other pixel stays fully transparent. The window is
+// click-through and never visible as a surface, so the transparent area costs
+// nothing but the DIB it needs.
+//
+// It used to be a 520x400 *stage* at (0, 0), which is exactly why the overlay
+// looked as if it were not there: the mockup anchors its blocks to the right edge
+// of whatever rect it is handed, so a 520-wide canvas put the watermark and the
+// module list around x = 400 — the top-left/middle of a 1920-wide screen — with
+// all the rest of the window transparent. The layout was never wrong; the rect it
+// hung off was. The stage that remains is `--dump`'s, and it is only a review
+// canvas: the live window is the monitor.
 
-/// Wide enough for the widest module row the contract allows, tall enough for the
-/// watermark block, eight rows and (when it is on) the status pill in the bottom
-/// corner. The size is deliberately unchanged while the pill is off: the stage is
-/// fully transparent outside the HUD, so the spare bottom corner costs nothing but
-/// the DIB, and 520x400 is the review canvas every `--dump` render is compared
-/// against.
+/// The size `--dump` renders on. Deliberately *not* the live window's size: every
+/// review BMP this project has produced is comparable at 520x400, and the dump
+/// prints the runtime rect it would use alongside, so the two cannot be confused.
 const DEF_W: u32 = 520;
 const DEF_H: u32 = 400;
-const DEF_X: i32 = 0;
-const DEF_Y: i32 = 0;
+
+/// The rect used when `GetSystemMetrics` cannot answer (a session with no display):
+/// a sane desktop rather than a zero-sized window.
+const FALLBACK_W: i32 = 1920;
+const FALLBACK_H: i32 = 1080;
 
 /// Backdrop the `--dump` BMP is composited over: the HUD is translucent, so a
 /// dump has to sit on something. A mid-tone desk (rather than the near-black a
@@ -98,24 +108,41 @@ const FADE_SECS: f32 = 0.35;
 const USAGE: &str = "\
 usage: doppel-hud [options]
 
-  --x <i32>            screen x of the stage's top-left corner (default 0)
-  --y <i32>            screen y of the stage's top-left corner (default 0)
-  --w <u32>            stage width in physical pixels (default 520)
-  --h <u32>            stage height in physical pixels (default 400)
+  --rect <x> <y> <w> <h>
+                       the screen rect the overlay covers. The layered window is
+                       created at (x, y) with that size and the HUD is laid out
+                       inside it, 16px in from whichever corners the mockup puts
+                       it in — a caller following the game window on a
+                       multi-monitor desktop passes that window's rect here.
+                       Default: the whole primary monitor, from
+                       GetSystemMetrics(SM_CXSCREEN / SM_CYSCREEN) (the primary
+                       monitor's origin is (0, 0) by definition), or 1920x1080 if
+                       that call gives nothing usable.
+  --x <i32>            adjust the chosen rect's x (default: the rect's own)
+  --y <i32>            adjust the chosen rect's y
+  --w <u32>            adjust the chosen rect's width
+  --h <u32>            adjust the chosen rect's height
   --position <where>   right (default) = the mockup's own layout: the watermark
                        and the module list in the top-right corner, plus the
                        status pill in the bottom-right when SHOW_STATUS_PILL is
                        on (it is off by default); left = the same HUD mirrored
                        into the left-hand corners. `stacked` is accepted as a
                        synonym of `right`, which is what it has always drawn.
-  --dump <path.bmp>    render one representative frame to a 32-bit BMP, print an
-                       ASCII preview, create no window, exit 0
+  --dump <path.bmp>    render one representative frame to a 32-bit BMP on the
+                       fixed 520x400 review canvas, print the measured geometry,
+                       an ASCII preview and the runtime rect the live window
+                       would cover, create no window, exit 0
   --hide               print one line, create no window, exit 0 (automation check)
   --help               print this text and exit 0
 
 The overlay reads %TEMP%\\doppel-hud.state, published by the game 3600 bytes at a
 time (magic 0x444F5050, version 1). It opens the file read-only: there is no back
 channel and nothing this process does can reach the game.
+
+It keeps its own breadcrumbs in %TEMP%\\doppel-hud.log: one line on start (local
+time, pid, the rect it covers, the resolved state file and whether it was
+readable), one on exit (why it stopped, and how many frames it drew). Logging can
+never affect the overlay, and a log over 64 KB is truncated on the next start.
 
 It never takes focus (no SetForegroundWindow / SetFocus / SW_SHOW) and every
 click passes through it, so Minecraft keeps the foreground and the mouse. Run the
@@ -133,10 +160,13 @@ in this console.";
 // the injector already parses its own arguments.
 
 struct Args {
-    x: i32,
-    y: i32,
-    /// None = DEF_W (the stage now holds all three elements on one side, so it no
-    /// longer has to span the screen for a mirrored layout).
+    /// `--rect x y w h`: the rect the window covers. `None` = the primary monitor.
+    rect: Option<Rect>,
+    /// Per-field adjustments applied on top of whichever rect was chosen. `None`
+    /// keeps the rect's own value, which is what makes the monitor the default
+    /// rather than a silent 520x400 shrink.
+    x: Option<i32>,
+    y: Option<i32>,
     w: Option<u32>,
     h: Option<u32>,
     position: Position,
@@ -150,8 +180,9 @@ struct Args {
 impl Default for Args {
     fn default() -> Args {
         Args {
-            x: DEF_X,
-            y: DEF_Y,
+            rect: None,
+            x: None,
+            y: None,
             w: None,
             h: None,
             position: Position::Right,
@@ -168,8 +199,9 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
     while i < argv.len() {
         let flag = argv[i].as_str();
         match flag {
-            "--x" => args.x = parse_num(flag, &next_value(argv, &mut i, flag)?)?,
-            "--y" => args.y = parse_num(flag, &next_value(argv, &mut i, flag)?)?,
+            "--rect" => args.rect = Some(parse_rect(argv, &mut i)?),
+            "--x" => args.x = Some(parse_num(flag, &next_value(argv, &mut i, flag)?)?),
+            "--y" => args.y = Some(parse_num(flag, &next_value(argv, &mut i, flag)?)?),
             "--w" => args.w = Some(parse_num(flag, &next_value(argv, &mut i, flag)?)?),
             "--h" => args.h = Some(parse_num(flag, &next_value(argv, &mut i, flag)?)?),
             "--position" => {
@@ -191,6 +223,30 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
         }
     }
     Ok(args)
+}
+
+/// `--rect x y w h` — four numbers, then the cursor past all five tokens. The
+/// width and the height must be positive: a zero-sized rect is the exact mistake
+/// this flag exists to avoid, so it is refused rather than quietly drawing into a
+/// window nobody can see.
+fn parse_rect(argv: &[String], i: &mut usize) -> Result<Rect, String> {
+    let raw = argv
+        .get(*i + 1..*i + 5)
+        .filter(|values| values.len() == 4)
+        .ok_or("--rect needs four numbers: x y w h")?;
+    let mut values = [0i32; 4];
+    for (slot, text) in values.iter_mut().zip(raw) {
+        *slot = parse_num("--rect", text)?;
+    }
+    *i += 5;
+    let rect = Rect::new(values[0], values[1], values[2], values[3]);
+    if rect.is_empty() {
+        return Err(format!(
+            "--rect: width and height must be positive, got {}x{}",
+            rect.w, rect.h
+        ));
+    }
+    Ok(rect)
 }
 
 /// `right` is the mockup's own layout and the default. `left` mirrors it into the
@@ -218,6 +274,77 @@ fn next_value(argv: &[String], i: &mut usize, flag: &str) -> Result<String, Stri
 /// was wrong.
 fn parse_num<T: std::str::FromStr>(flag: &str, raw: &str) -> Result<T, String> {
     raw.parse::<T>().map_err(|_| format!("{flag}: not a valid number: {raw}"))
+}
+
+// ── which rect the window covers ────────────────────────────────────────────
+
+/// Where the rect came from. Logged and printed by `--dump`: "the overlay drew
+/// but the HUD was in the wrong place" and "the overlay never saw a monitor"
+/// are very different reports.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum RectSource {
+    /// `GetSystemMetrics(SM_CXSCREEN / SM_CYSCREEN)`.
+    Monitor,
+    /// That call answered nothing usable, so `FALLBACK_W`x`FALLBACK_H` was used.
+    Fallback,
+    /// `--rect`, adjusted by any of `--x/--y/--w/--h`.
+    Override,
+}
+
+impl RectSource {
+    fn label(self) -> &'static str {
+        match self {
+            RectSource::Monitor => "primary monitor",
+            RectSource::Fallback => "fallback (GetSystemMetrics gave nothing)",
+            RectSource::Override => "--rect override",
+        }
+    }
+}
+
+/// The primary monitor's rect. `SM_CXSCREEN`/`SM_CYSCREEN` are its size and its
+/// origin is (0, 0) by definition — Win32 has no `SM_XSCREEN`/`SM_YSCREEN`, only
+/// the virtual screen has an origin. A machine that answers 0 (no display
+/// attached to this session) gets the fallback instead of a 0x0 window.
+fn monitor_rect() -> (Rect, bool) {
+    let (cx, cy) = unsafe { (GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN)) };
+    if cx > 0 && cy > 0 {
+        (Rect::new(0, 0, cx, cy), false)
+    } else {
+        (Rect::new(0, 0, FALLBACK_W, FALLBACK_H), true)
+    }
+}
+
+/// The rect the overlay will actually cover: `--rect` when given, the primary
+/// monitor otherwise, with `--x/--y/--w/--h` as per-field adjustments on top. All
+/// in physical pixels, matching the process-wide DPI awareness set in `main`.
+fn resolve_rect(args: &Args) -> Result<(Rect, RectSource), String> {
+    let (mut rect, source) = match args.rect {
+        Some(rect) => (rect, RectSource::Override),
+        None => {
+            let (rect, fell_back) = monitor_rect();
+            (rect, if fell_back { RectSource::Fallback } else { RectSource::Monitor })
+        }
+    };
+
+    if let Some(x) = args.x {
+        rect.x = x;
+    }
+    if let Some(y) = args.y {
+        rect.y = y;
+    }
+    if let Some(w) = args.w {
+        rect.w = w as i32;
+    }
+    if let Some(h) = args.h {
+        rect.h = h as i32;
+    }
+    if rect.is_empty() {
+        return Err(format!(
+            "--x/--y/--w/--h must leave a non-empty rect, got {}x{} at ({}, {})",
+            rect.w, rect.h, rect.x, rect.y
+        ));
+    }
+    Ok((rect, source))
 }
 
 fn wide(s: &str) -> Vec<u16> {
@@ -315,19 +442,59 @@ fn signature(entries: &[Entry], fade: f32) -> u64 {
 
 /// Create the overlay and run the frame loop until the game goes away or the
 /// window is closed.
+///
+/// The log is opened first and closed last: it is the only record of a run that
+/// draws nothing on screen, and every write through it is best-effort, so it can
+/// never be the reason the overlay fails.
 fn run(args: &Args) -> Result<(), String> {
+    let mut log = log::Log::open();
     let state_path = state::default_path();
-    let mut text = TextEngine::new()?;
 
-    let height = args.h.unwrap_or(DEF_H);
-    // All three elements live on one side of the stage now, so a mirrored layout
-    // no longer has to span the screen: the stage is the same size either way.
-    let width = args.w.unwrap_or(DEF_W);
-    if width == 0 || height == 0 {
-        return Err("--w and --h must both be non-zero".to_string());
-    }
+    let (rect, source) = match resolve_rect(args) {
+        Ok(chosen) => chosen,
+        Err(reason) => {
+            log.line(&format!("start refused: {reason}"));
+            return Err(reason);
+        }
+    };
+
+    // Read once before the loop starts: the answer is part of the startup line,
+    // and it is the difference between "the game has not published yet" and "the
+    // file is there but not ours".
+    let first_read = state::read(&state_path);
+    log.line(&format!(
+        "start: rect {}x{} at ({}, {}) [{}], position {:?}, state {} readable: {}",
+        rect.w,
+        rect.h,
+        rect.x,
+        rect.y,
+        source.label(),
+        args.position,
+        state_path.display(),
+        match &first_read {
+            Some(snapshot) => format!("yes ({} entries)", snapshot.entries.len()),
+            None => "no (missing, short, foreign or wrong version)".to_string(),
+        }
+    ));
+
+    let mut text = match TextEngine::new() {
+        Ok(text) => text,
+        Err(reason) => {
+            log.line(&format!("exit: error: {reason}, 0 frames drawn"));
+            return Err(reason);
+        }
+    };
 
     let mut config = Config { position: args.position, margin: hud::MARGIN, alpha: 1.0 };
+    // How many frames reached the compositor. Zero on a run that ended by itself
+    // is itself a diagnosis: the state file never showed up in time.
+    let mut frames: u64 = 0;
+    // When the process started, for the grace period and the exit line.
+    let started = Instant::now();
+    // Why the loop ends. Every `break` below sets it and the exit line logs it
+    // verbatim, so it is deliberately left uninitialised: a new exit path that
+    // forgets to say why is then a compile error rather than a vague log line.
+    let exit_reason: String;
 
     // One `unsafe` block, and the smallest one this job allows: Win32 is all
     // there is to call here, so the alternative would be scattering `unsafe`
@@ -341,7 +508,7 @@ fn run(args: &Args) -> Result<(), String> {
     // the thread that created the window and no other thread touches these
     // handles. TextEngine owns its own scratch DC/DIB and is dropped after the
     // window's DC is deleted, so the two never share an object.
-    unsafe {
+    let outcome: Result<(), String> = unsafe {
         let instance = GetModuleHandleW(std::ptr::null());
 
         let class_name = wide(CLASS_NAME);
@@ -354,25 +521,29 @@ fn run(args: &Args) -> Result<(), String> {
         wc.h_instance = instance;
         wc.lpsz_class_name = class_name.as_ptr();
         if RegisterClassExW(&wc) == 0 {
+            log.line(&format!("exit: error: RegisterClassExW failed, {frames} frames drawn"));
             return Err("RegisterClassExW failed".to_string());
         }
 
+        // The window *is* the rect: created at its corner, sized to it, so an
+        // element laid out MARGIN inside the canvas is MARGIN inside the screen.
         let title = wide("");
         let hwnd = CreateWindowExW(
             WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT,
             class_name.as_ptr(),
             title.as_ptr(),
             WS_POPUP,
-            args.x,
-            args.y,
-            width as i32,
-            height as i32,
+            rect.x,
+            rect.y,
+            rect.w,
+            rect.h,
             std::ptr::null_mut(),
             std::ptr::null_mut(),
             instance,
             std::ptr::null_mut(),
         );
         if hwnd.is_null() {
+            log.line(&format!("exit: error: CreateWindowExW failed, {frames} frames drawn"));
             return Err("CreateWindowExW failed".to_string());
         }
 
@@ -385,15 +556,16 @@ fn run(args: &Args) -> Result<(), String> {
         // release if the next call fails.
         let mem_dc = CreateCompatibleDC(std::ptr::null_mut());
         if mem_dc.is_null() {
+            log.line(&format!("exit: error: CreateCompatibleDC failed, {frames} frames drawn"));
             return Err("CreateCompatibleDC failed".to_string());
         }
 
         let mut info: BitmapInfo = std::mem::zeroed();
         info.header.size = std::mem::size_of::<BitmapInfoHeader>() as u32;
-        info.header.width = width as i32;
+        info.header.width = rect.w;
         // Negative height asks for a top-down DIB: row 0 is the top scanline,
         // which is the order the canvas writes in, so no flip is needed.
-        info.header.height = -(height as i32);
+        info.header.height = -rect.h;
         info.header.planes = 1;
         info.header.bit_count = 32;
         info.header.compression = BI_RGB;
@@ -402,11 +574,12 @@ fn run(args: &Args) -> Result<(), String> {
         let dib = CreateDIBSection(mem_dc, &info, DIB_RGB_COLORS, &mut bits, std::ptr::null_mut(), 0);
         if dib.is_null() || bits.is_null() {
             DeleteDC(mem_dc);
+            log.line(&format!("exit: error: CreateDIBSection failed, {frames} frames drawn"));
             return Err("CreateDIBSection failed".to_string());
         }
         let previous = SelectObject(mem_dc, dib);
 
-        let size = Size { cx: width as i32, cy: height as i32 };
+        let size = Size { cx: rect.w, cy: rect.h };
         let src_pos = Point { x: 0, y: 0 };
         let blend = BlendFunction {
             blend_op: AC_SRC_OVER,
@@ -418,7 +591,10 @@ fn run(args: &Args) -> Result<(), String> {
         };
 
         // ── live state ──
-        let mut canvas = Canvas::new(width, height);
+        // The canvas carries the window's screen origin, so the HUD is measured
+        // against the monitor rect the window covers and not against the surface's
+        // own (0, 0).
+        let mut canvas = Canvas::placed(rect.x, rect.y, rect.w as u32, rect.h as u32);
         let mut anim = Anim::new();
         let mut entries: Vec<Entry> = Vec::new();
         // Last write time of the state file — the game's own liveness signal.
@@ -429,7 +605,6 @@ fn run(args: &Args) -> Result<(), String> {
         let mut shown = false;
         let mut result: Result<(), String> = Ok(());
 
-        let started = Instant::now();
         let mut previous_frame = started;
         let mut msg: Msg = std::mem::zeroed();
 
@@ -447,6 +622,7 @@ fn run(args: &Args) -> Result<(), String> {
                 DispatchMessageW(&msg);
             }
             if quit {
+                exit_reason = "window lost (WM_QUIT / WM_CLOSE)".to_string();
                 break;
             }
 
@@ -474,6 +650,16 @@ fn run(args: &Args) -> Result<(), String> {
             if stale {
                 fade -= dt / FADE_SECS;
                 if fade <= 0.0 {
+                    // "Never wrote" and "stopped writing" are different reports:
+                    // the first means the game never came up, the second that it
+                    // went away. Both exit 0 — a game that quits is not an error.
+                    exit_reason = match last_write {
+                        Some(_) => format!("state stale (no write for {STALE_SECS:.0}s)"),
+                        None => format!(
+                            "state file never appeared (first-write grace of \
+                             {FIRST_WRITE_GRACE_SECS:.0}s timed out)"
+                        ),
+                    };
                     break;
                 }
             }
@@ -496,7 +682,10 @@ fn run(args: &Args) -> Result<(), String> {
                 );
                 // A null destination position keeps the coordinates
                 // CreateWindowExW was given — moving the window here would be a
-                // second chance to get the placement wrong.
+                // second chance to get the placement wrong. A failure is fatal,
+                // not a frame to skip: without it the window would stay empty
+                // while the process kept looping, which is precisely the silent
+                // "it started and I see nothing" this log exists to rule out.
                 if UpdateLayeredWindow(
                     hwnd,
                     std::ptr::null_mut(),
@@ -509,9 +698,14 @@ fn run(args: &Args) -> Result<(), String> {
                     ULW_ALPHA,
                 ) == 0
                 {
-                    result = Err("UpdateLayeredWindow failed".to_string());
+                    // Read the Win32 error before anything else can overwrite it.
+                    let reason =
+                        format!("UpdateLayeredWindow failed: {}", std::io::Error::last_os_error());
+                    exit_reason = format!("error: {reason}");
+                    result = Err(reason);
                     break;
                 }
+                frames += 1;
 
                 // Shown only once a finished HUD is in the window, so the first
                 // thing the desktop sees is the HUD rather than an empty window,
@@ -534,14 +728,30 @@ fn run(args: &Args) -> Result<(), String> {
         DeleteObject(dib);
         DeleteDC(mem_dc);
         result
-    }
+    };
+
+    // One line whatever happened: why it stopped and how much it drew. Written
+    // here, after the frame loop and before `main` turns an error into exit code
+    // 1, so a run that put nothing on screen is diagnosed from the log rather
+    // than from a blank desktop.
+    log.line(&format!(
+        "exit: {exit_reason}, {frames} frames drawn, {:.1}s",
+        started.elapsed().as_secs_f32()
+    ));
+    outcome
 }
 
 /// `--dump`: render one representative frame to a BMP and print the ASCII
 /// preview. No window class is registered and no window is created — the text
 /// engine only needs a memory DC, so this works on a session with no desktop.
 /// `--position` is honoured so both layouts can be reviewed the same way.
-fn run_dump(path: &str, position: Position) -> Result<(), String> {
+///
+/// `runtime` is the rect the *live* window would cover (the monitor, or `--rect`),
+/// which is printed but not drawn on: the review canvas stays the fixed 520x400
+/// every earlier dump was compared at, and the printed coordinates are therefore
+/// canvas-local. The runtime line is what says where those pixels would land on
+/// this machine's screen.
+fn run_dump(path: &str, position: Position, runtime: Rect, source: RectSource) -> Result<(), String> {
     let mut text = TextEngine::new()?;
     let (w, h) = (DEF_W, DEF_H);
     let mut canvas = Canvas::new(w, h);
@@ -561,6 +771,30 @@ fn run_dump(path: &str, position: Position) -> Result<(), String> {
         "wrote {path} ({w}x{h}, 32-bit BMP, {:?} layout, composited over #{:06X})",
         position,
         BACKDROP & 0x00FF_FFFF
+    );
+    // The rect the live window covers, which is *not* the review canvas: this is
+    // the number that decides whether the HUD lands in the screen's corner. The
+    // watermark's own origin is given in screen coordinates so the anchoring can
+    // be checked without running the windowed path.
+    let (wm_w, wm_h) = hud::watermark_size(&text);
+    let margin = hud::MARGIN;
+    println!(
+        "runtime window: {}x{} at ({}, {}) [{}] — the live layered window covers that rect, so the \
+         {margin}px margin is at x={} and the watermark block ({}x{}) at ({}, {}); the live layout \
+         is the same as this dump's, only measured against that rect",
+        runtime.w,
+        runtime.h,
+        runtime.x,
+        runtime.y,
+        source.label(),
+        match position {
+            Position::Left => runtime.x + margin,
+            Position::Right => runtime.right() - margin,
+        },
+        wm_w,
+        wm_h,
+        hud::anchor_x(runtime, position, margin, wm_w),
+        hud::anchor_top(runtime, margin),
     );
     // The numbers behind the picture: a dump that looks wrong is much easier to
     // fix when the face metrics are on screen next to it.
@@ -618,9 +852,19 @@ fn main() {
     }
 
     if let Some(path) = &args.dump {
-        if let Err(reason) = run_dump(path, args.position) {
-            eprintln!("error: {reason}");
-            std::process::exit(1);
+        // The dump draws on its fixed review canvas but reports the rect the live
+        // window would use, so a render can be checked against the real screen.
+        match resolve_rect(&args) {
+            Ok((rect, source)) => {
+                if let Err(reason) = run_dump(path, args.position, rect, source) {
+                    eprintln!("error: {reason}");
+                    std::process::exit(1);
+                }
+            }
+            Err(reason) => {
+                eprintln!("error: {reason}");
+                std::process::exit(2);
+            }
         }
         return;
     }
@@ -628,14 +872,22 @@ fn main() {
     if args.hide {
         // Automation hook: proves the executable starts, parses its arguments and
         // resolves its imports without ever touching the desktop.
+        let (rect, source) = match resolve_rect(&args) {
+            Ok(chosen) => chosen,
+            Err(reason) => {
+                eprintln!("error: {reason}");
+                std::process::exit(2);
+            }
+        };
         println!(
-            "{} {} — ok, no window created (stage would be {}x{} at {}, {}, layout {:?})",
+            "{} {} — ok, no window created (window rect {}x{} at ({}, {}) [{}], layout {:?})",
             env!("CARGO_PKG_NAME"),
             env!("CARGO_PKG_VERSION"),
-            args.w.map(|v| v as i64).unwrap_or(-1),
-            args.h.unwrap_or(DEF_H),
-            args.x,
-            args.y,
+            rect.w,
+            rect.h,
+            rect.x,
+            rect.y,
+            source.label(),
             args.position
         );
         return;

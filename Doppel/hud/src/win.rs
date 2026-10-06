@@ -131,6 +131,22 @@ pub struct BlendFunction {
     pub alpha_format: u8,
 }
 
+/// SYSTEMTIME: eight WORDs in this exact order. Only the log uses it, to stamp a
+/// line with the machine's *local* time — `std::time` speaks UTC only and no
+/// third-party crate is allowed, so one Win32 call is the cheapest correct answer.
+#[repr(C)]
+#[allow(dead_code)]
+pub struct SystemTimeW {
+    pub year: u16,
+    pub month: u16,
+    pub day_of_week: u16,
+    pub day: u16,
+    pub hour: u16,
+    pub minute: u16,
+    pub second: u16,
+    pub milliseconds: u16,
+}
+
 /// TEXTMETRICW: eleven LONGs, then five WCHARs, then five BYTEs. The font
 /// rasteriser needs tmHeight (the cell the layout budgets for) and relies on
 /// `repr(C)` to place those trailing narrow fields at offsets 44..60.
@@ -164,6 +180,9 @@ pub struct TextMetricsW {
 #[link(name = "user32")]
 extern "system" {
     pub fn RegisterClassExW(wc: *const WndClassExW) -> u16;
+    /// Screen metrics. Only the two indices below (`SM_CXSCREEN` / `SM_CYSCREEN`)
+    /// are used, to size the overlay's window to the primary monitor.
+    pub fn GetSystemMetrics(index: i32) -> i32;
     pub fn CreateWindowExW(
         ex_style: u32,
         class_name: *const u16,
@@ -242,6 +261,9 @@ extern "system" {
 #[link(name = "kernel32")]
 extern "system" {
     pub fn GetModuleHandleW(name: *const u16) -> Hinstance;
+    /// Fills in the system time in the machine's local zone — the overlay's log
+    /// timestamp. No return value, so there is nothing to check.
+    pub fn GetLocalTime(time: *mut SystemTimeW);
 }
 
 // ── constants ───────────────────────────────────────────────────────────────
@@ -273,6 +295,14 @@ pub const BI_RGB: u32 = 0;
 pub const AC_SRC_OVER: u8 = 0x00;
 pub const AC_SRC_ALPHA: u8 = 0x01;
 pub const ULW_ALPHA: u32 = 0x02;
+
+// `GetSystemMetrics` indices. The primary monitor is the one whose origin is
+// (0, 0) by definition, so only its *size* has to be asked for; there is no
+// `SM_XSCREEN`/`SM_YSCREEN` — only the virtual screen has an origin
+// (`SM_XVIRTUALSCREEN`/`SM_YVIRTUALSCREEN`, 76/77), and the overlay deliberately
+// covers the primary monitor rather than the whole desktop.
+pub const SM_CXSCREEN: i32 = 0;
+pub const SM_CYSCREEN: i32 = 1;
 
 // GDI text: ANTIALIASED_QUALITY (grayscale) is the only quality usable here —
 // ClearType is subpixel, so it tints edge pixels, and those cannot be

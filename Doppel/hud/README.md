@@ -2,6 +2,10 @@
 
 A standalone Win32 process that puts the client HUD on top of the Minecraft
 client: the **client watermark** (top corner) and the **module list** under it.
+Its layered window covers the whole primary monitor — or the rect `--rect` names —
+so the mockup's 16 px insets land on the *screen's* corners; the HUD itself is
+still drawn only at those insets and every other pixel of the window is fully
+transparent.
 The mockup's third element, the **status pill** in the bottom corner, is **off by
 default** — after reviewing the render the user asked for it not to be on screen;
 `SHOW_STATUS_PILL` in `src/hud.rs` is the one switch that brings it back (see
@@ -39,7 +43,8 @@ all stay in the tree as the geometry spec, and nothing else depends on the pill:
 no inset, no reserved gap, and no endless repaint (see *Lifetime*).
 
 Until D5 lands, nothing publishes the state file, so the overlay renders an empty
-HUD and exits three seconds after it starts.
+HUD and exits once its 30-second first-write grace runs out — and the two lines in
+`%TEMP%\doppel-hud.log` say exactly that (see *The log*).
 
 ## Hard prerequisite: windowed / borderless fullscreen only
 
@@ -60,11 +65,15 @@ cargo build --release
 ```
 
 Zero third-party dependencies: user32, gdi32 and kernel32 are called through raw
-`extern "system"` FFI, exactly like `injector/src/window.rs`. The rasteriser in
-`src/draw.rs` is pure Rust with no Win32 in it. `cargo test` covers the pixel
-blending, the rounded-box distance field, the state parser and the new pure
-geometry (row/bar size, watermark metrics, pill metrics, the design curve, the
-pulse ring and the count pop).
+`extern "system"` FFI, exactly like `injector/src/window.rs` — the two calls the
+placement fix and the log added (`GetSystemMetrics`, `GetLocalTime`) are declared
+there with the rest and pull in no crate. The rasteriser in `src/draw.rs` is pure
+Rust with no Win32 in it. `cargo test` covers the pixel blending, the rounded-box
+distance field, the state parser, the log (its size cap and its tolerance of an
+unopenable path) and the pure geometry: row/bar size, watermark metrics, pill
+metrics, the design curve, the pulse ring, the count pop, and the anchoring of the
+whole HUD to the rect the window covers (`anchor_x` / `anchor_top` /
+`anchor_bottom`, right, left and a `--rect` override).
 
 ## Running
 
@@ -74,12 +83,22 @@ target/release/doppel-hud.exe [options]
 
 | Option | Meaning | Default |
 | ------ | ------- | ------- |
-| `--x <i32>` / `--y <i32>` | screen position of the stage's top-left corner | `0`, `0` |
-| `--w <u32>` / `--h <u32>` | stage size in physical pixels | `520x400` |
+| `--rect <x> <y> <w> <h>` | the screen rect the overlay covers: the layered window is created at `(x, y)` with that size and the HUD is laid out inside it, 16 px in from the corners the mockup uses. A caller following the game window on a multi-monitor desktop passes that window's rect here | the whole primary monitor |
+| `--x <i32>` / `--y <i32>` / `--w <u32>` / `--h <u32>` | per-field adjustments to the chosen rect | the rect's own values |
 | `--position <where>` | `right` (the mockup's own layout: watermark + list top-right, and the status pill bottom-right only when `SHOW_STATUS_PILL` is on — it is off by default) or `left` (the same HUD mirrored into the left-hand corners) | `right` |
-| `--dump <path.bmp>` | render one representative frame to a 32-bit BMP, print the measured geometry and an ASCII preview, create no window, exit 0 | — |
+| `--dump <path.bmp>` | render one representative frame to a 32-bit BMP on the fixed 520x400 review canvas, print the measured geometry, an ASCII preview and the runtime rect the live window would cover, create no window, exit 0 | — |
 | `--hide` | print one line, create no window, exit 0 | — |
 | `--help` | print usage, exit 0 | — |
+
+The rect the window covers is the whole primary monitor by default
+(`GetSystemMetrics(SM_CXSCREEN / SM_CYSCREEN)`; the primary monitor's origin is
+`(0, 0)` by definition — Win32 has no `SM_XSCREEN`/`SM_YSCREEN`), or 1920x1080 if
+that call gives nothing usable. **This is the placement fix**: the window used to
+be a 520x400 stage at `(0, 0)`, and since the mockup hangs its blocks off the
+*right* edge of whatever rect it is given, the watermark and the list landed
+around x = 400 — the middle of a 1920-wide screen — with the rest of the window
+transparent. The layout was never wrong; the rect it hung off was. `--rect` is
+the hook a later caller uses to follow the game window.
 
 `stacked` (and `stack`/`default`) is still accepted as a synonym of `right`: the
 old card drew its brand pill in the top-right corner, and the mockup's watermark
@@ -98,7 +117,27 @@ for the status pill, either its rect and inner positions (when `SHOW_STATUS_PILL
 is on) or the one line saying it is not drawn and what it would measure, all taken
 from the same layout the painter used — and prints the same frame as ASCII
 characters (4x8 canvas pixels per character) so the shape can be judged from a
-terminal.
+terminal. It also prints the **runtime window** line: the monitor/`--rect` rect
+the live window would cover and the screen position the watermark would land at
+in it, because the dump's own canvas stays the fixed 520x400 review size.
+
+## The log
+
+The overlay appends to `%TEMP%\doppel-hud.log`, next to the state file (the
+injector's launch log points at it). It is the answer to "it is running but I see
+nothing", which a screenshot of an empty desktop cannot give:
+
+* one line on start — local time, pid, the rect it covers and where that came
+  from (primary monitor / fallback / `--rect`), the layout, the resolved state
+  path and whether that file was readable *and* parseable;
+* one line on exit — the reason (`window lost`, `state stale`, `state file never
+  appeared`, or `error: <Win32 error>`) and how many frames it pushed to the
+  compositor.
+
+Zero frames drawn plus a start line means the state file never appeared; frames
+drawn plus "nothing on screen" means the rect line is the thing to read. Logging
+is best-effort and can never fail the overlay, and a log over 64 KB is truncated
+on the next start, so it cannot grow without bound.
 
 The console window is intentional — it is where `--hide` and argument errors
 print. Stop the overlay from that console with Ctrl+C, from Task Manager, or with
@@ -109,17 +148,21 @@ which the window procedure turns into a clean `PostQuitMessage` and exit 0).
 
 * Style `WS_POPUP`; extended styles `WS_EX_LAYERED | WS_EX_TOOLWINDOW |
   WS_EX_NOACTIVATE | WS_EX_TRANSPARENT`.
-* The window is a **stage**: the HUD is drawn 16 px inside the corner it occupies
-  (`MARGIN`) and every other pixel stays fully transparent. Default stage origin
-  is `(0, 0)`, so with `--position right` the watermark block lands at screen
-  `(520-16-112, 16)` and, when the pill is on, it would land at
-  `(520-16-129, 400-16-29)` — that rect is left fully transparent while
-  `SHOW_STATUS_PILL` is `false` (it is a hole in the transparent stage, not a
-  reserved gap: no other element is inset by it).
+* The window **covers the whole rect it was given** — the primary monitor by
+  default, `--rect` otherwise — and the HUD is drawn 16 px inside the corner it
+  occupies (`MARGIN`); every other pixel of the window stays fully transparent.
+  With the default rect on a 1920x1080 screen, `--position right` puts the
+  watermark block at screen `(1920-16-112, 16) = (1792, 16)` and a row's chip
+  against x = 1904; `--position left` mirrors both to x = 16. When the status pill
+  is on it would sit at `(1920-16-129, 1080-16-29)` — that rect stays fully
+  transparent while `SHOW_STATUS_PILL` is `false` (a hole in the transparent
+  window, not a reserved gap: no other element is inset by it).
 * Content comes from `UpdateLayeredWindow` fed by a top-down 32bpp DIB of
   premultiplied BGRA pixels (`CreateDIBSection` + a memory DC) — the classic
   Win32 path for per-pixel alpha, and the reason GDI's own `RoundRect` is not
-  enough.
+  enough. The canvas that fills it carries the window's screen origin
+  (`Canvas::placed`), which is what makes the layout anchor to the monitor's
+  corner rather than to a surface origin.
 * The HUD is rasterised by hand — a rounded-rectangle distance field with
   coverage-based antialiasing in `src/draw.rs` — and text is drawn by GDI into a
   scratch DIB and blitted as a coverage mask, so a glyph's antialiasing ends up in
@@ -221,7 +264,13 @@ The process runs until it is killed or the window is closed, and it exits by
 itself when the game stops: when the state file has not been written for three
 seconds it fades the HUD out over 350 ms and exits 0. Before the first write it
 waits 30 seconds instead, because Forge + OptiFine + a world load routinely take
-longer than three seconds.
+longer than three seconds; if that grace runs out the log says so
+(`state file never appeared (first-write grace of 30s timed out)`) and the process
+still exits cleanly. Both exits are written to `%TEMP%\doppel-hud.log` with a frame
+count, and a window-lost exit (`taskkill` without `/F`, or the game closing it) is
+logged as such. A failed `UpdateLayeredWindow` is the one path that is *not*
+clean: it logs the Win32 error and exits 1 rather than looping with an empty
+window.
 
 Frames are pushed to the compositor when the state, the fade or an animation
 changed. While the status pill is on screen that is deliberately **every** frame:
@@ -243,22 +292,29 @@ appears, and renaming the binary in D6 is a `Cargo.toml` change.
 
 ## Layout of the code
 
-* `src/main.rs` — argument parsing, the window class and window, the DIB/blit
-  path, the frame loop, `--dump`, `WM_DESTROY` / `WM_CLOSE` / `WM_NCHITTEST`.
+* `src/main.rs` — argument parsing, the window class and window, the rect the
+  window covers (`--rect` / the primary monitor), the DIB/blit path, the frame
+  loop, `--dump`, `WM_DESTROY` / `WM_CLOSE` / `WM_NCHITTEST`.
 * `src/win.rs` — every Win32 type, constant and `extern "system"` declaration, so
-  the window code and the text rasteriser share one transcription.
+  the window code, the text rasteriser and the log share one transcription.
 * `src/draw.rs` — the pure pixel layer: a premultiplied BGRA canvas, colour
   packing, coverage antialiasing, rounded rectangles and rounded strokes. No
-  Win32, so it is covered by unit tests that run anywhere.
+  Win32, so it is covered by unit tests that run anywhere. The canvas also records
+  which screen point its `(0, 0)` is (`Canvas::placed`), which is what the layout
+  anchors to.
 * `src/text.rs` — the GDI text rasteriser: a scratch 32bpp DIB, seven cached
   Segoe UI / Consolas faces at `ANTIALIASED_QUALITY` (one per CSS font-size the
   mockup asks for), per-character tracking, a mirrored run for the mark, a
   bilinear-scaled run for the count's pop, and the coverage blit into the canvas.
 * `src/hud.rs` — the HUD itself: the palette, the design curve and the pulse/pop
-  easing, the entrance and flash animation state, the pure row/watermark/pill
-  geometry, and the painting. The geometry helpers are unit-tested.
-  `SHOW_STATUS_PILL` (and `ROW_CHIP_ALPHA`, the other display switch) live here.
+  easing, the entrance and flash animation state, the screen `Rect` and the
+  `anchor_*` helpers, the pure row/watermark/pill geometry, and the painting. The
+  geometry helpers are unit-tested. `SHOW_STATUS_PILL` (and `ROW_CHIP_ALPHA`, the
+  other display switch) live here.
 * `src/state.rs` — the reader half of the shared-state contract, plus the FNV-1a
   the writer keys module ids with.
+* `src/log.rs` — the `%TEMP%\doppel-hud.log` breadcrumbs: local time, pid, the
+  rect, the state file and the exit reason, capped at 64 KB per file and
+  best-effort throughout.
 * `src/preview.rs` — the `--dump` output: a 32-bit BMP writer and the ASCII
   downsample. Not used by the live overlay.

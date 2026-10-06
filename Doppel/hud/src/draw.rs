@@ -19,6 +19,13 @@ pub const fn argb(r: u8, g: u8, b: u8, a: u8) -> u32 {
 /// A CPU-side surface of premultiplied BGRA pixels, laid out exactly like the
 /// DIB section it will be memcpy'd into (word 0 = top-left pixel).
 pub struct Canvas {
+    /// Where this surface's `(0, 0)` lands on the monitor. The live overlay's
+    /// canvas *is* the layered window's surface, so the window's screen position
+    /// is what the HUD layout anchors against (`hud::canvas_rect`). Nothing in
+    /// this file reads it: pixels stay surface-local, and no drawing code has to
+    /// know the window moved.
+    screen_x: i32,
+    screen_y: i32,
     w: u32,
     h: u32,
     px: Vec<u32>,
@@ -29,7 +36,20 @@ impl Canvas {
     /// is also what the caller passes to CreateDIBSection — the two must agree
     /// or the copy at blit time would run off the end of the DIB.
     pub fn new(w: u32, h: u32) -> Canvas {
-        Canvas { w, h, px: vec![0u32; w as usize * h as usize] }
+        Canvas::placed(0, 0, w, h)
+    }
+
+    /// The same surface, declared to sit at `(screen_x, screen_y)` on the monitor.
+    /// Used by the live overlay, whose canvas covers the whole layered window: the
+    /// window is created at that corner, so the HUD's margins are measured from
+    /// the screen edge rather than from a small stage parked at the origin.
+    pub fn placed(screen_x: i32, screen_y: i32, w: u32, h: u32) -> Canvas {
+        Canvas { screen_x, screen_y, w, h, px: vec![0u32; w as usize * h as usize] }
+    }
+
+    /// Where this surface's `(0, 0)` sits on the monitor, for the layout.
+    pub fn screen_origin(&self) -> (i32, i32) {
+        (self.screen_x, self.screen_y)
     }
 
     /// The raw words, for handing to the DIB. BGRA byte order on little-endian
@@ -273,5 +293,20 @@ mod tests {
             assert!(((p >> 8) & 0xFF) <= a, "green channel exceeds alpha");
             assert!(((p >> 16) & 0xFF) <= a, "red channel exceeds alpha");
         }
+    }
+
+    /// A canvas knows where its surface sits on the monitor, which is what lets
+    /// the HUD anchor to the screen's corner instead of to a small stage's.
+    #[test]
+    fn a_placed_canvas_reports_where_its_surface_sits() {
+        let c = Canvas::placed(1920, 0, 8, 4);
+        assert_eq!(c.screen_origin(), (1920, 0));
+        assert_eq!((c.width(), c.height()), (8, 4));
+        assert_eq!(Canvas::new(8, 4).screen_origin(), (0, 0), "the default surface is at the origin");
+
+        // The origin is metadata: drawing is still surface-local.
+        let mut c = Canvas::placed(1920, 0, 8, 4);
+        c.fill_rect(0, 0, 1, 1, argb(0xFF, 0xFF, 0xFF, 0xFF));
+        assert_eq!(c.pixel(0, 0) >> 24, 0xFF, "x=0 is the surface's own first column");
     }
 }

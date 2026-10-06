@@ -1,0 +1,150 @@
+# GitLab CI - the GitHub Actions workflow ported over.
+#
+# Why every job runs on Windows: the JVM stack is portable, but the C++ payload
+# (MSVC + CMake + JNI headers) and the HUD overlay (raw Win32 FFI) are not. GitLab's
+# Windows runner image already ships CMake, Visual Studio Build Tools, Node and a JDK,
+# so only Gradle and Rust have to be fetched - and one runner type means one set of
+# setup steps instead of a cross-compilation story nobody wants to maintain.
+#
+# Runner facts worth remembering while reading this file:
+#   - tag: saas-windows-medium-amd64 (Beta, Windows 2022, 2 vCPU / 7.5 GB)
+#   - the shell is PowerShell and jobs run elevated, so choco/installs work
+#   - a fresh VM averages five minutes to provision; a job sitting in "pending" for a
+#     while is normal. Provisioning time is NOT billed against the namespace's compute
+#     minutes, only the script runtime is (cost factor 1 for the Windows runner).
+#   - shared runners require an identity-verified account. An unverified account fails
+#     with "user not verified" before any script runs: that is an account problem, not
+#     a pipeline problem.
+#   - PowerShell does not turn a failing native command into an error, so every gradle /
+#     cmake / cargo / node call below is followed by an explicit exit-code check.
+#
+# The Gradle wrapper in this repository is incomplete (gradle-wrapper.jar is missing),
+# which is why Gradle is downloaded here rather than through gradlew.
+
+stages:
+  - build
+
+variables:
+  GRADLE_VERSION: "8.5"
+
+# Shared preamble: every job is a Windows job.
+.windows:
+  tags:
+    - saas-windows-medium-amd64
+  before_script:
+    - $ErrorActionPreference = "Stop"
+    - Write-Host "job=$env:CI_JOB_NAME commit=$env:CI_COMMIT_SHORT_SHA ref=$env:CI_COMMIT_REF_NAME"
+
+# Rust toolchain (injector + HUD crate).
+.rust:
+  before_script:
+    - |
+      if (-not (Get-Command rustc -ErrorAction SilentlyContinue)) {
+        Write-Host "installing Rust (stable, minimal profile)"
+        $init = Join-Path $env:RUNNER_TEMP "rustup-init.exe"
+        Invoke-WebRequest -Uri "https://win.rustup.rs/x86_64" -OutFile $init -UseBasicParsing
+        & $init -y --profile minimal --default-toolchain stable
+        if ($LASTEXITCODE -ne 0) { exit 1 }
+      }
+    - $env:PATH = "$env:USERPROFILE\.cargo\bin;$env:PATH"
+    - rustc --version
+    - cargo --version
+
+# Gradle fetch. Referenced from jobs with !reference so it is written once.
+.gradle:
+  script:
+    - |
+      $gradleDir = Join-Path $env:RUNNER_TEMP "gradle-$env:GRADLE_VERSION"
+      if (-not (Test-Path (Join-Path $gradleDir "bin\gradle.bat"))) {
+        Write-Host "downloading Gradle $env:GRADLE_VERSION"
+        $zip = Join-Path $env:RUNNER_TEMP "gradle-bin.zip"
+        Invoke-WebRequest -Uri "https://services.gradle.org/distributions/gradle-$env:GRADLE_VERSION-bin.zip" -OutFile $zip -UseBasicParsing
+        Expand-Archive -Path $zip -DestinationPath $env:RUNNER_TEMP -Force
+      }
+      $env:PATH = "$gradleDir\bin;$env:PATH"
+    - gradle --version; if ($LASTEXITCODE -ne 0) { exit 1 }
+
+jvm:
+  extends: .windows
+  stage: build
+  script:
+    - !reference [.gradle, script]
+    # The mapping table rotted silently once, so it is verified before compiling.
+    - node Doppel/scripts/verify_mappings.mjs; if ($LASTEXITCODE -ne 0) { exit 1 }
+    - gradle -p Doppel --no-daemon :core:compileKotlin :agent:classes :adapter:common:compileKotlin :adapter:forge:v1_8_9:compileKotlin; if ($LASTEXITCODE -ne 0) { exit 1 }
+    - gradle -p Doppel --no-daemon :agent:jar; if ($LASTEXITCODE -ne 0) { exit 1 }
+    # TransformerTest lives in :agent:test - it transforms a stand-in for Display and
+    # loads the result, so a broken injection fails the pipeline instead of the game.
+    - gradle -p Doppel --no-daemon :core:test :adapter:common:test :agent:test; if ($LASTEXITCODE -ne 0) { exit 1 }
+    - |
+      $jar = Get-ChildItem Doppel\agent\build\libs\doppel-agent-*.jar | Select-Object -First 1
+      if (-not $jar) { Write-Error "no agent jar was produced"; exit 1 }
+      Write-Host "agent.jar: $($jar.FullName) ($($jar.Length) bytes)"
+      if ($jar.Length -lt 1000000) { Write-Error "agent.jar too small - the fat jar is broken"; exit 1 }
+      $entries = & jar tf $jar.FullName
+      # ASM replaced Javassist: without it bundled, Transformer dies with
+      # NoClassDefFoundError the moment the agent is attached.
+      foreach ($need in @("io/doppel/adapter/common/api/EventBridge", "io/doppel/core/model/PlayerState",
+                          "io/doppel/adapter/forge/v1_8_9/ForgeBootstrap", "io/doppel/agent/MappingContext",
+                          "io/doppel/agent/RenderBridge", "org/objectweb/asm/ClassReader")) {
+        if (-not ($entries | Select-String -SimpleMatch $need)) { Write-Error "$need is missing from the fat jar"; exit 1 }
+      }
+      Write-Host "agent.jar validation passed"
+  artifacts:
+    name: doppel-agent-jar
+    paths:
+      - Doppel/agent/build/libs/doppel-agent-*.jar
+    expire_in: 1 week
+
+injector:
+  extends: .windows
+  stage: build
+  needs: [jvm]
+  before_script:
+    - !reference [.windows, before_script]
+    - !reference [.rust, before_script]
+  script:
+    # The committed resources/agent.jar is a 0-byte placeholder; CI overwrites it with
+    # the real fat jar from the jvm job (its artifact is restored to that same path).
+    - |
+      $jar = Get-ChildItem -Recurse -Filter "doppel-agent-*.jar" -Path Doppel\agent\build\libs | Select-Object -First 1
+      if (-not $jar) { Write-Error "the agent.jar artifact is missing"; exit 1 }
+      Copy-Item $jar.FullName "Doppel\injector\resources\agent.jar" -Force
+      Write-Host "agent.jar ready: $((Get-Item 'Doppel\injector\resources\agent.jar').Length) bytes"
+    - cmake -S Doppel/injector/src/payload -B Doppel/injector/payload-build -DCMAKE_BUILD_TYPE=Release; if ($LASTEXITCODE -ne 0) { exit 1 }
+    - cmake --build Doppel/injector/payload-build --config Release; if ($LASTEXITCODE -ne 0) { exit 1 }
+    - |
+      $dll = Get-ChildItem -Recurse -Filter payload.dll Doppel\injector\payload-build | Select-Object -First 1
+      if (-not $dll) { Write-Error "payload.dll was not built"; exit 1 }
+      Copy-Item $dll.FullName "Doppel\injector\resources\payload.dll" -Force
+      Write-Host "payload.dll ready: $($dll.Length) bytes"
+    - cargo build --release --manifest-path Doppel/injector/Cargo.toml; if ($LASTEXITCODE -ne 0) { exit 1 }
+    - |
+      $exe = "Doppel\injector\target\release\doppel-injector.exe"
+      if (-not (Test-Path $exe)) { Write-Error "doppel-injector.exe was not produced"; exit 1 }
+      Write-Host "doppel-injector.exe: $((Get-Item $exe).Length) bytes"
+  artifacts:
+    name: doppel-injector
+    paths:
+      - Doppel/injector/target/release/doppel-injector.exe
+    expire_in: 1 week
+
+hud:
+  extends: .windows
+  stage: build
+  before_script:
+    - !reference [.windows, before_script]
+    - !reference [.rust, before_script]
+  script:
+    # Compiled on every push: the Fabric adapter is the cautionary tale of what happens
+    # to code that no job builds.
+    - cargo build --release --manifest-path Doppel/hud/Cargo.toml; if ($LASTEXITCODE -ne 0) { exit 1 }
+    - |
+      $exe = Get-ChildItem Doppel\hud\target\release -Filter *.exe | Select-Object -First 1
+      if (-not $exe) { Write-Error "the HUD binary was not produced"; exit 1 }
+      Write-Host "doppel-hud.exe: $($exe.Name) ($($exe.Length) bytes)"
+  artifacts:
+    name: doppel-hud
+    paths:
+      - Doppel/hud/target/release/*.exe
+    expire_in: 1 week

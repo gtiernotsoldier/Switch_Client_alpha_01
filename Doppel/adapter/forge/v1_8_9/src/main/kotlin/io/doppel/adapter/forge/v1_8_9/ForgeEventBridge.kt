@@ -1293,10 +1293,36 @@ object ForgeEventBridge : IEventBridge {
                 it.returnType == Void.TYPE
         }
     }
-    private val optionsGetValueMethod by lazy {
-        gameSettingsOptionsClass?.declaredMethods?.firstOrNull {
-            it.parameterCount == 1 && it.parameterTypes[0] == Float::class.javaPrimitiveType &&
-                it.returnType == Float::class.javaPrimitiveType
+
+    /**
+     * `GameSettings.setOptionValue(Options, float)` / `getOptionValue(Options)`.
+     *
+     * These are the pair the game's own options screen drives, and they are the reason the first cut
+     * of this module did nothing: the `Options` enum turned out to declare **four** float-taking
+     * float-returning methods (value min/max/step and `getValue`), so "the one that takes a float"
+     * picked an arbitrary one and the original value read back was never the option's own. The pair
+     * on `GameSettings` is unambiguous: the only declared void method taking (Options, float), and
+     * the only declared float method taking (Options).
+     */
+    private val gameSettingsSetOptionMethod by lazy {
+        try {
+            Class.forName("net.minecraft.client.settings.GameSettings").declaredMethods.firstOrNull {
+                it.parameterCount == 2 && it.returnType == Void.TYPE &&
+                    it.parameterTypes[1] == Float::class.javaPrimitiveType &&
+                    (gameSettingsOptionsClass?.isAssignableFrom(it.parameterTypes[0]) == true)
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+    private val gameSettingsGetOptionMethod by lazy {
+        try {
+            Class.forName("net.minecraft.client.settings.GameSettings").declaredMethods.firstOrNull {
+                it.parameterCount == 1 && it.returnType == Float::class.javaPrimitiveType &&
+                    (gameSettingsOptionsClass?.isAssignableFrom(it.parameterTypes[0]) == true)
+            }
+        } catch (_: Exception) {
+            null
         }
     }
 
@@ -1304,9 +1330,16 @@ object ForgeEventBridge : IEventBridge {
     private val viewBobbingOption by lazy {
         val cls = gameSettingsOptionsClass ?: return@lazy null
         val key = optionsEnumStringMethod ?: return@lazy null
-        cls.enumConstants?.firstOrNull {
+        // Normally they are `enumConstants`. The fallback covers an obfuscator that stripped the
+        // enum-ness (no `values()`/`valueOf()`, `enumConstants` null): the constants would still be
+        // static fields of the same type, so scan those rather than give up silently.
+        val pool = cls.enumConstants?.toList()
+            ?: cls.declaredFields
+                .filter { it.type == cls && java.lang.reflect.Modifier.isStatic(it.modifiers) }
+                .mapNotNull { f -> try { f.get(null) } catch (_: Exception) { null } }
+        pool.firstOrNull { c ->
             try {
-                (key.invoke(it) as? String)?.equals("options.viewBobbing", ignoreCase = true) == true
+                (key.invoke(c) as? String)?.equals("options.viewBobbing", ignoreCase = true) == true
             } catch (_: Exception) {
                 false
             }
@@ -1315,6 +1348,9 @@ object ForgeEventBridge : IEventBridge {
 
     /** The player's own value while the module is on; null = we are not overriding anything. */
     @Volatile private var savedViewBobbing: Float? = null
+
+    /** One "what did I resolve" line per enable edge — see applyCameraBobOverride. */
+    @Volatile private var cameraBobLogged: Boolean = false
 
     /**
      * NoCameraBob — hold vanilla's View Bobbing off while the module is on, then hand the player's
@@ -1326,21 +1362,63 @@ object ForgeEventBridge : IEventBridge {
      */
     private fun applyCameraBobOverride() {
         try {
-            val option = viewBobbingOption ?: return
-            val setter = optionsSetValueMethod ?: return
-            if (EventBridge.suppressCameraBob) {
-                if (savedViewBobbing == null) {
-                    savedViewBobbing = try {
-                        (optionsGetValueMethod?.invoke(option, 1.0f) as? Float) ?: 1.0f
-                    } catch (_: Exception) {
-                        1.0f
-                    }
-                }
-                setter.invoke(option, 0.0f)
-            } else {
+            if (!EventBridge.suppressCameraBob) {
                 val saved = savedViewBobbing ?: return
-                setter.invoke(option, saved)
+                writeViewBobbing(saved)
                 savedViewBobbing = null
+                cameraBobLogged = false
+                return
+            }
+            val option = viewBobbingOption
+            val gs = getMc()?.let { MappingContext.getFieldValue(it, "forge:mc_gameSettings") }
+            val current = readViewBobbing()
+            if (savedViewBobbing == null) {
+                savedViewBobbing = current ?: 1.0f
+                if (!cameraBobLogged) {
+                    cameraBobLogged = true
+                    // One line per enable, because "the crosshair still bobs" and "the module never
+                    // found the option" look identical from the outside.
+                    io.doppel.core.logging.CoreLogger.info(
+                        "[NoCameraBob] option=${option != null} enum=${gameSettingsOptionsClass?.enumConstants?.size ?: -1} " +
+                            "keyFn=${optionsEnumStringMethod != null} settings=${gs != null} " +
+                            "read=${gameSettingsGetOptionMethod != null} " +
+                            "write=${gameSettingsSetOptionMethod != null || optionsSetValueMethod != null} " +
+                            "current=$current -> off"
+                    )
+                }
+            }
+            writeViewBobbing(0.0f)
+        } catch (_: Exception) {}
+    }
+
+    /** Read the player's own View Bobbing value, or null when the option cannot be reached. */
+    private fun readViewBobbing(): Float? {
+        val option = viewBobbingOption ?: return null
+        val gs = try {
+            getMc()?.let { MappingContext.getFieldValue(it, "forge:mc_gameSettings") }
+        } catch (_: Exception) {
+            null
+        } ?: return null
+        return try {
+            gameSettingsGetOptionMethod?.invoke(gs, option) as? Float
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /** Write View Bobbing through whichever of the two canonical setters this runtime exposes. */
+    private fun writeViewBobbing(value: Float) {
+        val option = viewBobbingOption ?: return
+        val gs = try {
+            getMc()?.let { MappingContext.getFieldValue(it, "forge:mc_gameSettings") }
+        } catch (_: Exception) {
+            null
+        }
+        try {
+            if (gs != null && gameSettingsSetOptionMethod != null) {
+                gameSettingsSetOptionMethod?.invoke(gs, option, value)
+            } else {
+                optionsSetValueMethod?.invoke(option, value)
             }
         } catch (_: Exception) {}
     }

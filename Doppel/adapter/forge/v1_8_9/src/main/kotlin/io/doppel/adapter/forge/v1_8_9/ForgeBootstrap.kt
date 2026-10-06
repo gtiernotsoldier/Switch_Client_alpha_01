@@ -9,6 +9,7 @@ import io.doppel.adapter.common.module.player.*
 import io.doppel.adapter.common.module.render.Fullbright
 import io.doppel.adapter.common.module.render.HUD
 import io.doppel.adapter.common.module.render.Keystrokes
+import io.doppel.adapter.common.module.render.Freelook
 import io.doppel.adapter.common.module.render.NoHurtCam
 import io.doppel.adapter.common.module.render.Speedometer
 import io.doppel.adapter.common.module.render.VelocityDisplay
@@ -126,7 +127,7 @@ object ForgeBootstrap {
             SprintReset, STap, SuperKnockback, TriggerBot, Velocity, WTap,
             NoJumpDelay, NoKeyboardFix, NoMouseFix, Sprint, Strafe, StrafeFix, InvMove,
             AntiBot, AutoTool, BridgeAssist, Eagle, ParallaxStrike, Teams, TargetFilter,
-            Fullbright, HUD, NoHurtCam, Keystrokes, Speedometer, VelocityDisplay, JumpStatus,
+            Freelook, Fullbright, HUD, NoHurtCam, Keystrokes, Speedometer, VelocityDisplay, JumpStatus,
             JumpTiming, KnockbackDisplay,
             WebUI,
             FastPlace

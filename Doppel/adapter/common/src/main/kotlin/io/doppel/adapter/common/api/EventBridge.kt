@@ -150,6 +150,9 @@ object EventBridge {
         // Render/GUI hook contract — a stale "on" flag here would outlive the module that set it.
         suppressHurtCam = false
         blockCounter = null
+        freeLookActive = false
+        freeLookYaw = 0f
+        freeLookPitch = 0f
         keepMovementInGui = false
         guiMovementKeepSprint = false
         guiMovementOnlyInventory = false
@@ -1249,6 +1252,20 @@ object EventBridge {
     // NoFOV was deleted at the user's request, and with it the `lockFovModifier` flag it published.
     // The approach it needed was real (a 20 Hz write could never win against
     // `updateFovModifierHand()` inside `Minecraft.runTick()`), but the module itself was not wanted.
+
+    // ========== Freelook (Visual) ==========
+    /**
+     * True while a module wants the camera to follow its own angles instead of the player's.
+     *
+     * The platform points `Minecraft.renderViewEntity` at a stand-in entity carrying [freeLookYaw] /
+     * [freeLookPitch], so the camera turns while the player's real rotation — and therefore movement
+     * and everything the server sees — stays exactly where it was.
+     */
+    @Volatile var freeLookActive: Boolean = false
+
+    /** The camera angles Freelook wants, in degrees. Only meaningful while [freeLookActive]. */
+    @Volatile var freeLookYaw: Float = 0f
+    @Volatile var freeLookPitch: Float = 0f
 
     // ========== Block count (BridgeAssist's bridging readout) ==========
     private var blockCounter: ((Int) -> Int)? = null

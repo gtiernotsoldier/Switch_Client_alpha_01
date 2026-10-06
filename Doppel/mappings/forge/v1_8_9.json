@@ -735,6 +735,70 @@
     ],
     "mcp": "fontRendererObj"
   },
+  "forge:mc_renderViewEntity": {
+    "class": "net.minecraft.client.Minecraft",
+    "field": "field_71451_h",
+    "aliases": [
+      "mc_renderViewEntity"
+    ],
+    "mcp": "renderViewEntity"
+  },
+  "forge:entity_rotationYaw": {
+    "class": "net.minecraft.entity.Entity",
+    "field": "field_70177_z",
+    "aliases": [
+      "entity_rotationYaw"
+    ],
+    "mcp": "rotationYaw"
+  },
+  "forge:entity_rotationPitch": {
+    "class": "net.minecraft.entity.Entity",
+    "field": "field_70125_A",
+    "aliases": [
+      "entity_rotationPitch"
+    ],
+    "mcp": "rotationPitch"
+  },
+  "forge:entity_prevRotationYaw": {
+    "class": "net.minecraft.entity.Entity",
+    "field": "field_70126_B",
+    "aliases": [
+      "entity_prevRotationYaw"
+    ],
+    "mcp": "prevRotationYaw"
+  },
+  "forge:entity_prevRotationPitch": {
+    "class": "net.minecraft.entity.Entity",
+    "field": "field_70127_C",
+    "aliases": [
+      "entity_prevRotationPitch"
+    ],
+    "mcp": "prevRotationPitch"
+  },
+  "forge:entity_prevPosX": {
+    "class": "net.minecraft.entity.Entity",
+    "field": "field_70169_q",
+    "aliases": [
+      "entity_prevPosX"
+    ],
+    "mcp": "prevPosX"
+  },
+  "forge:entity_prevPosY": {
+    "class": "net.minecraft.entity.Entity",
+    "field": "field_70167_r",
+    "aliases": [
+      "entity_prevPosY"
+    ],
+    "mcp": "prevPosY"
+  },
+  "forge:entity_prevPosZ": {
+    "class": "net.minecraft.entity.Entity",
+    "field": "field_70166_s",
+    "aliases": [
+      "entity_prevPosZ"
+    ],
+    "mcp": "prevPosZ"
+  },
   "forge:mc_gameSettings": {
     "class": "net.minecraft.client.Minecraft",
     "field": "field_71474_y",

@@ -53,6 +53,7 @@ object AgentBridge {
         "Teams" to "player",
         "TargetFilter" to "player",
         // Render
+        "Freelook" to "render",
         "Fullbright" to "render",
         "HUD" to "render",
         "NoHurtCam" to "render",

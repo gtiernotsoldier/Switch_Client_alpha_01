@@ -1299,12 +1299,108 @@ object ForgeEventBridge : IEventBridge {
     }
 
 
+    // ── Freelook: point the camera at a stand-in entity ──
+    //
+    // The camera follows `Minecraft.renderViewEntity`, so lending that field a stand-in whose rotation
+    // we own turns the view without touching the player's rotation — movement, hit direction and what
+    // the server is told all stay where they were. A bare Entity reports an eye height of 0, so the
+    // stand-in is placed at the player's eye position directly.
+    private val mcRenderViewEntityField by lazy { MappingContext.getField("forge:mc_renderViewEntity") }
+    private var freeLookDummy: Any? = null
+    private var freeLookSwapped = false
+    private var freeLookLogged = false
+    private var freeLookStickLogged = false
+
+    private fun ensureFreeLookEntity(): Any? {
+        freeLookDummy?.let { return it }
+        return try {
+            val world = getWorld() ?: return null
+            val cls = Class.forName("net.minecraft.entity.Entity")
+            val ctor = cls.getDeclaredConstructor(Class.forName("net.minecraft.world.World"))
+            ctor.isAccessible = true
+            ctor.newInstance(world).also { freeLookDummy = it }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun syncFreeLookEntity(dummy: Any, player: Any) {
+        val px = MappingContext.getFieldValue(player, "forge:entity_posX") as? Double ?: return
+        val py = MappingContext.getFieldValue(player, "forge:entity_posY") as? Double ?: return
+        val pz = MappingContext.getFieldValue(player, "forge:entity_posZ") as? Double ?: return
+        val eye = py + 1.62
+        // prev == current, so the camera does not interpolate in from wherever the stand-in was.
+        for ((key, v) in listOf(
+            "forge:entity_posX" to px, "forge:entity_prevPosX" to px,
+            "forge:entity_posY" to eye, "forge:entity_prevPosY" to eye,
+            "forge:entity_posZ" to pz, "forge:entity_prevPosZ" to pz
+        )) {
+            MappingContext.getField(key)?.setDouble(dummy, v)
+        }
+        for ((key, v) in listOf(
+            "forge:entity_rotationYaw" to EventBridge.freeLookYaw,
+            "forge:entity_prevRotationYaw" to EventBridge.freeLookYaw,
+            "forge:entity_rotationPitch" to EventBridge.freeLookPitch,
+            "forge:entity_prevRotationPitch" to EventBridge.freeLookPitch
+        )) {
+            MappingContext.getField(key)?.setFloat(dummy, v)
+        }
+    }
+
+    /**
+     * Freelook — lend `renderViewEntity` to the stand-in while the module is on, hand it back when it
+     * goes off. The read-back on the first frame is deliberate: if the game reassigns the field after
+     * us, the log says so instead of the module looking broken for no stated reason.
+     */
+    private fun applyFreeLook() {
+        try {
+            val mc = getMc() ?: return
+            val player = getPlayer() ?: return
+            val field = mcRenderViewEntityField
+            if (field == null) {
+                if (!freeLookLogged) {
+                    freeLookLogged = true
+                    io.doppel.core.logging.CoreLogger.error(
+                        "[Freelook] renderViewEntity (field_71451_h) not resolved — the camera cannot be redirected"
+                    )
+                }
+                return
+            }
+            if (!EventBridge.freeLookActive) {
+                if (freeLookSwapped) {
+                    field.set(mc, player)
+                    freeLookSwapped = false
+                }
+                freeLookLogged = false
+                freeLookStickLogged = false
+                return
+            }
+            val dummy = ensureFreeLookEntity() ?: return
+            syncFreeLookEntity(dummy, player)
+            field.set(mc, dummy)
+            freeLookSwapped = true
+            if (!freeLookLogged) {
+                freeLookLogged = true
+                io.doppel.core.logging.CoreLogger.info("[Freelook] camera redirected to the stand-in entity")
+            }
+            if (!freeLookStickLogged) {
+                freeLookStickLogged = true
+                val stuck = try { field.get(mc) === dummy } catch (_: Exception) { false }
+                io.doppel.core.logging.CoreLogger.info(
+                    "[Freelook] renderViewEntity write stuck=$stuck" +
+                        (if (stuck) "" else " — the game reassigns it after us; the swap needs to move earlier")
+                )
+            }
+        } catch (_: Exception) {}
+    }
+
     /**
      * Called once per rendered frame from ForgeBootstrap.render() (MC main thread).
      * No-op unless a render module asked for it.
      */
     fun applyFrameOverrides() {
         applyHurtCamOverride()
+        applyFreeLook()
     }
 
     // ═══════════════════════════════════════════

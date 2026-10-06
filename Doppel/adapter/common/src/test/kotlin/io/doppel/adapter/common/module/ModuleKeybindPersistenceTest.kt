@@ -17,7 +17,7 @@ import java.io.File
  */
 class ModuleKeybindPersistenceTest {
 
-    private class Binding : Module("Binding", Category.RENDER)
+    private class Binding : Module("Binding", Category.VISUAL)
 
     /**
      * The persisted state is keyed by the module *name*, so every `Binding` in this class shares one

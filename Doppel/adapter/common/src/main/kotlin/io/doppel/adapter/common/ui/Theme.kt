@@ -82,16 +82,16 @@ object Theme {
      * Base hue 0.8 (warm orange), categories offset their hue.
      *
      * Maps by category NAME (not enum ordinal) so the palette matches the
-     * `aurora_gui_visual_system_preview.html` design: RENDER=orange,
-     * COMBAT=gold, MOVEMENT=mint, PLAYER=pink, WORLD=yellow-green.
+     * `aurora_gui_visual_system_preview.html` design: VISUAL=orange,
+     * COMBAT=gold, MOVEMENT=mint, PLAYER=pink, UTILITY=yellow-green.
      */
     fun accentFor(category: Category): Int {
         val offset = when (category) {
-            Category.RENDER   -> 0.00f  // warm orange
+            Category.VISUAL   -> 0.00f  // warm orange
             Category.COMBAT   -> 0.33f  // gold
             Category.MOVEMENT -> 0.66f  // mint
             Category.PLAYER   -> 0.15f  // pink/purple
-            Category.WORLD    -> 0.50f  // yellow-green
+            Category.UTILITY    -> 0.50f  // yellow-green
             else              -> 0.0f
         }
         val hue = (0.8f + offset) % 1.0f
@@ -113,11 +113,11 @@ object Theme {
      */
     fun accentGlow(category: Category): Int {
         val offset = when (category) {
-            Category.RENDER   -> 0.00f  // warm orange
+            Category.VISUAL   -> 0.00f  // warm orange
             Category.COMBAT   -> 0.33f  // gold
             Category.MOVEMENT -> 0.66f  // mint
             Category.PLAYER   -> 0.15f  // pink/purple
-            Category.WORLD    -> 0.50f  // yellow-green
+            Category.UTILITY    -> 0.50f  // yellow-green
             else              -> 0.0f
         }
         val hue = (0.8f + offset) % 1.0f

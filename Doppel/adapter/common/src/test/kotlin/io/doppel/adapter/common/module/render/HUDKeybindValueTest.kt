@@ -13,7 +13,7 @@ import org.junit.jupiter.api.Test
  */
 class HUDKeybindValueTest {
 
-    private class Dummy : Module("Dummy", Category.RENDER)
+    private class Dummy : Module("Dummy", Category.VISUAL)
 
     /**
      * The keybind lives in the config store, keyed by the module *name* — which is what makes it

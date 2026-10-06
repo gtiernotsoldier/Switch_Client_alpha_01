@@ -20,7 +20,7 @@ import org.junit.jupiter.api.Test
  */
 class HUDToggleNoticeTest {
 
-    private class Bound : Module("Bound", Category.RENDER)
+    private class Bound : Module("Bound", Category.VISUAL)
 
     @BeforeEach
     fun setUp() {

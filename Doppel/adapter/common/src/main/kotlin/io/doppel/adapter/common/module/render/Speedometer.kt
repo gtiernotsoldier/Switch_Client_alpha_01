@@ -19,7 +19,7 @@ import kotlin.math.sqrt
  * Rendered exactly like the Keystrokes HUD: draggable while a GUI is open, plain text with
  * shadow, NO background box — just numbers.
  */
-object Speedometer : Module("Speedometer", Category.RENDER) {
+object Speedometer : Module("Speedometer", Category.VISUAL) {
 
     /** Sprint baseline (blocks/second) used for the 100% retention reference. ~5.6 b/s. */
     private const val SPRINT_BPS = 5.6f

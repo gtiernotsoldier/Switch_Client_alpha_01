@@ -17,7 +17,7 @@ import io.doppel.adapter.common.render.RenderContext
  * Rendered exactly like Speedometer: draggable while a GUI is open, plain text with shadow, NO
  * background box — vanilla font.
  */
-object JumpStatus : Module("JumpStatus", Category.RENDER) {
+object JumpStatus : Module("JumpStatus", Category.VISUAL) {
 
     @Volatile
     var posX: Int = -1

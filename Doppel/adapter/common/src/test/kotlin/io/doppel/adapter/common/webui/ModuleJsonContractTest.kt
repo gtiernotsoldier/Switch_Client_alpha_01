@@ -16,7 +16,7 @@ import org.junit.jupiter.api.Test
  */
 class ModuleJsonContractTest {
 
-    private class Bound : Module("JsonBound", Category.RENDER)
+    private class Bound : Module("JsonBound", Category.VISUAL)
 
     private fun module(): Bound {
         val m = Bound()

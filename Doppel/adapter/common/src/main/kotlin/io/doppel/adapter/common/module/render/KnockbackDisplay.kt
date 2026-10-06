@@ -26,7 +26,7 @@ import kotlin.math.sqrt
  *
  * Rendering: 4 lines, draggable while a GUI is open, plain text with shadow, no background box.
  */
-object KnockbackDisplay : Module("KnockbackDisplay", Category.RENDER) {
+object KnockbackDisplay : Module("KnockbackDisplay", Category.VISUAL) {
 
     private const val DEALT_MATCH_MS = 600L
     private const val MEASURE_MS = 1500L

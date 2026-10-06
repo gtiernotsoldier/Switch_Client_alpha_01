@@ -23,7 +23,7 @@ import io.doppel.adapter.common.ui.RenderUtils
  * text factor j = 1 - elapsed/20 on press (fade to dark), white CPS text whose brightness
  * follows j. Exactly matches Raven's KeyStrokeKeyRenderer.renderKey / KeyStrokeMouse.n.
  */
-object Keystrokes : Module("Keystrokes", Category.RENDER) {
+object Keystrokes : Module("Keystrokes", Category.VISUAL) {
 
     // ── Raven color palette (KeyStrokeConfigGui order) ──
     private val THEME_COLORS = intArrayOf(

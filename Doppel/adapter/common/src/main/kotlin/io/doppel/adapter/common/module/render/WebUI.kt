@@ -14,7 +14,7 @@ import io.doppel.adapter.common.webui.WebUIServer
  * The server runs on its own daemon thread pool — zero impact on the MC
  * render thread. Enable this module to start it (default: on).
  */
-object WebUI : Module("WebUI", Category.RENDER) {
+object WebUI : Module("WebUI", Category.VISUAL) {
 
     init {
         showRedIndicator = false

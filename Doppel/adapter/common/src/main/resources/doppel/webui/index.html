@@ -275,8 +275,8 @@
         .mod-icon.cat-COMBAT   { color:#FBBF24; background:rgba(251,191,36,0.08);  border-color:rgba(251,191,36,0.22); }
         .mod-icon.cat-PLAYER   { color:#F472B6; background:rgba(244,114,182,0.08); border-color:rgba(244,114,182,0.22); }
         .mod-icon.cat-MOVEMENT { color:#6EE7B7; background:rgba(110,231,183,0.08); border-color:rgba(110,231,183,0.22); }
-        .mod-icon.cat-WORLD    { color:#A3E635; background:rgba(163,230,53,0.08);  border-color:rgba(163,230,53,0.22); }
-        .mod-icon.cat-RENDER   { color:#22D3EE; background:rgba(34,211,238,0.08);  border-color:rgba(34,211,238,0.22); }
+        .mod-icon.cat-UTILITY    { color:#A3E635; background:rgba(163,230,53,0.08);  border-color:rgba(163,230,53,0.22); }
+        .mod-icon.cat-VISUAL   { color:#22D3EE; background:rgba(34,211,238,0.08);  border-color:rgba(34,211,238,0.22); }
         .mod-icon.cat-MISC     { color:#A78BFA; background:rgba(167,139,250,0.08); border-color:rgba(167,139,250,0.22); }
         /* Mode chip at a glance (e.g. Legit / Pack / Switch) */
         .mode-chip {
@@ -700,15 +700,15 @@
 <script>
         const $ = s => document.querySelector(s);
         const $$ = s => Array.from(document.querySelectorAll(s));
-        const CATS = ['COMBAT','PLAYER','MOVEMENT','WORLD','RENDER','MISC'];
-        const CAT_TAB = { COMBAT:'Combat', PLAYER:'Player', MOVEMENT:'Movement', WORLD:'World', RENDER:'Render', MISC:'Misc' };
+        const CATS = ['COMBAT','PLAYER','MOVEMENT','UTILITY','VISUAL','MISC'];
+        const CAT_TAB = { COMBAT:'Combat', PLAYER:'Player', MOVEMENT:'Movement', UTILITY:'Utility', VISUAL:'Visual', MISC:'Misc' };
         const SVGO = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">';
         const CAT_NAV = {
             COMBAT:'<circle cx="12" cy="12" r="7"/><path d="M12 2.5V6M12 18v3.5M2.5 12H6M18 12h3.5"/>',
             PLAYER:'<circle cx="12" cy="7.5" r="3.4"/><path d="M5 20c1-4 3.7-6 7-6s6 2 7 6"/>',
             MOVEMENT:'<path d="M4 20h16"/><path d="M13 4l-5 8h4l-2 8 6-9h-4.5z"/>',
-            WORLD:'<circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c-5 5.5-5 11.5 0 17M12 3.5c5 5.5 5 11.5 0 17"/>',
-            RENDER:'<rect x="3" y="4.5" width="18" height="15" rx="2.5"/><path d="M7 9h6M7 13h9M7 17h5"/>',
+            UTILITY:'<circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c-5 5.5-5 11.5 0 17M12 3.5c5 5.5 5 11.5 0 17"/>',
+            VISUAL:'<rect x="3" y="4.5" width="18" height="15" rx="2.5"/><path d="M7 9h6M7 13h9M7 17h5"/>',
             MISC:'<circle cx="5" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="19" cy="12" r="1.4"/>'
         };
 
@@ -753,7 +753,7 @@
             'Teams':            '<circle cx="9" cy="8.5" r="3"/><path d="M3.5 19.5c.8-3.2 2.9-4.9 5.5-4.9s4.7 1.7 5.5 4.9"/><circle cx="16.8" cy="9.5" r="2.3"/><path d="M16 14.8c2.5.2 4.1 1.6 4.7 4.2"/>',
             'Eagle':            '<path d="M3 20.5h6V15h6V9.5h6"/><path d="M18.5 3v6M16.4 7l2.1 2 2.1-2"/>',
             'AntiBot':          '<rect x="6" y="8" width="12" height="9.5" rx="2.5"/><circle cx="10" cy="12.2" r=".4" fill="currentColor"/><circle cx="14" cy="12.2" r=".4" fill="currentColor"/><path d="M12 8V5M9.5 5h5"/><path d="M4 4.5l16 15"/>',
-            /* ---- RENDER ---- */
+            /* ---- VISUAL ---- */
             'HUD':              '<rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M7 8.5h5M7 12.5h8M7 16.5h4"/><path d="M17 8.5h.01"/>',
             'NoFOV':            '<path d="M2.5 12c2.5-4 5.9-6 9.5-6s7 2 9.5 6c-2.5 4-5.9 6-9.5 6s-7-2-9.5-6z"/><circle cx="12" cy="12" r="2.6"/><path d="M19.5 4.5L22 2M22 5.5V2h-3.5"/>',
             'VelocityDisplay':  '<path d="M3 12.5c1.8-4.2 3.7-4.2 5.5 0s3.7 4.2 5.5 0 3.7-4.2 5.5 0"/><path d="M3 19.5h18"/>',
@@ -765,7 +765,7 @@
             'Speedometer':      '<path d="M4.5 16.5a7.8 7.8 0 1115 0"/><path d="M12 16.5l4-5.6"/><circle cx="12" cy="16.5" r="1.3"/><path d="M3.5 20h17"/>',
             'KnockbackDisplay': '<path d="M20 7L9.5 17.5"/><path d="M9.5 13.5v4h4"/><path d="M20 12V7h-5"/>',
             'JumpStatus':       '<path d="M4 20h16"/><path d="M7 20v-6M12 20V9M17 20v-9"/><path d="M12 4.5v4M9.9 6.6L12 4.5l2.1 2.1"/>',
-            /* ---- WORLD ---- */
+            /* ---- UTILITY ---- */
             'FastPlace':        '<rect x="8.5" y="8.5" width="9" height="9" rx="1.5"/><path d="M16.5 5h4M18.5 3v4"/><path d="M3 9h3.5M3 13h3M3 17h3.5"/>'
         };
         function iconSvg(name, cat){
@@ -1007,8 +1007,6 @@
             'Velocity': { selector:'Mode', groups:{ 'Legit':['HorizontalMin','HorizontalMax','VerticalMin','VerticalMax','Chance','OnlyOnHitFrame','NaturalMode','HitWindowMs','BaseChance','ChancePerHit','MaxChance','NthMin','NthMax'],
                                                     'Delay':['DelayMs','DelayTicks'],
                                                     'Click':['ClicksMin','ClicksMax','HurtTimeToClick','WhenFacingEnemyOnly','MaxAngleDifference','ClickRange'] } },
-            'KeepSprint': { selector:'Mode', groups:{ 'Normal':['HorizontalKeep'],
-                                                      'Legit':['MinReach','MaxReach','MinKeep','MaxKeep'] } },
             'SuperKnockback': { selector:'Mode', groups:{ } },
             'JumpReset': { selector:'CooldownMode', groups:{ 'Ticks':['TicksUntilJump'],
                                                              'ReceivedHits':['HitsUntilJump'] } },

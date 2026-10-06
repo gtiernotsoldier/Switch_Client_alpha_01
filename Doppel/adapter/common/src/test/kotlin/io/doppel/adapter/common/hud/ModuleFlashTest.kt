@@ -9,7 +9,7 @@ import org.junit.jupiter.api.Test
 /** HUD v3 work-flash time math (Module.markWorked / flashStrength). */
 class ModuleFlashTest {
 
-    private class DummyModule : Module("Dummy", Category.RENDER)
+    private class DummyModule : Module("Dummy", Category.VISUAL)
 
     /**
      * `showRedIndicator` now lives in the config store (so a stealth module stays stealth across a

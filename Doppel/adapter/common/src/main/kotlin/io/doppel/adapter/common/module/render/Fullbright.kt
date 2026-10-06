@@ -10,7 +10,7 @@ import io.doppel.adapter.common.module.Category
  * Sets the game's gamma to 100.0 on enable, restoring the value on disable.
  * No configuration. Works on 1.8 and 1.9+.
  */
-object Fullbright : Module("Fullbright", Category.RENDER) {
+object Fullbright : Module("Fullbright", Category.VISUAL) {
 
     private var savedGamma: Float = 1.0f
 

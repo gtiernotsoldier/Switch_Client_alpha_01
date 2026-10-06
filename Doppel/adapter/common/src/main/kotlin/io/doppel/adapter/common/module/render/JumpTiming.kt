@@ -32,7 +32,7 @@ import io.doppel.adapter.common.render.RenderContext
  * The knockback timestamp comes from the velocity notifier (Netty thread, precise), not the 20Hz
  * tick sample — the window opens the moment the S12/S27 arrives.
  */
-object JumpTiming : Module("JumpTiming", Category.RENDER) {
+object JumpTiming : Module("JumpTiming", Category.VISUAL) {
 
     /** Green window: jump pressed within this many ms of the knockback. */
     private const val GREEN_MS = 100L

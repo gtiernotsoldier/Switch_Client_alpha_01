@@ -19,7 +19,7 @@ import kotlin.math.sqrt
  * Rendered exactly like Speedometer: draggable while a GUI is open, plain text with shadow, NO
  * background box — vanilla font, per project conventions.
  */
-object VelocityDisplay : Module("VelocityDisplay", Category.RENDER) {
+object VelocityDisplay : Module("VelocityDisplay", Category.VISUAL) {
 
     @Volatile
     var posX: Int = 8

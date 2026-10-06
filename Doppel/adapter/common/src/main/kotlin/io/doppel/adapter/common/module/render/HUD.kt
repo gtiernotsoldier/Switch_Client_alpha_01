@@ -33,7 +33,7 @@ import io.doppel.core.model.TargetState
  *  - re-collected when a module toggles on/off (tick diff is a cheap safety net).
  * Position (left/right) is configured from the WebUI.
  */
-object HUD : Module("HUD", Category.RENDER) {
+object HUD : Module("HUD", Category.VISUAL) {
 
     /** A single HUD line. */
     data class HUDEntry(

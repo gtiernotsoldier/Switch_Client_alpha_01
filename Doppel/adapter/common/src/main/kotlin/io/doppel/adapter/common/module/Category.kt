@@ -7,7 +7,7 @@ enum class Category {
     COMBAT,
     PLAYER,
     MOVEMENT,
-    WORLD,
-    RENDER,
+    UTILITY,
+    VISUAL,
     MISC
 }

@@ -156,6 +156,8 @@ object EventBridge {
         entityTicksProvider = null
         entityOnGroundChecker = null
         hudTextLine = ""
+        localPlayerName = ""
+        clientFps = 0
         guiMouseX = 0
         guiMouseY = 0
         guiLeftMouseDown = false
@@ -764,6 +766,40 @@ object EventBridge {
     /** Jump (space) key state — used by the Keystrokes HUD. */
     @Volatile var isKeyJumpDown: Boolean = false
 
+    // ========== Effective key states (Keystrokes display) ==========
+    // The Keystrokes HUD must light a box whenever the GAME sees the key as pressed, which includes
+    // the tap modules' synthetic presses: WTap releases W, STap presses S, ADTap taps A/D, and
+    // JumpReset pulses space. Reading `KeyBinding.pressed` back for this is what caused the sticky
+    // keys — the adapters write that field themselves and MC only refreshes it on a real key event,
+    // so our own write latched. These accessors instead derive the effective state from the same
+    // inputs the platform uses when it writes the KeyBinding (ForgeEventBridge.applySyntheticInput),
+    // so the display can never feed back into the modules' own key logic.
+    //
+    // Forward/back have an override path: while a tap module owns the key, the game sees ONLY its
+    // synthetic value — the physical W being held is deliberately ignored, because that is exactly
+    // what a W-tap is. A/D have no override by design (ADTap never hijacks the player's strafing),
+    // so they are always OR-ed with the physical key.
+
+    /** Effective W: what the game sees this frame — physical OR WTap's synthetic hold/release. */
+    val isKeyForwardActive: Boolean
+        get() = if (syntheticForwardOverride) syntheticForward else syntheticForward || isKeyForwardDown
+
+    /** Effective S: physical OR STap's S-tap. */
+    val isKeyBackActive: Boolean
+        get() = if (syntheticBackOverride) syntheticBack else syntheticBack || isKeyBackDown
+
+    /** Effective A: physical OR ADTap's strafe tap. */
+    val isKeyLeftActive: Boolean
+        get() = syntheticLeft || isKeyLeftDown
+
+    /** Effective D: physical OR ADTap's strafe tap. */
+    val isKeyRightActive: Boolean
+        get() = syntheticRight || isKeyRightDown
+
+    /** Effective space: physical OR a live JumpReset pulse. */
+    val isKeyJumpActive: Boolean
+        get() = isKeyJumpDown || isJumpPulseActive()
+
     // ========== Input Snapshots (NoMouseFix, NoKeyboardFix) ==========
     @Volatile var snapMouseDeltaX: Float = 0f
     @Volatile var snapMouseDeltaY: Float = 0f
@@ -1193,6 +1229,14 @@ object EventBridge {
 
     // ========== HUD Text (HUD — Render) ==========
     @Volatile var hudTextLine: String = ""
+
+    // ========== HUD identity (external overlay's watermark — HUD, contract v2) ==========
+    // Filled by the platform because the common module cannot reach Minecraft: the adapters read
+    // the local player's display name on their tick and their frame rate on their render hook,
+    // and `HudStateWriter` publishes both in the v2 header. Empty / 0 mean "unknown", which the
+    // overlay renders as "no name segment" / "no FPS segment" — never as a wrong number.
+    @Volatile var localPlayerName: String = ""
+    @Volatile var clientFps: Int = 0
 
     // ========== GUI Mouse State (populated by platform render hook for HUD drag) ==========
     // Scaled GUI coordinates (left-top origin, y down).

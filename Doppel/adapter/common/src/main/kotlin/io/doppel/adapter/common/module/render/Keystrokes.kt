@@ -134,19 +134,21 @@ object Keystrokes : Module("Keystrokes", Category.RENDER) {
         }
 
         // WASD — Raven KeyStrokeKeyRenderer coords (26,2 / 2,26 / 26,26 / 50,26), 22x22.
-        renderKey(ctx, "W", x + k(26), y + k(2), EventBridge.isKeyForwardDown, theme)
-        renderKey(ctx, "A", x + k(2), y + k(26), EventBridge.isKeyLeftDown, theme)
-        renderKey(ctx, "S", x + k(26), y + k(26), EventBridge.isKeyBackDown, theme)
-        renderKey(ctx, "D", x + k(50), y + k(26), EventBridge.isKeyRightDown, theme)
+        // Effective (not physical) key states: the tap modules press these keys synthetically, so a
+        // box must light for a WTap/STap/ADTap that the player never touched. See EventBridge.
+        renderKey(ctx, "W", x + k(26), y + k(2), EventBridge.isKeyForwardActive, theme)
+        renderKey(ctx, "A", x + k(2), y + k(26), EventBridge.isKeyLeftActive, theme)
+        renderKey(ctx, "S", x + k(26), y + k(26), EventBridge.isKeyBackActive, theme)
+        renderKey(ctx, "D", x + k(50), y + k(26), EventBridge.isKeyRightActive, theme)
 
         if (showMouse) {
             // Mouse buttons — Raven KeyStrokeMouse coords, 34x22.
             renderMouse(ctx, "LMB", 0, x + k(2), y + k(50), theme)
             renderMouse(ctx, "RMB", 1, x + k(38), y + k(50), theme)
             // SPACE — width = A/S/D combined (3x22=66, the full WASD row width), centered below.
-            renderSpace(ctx, x + k(4), y + k(74), EventBridge.isKeyJumpDown, theme)
+            renderSpace(ctx, x + k(4), y + k(74), EventBridge.isKeyJumpActive, theme)
         } else {
-            renderSpace(ctx, x + k(4), y + k(54), EventBridge.isKeyJumpDown, theme)
+            renderSpace(ctx, x + k(4), y + k(54), EventBridge.isKeyJumpActive, theme)
         }
     }
 
@@ -319,8 +321,57 @@ object Keystrokes : Module("Keystrokes", Category.RENDER) {
         RenderUtils.rect(ctx, lx, ly, lineW, lineH, lineColor)
     }
 
-    private fun rainbowColor(): Int {
-        val hue = (System.currentTimeMillis() % 3750L) / 3750f
-        return java.awt.Color.getHSBColor(hue, 1f, 1f).rgb
+    // ── Rainbow (AWT-free + cached) ──
+    // The colour sweeps a 3.75 s cycle. It used to call java.awt.Color.getHSBColor on EVERY frame:
+    // first use initialises AWT's colour machinery and every call allocates, and inside MC's render
+    // loop that is a real stall source. We compute the identical HSV→RGB ourselves (no AWT anywhere
+    // in the render path) and cache the result for 50 ms — the hue moves ~1.3% in that window,
+    // which is imperceptible, so the per-frame cost becomes one clock read.
+
+    private const val RAINBOW_CYCLE_MS = 3750L
+    private const val RAINBOW_REFRESH_MS = 50L
+    private var rainbowCache: Int = 0xFFFFFF
+    // 0, not Long.MIN_VALUE: `now - MIN_VALUE` overflows and would silently keep the
+    // placeholder colour for the first frame (and the test caught exactly that).
+    private var rainbowCacheAt: Long = 0L
+
+    internal fun rainbowColor(): Int {
+        val now = System.currentTimeMillis()
+        if (now - rainbowCacheAt >= RAINBOW_REFRESH_MS) {
+            rainbowCacheAt = now
+            rainbowCache = hsvToRgb((now % RAINBOW_CYCLE_MS).toFloat() / RAINBOW_CYCLE_MS, 1f, 1f)
+        }
+        return rainbowCache
+    }
+
+    /**
+     * HSV→RGB, h/s/v in 0..1, returning 0xFFRRGGBB.
+     *
+     * Deliberately the same arithmetic (and the same `+0.5f` rounding) as
+     * `java.awt.Color.getHSBColor(h, s, v).rgb`, so the rainbow looks exactly as before — but
+     * without loading AWT. [KeystrokesColorTest] pins the two against each other across the cycle.
+     */
+    internal fun hsvToRgb(hue: Float, saturation: Float, value: Float): Int {
+        val h = (hue - kotlin.math.floor(hue)) * 6f
+        val i = h.toInt()
+        val f = h - i
+        val p = value * (1f - saturation)
+        val q = value * (1f - saturation * f)
+        val t = value * (1f - saturation * (1f - f))
+        val r: Float
+        val g: Float
+        val b: Float
+        when (i % 6) {
+            0 -> { r = value; g = t; b = p }
+            1 -> { r = q; g = value; b = p }
+            2 -> { r = p; g = value; b = t }
+            3 -> { r = p; g = q; b = value }
+            4 -> { r = t; g = p; b = value }
+            else -> { r = value; g = p; b = q }
+        }
+        val ri = (r * 255f + 0.5f).toInt().coerceIn(0, 255)
+        val gi = (g * 255f + 0.5f).toInt().coerceIn(0, 255)
+        val bi = (b * 255f + 0.5f).toInt().coerceIn(0, 255)
+        return (0xFF shl 24) or (ri shl 16) or (gi shl 8) or bi
     }
 }

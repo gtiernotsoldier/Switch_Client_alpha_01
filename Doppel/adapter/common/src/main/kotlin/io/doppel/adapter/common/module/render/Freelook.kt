@@ -40,30 +40,23 @@ object Freelook : Module("Freelook", Category.VISUAL) {
         val pitchNow = player.rotation.pitch
 
         // The first tick after enabling remembers where the body was pointing; that is also the rotation
-        // the player gets back on disable.
+        // the player gets back on disable. The camera angles START there and are then advanced by the
+        // platform each frame — this tick must not write them again, or it would reset 20 times a second
+        // the very accumulation that makes the rotation glide.
         if (realYaw == null) {
             realYaw = yawNow
             realPitch = pitchNow
             freeYaw = yawNow
             freePitch = pitchNow
+            EventBridge.freeLookYaw = yawNow
+            EventBridge.freeLookPitch = pitchNow
         }
 
-        // The look input, taken from MouseHelper exactly as the reference clients take it. The previous
-        // version inferred it from how much the player's rotation had changed, while restoring that
-        // rotation every tick — a loop that reads its own reset and therefore always sees zero, which is
-        // why the camera stayed where it started no matter how the mouse was moved.
-        val dx = EventBridge.freelookDeltaX
-        val dy = EventBridge.freelookDeltaY
-        if (dx != 0f || dy != 0f) {
-            // Vanilla's own scaling, so the default sensitivity feels exactly like looking normally.
-            val sens = EventBridge.mouseSensitivity * 0.6f + 0.2f
-            val mult = sens * sens * sens * 8.0f
-            val turned = accumulate(freeYaw, freePitch, dx * mult * 0.15f, dy * mult * 0.15f, sensitivity, invertY)
-            freeYaw = turned.first
-            freePitch = turned.second
-        }
-        EventBridge.freelookDeltaX = 0f
-        EventBridge.freelookDeltaY = 0f
+        // The angles are accumulated by the platform once per FRAME (see ForgeEventBridge.applyMouseDelta)
+        // — this tick is 20 Hz and the camera is drawn every frame, so accumulating here is what made the
+        // rotation step instead of glide. The module only decides the rate and hands its options over.
+        EventBridge.freelookSensitivity = sensitivity
+        EventBridge.freelookInvertY = invertY
 
         // Safety net: if vanilla already applied the same delta before we took it, put the body back.
         val ry = realYaw ?: yawNow
@@ -71,9 +64,6 @@ object Freelook : Module("Freelook", Category.VISUAL) {
         if (yawNow != ry || pitchNow != rp) {
             EventBridge.setPlayerRotation(ry, rp)
         }
-
-        EventBridge.freeLookYaw = freeYaw
-        EventBridge.freeLookPitch = freePitch
     }
 
     /** Shortest signed difference, so crossing the +/-180 seam is a small step and not a full spin. */

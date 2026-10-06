@@ -1319,9 +1319,19 @@ object ForgeEventBridge : IEventBridge {
             val dx = (MappingContext.getFieldValue(helper, "forge:mouseHelper_deltaX") as? Int) ?: 0
             val dy = (MappingContext.getFieldValue(helper, "forge:mouseHelper_deltaY") as? Int) ?: 0
             if (dx != 0 || dy != 0) {
-                EventBridge.freelookDeltaX += dx
-                EventBridge.freelookDeltaY += dy
                 freelookDeltaSeen = true
+                // Freelook accumulates HERE, once per rendered frame, not in the 20 Hz tick: the camera
+                // is drawn every frame, so a tick-rate angle is a camera that steps 20 times a second.
+                // This is the same scaling vanilla applies to the mouse, times the module's sensitivity.
+                if (EventBridge.freeLookActive) {
+                    val sens = EventBridge.mouseSensitivity * 0.6f + 0.2f
+                    val mult = sens * sens * sens * 8.0f
+                    val scale = mult * 0.15f * EventBridge.freelookSensitivity
+                    val flip = if (EventBridge.freelookInvertY) 1f else -1f
+                    EventBridge.freeLookYaw += dx * scale
+                    EventBridge.freeLookPitch =
+                        (EventBridge.freeLookPitch + dy * scale * flip).coerceIn(-90f, 90f)
+                }
                 // Zero them so the turn vanilla makes later in the tick moves nothing; the body then keeps
                 // its rotation without anyone having to put it back.
                 MappingContext.getField("forge:mouseHelper_deltaX")?.setInt(helper, 0)

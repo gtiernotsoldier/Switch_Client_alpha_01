@@ -153,6 +153,8 @@ object EventBridge {
         freeLookActive = false
         freeLookYaw = 0f
         freeLookPitch = 0f
+        freelookSensitivity = 1f
+        freelookInvertY = false
         freelookDeltaX = 0f
         freelookDeltaY = 0f
         keepMovementInGui = false
@@ -1265,6 +1267,10 @@ object EventBridge {
      * authoritative input here for the reason the reference clients use it — it holds the delta until the
      * next poll, so a 20 Hz reader still sees it, while `Mouse.getDX()` is consumed every frame.
      */
+    /** Freelook's own settings, so the platform can accumulate at FRAME rate with them. */
+    @Volatile var freelookSensitivity: Float = 1f
+    @Volatile var freelookInvertY: Boolean = false
+
     @Volatile var freelookDeltaX: Float = 0f
     @Volatile var freelookDeltaY: Float = 0f
 

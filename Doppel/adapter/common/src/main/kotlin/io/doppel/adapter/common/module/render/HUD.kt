@@ -12,8 +12,11 @@ import io.doppel.adapter.common.option.choices
 import io.doppel.adapter.common.option.color
 import io.doppel.adapter.common.option.float
 import io.doppel.adapter.common.option.int
+import io.doppel.adapter.common.option.optionPairOf
 import io.doppel.adapter.common.option.string
 import io.doppel.adapter.common.option.ConfigManager
+import io.doppel.adapter.common.option.OptionMeta
+import io.doppel.adapter.common.option.OptionType
 import io.doppel.core.model.PlayerState
 import io.doppel.core.model.TargetState
 
@@ -307,27 +310,55 @@ object HUD : Module("HUD", Category.RENDER) {
     }
 
     /**
-     * Auto-derive a HUD value for a module: the first numeric option (FLOAT/INT)
-     * registered under it, rendered as "value+unit". Returns ("",false) for
-     * toggle-only modules (no numeric option) so they show name only.
+     * Auto-derive a HUD value for a module: its Min/Max range when it has one, else the first
+     * numeric option, rendered as "value+unit". Returns ("",false) for toggle-only modules
+     * (no numeric option) so they show name only.
      *
-     * Formatted through the option's own declared precision (`OptionMeta.formatNumber`), which is
-     * the same rule the WebUI formats with (B2) — the panel and this published string are now the
-     * same text instead of two independent roundings of the same number.
+     * The range case is the general version of the reported Velocity problem: a module whose two
+     * options are a range must show BOTH ends ("25-55 ms"), because showing only one of them is how
+     * a configured 0%..100% axis ended up reading as a single derived "50%". Velocity, Reach and
+     * AutoClicker publish their own string through [HudLineProvider] and never reach this.
+     *
+     * Formatted through each option's own declared precision (`OptionMeta.formatNumber`), which is
+     * the same rule the WebUI formats with — the panel and this published string are the same text.
      */
-    private fun autoHudValue(module: Module): Pair<String, Boolean> {
-        for (desc in ConfigManager.optionsOf(module.name)) {
-            if (desc.type == io.doppel.adapter.common.option.OptionType.FLOAT ||
-                desc.type == io.doppel.adapter.common.option.OptionType.INT
-            ) {
-                val v = ConfigManager.currentValue(desc.key) ?: continue
-                val num = v as? Number ?: continue
-                val text = desc.meta.formatNumber(num)
-                val unit = desc.meta.unit
-                return (if (unit.isNotEmpty()) "$text $unit" else text) to true
-            }
+    internal fun autoHudValue(module: Module): Pair<String, Boolean> {
+        val numeric = ConfigManager.optionsOf(module.name).filter {
+            it.type == OptionType.FLOAT || it.type == OptionType.INT
+        }
+
+        for (desc in numeric) {
+            val pair = optionPairOf(desc.name) ?: continue
+            if (!pair.isMin) continue
+            val partner = numeric.firstOrNull { it.name == pair.partner } ?: continue
+            val mine = ConfigManager.currentValue(desc.key) as? Number ?: continue
+            val theirs = ConfigManager.currentValue(partner.key) as? Number ?: continue
+            val text = rangeText(desc.meta, partner.meta, mine, theirs)
+            val unit = desc.meta.unit.ifEmpty { partner.meta.unit }
+            return (if (unit.isNotEmpty()) "$text $unit" else text) to true
+        }
+
+        for (desc in numeric) {
+            val num = ConfigManager.currentValue(desc.key) as? Number ?: continue
+            val text = desc.meta.formatNumber(num)
+            val unit = desc.meta.unit
+            return (if (unit.isNotEmpty()) "$text $unit" else text) to true
         }
         return "" to false
+    }
+
+    /**
+     * `25-55`, collapsing to one value when both ends are equal, and printing the smaller end first
+     * even if the pair somehow arrives inverted — the option layer keeps pairs ordered, but a HUD
+     * value must not depend on that to stay readable.
+     */
+    private fun rangeText(minMeta: OptionMeta, maxMeta: OptionMeta, min: Number, max: Number): String {
+        val ordered = min.toDouble() <= max.toDouble()
+        val low = if (ordered) min else max
+        val high = if (ordered) max else min
+        val lowText = (if (ordered) minMeta else maxMeta).formatNumber(low)
+        val highText = (if (ordered) maxMeta else minMeta).formatNumber(high)
+        return if (lowText == highText) lowText else "$lowText-$highText"
     }
 
     private fun comparator(): Comparator<Module> {

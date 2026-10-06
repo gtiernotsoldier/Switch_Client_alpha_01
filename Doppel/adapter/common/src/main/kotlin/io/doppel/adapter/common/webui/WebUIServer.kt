@@ -273,9 +273,17 @@ object WebUIServer {
                     val body = String(exchange.requestBody.readBytes(), StandardCharsets.UTF_8)
                     @Suppress("UNCHECKED_CAST")
                     val req = mapper.readValue(body, Map::class.java) as Map<String, Any?>
-                    val hidden = (req["hidden"] as? Boolean) ?: false
+                    // One endpoint drives both HUD-list controls: whether the module's line is
+                    // listed at all ("hidden"), and whether it flashes red while it works ("red").
+                    // Either field may be absent, and an absent one is left alone.
+                    val hidden = req["hidden"] as? Boolean
+                    val red = req["red"] as? Boolean
+                    val module = ModuleRegistry.get(name)
                     synchronized(lock) {
-                        ModuleRegistry.get(name)?.hudHidden = hidden
+                        if (module != null) {
+                            if (hidden != null) module.hudHidden = hidden
+                            if (red != null) module.showRedIndicator = red
+                        }
                     }
                     // Poke the HUD to re-collect immediately.
                     try {
@@ -283,7 +291,13 @@ object WebUIServer {
                     } catch (_: Throwable) {}
                     try { ConfigStore.save() } catch (_: Exception) {}
                     respondJson(exchange, 200, mapper.writeValueAsString(
-                        mapOf("ok" to true, "name" to name, "hudHidden" to hidden)))
+                        mapOf(
+                            "ok" to (module != null),
+                            "name" to name,
+                            "hudHidden" to (module?.hudHidden ?: false),
+                            "redIndicator" to (module?.showRedIndicator ?: true)
+                        )
+                    ))
                 }
                 exchange.requestMethod == "GET" -> {
                     val list = synchronized(lock) {
@@ -401,6 +415,8 @@ object WebUIServer {
             "keyName" to keyName(module.keybind),
             "hudHidden" to module.hudHidden,
             "hudShown" to !module.hudHidden,
+            // The HUD-list panel's second control: does this module flash red while it works?
+            "redIndicator" to module.showRedIndicator,
             // Where the module sits in the user's HUD order — the WebUI's HUD panel sorts by this.
             "hudIndex" to io.doppel.adapter.common.module.render.HUD.hudIndexOf(module.name),
             "hudEnabled" to (module is io.doppel.adapter.common.module.HudLineProvider),

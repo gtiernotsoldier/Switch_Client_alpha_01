@@ -76,6 +76,7 @@ object ForgeBootstrap {
     private val keyboardIsKeyDown by lazy { keyboardClass.getMethod("isKeyDown", Int::class.javaPrimitiveType) }
 
     private var keybindFrame = 0
+    private var keybindErrorLogged = 0L
     private val moduleKeyStates = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
 
     private fun pollModuleKeybinds() {
@@ -94,10 +95,23 @@ object ForgeBootstrap {
                 val prev = moduleKeyStates[module.name] ?: false
                 moduleKeyStates[module.name] = down
                 if (down && !prev) {
+                    // Module.enable/disable logs the toggle, so a key that fires leaves a line in
+                    // doppel-agent.log — that is how "the key never arrived" is told apart from
+                    // "the module toggled and I did not notice".
                     module.tryKeybindToggle(module.keybind)
                 }
             }
-        } catch (_: Exception) {}
+        } catch (e: Exception) {
+            // Swallowing this silently is why a broken poll looked exactly like "keybinds do not
+            // work" with nothing to go on. One line per 10 s.
+            val now = System.currentTimeMillis()
+            if (now - keybindErrorLogged > 10_000) {
+                keybindErrorLogged = now
+                io.doppel.core.logging.CoreLogger.error(
+                    "[ForgeBootstrap] keybind poll failed: ${e.javaClass.simpleName}: ${e.message}"
+                )
+            }
+        }
     }
 
     fun init() {

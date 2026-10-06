@@ -15,6 +15,16 @@ class HUDKeybindValueTest {
 
     private class Dummy : Module("Dummy", Category.RENDER)
 
+    /**
+     * The keybind lives in the config store, keyed by the module *name* — which is what makes it
+     * persist, and also what makes every `Dummy` in this class share one key. Reset it per test so
+     * the cases stay independent.
+     */
+    @org.junit.jupiter.api.BeforeEach
+    fun resetKeybind() {
+        io.doppel.adapter.common.option.ConfigManager.set("Dummy.Keybind", Module.NO_KEYBIND)
+    }
+
     @Test
     fun `an unbound module shows its value alone`() {
         val m = Dummy()

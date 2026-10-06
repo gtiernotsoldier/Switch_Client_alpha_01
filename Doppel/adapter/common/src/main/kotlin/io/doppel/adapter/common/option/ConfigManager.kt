@@ -213,12 +213,17 @@ object ConfigManager {
     /**
      * All registered options of one module, in registration order.
      * Powers the ClickGUI settings panel.
+     *
+     * Options registered with `hidden = true` — a module's keybind, its red work-flash
+     * flag — are filtered out: they are persisted state, not things to tune, and a
+     * "-1 Keybind" slider in the panel is worse than useless.
      */
     fun optionsOf(moduleName: String): List<OptionDescriptor> {
         val prefix = "$moduleName."
         return registry.entries
             .asSequence()
             .filter { it.key.startsWith(prefix) }
+            .filter { !it.value.hidden }
             .map { (key, meta) -> OptionDescriptor(key, meta.type, meta) }
             .toList()
     }

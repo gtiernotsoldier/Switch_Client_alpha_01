@@ -29,7 +29,17 @@ data class OptionMeta(
      * 0.01 for floats. Never used for validation — any value inside the range is
      * legal, the step only drives the nudge buttons.
      */
-    val step: Double = 0.0
+    val step: Double = 0.0,
+    /**
+     * Registered for persistence, but not a tunable option.
+     *
+     * Some per-module state is not a setting the user edits in a list — a module's
+     * keybind and its red work-flash flag are two. Holding them as plain fields made
+     * them vanish on restart, because only registered options are saved; registering
+     * them and hiding them here gives them the config file's save/load/validate path
+     * without putting a "Keybind: -1" slider in the panel.
+     */
+    val hidden: Boolean = false
 ) {
     /**
      * Validate a candidate value against this option's constraints.

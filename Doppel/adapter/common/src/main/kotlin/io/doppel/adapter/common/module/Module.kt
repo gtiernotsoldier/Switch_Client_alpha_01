@@ -1,6 +1,8 @@
 package io.doppel.adapter.common.module
 
 import io.doppel.adapter.common.option.ConfigManager
+import io.doppel.adapter.common.option.OptionMeta
+import io.doppel.adapter.common.option.OptionType
 
 /**
  * Base class for all modules.
@@ -17,6 +19,19 @@ abstract class Module(
 ) {
     init {
         ConfigManager.onModuleDirty(name) { markConfigDirty() }
+        // The keybind and the red-flash flag live in the config store, not in a plain
+        // field: only registered options are saved, so as fields they were silently
+        // forgotten on every restart — which is exactly how "my keybind stopped
+        // working" happens. Both are registered as hidden options so they persist and
+        // validate through the normal path without appearing as tunable sliders.
+        ConfigManager.register(
+            "$name.$KEYBIND_OPTION", NO_KEYBIND,
+            OptionMeta(type = OptionType.INT, default = NO_KEYBIND, intRangeMin = -1, intRangeMax = 1000, hidden = true)
+        )
+        ConfigManager.register(
+            "$name.$RED_INDICATOR_OPTION", true,
+            OptionMeta(type = OptionType.BOOLEAN, default = true, hidden = true)
+        )
     }
 
     var enabled: Boolean = false
@@ -26,20 +41,30 @@ abstract class Module(
     var hidden: Boolean = false
 
     /**
-     * GLFW key code to toggle this module (-1 = unbound).
-     * The GUI lets users rebind this at runtime.
+     * GLFW key code to toggle this module (`-1` = unbound).
+     *
+     * Backed by the config store: registered in [init], so it is written to
+     * `doppel-config.json` with everything else and survives a restart.
      */
-    var keybind: Int = -1
+    var keybind: Int
+        get() = ConfigManager.get<Int>("$name.$KEYBIND_OPTION")
+        set(value) {
+            ConfigManager.set("$name.$KEYBIND_OPTION", value)
+        }
 
     /**
-     * Whether this module shows a red indicator on the HUD when active.
-     * Set to false for stealth modules (e.g. AimAssist, AutoClicker)
-     * where a visible indicator would be undesirable.
+     * Whether this module flashes its HUD row red while it is working.
      *
-     * Note: this is only effective when the global red-indicator toggle
-     * (EventBridge.isGuiRedIndicatorEnabled) is ON.
+     * Set to false for stealth modules (e.g. AimAssist, AutoClicker) where a visible
+     * indicator would be undesirable. Also persisted, for the same reason as the
+     * keybind — a stealth module that starts flashing again after a restart is a
+     * surprise the user cannot explain.
      */
-    var showRedIndicator: Boolean = true
+    var showRedIndicator: Boolean
+        get() = ConfigManager.get<Boolean>("$name.$RED_INDICATOR_OPTION")
+        set(value) {
+            ConfigManager.set("$name.$RED_INDICATOR_OPTION", value)
+        }
 
     /**
      * Whether this module is hidden from the HUD module list. Configured from
@@ -64,6 +89,13 @@ abstract class Module(
 
         /** How long one work pulse takes to decay, in ms. */
         const val WORK_FLASH_MS: Long = 420L
+
+        /** Option names for the two pieces of per-module state that are persisted but not tuned. */
+        const val KEYBIND_OPTION = "Keybind"
+        const val RED_INDICATOR_OPTION = "RedIndicator"
+
+        /** The value of an unbound keybind. */
+        const val NO_KEYBIND = -1
     }
 
     fun enable() {

@@ -11,6 +11,15 @@ class ModuleFlashTest {
 
     private class DummyModule : Module("Dummy", Category.RENDER)
 
+    /**
+     * `showRedIndicator` now lives in the config store (so a stealth module stays stealth across a
+     * restart), which means every `Dummy` in this class shares the flag. Reset it per test.
+     */
+    @org.junit.jupiter.api.BeforeEach
+    fun resetRedIndicator() {
+        io.doppel.adapter.common.option.ConfigManager.set("Dummy.RedIndicator", true)
+    }
+
     @Test
     fun `idle module has zero flash strength`() {
         val m = DummyModule()

@@ -24,6 +24,14 @@ class HUDOrderTest {
 
     private val names = listOf("Alpha", "Bravo", "Charlie")
 
+    /**
+     * The order of the three dummies, ignoring anything else the registry happens to hold.
+     *
+     * `hudOrderedNames()` lists every registered module, and other test classes in this JVM
+     * register their own — so the assertion is about relative order, not about the whole registry.
+     */
+    private fun orderedDummies(): List<String> = HUD.hudOrderedNames().filter { it in names }
+
     @BeforeEach
     fun setUp() {
         // Test-only dummies: the adapter never registers these names, and nothing in this suite
@@ -41,7 +49,7 @@ class HUDOrderTest {
 
     @Test
     fun `with no manual order the registry order stands`() {
-        assertEquals(names, HUD.hudOrderedNames())
+        assertEquals(names, orderedDummies())
         assertEquals(0, HUD.hudIndexOf("Alpha"))
         assertEquals(2, HUD.hudIndexOf("Charlie"))
     }
@@ -50,7 +58,7 @@ class HUDOrderTest {
     fun `moving a module up swaps it with the one above`() {
         assertTrue(HUD.moveInHud("Charlie", "up"))
 
-        assertEquals(listOf("Alpha", "Charlie", "Bravo"), HUD.hudOrderedNames())
+        assertEquals(listOf("Alpha", "Charlie", "Bravo"), orderedDummies())
         assertEquals(1, HUD.hudIndexOf("Charlie"))
         assertEquals(2, HUD.hudIndexOf("Bravo"))
     }
@@ -59,21 +67,21 @@ class HUDOrderTest {
     fun `moving a module down swaps it with the one below`() {
         assertTrue(HUD.moveInHud("Alpha", "down"))
 
-        assertEquals(listOf("Bravo", "Alpha", "Charlie"), HUD.hudOrderedNames())
+        assertEquals(listOf("Bravo", "Alpha", "Charlie"), orderedDummies())
     }
 
     @Test
     fun `the ends are clamped rather than wrapped`() {
         assertFalse(HUD.moveInHud("Alpha", "up"), "the first row cannot move up")
         assertFalse(HUD.moveInHud("Charlie", "down"), "the last row cannot move down")
-        assertEquals(names, HUD.hudOrderedNames(), "a refused move changes nothing")
+        assertEquals(names, orderedDummies(), "a refused move changes nothing")
     }
 
     @Test
     fun `an unknown module and an unknown direction are refused`() {
         assertFalse(HUD.moveInHud("NotAModule", "up"))
         assertFalse(HUD.moveInHud("Alpha", "sideways"))
-        assertEquals(names, HUD.hudOrderedNames())
+        assertEquals(names, orderedDummies())
     }
 
     @Test
@@ -85,8 +93,8 @@ class HUDOrderTest {
         // Re-reading the stored value must reproduce the same order — the WebUI saves it as a plain
         // option, so it has to survive a config reload unchanged.
         HUD.hudOrderRaw = ""
-        assertEquals(names, HUD.hudOrderedNames())
+        assertEquals(names, orderedDummies())
         HUD.hudOrderRaw = stored
-        assertEquals(listOf("Alpha", "Charlie", "Bravo"), HUD.hudOrderedNames())
+        assertEquals(listOf("Alpha", "Charlie", "Bravo"), orderedDummies())
     }
 }

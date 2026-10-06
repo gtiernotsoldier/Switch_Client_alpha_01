@@ -764,6 +764,39 @@
     ],
     "mcp": "objectMouseOver"
   },
+  "forge:mc_pointedEntity": {
+    "class": "net.minecraft.client.Minecraft",
+    "field": "field_147125_j",
+    "aliases": [
+      "mc_pointedEntity",
+      "pointedEntity"
+    ],
+    "mcp": "pointedEntity"
+  },
+  "forge:guiScreen_mouseClicked": {
+    "class": "net.minecraft.client.gui.GuiScreen",
+    "method": "func_73864_a",
+    "aliases": [
+      "guiScreen_mouseClicked"
+    ],
+    "mcp": "mouseClicked"
+  },
+  "forge:guiScreen_width": {
+    "class": "net.minecraft.client.gui.GuiScreen",
+    "field": "field_146294_l",
+    "aliases": [
+      "guiScreen_width"
+    ],
+    "mcp": "width"
+  },
+  "forge:guiScreen_height": {
+    "class": "net.minecraft.client.gui.GuiScreen",
+    "field": "field_146295_m",
+    "aliases": [
+      "guiScreen_height"
+    ],
+    "mcp": "height"
+  },
   "forge:mc_getRenderViewEntity": {
     "class": "net.minecraft.client.Minecraft",
     "aliases": [

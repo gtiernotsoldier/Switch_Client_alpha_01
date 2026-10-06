@@ -18,9 +18,9 @@ import io.doppel.adapter.common.module.render.JumpTiming
 import io.doppel.adapter.common.module.render.KnockbackDisplay
 import io.doppel.adapter.common.module.render.WebUI
 import io.doppel.adapter.common.module.world.FastPlace
+import io.doppel.adapter.common.hud.HudStateWriter
 import io.doppel.adapter.common.render.OverlayRenderer
 import io.doppel.adapter.common.render.RenderContext
-import io.doppel.adapter.common.render.HudFonts
 import io.doppel.core.logging.CoreLogger
 import io.doppel.agent.MappingContext
 
@@ -67,55 +67,6 @@ object ForgeBootstrap {
     private val glBridge by lazy { ForgeGL11Bridge() }
     private val mouseGetX by lazy { try { mouseClass.getMethod("getX") } catch (_: Exception) { null } }
     private val mouseGetY by lazy { try { mouseClass.getMethod("getY") } catch (_: Exception) { null } }
-
-    // Smooth (TTF atlas) fonts for the HUD v3 card. Built lazily on the render
-    // thread; rebuilt when the GUI scale factor changes (raster crispness).
-    // If construction or atlas upload fails, HUD falls back to the vanilla
-    // pixel font with the same v3 layout — never crashes, never blank.
-    // Failed builds RETRY (throttled to once per 5s): a transient GL state
-    // while the world is still loading must not strip smooth fonts forever.
-    private var hudFontsCache: HudFonts? = null
-    private var hudFontsScale: Int = 0
-    private var hudFontsLastFailMs: Long = 0
-
-    private fun hudFontsFor(scale: Int): HudFonts? {
-        // v3.3: rebuild when there is no cache OR the GUI scale factor changed.
-        // The old logic only rebuilt when the cache was NULL while still
-        // stamping hudFontsScale to the new value — so after the first
-        // successful build, a GUI scale change silently mismatched the atlas
-        // rasterization to the layout scale FOREVER (blurry/stretched HUD text
-        // until restart), and the cache never rebuilt again.
-        val cached = hudFontsCache
-        if (cached != null && hudFontsScale == scale) return cached
-
-        // Throttle (re)build attempts to once per 5s — a transient GL state
-        // while the world is still loading must not thrash atlas uploads.
-        val now = System.currentTimeMillis()
-        if (hudFontsLastFailMs != 0L && now - hudFontsLastFailMs < 5000) {
-            // Serve the old bundle (possibly wrong scale) rather than dropping
-            // to the vanilla font for the throttle window — better than blank.
-            return cached
-        }
-
-        val built = HudFonts.create(glBridge, scale)
-        return if (built != null) {
-            cached?.release() // free the old bundle's 4 atlases (VRAM leak fix)
-            hudFontsCache = built
-            hudFontsScale = scale
-            hudFontsLastFailMs = 0L
-            built
-        } else {
-            hudFontsLastFailMs = now
-            if (cached != null) {
-                io.doppel.core.logging.CoreLogger.warn(
-                    "[ForgeBootstrap] HudFonts rebuild failed for scale=$scale — keeping previous bundle"
-                )
-                cached
-            } else {
-                null // vanilla font fallback for now; retried after the throttle
-            }
-        }
-    }
 
     // ── Keyboard state polling for module keybinds (state, edge-detected) ──
     // Polls Keyboard.isKeyDown() (NOT Keyboard.next(), which races MC) on the
@@ -301,6 +252,19 @@ object ForgeBootstrap {
             // only place that writes the real KeyBinding fields (race-free).
             try { ForgeEventBridge.applySyntheticInput() } catch (_: Exception) {}
 
+            // ClickAssist: emit the extra clicks as real OS clicks (AWT Robot) on physical press
+            // edges. Runs per frame on this thread, same as Raven's MouseEvent handler.
+            try { ForgeEventBridge.applyClickAssistFrame() } catch (_: Exception) {}
+
+            // Extended reach (Reach), applied every frame on this thread. The game has just
+            // re-run its own ray trace for this frame and the next input pass has not happened
+            // yet, so an objectMouseOver overwrite written here is what the click will use.
+            // Doing this from the 20Hz background tick raced against the ray trace and lost.
+            try {
+                val reach = EventBridge.askReachFrame()
+                if (reach != null) EventBridge.doReachRaycast(reach)
+            } catch (_: Exception) {}
+
             // Sample mouse delta EVERY render frame (LWJGL Mouse.getDX/getDY are per-frame buffers;
             // sampling them on the 20Hz tick drops frames and jitters with unstable tick intervals).
             try {
@@ -411,9 +375,13 @@ object ForgeBootstrap {
                 scaledHeight = scaledHeight,
                 fontRenderer = ForgeFontRendererBridge(fontRendererObj),
                 gl = glBridge,
-                guiScale = scale,
-                hudFonts = hudFontsFor(scale)
+                guiScale = scale
             )
+
+            // Publish the module table for the external HUD process (plan §5.3). Cosmetic channel:
+            // HudStateWriter swallows every error, so a missing or locked file cannot affect
+            // rendering, and the HUD opens it read-only (no back channel).
+            HudStateWriter.publish(HUD.hudEntries)
 
             OverlayRenderer.render(ctx)
 

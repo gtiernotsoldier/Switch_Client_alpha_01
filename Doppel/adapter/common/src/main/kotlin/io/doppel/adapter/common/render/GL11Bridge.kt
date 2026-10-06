@@ -51,7 +51,6 @@ interface GL11Bridge {
     /** Set GL_TEXTURE_ENV mode (e.g. GL_MODULATE) so glColor4f tints textured quads. */
     fun glTexEnv(target: Int, pname: Int, param: Int)
 
-    // ── Texture (SmoothFontRenderer) ──
 
     /** Generate a texture name (GL11.glGenTextures). */
     fun glGenTextures(): Int

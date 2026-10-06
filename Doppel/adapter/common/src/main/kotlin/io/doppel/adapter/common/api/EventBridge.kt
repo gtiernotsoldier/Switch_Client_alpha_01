@@ -110,6 +110,9 @@ object EventBridge {
         resetJumpDelayHandler = null
         reachSetter = null
         reachRaycast = null
+        reachFrameAdvisor = null
+        clickInGuiAllowed = false
+        clickHoldOnBlock = false
         attackTrigger = null
         cancelAttackHandler = null
         syntheticAttack = false
@@ -1100,6 +1103,51 @@ object EventBridge {
 
     fun doReachRaycast(reach: Double): Boolean = reachRaycast?.invoke(reach) ?: false
     fun registerReachRaycast(handler: (Double) -> Boolean) { reachRaycast = handler }
+
+    /**
+     * Per-frame reach advisor (Reach — 1.8 exclusive).
+     *
+     * Called once per rendered frame ON THE MC MAIN THREAD, right after the game has finished its
+     * own ray trace and before the next input pass. Returns the reach distance to apply this
+     * frame, or null for "leave the crosshair alone".
+     *
+     * Why per frame: `objectMouseOver` is recomputed by the game during every render, so an
+     * overwrite is only visible to the click processing that follows it. Applying the extension
+     * from the 20Hz background tick raced against that recomputation and usually lost — the click
+     * then landed with vanilla reach, which is exactly why Reach appeared to do nothing.
+     */
+    private var reachFrameAdvisor: (() -> Double?)? = null
+
+    fun registerReachFrameAdvisor(advisor: (() -> Double?)?) { reachFrameAdvisor = advisor }
+    fun askReachFrame(): Double? = reachFrameAdvisor?.invoke()
+
+    // ========== AutoClicker: GUI clicking + block breaking (Raven semantics) ==========
+    /** AutoClicker "InGui": click inside an open screen at the cursor, at the CPS cadence. */
+    @Volatile var clickInGuiAllowed: Boolean = false
+
+    /**
+     * AutoClicker "BreakBlocks": while the crosshair is on a block and the player is physically
+     * attacking, hold the attack key instead of pulsing it. Pulsing hands the key up every cycle,
+     * which resets vanilla's mining progress — so a block could never break with the clicker on.
+     * raven-bs holds the key in exactly this situation.
+     */
+    @Volatile var clickHoldOnBlock: Boolean = false
+
+    // ========== ClickAssist (Robot-backed extra clicks) ==========
+    /**
+     * Physical press-edge advisor for ClickAssist. The adapter calls it once per frame for each
+     * mouse button that went down PHYSICALLY, and it answers how many extra clicks to emit (0..3).
+     * The adapter then emits them as real OS clicks through AWT Robot, which re-enter the game's
+     * own input path (Raven does the same).
+     *
+     * A callback instead of a shared flag on purpose: the old design latched
+     * `syntheticAttack`/`syntheticUse` and competed with AutoClicker/HitSelect for the same flags on
+     * the 20Hz tick, so an extra click either never happened or pinned the attack key down forever.
+     */
+    private var clickAssistAdvisor: ((Int) -> Int)? = null
+
+    fun registerClickAssistAdvisor(advisor: ((Int) -> Int)?) { clickAssistAdvisor = advisor }
+    fun askClickAssist(button: Int): Int = clickAssistAdvisor?.invoke(button) ?: 0
 
     // ========== 6. Render & Display ==========
 

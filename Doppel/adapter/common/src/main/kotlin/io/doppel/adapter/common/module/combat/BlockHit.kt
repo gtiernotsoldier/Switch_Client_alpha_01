@@ -99,6 +99,17 @@ object BlockHit : Module("BlockHit", Category.COMBAT) {
     }
 
     private fun onTick(player: PlayerState, target: TargetState?) {
+        // Any open screen — inventory, chest, crafting, chat, pause — means no combat: never start
+        // a block-hit and immediately drop anything we are holding, so the block cannot stick
+        // while the player browses a container.
+        if (EventBridge.isGuiOpen) {
+            if (phase == Phase.BLOCKING) releaseBlock()
+            EventBridge.syntheticUse = false
+            phase = Phase.IDLE
+            hitCounter = 0
+            return
+        }
+
         val now = System.nanoTime()
 
         // ---- Phase: BLOCKING (holding right-click) ----

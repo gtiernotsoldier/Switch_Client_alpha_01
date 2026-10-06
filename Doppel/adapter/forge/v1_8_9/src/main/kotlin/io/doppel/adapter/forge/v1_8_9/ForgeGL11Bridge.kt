@@ -70,7 +70,6 @@ class ForgeGL11Bridge : GL11Bridge {
         gl11Class.getMethod("glEnd")
     }
 
-    // ── Texture (SmoothFontRenderer) ──
 
     private val glGenTexturesMethod by lazy {
         gl11Class.getMethod("glGenTextures")
@@ -208,7 +207,6 @@ class ForgeGL11Bridge : GL11Bridge {
         safeInvoke("glEnd", glEndMethod)
     }
 
-    // ── Texture (SmoothFontRenderer) ──
 
     override fun glGenTextures(): Int {
         return try {
@@ -239,7 +237,6 @@ class ForgeGL11Bridge : GL11Bridge {
 
     // ── Font atlas upload (v3 reliability ladder) ──
     //
-    // The first SmoothFontRenderer attempt was rolled back because its upload
     // path "did not reliably render". Root causes addressed here:
     //   1. manual glTexImage2D with a HEAP ByteBuffer → LWJGL throws
     //      IllegalArgumentException("direct buffer required") → nothing draws;

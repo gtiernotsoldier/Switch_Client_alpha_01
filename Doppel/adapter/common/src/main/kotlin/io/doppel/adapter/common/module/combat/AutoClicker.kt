@@ -92,6 +92,16 @@ object AutoClicker : Module("AutoClicker", Category.COMBAT), HudLineProvider {
     }
     private val disableOnBlock by boolean("DisableOnBlock", true)
 
+    // ========== GUI / mining behaviour (Raven semantics) ==========
+    /** Click inside an open inventory/container screen at the cursor, at the CPS cadence
+     *  (raven-bs "inventory", XD "inventoryFill"). Gated on the physical attack button being
+     *  held, so a normal single click in a menu is not turned into a stream of clicks. */
+    private val inGui by boolean("InGui", true)
+    /** While the crosshair is on a block and the player is attacking, hold the attack key instead
+     *  of pulsing it, so vanilla's mining progress is never reset and blocks actually break
+     *  (raven-bs "Break blocks"). Without this a clicker makes block breaking impossible. */
+    private val breakBlocks by boolean("BreakBlocks", true)
+
     // ====================================================================
     // Core Strategies (Algorithm lives here)
     // ====================================================================
@@ -117,6 +127,9 @@ object AutoClicker : Module("AutoClicker", Category.COMBAT), HudLineProvider {
         EventBridge.clickPattern = clickPattern
         EventBridge.clickRandomize = randomize
         EventBridge.clickExhaust = simulateExhaust
+        // GUI clicking and block-breaking behaviour are read by the platform on the render thread.
+        EventBridge.clickInGuiAllowed = inGui
+        EventBridge.clickHoldOnBlock = breakBlocks
         when (combatVersion) {
             "1.8" -> onTick18(player, target)
             "1.9+" -> onTick19(player, target)
@@ -242,6 +255,8 @@ object AutoClicker : Module("AutoClicker", Category.COMBAT), HudLineProvider {
         EventBridge.syntheticAttackOverride = true
         EventBridge.clickMinCps = minCps
         EventBridge.clickMaxCps = maxCps
+        EventBridge.clickInGuiAllowed = inGui
+        EventBridge.clickHoldOnBlock = breakBlocks
 
         tickListener = { player, target ->
             if (enabled) onClientTick(player, target)
@@ -256,6 +271,8 @@ object AutoClicker : Module("AutoClicker", Category.COMBAT), HudLineProvider {
         EventBridge.syntheticAttackOverride = false
         EventBridge.clickMinCps = 0
         EventBridge.clickMaxCps = 0
+        EventBridge.clickInGuiAllowed = false
+        EventBridge.clickHoldOnBlock = false
         state18.reset()
         state19.reset()
     }

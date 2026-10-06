@@ -21,6 +21,19 @@ object ForgeEventBridge : IEventBridge {
     private val mouseIsButtonDown by lazy {
         mouseClass.getMethod("isButtonDown", Int::class.javaPrimitiveType)
     }
+    /** Cursor position, for clicking inside an open screen (Raven's inventoryClick transform). */
+    private val mouseGetX by lazy { mouseClass.getMethod("getX") }
+    private val mouseGetY by lazy { mouseClass.getMethod("getY") }
+
+    /**
+     * LWJGL Keyboard — the only source of PHYSICAL key state in this class.
+     * Never read `KeyBinding.pressed` back: this class writes that field, so reading it feeds our
+     * own writes in and latches (MC only refreshes it on real key events). See [physicalKeyDown].
+     */
+    private val keyboardClass by lazy { Class.forName("org.lwjgl.input.Keyboard") }
+    private val keyboardIsKeyDown by lazy {
+        keyboardClass.getMethod("isKeyDown", Int::class.javaPrimitiveType)
+    }
     private val entityLivingBaseClass by lazy { Class.forName("net.minecraft.entity.EntityLivingBase") }
     private val entityPlayerClass by lazy { Class.forName("net.minecraft.entity.player.EntityPlayer") }
     private val s27PacketClass by lazy { Class.forName("net.minecraft.network.play.server.S27PacketExplosion") }
@@ -92,6 +105,8 @@ object ForgeEventBridge : IEventBridge {
     private val inventoryCurrentItemField by lazy { MappingContext.getField("forge:inventory_currentItem") }
     private val playerJumpTicksField by lazy { MappingContext.getField("forge:player_jumpTicks") }
     private val mcObjectMouseOverField by lazy { MappingContext.getField("forge:mc_objectMouseOver") }
+    /** `mc.pointedEntity` — Raven sets this alongside objectMouseOver when it spoofs a pick. */
+    private val mcPointedEntityField by lazy { MappingContext.getField("forge:mc_pointedEntity") }
 
     // ========== State ==========
 
@@ -200,13 +215,23 @@ object ForgeEventBridge : IEventBridge {
         } catch (_: Exception) {}
     }
 
-    /** Read the current pressed state of a game-settings key binding. */
-    private fun readKeyPressed(gsKey: String): Boolean {
+    /**
+     * Physical state of a game-settings key binding, read from LWJGL's Keyboard.
+     *
+     * Deliberately NOT `KeyBinding.pressed`: this class writes that field every frame, so reading
+     * it back feeds our own synthetic writes in — and the value latches, because MC only refreshes
+     * it on a real key event. That is what left W released forever after a W-tap, and S / A / D
+     * pressed forever after an S-tap or an A/D-tap stopped driving them: the module's release
+     * could never win against the value we had written ourselves.
+     */
+    private fun physicalKeyDown(gsKey: String): Boolean {
         return try {
             val mc = getMc() ?: return false
             val gs = MappingContext.getFieldValue(mc, "forge:mc_gameSettings") ?: return false
             val keyBind = MappingContext.getFieldValue(gs, gsKey) ?: return false
-            keybindingPressedField?.getBoolean(keyBind) ?: false
+            val keyCode = (MappingContext.getFieldValue(keyBind, "forge:keybinding_keyCode") as? Int) ?: 0
+            if (keyCode == 0) false
+            else (keyboardIsKeyDown.invoke(null, keyCode) as? Boolean) ?: false
         } catch (_: Exception) { false }
     }
 
@@ -220,11 +245,11 @@ object ForgeEventBridge : IEventBridge {
      */
     fun refreshKeyDisplayState() {
         try {
-            EventBridge.isKeyJumpDown = readKeyPressed("forge:gs_keyBindJump") || EventBridge.isJumpPulseActive()
-            EventBridge.isKeyForwardDown = readKeyPressed("forge:gs_keyBindForward")
-            EventBridge.isKeyBackDown = readKeyPressed("forge:gs_keyBindBack")
-            EventBridge.isKeyLeftDown = readKeyPressed("forge:gs_keyBindLeft")
-            EventBridge.isKeyRightDown = readKeyPressed("forge:gs_keyBindRight")
+            EventBridge.isKeyJumpDown = physicalKeyDown("forge:gs_keyBindJump") || EventBridge.isJumpPulseActive()
+            EventBridge.isKeyForwardDown = physicalKeyDown("forge:gs_keyBindForward")
+            EventBridge.isKeyBackDown = physicalKeyDown("forge:gs_keyBindBack")
+            EventBridge.isKeyLeftDown = physicalKeyDown("forge:gs_keyBindLeft")
+            EventBridge.isKeyRightDown = physicalKeyDown("forge:gs_keyBindRight")
         } catch (_: Exception) {}
     }
 
@@ -537,6 +562,9 @@ object ForgeEventBridge : IEventBridge {
                     val mopCtor = mopClass.getConstructor(Class.forName("net.minecraft.entity.Entity"), Class.forName("net.minecraft.util.Vec3"))
                     val mop = mopCtor.newInstance(bestEntity, coreVec3ToMcVec3(bestHitVec))
                     mcObjectMouseOverField?.set(mc, mop)
+                    // Raven sets pointedEntity too: other code (and the client's own
+                    // interaction paths) read it independently of objectMouseOver.
+                    mcPointedEntityField?.set(mc, bestEntity)
                     return@registerReachRaycast true
                 }
             } catch (_: Exception) {}
@@ -924,11 +952,109 @@ object ForgeEventBridge : IEventBridge {
      * own clicks (never releases a manually-held attack) while still driving the
      * synthetic press from the main thread.
      */
+    // ========== ClickAssist — real extra clicks through AWT Robot ==========
+    //
+    // Raven generates its assist clicks with java.awt.Robot: mouseRelease + mousePress using the
+    // legacy masks BUTTON1_MASK (16) / BUTTON3_MASK (4). Because that is a real OS event it
+    // re-enters the client through LWJGL and is processed exactly like the player's own click — no
+    // shared synthetic flags, and it behaves identically in the world, in GUIs and while mining.
+    //
+    // The echo problem: our own emitted press shows up as a physical press on the next poll, so it
+    // must not queue another assist click. Raven clears a boolean when the echo arrives and has a
+    // known hole — the flag is only cleared inside its "no screen / not eating" branch, so a GUI or
+    // an item use starting before the echo leaves it armed and it then swallows the player's next
+    // real click. A short time window closes that hole without depending on which branch runs.
+    private val clickRobot by lazy {
+        try { java.awt.Robot() } catch (_: Throwable) { null }
+    }
+    private var assistPrevLeftDown = false
+    private var assistPrevRightDown = false
+    private var assistEmittedLeftNano = 0L
+    private var assistEmittedRightNano = 0L
+    private var assistOwedLeftRelease = false
+    private var assistOwedRightRelease = false
+    /** Physical press edges inside this window after our own emission are our Robot echo. */
+    private val assistEchoWindowNs = 250_000_000L
+
+    /**
+     * Per-frame ClickAssist driver, called from the render hook on the MC main thread. Emits extra
+     * clicks only on physical press edges and only when the module's advisor asks for them.
+     */
+    fun applyClickAssistFrame() {
+        val robot = clickRobot ?: return
+        try {
+            assistButton(robot, 0)
+            assistButton(robot, 1)
+        } catch (_: Throwable) {}
+    }
+
+    private fun assistButton(robot: java.awt.Robot, button: Int) {
+        val mask = if (button == 0) 16 else 4 // BUTTON1_MASK / BUTTON3_MASK — the masks Raven uses
+        val down = isMouseButtonDown(button)
+        val wasDown = if (button == 0) assistPrevLeftDown else assistPrevRightDown
+        if (button == 0) assistPrevLeftDown = down else assistPrevRightDown = down
+
+        // Un-stick (Raven's fix()): if we left a synthetic press behind and the player is no longer
+        // holding that button, release it. Only ever runs while the player is NOT holding, so it
+        // can never release the player's own click.
+        val owed = if (button == 0) assistOwedLeftRelease else assistOwedRightRelease
+        if (owed && !down) {
+            try { robot.mouseRelease(mask) } catch (_: Throwable) {}
+            if (button == 0) assistOwedLeftRelease = false else assistOwedRightRelease = false
+        }
+
+        if (!down || wasDown) return // physical press edges only
+
+        val now = System.nanoTime()
+        val lastEmit = if (button == 0) assistEmittedLeftNano else assistEmittedRightNano
+        if (lastEmit != 0L && now - lastEmit < assistEchoWindowNs) return // our own echo
+
+        val extra = EventBridge.askClickAssist(button)
+        if (extra <= 0) return
+
+        repeat(extra.coerceIn(1, 3)) {
+            robot.mouseRelease(mask)
+            robot.mousePress(mask)
+        }
+        if (button == 0) {
+            assistEmittedLeftNano = now
+            assistOwedLeftRelease = true
+        } else {
+            assistEmittedRightNano = now
+            assistOwedRightRelease = true
+        }
+    }
+
     fun applySyntheticInput() {
         try {
             val mc = getMc() ?: return
             val gs = MappingContext.getFieldValue(mc, "forge:mc_gameSettings") ?: return
             val keyBindAttack = MappingContext.getFieldValue(gs, "forge:gs_keyBindAttack") ?: return
+            // Refresh the shared physical-button flag here — main thread, once per frame — instead
+            // of only on the 20Hz tick. Reach's press edge and every tap module's "is the player
+            // really clicking" check read it, and a ~50ms-stale sample both misses fast clicks and
+            // flickers. This is the same LWJGL state MC reads in its next input pass.
+            val physicalAttack = isMouseButtonDown(0)
+            EventBridge.isLeftMousePhysicallyDown = physicalAttack
+
+            // A screen is open: MC does not process world keybinds there, and a synthetic press
+            // left on a KeyBinding leaks into the world the instant the screen closes (a stuck
+            // attack/mining key). So write no world input at all. Clicks INSIDE the screen are
+            // driven separately, through the screen's own mouse handler, when AutoClicker's InGui
+            // option is on (raven-bs guards its world path the same way and clicks inventories
+            // separately).
+            if (EventBridge.isGuiOpen) {
+                val attackKeyCode = (MappingContext.getFieldValue(keyBindAttack, "forge:keybinding_keyCode") as? Int) ?: 0
+                if (attackKeyCode != 0) releaseClick(attackKeyCode, leftClick = true)
+                val guiUseBind = MappingContext.getFieldValue(gs, "forge:gs_keyBindUseItem")
+                val guiUseKeyCode = (guiUseBind?.let { MappingContext.getFieldValue(it, "forge:keybinding_keyCode") } as? Int) ?: 0
+                if (guiUseKeyCode != 0) releaseClick(guiUseKeyCode, leftClick = false)
+                EventBridge.mouseButton0 = physicalAttack
+                EventBridge.mouseButton1 = isMouseButtonDown(1)
+                if (EventBridge.clickInGuiAllowed && physicalAttack) driveGuiClickCadence(mc)
+                else guiClickLastNano = 0L
+                return
+            }
             if (EventBridge.syntheticAttackOverride) {
                 // Full clicker active: drive a smooth, time-based press/release cadence
                 // (Raven-style). Each click = press (hold ~delay/2) then release (at delay),
@@ -942,7 +1068,20 @@ object ForgeEventBridge : IEventBridge {
                 // returned null here, so keyCode stayed 0 and the synthetic click cadence
                 // never ran (see ForgeBootstrap for the same fix on the movement keys).
                 val keyCode = (MappingContext.getFieldValue(keyBindAttack, "forge:keybinding_keyCode") as? Int) ?: 0
-                if (now && keyCode != 0 && EventBridge.currentAttackGate()) {
+                // BreakBlocks: the player is mining (crosshair on a block, attack physically held).
+                // Hold the key down and skip the burst cadence — pulsing hands the key back up
+                // between clicks, so vanilla restarts the block's damage from zero every cycle and
+                // the block can never break. raven-bs holds the key in exactly this situation.
+                val miningHold = EventBridge.clickHoldOnBlock && physicalAttack && EventBridge.isLookingAtBlock
+                if (miningHold && keyCode != 0) {
+                    try {
+                        MappingContext.invokeMethod(null, "forge:keybinding_setKeyBindState", keyCode, true)
+                    } catch (_: Exception) {}
+                    setMouseButtonPhysical(0, true)
+                    EventBridge.mouseButton0 = true
+                    attackCadenceActive = false
+                    attackPressed = false
+                } else if (now && keyCode != 0 && EventBridge.currentAttackGate()) {
                     driveClickCadence(keyCode, leftClick = true)
                 } else {
                     releaseClick(keyCode, leftClick = true)
@@ -950,14 +1089,13 @@ object ForgeEventBridge : IEventBridge {
                 }
                 // Preserve the physical button in the underlying mouse buffer so a manual
                 // click still reads as down (this path also ORs the physical state).
-                setMouseButtonPhysical(0, EventBridge.syntheticAttack || isMouseButtonDown(0))
+                setMouseButtonPhysical(0, EventBridge.syntheticAttack || physicalAttack)
             } else {
                 // Assist modules (ClickAssist/BlockHit/AutoBlock): augment the player's
                 // own input — OR with the physical button so their press is not stolen.
                 // attackAllowed (HitSelect) can force the attack key OFF to swallow clicks
                 // that would land inside the target's i-frame window (wasted hits). Decided on
                 // the main thread at this exact frame via the attack-gate provider.
-                val physicalAttack = isMouseButtonDown(0)
                 val gateAllowed = EventBridge.currentAttackGate()
                 val effectiveAttack = EventBridge.syntheticAttack || (physicalAttack && gateAllowed)
                 keybindingPressedField?.setBoolean(keyBindAttack, effectiveAttack)
@@ -973,7 +1111,7 @@ object ForgeEventBridge : IEventBridge {
                 keybindingPressedField?.setBoolean(
                     keyBindForward,
                     if (EventBridge.syntheticForwardOverride) EventBridge.syntheticForward
-                    else EventBridge.syntheticForward || readKeyPressed("forge:gs_keyBindForward")
+                    else EventBridge.syntheticForward || physicalKeyDown("forge:gs_keyBindForward")
                 )
             }
             val keyBindBack = MappingContext.getFieldValue(gs, "forge:gs_keyBindBack")
@@ -981,7 +1119,7 @@ object ForgeEventBridge : IEventBridge {
                 keybindingPressedField?.setBoolean(
                     keyBindBack,
                     if (EventBridge.syntheticBackOverride) EventBridge.syntheticBack
-                    else EventBridge.syntheticBack || readKeyPressed("forge:gs_keyBindBack")
+                    else EventBridge.syntheticBack || physicalKeyDown("forge:gs_keyBindBack")
                 )
             }
             // Strafe keys (ADTap) — keyboard only, always OR-ed with the physical key
@@ -990,14 +1128,14 @@ object ForgeEventBridge : IEventBridge {
             if (keyBindLeft != null) {
                 keybindingPressedField?.setBoolean(
                     keyBindLeft,
-                    EventBridge.syntheticLeft || readKeyPressed("forge:gs_keyBindLeft")
+                    EventBridge.syntheticLeft || physicalKeyDown("forge:gs_keyBindLeft")
                 )
             }
             val keyBindRight = MappingContext.getFieldValue(gs, "forge:gs_keyBindRight")
             if (keyBindRight != null) {
                 keybindingPressedField?.setBoolean(
                     keyBindRight,
-                    EventBridge.syntheticRight || readKeyPressed("forge:gs_keyBindRight")
+                    EventBridge.syntheticRight || physicalKeyDown("forge:gs_keyBindRight")
                 )
             }
             val keyBindUse = MappingContext.getFieldValue(gs, "forge:gs_keyBindUseItem") ?: return
@@ -1094,6 +1232,44 @@ object ForgeEventBridge : IEventBridge {
     private fun cadenceActive(leftClick: Boolean): Boolean =
         if (leftClick) attackCadenceActive else useCadenceActive
 
+    /** Timestamp of the last synthetic click inside an open screen (AutoClicker "InGui"). */
+    private var guiClickLastNano = 0L
+
+    /**
+     * Click inside an open screen at the clicker's CPS, at the cursor position.
+     *
+     * MC's screens consume real LWJGL mouse EVENTS (`Mouse.next()`), which cannot be synthesised by
+     * writing the button buffer — so the click is delivered by calling the screen's own
+     * `mouseClicked(x, y, button)` with the cursor mapped from window to GUI coordinates. This is
+     * the same technique Raven uses (XD `Utils.inventoryClick`, b+ `inInvClick`). It runs on the
+     * main thread from the render hook, which is where a screen expects input.
+     */
+    private fun driveGuiClickCadence(mc: Any) {
+        try {
+            val screen = MappingContext.getFieldValue(mc, "forge:mc_currentScreen") ?: return
+            val cps = sampleCps().coerceAtLeast(1)
+            val interval = 1_000_000_000L / cps
+            val now = System.nanoTime()
+            if (guiClickLastNano != 0L && now - guiClickLastNano < interval) return
+            guiClickLastNano = now
+
+            val dw = MappingContext.getFieldValue(mc, "forge:mc_displayWidth") as? Int ?: return
+            val dh = MappingContext.getFieldValue(mc, "forge:mc_displayHeight") as? Int ?: return
+            val sw = MappingContext.getFieldValue(screen, "forge:guiScreen_width") as? Int ?: return
+            val sh = MappingContext.getFieldValue(screen, "forge:guiScreen_height") as? Int ?: return
+            if (dw <= 0 || dh <= 0 || sw <= 0 || sh <= 0) return
+
+            val mouseX = mouseGetX.invoke(null) as Int
+            val mouseY = mouseGetY.invoke(null) as Int
+            // Vanilla's window -> GUI coordinate transform.
+            val guiX = mouseX * sw / dw
+            val guiY = sh - mouseY * sh / dh - 1
+
+            MappingContext.invokeMethod(screen, "forge:guiScreen_mouseClicked", guiX, guiY, 0)
+            EventBridge.recordClick(0)
+        } catch (_: Exception) {}
+    }
+
     private fun startCadence(leftClick: Boolean, now: Long) {
         val cps = sampleCps().coerceAtLeast(1)
         val delay = 1000L / cps
@@ -1126,11 +1302,19 @@ object ForgeEventBridge : IEventBridge {
     }
 
     private fun releaseKey(keyCode: Int, leftClick: Boolean) {
+        // Hand the key back to the PLAYER's own state instead of forcing it up.
+        //
+        // Forcing it up is what broke block breaking: every clicker cycle released the attack key,
+        // vanilla reset the mining progress, and a block could never be broken while the clicker
+        // ran. It also means a synthetic release can never steal a physically held button.
+        // LWJGL's poll refreshes the button buffer every frame, so this reads the real hardware
+        // state (not our own synthetic write).
+        val physical = isMouseButtonDown(if (leftClick) 0 else 1)
         try {
-            MappingContext.invokeMethod(null, "forge:keybinding_setKeyBindState", keyCode, false)
+            MappingContext.invokeMethod(null, "forge:keybinding_setKeyBindState", keyCode, physical)
         } catch (_: Exception) {}
-        setMouseButtonPhysical(if (leftClick) 0 else 1, false)
-        if (leftClick) EventBridge.mouseButton0 = false else EventBridge.mouseButton1 = false
+        setMouseButtonPhysical(if (leftClick) 0 else 1, physical)
+        if (leftClick) EventBridge.mouseButton0 = physical else EventBridge.mouseButton1 = physical
     }
 
     private fun releaseClick(keyCode: Int, leftClick: Boolean) {

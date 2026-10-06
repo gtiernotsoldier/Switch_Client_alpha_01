@@ -1,4 +1,4 @@
-// main.rs — the out-of-process overlay window (plan phase D0).
+// main.rs — the out-of-process overlay window (plan phase D0, now D1/D2/D3/D4).
 //
 // Why a second process at all: drawing the HUD from inside the JVM means
 // touching the game's render thread and its GL state, which is exactly the
@@ -18,254 +18,117 @@
 // prerequisite). So the window is created with WS_EX_NOACTIVATE, shown with
 // SW_SHOWNOACTIVATE, and never asks for focus or for foreground rights.
 //
+// What the frame loop does now: read the published state block (D2), advance the
+// entrance/flash animations (D3/D4), rasterise the card into the canvas, push it
+// through UpdateLayeredWindow. Frames are only pushed when something actually
+// changed — a still card is not re-composited 60 times a second.
+//
 // Zero third-party dependencies, same rule as the injector: kernel32/user32/gdi32
-// through raw extern "system" FFI, with the struct layouts spelled out by hand.
-// The declarations below are transcribed from the documented prototypes in
-// winuser.h / wingdi.h rather than guessed; the two that would fail first if a
-// character were wrong are UpdateLayeredWindow and CreateDIBSection, and both are
-// written out in full with every parameter named so a mismatch is visible at a
-// glance rather than hidden behind a type alias.
+// through raw extern "system" FFI, declared in win.rs. The pixel work lives in
+// draw.rs (pure), the text in text.rs (GDI), the card in hud.rs (pure geometry).
 
 mod draw;
+mod hud;
+mod preview;
+mod state;
+mod text;
+mod win;
 
 use std::ffi::c_void;
+use std::path::Path;
+use std::time::{Duration, Instant};
 
 use draw::{argb, Canvas};
-
-// ── Win32 types ─────────────────────────────────────────────────────────────
-//
-// The layout structs below carry `#[allow(dead_code)]`: every field exists
-// because Win32 dictates the byte offset, and the padding and reserved ones are
-// only ever zeroed, so the never-read-field lint would otherwise flag perfectly
-// correct FFI. The allowance is per struct on purpose — a crate-wide allow would
-// also hide genuinely dead code.
-
-type Hwnd = *mut c_void;
-type Hinstance = *mut c_void;
-type Hdc = *mut c_void;
-type Hbrush = *mut c_void;
-type Hicon = *mut c_void;
-type Hcursor = *mut c_void;
-type Wparam = usize;
-type Lparam = isize;
-type Lresult = isize;
-
-#[repr(C)]
-#[allow(dead_code)]
-struct Point {
-    x: i32,
-    y: i32,
-}
-
-#[repr(C)]
-#[allow(dead_code)]
-struct Size {
-    cx: i32,
-    cy: i32,
-}
-
-#[repr(C)]
-#[allow(dead_code)]
-struct Msg {
-    hwnd: Hwnd,
-    message: u32,
-    w_param: Wparam,
-    l_param: Lparam,
-    time: u32,
-    pt: Point,
-}
-
-#[repr(C)]
-#[allow(dead_code)]
-struct WndClassExW {
-    cb_size: u32,
-    style: u32,
-    lpfn_wnd_proc: Option<unsafe extern "system" fn(Hwnd, u32, Wparam, Lparam) -> Lresult>,
-    cb_cls_extra: i32,
-    cb_wnd_extra: i32,
-    h_instance: Hinstance,
-    h_icon: Hicon,
-    h_cursor: Hcursor,
-    hbr_background: Hbrush,
-    lpsz_menu_name: *const u16,
-    lpsz_class_name: *const u16,
-    h_icon_sm: Hicon,
-}
-
-#[repr(C)]
-#[allow(dead_code)]
-struct BitmapInfoHeader {
-    size: u32,
-    width: i32,
-    height: i32,
-    planes: u16,
-    bit_count: u16,
-    compression: u32,
-    size_image: u32,
-    x_pels_per_meter: i32,
-    y_pels_per_meter: i32,
-    clr_used: u32,
-    clr_important: u32,
-}
-
-/// BITMAPINFO is a header followed by a colour table. We always ask for BI_RGB
-/// at 32bpp, where the table is ignored, but the struct still has to have room
-/// for at least one entry or the API would read past our stack frame.
-#[repr(C)]
-#[allow(dead_code)]
-struct BitmapInfo {
-    header: BitmapInfoHeader,
-    colours: [u32; 1],
-}
-
-/// BLENDFUNCTION, four bytes in this exact order (BlendOp, BlendFlags,
-/// SourceConstantAlpha, AlphaFormat) — it is passed by pointer, so a reordered
-/// field would silently change what the compositor does.
-#[repr(C)]
-#[allow(dead_code)]
-struct BlendFunction {
-    blend_op: u8,
-    blend_flags: u8,
-    source_constant_alpha: u8,
-    alpha_format: u8,
-}
-
-// ── Win32 FFI ───────────────────────────────────────────────────────────────
-
-#[link(name = "user32")]
-extern "system" {
-    fn RegisterClassExW(wc: *const WndClassExW) -> u16;
-    fn CreateWindowExW(
-        ex_style: u32,
-        class_name: *const u16,
-        window_name: *const u16,
-        style: u32,
-        x: i32,
-        y: i32,
-        w: i32,
-        h: i32,
-        parent: Hwnd,
-        menu: *mut c_void,
-        instance: Hinstance,
-        param: *mut c_void,
-    ) -> Hwnd;
-    fn DefWindowProcW(hwnd: Hwnd, msg: u32, wp: Wparam, lp: Lparam) -> Lresult;
-    fn ShowWindow(hwnd: Hwnd, cmd: i32) -> i32;
-    fn GetMessageW(msg: *mut Msg, hwnd: Hwnd, min: u32, max: u32) -> i32;
-    fn TranslateMessage(msg: *const Msg) -> i32;
-    fn DispatchMessageW(msg: *const Msg) -> Lresult;
-    fn PostQuitMessage(code: i32);
-    fn UpdateLayeredWindow(
-        hwnd: Hwnd,
-        dst_dc: Hdc,
-        dst_pos: *const Point,
-        size: *const Size,
-        src_dc: Hdc,
-        src_pos: *const Point,
-        key: u32,
-        blend: *const BlendFunction,
-        flags: u32,
-    ) -> i32;
-}
-
-#[link(name = "gdi32")]
-extern "system" {
-    fn CreateCompatibleDC(hdc: Hdc) -> Hdc;
-    fn CreateDIBSection(
-        hdc: Hdc,
-        info: *const BitmapInfo,
-        usage: u32,
-        bits: *mut *mut c_void,
-        section: *mut c_void,
-        offset: u32,
-    ) -> *mut c_void;
-    fn SelectObject(hdc: Hdc, obj: *mut c_void) -> *mut c_void;
-    fn DeleteObject(obj: *mut c_void) -> i32;
-    fn DeleteDC(hdc: Hdc) -> i32;
-}
-
-#[link(name = "kernel32")]
-extern "system" {
-    fn GetModuleHandleW(name: *const u16) -> Hinstance;
-}
-
-// ── Win32 constants ─────────────────────────────────────────────────────────
-
-const WS_POPUP: u32 = 0x8000_0000;
-const WS_EX_TRANSPARENT: u32 = 0x0000_0020;
-const WS_EX_TOOLWINDOW: u32 = 0x0000_0080;
-const WS_EX_LAYERED: u32 = 0x0008_0000;
-const WS_EX_NOACTIVATE: u32 = 0x0800_0000;
-
-const WM_DESTROY: u32 = 0x0002;
-const WM_CLOSE: u32 = 0x0010;
-const WM_NCHITTEST: u32 = 0x0084;
-
-/// "The click belongs to whatever is underneath." HTTRANSPARENT is the only
-/// negative HT* value, hence the odd-looking literal.
-const HTTRANSPARENT: Lresult = -1;
-
-/// SW_SHOWNOACTIVATE. Deliberately not SW_SHOW: see the header note on focus.
-const SW_SHOWNOACTIVATE: i32 = 4;
-
-const DIB_RGB_COLORS: u32 = 0;
-const BI_RGB: u32 = 0;
-
-const AC_SRC_OVER: u8 = 0x00;
-const AC_SRC_ALPHA: u8 = 0x01;
-const ULW_ALPHA: u32 = 0x02;
+use hud::{Anim, Config, Position};
+use state::Entry;
+use text::TextEngine;
+use win::*;
 
 /// Neutral class name and an empty caption: nothing that greps for the product's
 /// name may find this window (plan §7).
 const CLASS_NAME: &str = "WndClsA1";
 
-// ── card geometry ───────────────────────────────────────────────────────────
+// ── window geometry ─────────────────────────────────────────────────────────
 //
-// All values are physical pixels; the window is exactly the size of the card, so
-// the buffer, the DIB and the window rectangle always agree.
+// The window is the *stage*: the card is drawn inside it at MARGIN from the top
+// corner it occupies and everything else stays fully transparent. It is
+// click-through and never visible as a surface, so a stage larger than the card
+// costs nothing but the DIB it needs.
 
-const CARD_RADIUS: f32 = 8.0;
-const ACCENT_INSET: u32 = 12;
-const ACCENT_TOP: u32 = 12;
-const ACCENT_H: u32 = 4;
+/// Stacked layout: pill on top, list under it. Wide enough for the longest name
+/// and value field the contract allows, tall enough for the pill plus eight rows.
+const DEF_W: u32 = 520;
+const DEF_H: u32 = 400;
+/// Split layouts put the two halves in opposite top corners of the screen, so the
+/// stage has to span it.
+const MIN_SPLIT_W: u32 = 640;
+const DEF_X: i32 = 0;
+const DEF_Y: i32 = 0;
 
-/// #0D111C at 80%: the panel body. The alpha is baked into the DIB, and
-/// BlendFunction then supplies the per-pixel alpha on top of it.
-const CARD_ARGB: u32 = argb(0x0D, 0x11, 0x1C, 0xCC);
-/// The accent strip. Without one, a dark card over a dark game is invisible.
-const ACCENT_ARGB: u32 = argb(0x3F, 0xD8, 0xE0, 0xFF);
+/// Backdrop the `--dump` BMP is composited over: the card is translucent, so a
+/// dump has to sit on something. A mid-tone desk (rather than the near-black a
+/// game usually is) keeps the panel body, its rim and its drop shadow all
+/// distinguishable from the background, which is what makes the dump reviewable.
+const BACKDROP: u32 = argb(0x4A, 0x50, 0x61, 0xFF);
 
-const DEF_X: i32 = 40;
-const DEF_Y: i32 = 40;
-const DEF_W: u32 = 360;
-const DEF_H: u32 = 200;
+// ── process behaviour ───────────────────────────────────────────────────────
+
+/// Target frame interval. Animations are ~350 ms fades, so 60 Hz is smooth and
+/// the loop is idle-cheap (a state read and a hash) when nothing is moving.
+const FRAME_MS: u64 = 16;
+/// "The game is gone": nothing has written the state file for this long.
+const STALE_SECS: f32 = 3.0;
+/// Silence tolerated BEFORE the first successful read. The injector starts this process while the
+/// game is still loading, and Forge + OptiFine + world load routinely take longer than three
+/// seconds — with the short rule the window would die before the JVM ever published anything.
+const FIRST_WRITE_GRACE_SECS: f32 = 30.0;
+/// How long the card takes to fade out once that happens.
+const FADE_SECS: f32 = 0.35;
 
 const USAGE: &str = "\
 usage: doppel-hud [options]
 
-  --x <i32>   screen x of the card's top-left corner (default 40)
-  --y <i32>   screen y of the card's top-left corner (default 40)
-  --w <u32>   card width in physical pixels (default 360)
-  --h <u32>   card height in physical pixels (default 200)
-  --hide      print one line, create no window, exit 0 (automation check)
-  --help      print this text and exit 0
+  --x <i32>            screen x of the stage's top-left corner (default 0)
+  --y <i32>            screen y of the stage's top-left corner (default 0)
+  --w <u32>            stage width in physical pixels (default 520 stacked,
+                       the screen width when --position is left/right)
+  --h <u32>            stage height in physical pixels (default 400)
+  --position <where>   stacked (default) = pill on top, list under it;
+                       left = list in the left corner, pill in the right;
+                       right = list in the right corner, pill in the left
+  --dump <path.bmp>    render one representative frame to a 32-bit BMP, print an
+                       ASCII preview, create no window, exit 0
+  --hide               print one line, create no window, exit 0 (automation check)
+  --help               print this text and exit 0
 
-The card is click-through and never takes focus, so stop it from Task Manager,
-from `taskkill /IM doppel-hud.exe` (without /F, which posts WM_CLOSE), or with
-Ctrl+C in this console. Run Minecraft in windowed or borderless-fullscreen mode:
-under exclusive fullscreen the desktop compositor is bypassed and a layered
-window is never drawn.";
+The card reads %TEMP%\\doppel-hud.state, published by the game 3600 bytes at a
+time (magic 0x444F5050, version 1). It opens the file read-only: there is no back
+channel and nothing this process does can reach the game.
+
+It never takes focus (no SetForegroundWindow / SetFocus / SW_SHOW) and every
+click passes through it, so Minecraft keeps the foreground and the mouse. Run the
+game in windowed or borderless-fullscreen mode: under exclusive fullscreen the
+desktop compositor is bypassed and a layered window is never drawn.
+
+The process exits by itself when the game does — three seconds without the state
+file being written, then a short fade. Stop it early from Task Manager, from
+`taskkill /IM doppel-hud.exe` (without /F, which posts WM_CLOSE), or with Ctrl+C
+in this console.";
 
 // ── command line ────────────────────────────────────────────────────────────
 //
-// Hand-rolled on purpose: three numeric flags and two switches do not justify a
-// dependency, and the injector already parses its own arguments.
+// Hand-rolled on purpose: a handful of flags does not justify a dependency, and
+// the injector already parses its own arguments.
 
 struct Args {
     x: i32,
     y: i32,
-    w: u32,
-    h: u32,
+    /// None = "pick by layout" (see DEF_W and the split case in run()).
+    w: Option<u32>,
+    h: Option<u32>,
+    position: Position,
+    /// Headless render to a BMP, no window.
+    dump: Option<String>,
     /// Headless check: prove the binary starts and links without opening a window.
     hide: bool,
     help: bool,
@@ -273,7 +136,16 @@ struct Args {
 
 impl Default for Args {
     fn default() -> Args {
-        Args { x: DEF_X, y: DEF_Y, w: DEF_W, h: DEF_H, hide: false, help: false }
+        Args {
+            x: DEF_X,
+            y: DEF_Y,
+            w: None,
+            h: None,
+            position: Position::Stacked,
+            dump: None,
+            hide: false,
+            help: false,
+        }
     }
 }
 
@@ -283,17 +155,16 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
     while i < argv.len() {
         let flag = argv[i].as_str();
         match flag {
-            "--x" => {
-                args.x = parse_num(flag, &next_value(argv, &mut i, flag)?)?;
+            "--x" => args.x = parse_num(flag, &next_value(argv, &mut i, flag)?)?,
+            "--y" => args.y = parse_num(flag, &next_value(argv, &mut i, flag)?)?,
+            "--w" => args.w = Some(parse_num(flag, &next_value(argv, &mut i, flag)?)?),
+            "--h" => args.h = Some(parse_num(flag, &next_value(argv, &mut i, flag)?)?),
+            "--position" => {
+                let raw = next_value(argv, &mut i, flag)?;
+                args.position = parse_position(&raw)?;
             }
-            "--y" => {
-                args.y = parse_num(flag, &next_value(argv, &mut i, flag)?)?;
-            }
-            "--w" => {
-                args.w = parse_num(flag, &next_value(argv, &mut i, flag)?)?;
-            }
-            "--h" => {
-                args.h = parse_num(flag, &next_value(argv, &mut i, flag)?)?;
+            "--dump" => {
+                args.dump = Some(next_value(argv, &mut i, flag)?);
             }
             "--hide" => {
                 args.hide = true;
@@ -307,6 +178,16 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
         }
     }
     Ok(args)
+}
+
+/// "Left" means the list is on the left, matching the old card's `HUD.position`.
+fn parse_position(raw: &str) -> Result<Position, String> {
+    match raw.to_ascii_lowercase().as_str() {
+        "stacked" | "stack" | "default" => Ok(Position::Stacked),
+        "left" => Ok(Position::ListLeft),
+        "right" => Ok(Position::ListRight),
+        other => Err(format!("--position: expected stacked, left or right, got {other}")),
+    }
 }
 
 /// Consume the value that follows a flag and step the cursor past both. A
@@ -325,22 +206,6 @@ fn parse_num<T: std::str::FromStr>(flag: &str, raw: &str) -> Result<T, String> {
     raw.parse::<T>().map_err(|_| format!("{flag}: not a valid number: {raw}"))
 }
 
-// ── painting ────────────────────────────────────────────────────────────────
-
-/// Compose one frame of the card. The rasteriser lives in `draw` and knows
-/// nothing about Win32, which is what keeps this part testable on any host and
-/// leaves room for the D1 bitmap font to write into the same buffer.
-fn paint(canvas: &mut Canvas, w: u32, h: u32) {
-    canvas.fill_rounded_rect(0, 0, w, h, CARD_RADIUS, CARD_ARGB);
-
-    // Inset so the strip never touches the rounded rim, and skipped entirely on
-    // a card too small to hold it (a 0-wide fill would just divide the work).
-    let bar_w = w.saturating_sub(ACCENT_INSET * 2);
-    if bar_w > 0 && h > ACCENT_TOP + ACCENT_H {
-        canvas.fill_rect(ACCENT_INSET as i32, ACCENT_TOP as i32, bar_w, ACCENT_H, ACCENT_ARGB);
-    }
-}
-
 fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }
@@ -350,15 +215,15 @@ fn wide(s: &str) -> Vec<u16> {
 /// `unsafe extern "system"` because user32 calls it: the signature has to match
 /// the ABI the class was registered with, and every argument arrives as a raw
 /// Win32 value. It runs on the thread that owns the window, which is the thread
-/// blocked in the message loop below.
+/// that runs the frame loop below.
 unsafe extern "system" fn wnd_proc(hwnd: Hwnd, msg: u32, wp: Wparam, lp: Lparam) -> Lresult {
     match msg {
         // WS_EX_TRANSPARENT already keeps the mouse away; answering like this as
         // well means a click that does arrive is routed to the window below
         // instead of being swallowed if the style is ever dropped by the driver.
         WM_NCHITTEST => HTTRANSPARENT,
-        // Both paths end the same way: the message loop's GetMessageW returns 0
-        // on WM_QUIT and run() falls out to process exit.
+        // Both paths end the same way: the frame loop sees WM_QUIT and falls out
+        // to the cleanup at the end of run().
         WM_CLOSE | WM_DESTROY => {
             PostQuitMessage(0);
             0
@@ -367,10 +232,95 @@ unsafe extern "system" fn wnd_proc(hwnd: Hwnd, msg: u32, wp: Wparam, lp: Lparam)
     }
 }
 
-// ── entry point ─────────────────────────────────────────────────────────────
+// ── frame content ───────────────────────────────────────────────────────────
 
-/// Create the overlay and pump messages until it closes.
+/// A representative module table for `--dump`: the mix the real HUD shows —
+/// valued and bare modules, two accent values, one module mid-flash.
+fn demo_entries() -> Vec<Entry> {
+    const DEMO: &[(&str, &str, bool)] = &[
+        ("AutoClicker", "12.3 cps", true),
+        ("Velocity", "82%", true),
+        ("Keystrokes", "", false),
+        ("Reach", "3.1-3.3", false),
+        ("HitSelect", "", false),
+        ("BlockHit", "", false),
+        ("WTap", "", false),
+        ("Sprint", "", false),
+    ];
+
+    DEMO.iter()
+        .map(|(name, value, highlight)| Entry {
+            id: state::fnv1a(name),
+            enabled: true,
+            flash: false,
+            highlight: *highlight,
+            name: (*name).to_string(),
+            value: (*value).to_string(),
+        })
+        .collect()
+}
+
+/// Ids the dump seeds with a partly decayed flash (255 = just fired).
+fn demo_flashes() -> Vec<(u32, u8)> {
+    vec![(state::fnv1a("Velocity"), 150)]
+}
+
+/// Cheap change detector: everything the card depends on except time. When it
+/// matches the previous frame and nothing is animating, the compositor already
+/// holds the right pixels and the frame is skipped.
+fn signature(entries: &[Entry], fade: f32) -> u64 {
+    fn mix(hash: &mut u64, byte: u8) {
+        *hash ^= byte as u64;
+        *hash = hash.wrapping_mul(0x0000_0100_0000_01B3);
+    }
+
+    let mut hash: u64 = 0xCBF2_9CE4_8422_2325;
+    mix(&mut hash, entries.len() as u8);
+    for e in entries {
+        for b in e.id.to_le_bytes() {
+            mix(&mut hash, b);
+        }
+        mix(&mut hash, e.flash as u8);
+        mix(&mut hash, e.highlight as u8);
+        for b in e.name.as_bytes() {
+            mix(&mut hash, *b);
+        }
+        mix(&mut hash, 0);
+        for b in e.value.as_bytes() {
+            mix(&mut hash, *b);
+        }
+        mix(&mut hash, 0xFF);
+    }
+    // The fade is quantised into the signature so the ramp repaints, without
+    // floating-point noise making every frame look different.
+    mix(&mut hash, (fade.clamp(0.0, 1.0) * 64.0) as u8);
+    hash
+}
+
+// ── entry points ────────────────────────────────────────────────────────────
+
+/// Create the overlay and run the frame loop until the game goes away or the
+/// window is closed.
 fn run(args: &Args) -> Result<(), String> {
+    let state_path = state::default_path();
+    let mut text = TextEngine::new()?;
+
+    let height = args.h.unwrap_or(DEF_H);
+    let width = args.w.unwrap_or_else(|| match args.position {
+        Position::Stacked => DEF_W,
+        // The split layouts put the list and the pill in opposite *screen*
+        // corners, so the stage has to span the screen.
+        Position::ListLeft | Position::ListRight => {
+            let screen = unsafe { GetSystemMetrics(SM_CXSCREEN) };
+            (screen.max(MIN_SPLIT_W as i32)) as u32
+        }
+    });
+    if width == 0 || height == 0 {
+        return Err("--w and --h must both be non-zero".to_string());
+    }
+
+    let mut config = Config { position: args.position, margin: hud::MARGIN, alpha: 1.0 };
+
     // One `unsafe` block, and the smallest one this job allows: Win32 is all
     // there is to call here, so the alternative would be scattering `unsafe`
     // through the function.
@@ -378,10 +328,11 @@ fn run(args: &Args) -> Result<(), String> {
     // SAFETY: every call below is a Win32 entry point taking plain handles and
     // pointers to the stack values just built. The window, DIB and DC never leave
     // this function; the only memory reached through a raw pointer is the DIB
-    // section's own storage, which Win32 sized for us and which we fill exactly
-    // once, contiguously, before handing it back to the compositor. The function
-    // runs on the thread that created the window and no other thread touches
-    // these handles.
+    // section's own storage, which Win32 sized for us and which we fill
+    // contiguously before handing it back to the compositor. The function runs on
+    // the thread that created the window and no other thread touches these
+    // handles. TextEngine owns its own scratch DC/DIB and is dropped after the
+    // window's DC is deleted, so the two never share an object.
     unsafe {
         let instance = GetModuleHandleW(std::ptr::null());
 
@@ -406,8 +357,8 @@ fn run(args: &Args) -> Result<(), String> {
             WS_POPUP,
             args.x,
             args.y,
-            args.w as i32,
-            args.h as i32,
+            width as i32,
+            height as i32,
             std::ptr::null_mut(),
             std::ptr::null_mut(),
             instance,
@@ -431,41 +382,23 @@ fn run(args: &Args) -> Result<(), String> {
 
         let mut info: BitmapInfo = std::mem::zeroed();
         info.header.size = std::mem::size_of::<BitmapInfoHeader>() as u32;
-        info.header.width = args.w as i32;
+        info.header.width = width as i32;
         // Negative height asks for a top-down DIB: row 0 is the top scanline,
         // which is the order the canvas writes in, so no flip is needed.
-        info.header.height = -(args.h as i32);
+        info.header.height = -(height as i32);
         info.header.planes = 1;
         info.header.bit_count = 32;
         info.header.compression = BI_RGB;
 
         let mut bits: *mut c_void = std::ptr::null_mut();
-        let dib = CreateDIBSection(
-            mem_dc,
-            &info,
-            DIB_RGB_COLORS,
-            &mut bits,
-            std::ptr::null_mut(),
-            0,
-        );
+        let dib = CreateDIBSection(mem_dc, &info, DIB_RGB_COLORS, &mut bits, std::ptr::null_mut(), 0);
         if dib.is_null() || bits.is_null() {
             DeleteDC(mem_dc);
             return Err("CreateDIBSection failed".to_string());
         }
         let previous = SelectObject(mem_dc, dib);
 
-        // The canvas is the same size as the DIB, so this covers every pixel —
-        // nothing depends on how CreateDIBSection initialises its storage.
-        let mut canvas = Canvas::new(args.w, args.h);
-        paint(&mut canvas, args.w, args.h);
-        let pixels = canvas.pixels();
-        std::ptr::copy_nonoverlapping(
-            pixels.as_ptr() as *const u8,
-            bits as *mut u8,
-            pixels.len() * std::mem::size_of::<u32>(),
-        );
-
-        let size = Size { cx: args.w as i32, cy: args.h as i32 };
+        let size = Size { cx: width as i32, cy: height as i32 };
         let src_pos = Point { x: 0, y: 0 };
         let blend = BlendFunction {
             blend_op: AC_SRC_OVER,
@@ -475,37 +408,116 @@ fn run(args: &Args) -> Result<(), String> {
             source_constant_alpha: 255,
             alpha_format: AC_SRC_ALPHA,
         };
-        // A null destination position keeps the coordinates CreateWindowExW was
-        // given — moving the window here would be a second chance to get the
-        // placement wrong.
-        let updated = UpdateLayeredWindow(
-            hwnd,
-            std::ptr::null_mut(),
-            std::ptr::null(),
-            &size,
-            mem_dc,
-            &src_pos,
-            0,
-            &blend,
-            ULW_ALPHA,
-        );
-        if updated == 0 {
-            SelectObject(mem_dc, previous);
-            DeleteObject(dib);
-            DeleteDC(mem_dc);
-            return Err("UpdateLayeredWindow failed".to_string());
-        }
 
-        // Shown only now, so the first thing the desktop sees is the finished
-        // card rather than an empty window, and shown without activation.
-        ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+        // ── live state ──
+        let mut canvas = Canvas::new(width, height);
+        let mut anim = Anim::new();
+        let mut entries: Vec<Entry> = Vec::new();
+        // Last write time of the state file — the game's own liveness signal.
+        let mut last_write: Option<std::time::SystemTime> = None;
+        let mut fade = 1.0f32;
+        let mut last_signature = 0u64;
+        let mut animating = true;
+        let mut shown = false;
+        let mut result: Result<(), String> = Ok(());
 
+        let started = Instant::now();
+        let mut previous_frame = started;
         let mut msg: Msg = std::mem::zeroed();
-        // GetMessageW returns 0 on WM_QUIT and -1 on error; either way the loop
-        // ends and the process is on its way out.
-        while GetMessageW(&mut msg, std::ptr::null_mut(), 0, 0) > 0 {
-            TranslateMessage(&msg);
-            DispatchMessageW(&msg);
+
+        loop {
+            // Drain the queue. GetMessageW would block and the card has to keep
+            // animating while the game is running, so this loop peeks and paces
+            // itself instead.
+            let mut quit = false;
+            while PeekMessageW(&mut msg, std::ptr::null_mut(), 0, 0, PM_REMOVE) != 0 {
+                if msg.message == WM_QUIT {
+                    quit = true;
+                    break;
+                }
+                TranslateMessage(&msg);
+                DispatchMessageW(&msg);
+            }
+            if quit {
+                break;
+            }
+
+            let now = Instant::now();
+            let dt = now.saturating_duration_since(previous_frame).as_secs_f32();
+            previous_frame = now;
+
+            // D2: read the published block. A missing, short or foreign file
+            // leaves the last good frame on screen — never garbage.
+            if let Some(snapshot) = state::read(&state_path) {
+                entries = snapshot.entries;
+                if let Some(modified) = snapshot.modified {
+                    last_write = Some(modified);
+                }
+            }
+
+            // The game is gone when nothing has written the file for three seconds; fading out and
+            // exiting beats leaving a ghost card on the desktop. Before the FIRST write the overlay
+            // is still waiting for a game that may be loading, so it gets a much longer grace
+            // instead (see FIRST_WRITE_GRACE_SECS).
+            let stale = match last_write {
+                Some(written) => written.elapsed().map(|d| d.as_secs_f32() > STALE_SECS).unwrap_or(false),
+                None => started.elapsed().as_secs_f32() > FIRST_WRITE_GRACE_SECS,
+            };
+            if stale {
+                fade -= dt / FADE_SECS;
+                if fade <= 0.0 {
+                    break;
+                }
+            }
+
+            anim.update(&entries);
+            let current = signature(&entries, fade);
+            if current != last_signature || animating {
+                config.alpha = fade;
+                // The card is redrawn from scratch: last frame's pixels must not
+                // survive underneath the new ones.
+                canvas.clear();
+                animating = hud::paint(&mut canvas, &mut text, &entries, &mut anim, now, &config);
+                last_signature = current;
+
+                let pixels = canvas.pixels();
+                std::ptr::copy_nonoverlapping(
+                    pixels.as_ptr() as *const u8,
+                    bits as *mut u8,
+                    pixels.len() * std::mem::size_of::<u32>(),
+                );
+                // A null destination position keeps the coordinates
+                // CreateWindowExW was given — moving the window here would be a
+                // second chance to get the placement wrong.
+                if UpdateLayeredWindow(
+                    hwnd,
+                    std::ptr::null_mut(),
+                    std::ptr::null(),
+                    &size,
+                    mem_dc,
+                    &src_pos,
+                    0,
+                    &blend,
+                    ULW_ALPHA,
+                ) == 0
+                {
+                    result = Err("UpdateLayeredWindow failed".to_string());
+                    break;
+                }
+
+                // Shown only once a finished card is in the window, so the first
+                // thing the desktop sees is the card rather than an empty window,
+                // and shown without activation.
+                if !shown {
+                    ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+                    shown = true;
+                }
+            }
+
+            let frame = now.elapsed();
+            if frame < Duration::from_millis(FRAME_MS) {
+                std::thread::sleep(Duration::from_millis(FRAME_MS) - frame);
+            }
         }
 
         // Released in reverse: a DIB must not be deleted while it is still
@@ -513,11 +525,71 @@ fn run(args: &Args) -> Result<(), String> {
         SelectObject(mem_dc, previous);
         DeleteObject(dib);
         DeleteDC(mem_dc);
-        Ok(())
+        result
     }
 }
 
+/// `--dump`: render one representative frame to a BMP and print the ASCII
+/// preview. No window class is registered and no window is created — the text
+/// engine only needs a memory DC, so this works on a session with no desktop.
+/// `--position` is honoured so both layouts can be reviewed the same way.
+fn run_dump(path: &str, position: Position) -> Result<(), String> {
+    let mut text = TextEngine::new()?;
+    // The split layouts put the two halves in opposite screen corners; the dump
+    // uses a deterministic screen width rather than whatever this session has.
+    let (w, h) = (if position == Position::Stacked { DEF_W } else { 900 }, DEF_H);
+    let mut canvas = Canvas::new(w, h);
+
+    let entries = demo_entries();
+    let mut anim = Anim::new();
+    let now = Instant::now();
+    anim.seed(&entries, now, &demo_flashes());
+
+    let config = Config { position, margin: hud::MARGIN, alpha: 1.0 };
+    canvas.clear();
+    hud::paint(&mut canvas, &mut text, &entries, &mut anim, now, &config);
+
+    preview::write_bmp(Path::new(path), &canvas, BACKDROP)
+        .map_err(|e| format!("cannot write {path}: {e}"))?;
+    println!(
+        "wrote {path} ({w}x{h}, 32-bit BMP, {:?} layout, composited over #{:06X})",
+        position,
+        BACKDROP & 0x00FF_FFFF
+    );
+    // The numbers behind the picture: a dump that looks wrong is much easier to
+    // fix when the face metrics are on screen next to it.
+    let (pill_w, pill_h) = hud::pill_size(&text);
+    let row_h = hud::row_height(&text);
+    println!(
+        "faces: ui {}px cell, bold {}px cell, mono {}px cell | pill {}x{} | \
+         {} rows of {}px (+2) from y={} | widest value {}px",
+        text.height(text::FontId::Ui),
+        text.height(text::FontId::UiBold),
+        text.height(text::FontId::Mono),
+        pill_w,
+        pill_h,
+        entries.len(),
+        row_h,
+        hud::MARGIN + pill_h + 10,
+        entries
+            .iter()
+            .map(|e| text.measure(text::FontId::Mono, &e.value))
+            .max()
+            .unwrap_or(0),
+    );
+    // The measured card: pill and backing sheet, the row band and each row's
+    // name-end -> value distance. Printed from the same layout the painter used,
+    // so a dump that looks wrong can be checked against real numbers.
+    print!("{}", hud::describe(&text, &entries, position, w));
+    print!("{}", preview::ascii_preview(&canvas, BACKDROP, 106, 44));
+    Ok(())
+}
+
 fn main() {
+    // Must happen before any window is created: on a scaled display this is what keeps one canvas
+    // pixel equal to one screen pixel instead of letting Windows stretch the card.
+    win::enable_dpi_awareness();
+
     let argv: Vec<String> = std::env::args().skip(1).collect();
     let args = match parse_args(&argv) {
         Ok(args) => args,
@@ -533,24 +605,28 @@ fn main() {
         return;
     }
 
+    if let Some(path) = &args.dump {
+        if let Err(reason) = run_dump(path, args.position) {
+            eprintln!("error: {reason}");
+            std::process::exit(1);
+        }
+        return;
+    }
+
     if args.hide {
         // Automation hook: proves the executable starts, parses its arguments and
         // resolves its imports without ever touching the desktop.
         println!(
-            "{} {} — ok, no window created (card would be {}x{} at {}, {})",
+            "{} {} — ok, no window created (stage would be {}x{} at {}, {}, layout {:?})",
             env!("CARGO_PKG_NAME"),
             env!("CARGO_PKG_VERSION"),
-            args.w,
-            args.h,
+            args.w.map(|v| v as i64).unwrap_or(-1),
+            args.h.unwrap_or(DEF_H),
             args.x,
-            args.y
+            args.y,
+            args.position
         );
         return;
-    }
-
-    if args.w == 0 || args.h == 0 {
-        eprintln!("error: --w and --h must both be non-zero");
-        std::process::exit(2);
     }
 
     if let Err(reason) = run(&args) {

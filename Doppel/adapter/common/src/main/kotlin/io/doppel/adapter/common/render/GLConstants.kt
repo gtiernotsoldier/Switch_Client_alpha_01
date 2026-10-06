@@ -19,7 +19,6 @@ object GLConstants {
     const val GL_MODELVIEW = 0x1700
     const val GL_LIGHTING = 0x0B50
 
-    // ── Texture / font rendering (SmoothFontRenderer) ──
     const val GL_RGBA = 0x1908
     const val GL_UNSIGNED_BYTE = 0x1401
     const val GL_LINEAR = 0x2601

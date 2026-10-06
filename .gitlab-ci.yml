@@ -99,7 +99,7 @@ jvm:
 injector:
   extends: .windows
   stage: build
-  needs: [jvm]
+  needs: [jvm, hud]
   before_script:
     - !reference [.windows, before_script]
     - !reference [.rust, before_script]
@@ -111,6 +111,15 @@ injector:
       if (-not $jar) { Write-Error "the agent.jar artifact is missing"; exit 1 }
       Copy-Item $jar.FullName "Doppel\injector\resources\agent.jar" -Force
       Write-Host "agent.jar ready: $((Get-Item 'Doppel\injector\resources\agent.jar').Length) bytes"
+    # Same for the external HUD overlay: the injector embeds it as RCDATA 103 and launches it
+    # after a successful injection, so the hud job's artifact has to be in place BEFORE cargo runs
+    # (build.rs only embeds what already exists). A missing overlay is not fatal, but shipping an
+    # injector without it would silently drop the HUD.
+    - |
+      $hudExe = "Doppel\hud\target\release\doppel-hud.exe"
+      if (-not (Test-Path $hudExe)) { Write-Error "the doppel-hud.exe artifact is missing"; exit 1 }
+      Copy-Item $hudExe "Doppel\injector\resources\doppel-hud.exe" -Force
+      Write-Host "doppel-hud.exe ready: $((Get-Item 'Doppel\injector\resources\doppel-hud.exe').Length) bytes"
     - cmake -S Doppel/injector/src/payload -B Doppel/injector/payload-build -DCMAKE_BUILD_TYPE=Release; if ($LASTEXITCODE -ne 0) { exit 1 }
     - cmake --build Doppel/injector/payload-build --config Release; if ($LASTEXITCODE -ne 0) { exit 1 }
     - |

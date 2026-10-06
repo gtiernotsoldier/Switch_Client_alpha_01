@@ -27,11 +27,5 @@ data class RenderContext(
      * badge to convert layout rects into framebuffer coordinates for the
      * downsample blur. Defaults to 1 when unknown.
      */
-    val guiScale: Int = 1,
-    /**
-     * Smooth (TTF atlas) fonts for the HUD card — null when unavailable
-     * (construction failed or platform lacks the texture path), in which case
-     * the HUD falls back to [fontRenderer] (vanilla pixel font).
-     */
-    val hudFonts: HudFonts? = null
+    val guiScale: Int = 1
 )

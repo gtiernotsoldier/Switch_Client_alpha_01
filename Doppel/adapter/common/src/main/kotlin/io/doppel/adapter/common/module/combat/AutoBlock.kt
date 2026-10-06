@@ -126,6 +126,16 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
         }
 
         // ---------- Platform-level guards ----------
+        // Any open screen — inventory, chest, crafting, chat, pause — means the player is not
+        // fighting. Never press or hold the synthetic block there, and drop anything we were
+        // holding so the block cannot stick while the player browses a container.
+        if (EventBridge.isGuiOpen) {
+            releaseBlock()
+            reblockPending = false
+            lastAttackNano = 0L
+            return
+        }
+
         // 1.8 exclusive: only SWORD matters (1.9+ has shields, no sword block)
         if (player.weaponType != WeaponType.SWORD) return
 

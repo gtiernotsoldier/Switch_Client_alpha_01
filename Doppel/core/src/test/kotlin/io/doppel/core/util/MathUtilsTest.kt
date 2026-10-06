@@ -28,4 +28,19 @@ class MathUtilsTest {
     fun `randomInt stays within range and is inclusive`() {
         repeat(100) { val v = MathUtils.randomInt(1, 3); assertTrue(v in 1..3) }
     }
+
+    /**
+     * A Min/Max pair that someone inverted must not take the tick down.
+     *
+     * `Random.nextInt(min, max + 1)` throws when `min > max`, and `randomFloat` would return values
+     * outside the range. The option layer keeps ranges ordered; this is the backstop for anything
+     * that reads a pair before it gets there.
+     */
+    @Test
+    fun `swapped bounds are ordered instead of throwing`() {
+        repeat(100) {
+            assertTrue(MathUtils.randomInt(5, 3) in 3..5)
+            assertTrue(MathUtils.randomFloat(0.8f, 0.2f) in 0.2f..0.8f)
+        }
+    }
 }

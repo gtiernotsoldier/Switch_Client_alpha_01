@@ -66,6 +66,51 @@ object ConfigManager {
             val moduleName = key.substringBefore('.')
             moduleDirtyCallbacks[moduleName]?.forEach { it() }
         }
+        // A Min/Max pair that has just been inverted is a crash waiting in the module that reads it,
+        // so the sibling is pulled along. Done after the change is announced, and it recurses once
+        // (the sibling's own check then finds the pair ordered and stops).
+        enforcePairOrder(key, value as? Number ?: return)
+    }
+
+    // ========== Min/Max pair ordering ==========
+
+    /**
+     * Keep a module's Min/Max option pair ordered.
+     *
+     * Every ranged module declares its range as two options — `HorizontalMin`/`HorizontalMax`,
+     * `MinCPS`/`MaxCPS`, `ActionMsMin18`/`ActionMsMax18` — and the consumers feed them straight into
+     * `Random.nextInt(min, max + 1)`, which **throws** when `min > max` and silently misbehaves in
+     * the float paths. Nothing stopped the WebUI, a hand-edited config or a half-applied JSON import
+     * from inverting a pair, so the rule is enforced here, at the one place every write goes
+     * through: setting the minimum above the maximum raises the maximum, and setting the maximum
+     * below the minimum lowers the minimum.
+     *
+     * The sibling is derived from the *name* ([optionPairOf]), so no module has to declare its pairs
+     * and a module added later gets the behaviour for free. A name with no partner, a partner that
+     * is not registered, or a partner whose own range cannot hold the value is skipped — the last
+     * one is what happens to `KeepSprint`'s `MinReach` (0..1.5) against `MaxReach` (2.5..3), whose
+     * ranges do not overlap, and to which the ordered world is the one they already live in.
+     */
+    private fun enforcePairOrder(key: String, value: Number) {
+        val dot = key.indexOf('.')
+        if (dot <= 0) return
+        val module = key.substring(0, dot)
+        val pair = optionPairOf(key.substring(dot + 1)) ?: return
+        val partnerKey = "$module.${pair.partner}"
+        val theirs = (values[partnerKey] as? Number)?.toDouble() ?: return
+        val mine = value.toDouble()
+
+        val inverted = if (pair.isMin) mine > theirs else mine < theirs
+        if (!inverted) return
+        val converted = asDeclaredNumber(partnerKey, mine) ?: return
+        set(partnerKey, converted)
+    }
+
+    /** [v] converted to the type its option was registered with, so the store never holds a Double. */
+    private fun asDeclaredNumber(key: String, v: Double): Any? = when (registry[key]?.type) {
+        OptionType.FLOAT -> v.toFloat()
+        OptionType.INT, OptionType.PROBABILITY, OptionType.COLOR -> v.toInt()
+        else -> null
     }
 
     // ========== Listeners ==========
@@ -136,6 +181,10 @@ object ConfigManager {
         val meta = registry[key] ?: return
         values[key] = meta.default
         listeners[key]?.forEach { it(meta.default) }
+        // A reset bypasses `set`, so the pair rule has to be applied here too: the defaults are
+        // ordered by construction, but a module that declared them the other way round would
+        // otherwise leave an inverted pair behind with no write to catch it.
+        (meta.default as? Number)?.let { enforcePairOrder(key, it) }
     }
 
     /**
@@ -144,6 +193,11 @@ object ConfigManager {
     fun resetAll() {
         for ((key, meta) in registry) {
             values[key] = meta.default
+        }
+        // One enforced pass afterwards rather than per key, so the result does not depend on the
+        // order the registry happens to iterate in.
+        for (key in registry.keys.toList()) {
+            (values[key] as? Number)?.let { enforcePairOrder(key, it) }
         }
         CoreLogger.info("[ConfigManager] All options reset to defaults")
     }
@@ -250,4 +304,33 @@ object ConfigManager {
         }
         return value and COLOR_MAX
     }
+}
+
+/** A Min/Max sibling, and which side of the pair the name it was derived from belongs to. */
+internal data class OptionPair(val partner: String, val isMin: Boolean)
+
+/**
+ * The sibling of a Min/Max option name, or null when the name carries no such token.
+ *
+ * The **last** `min`/`max` occurrence is the one that names the side: `MaxSneakTimeMin` pairs with
+ * `MaxSneakTimeMax` (its trailing `Min` is the side, not the leading `Max`), and the replacement
+ * keeps the original casing, so `MinCPS` becomes `MaxCPS` rather than `maxCPS`.
+ *
+ * Pure and internal so it can be tested against every option name the modules actually declare.
+ */
+internal fun optionPairOf(optionName: String): OptionPair? {
+    val lower = optionName.lowercase()
+    val minAt = lower.lastIndexOf("min")
+    val maxAt = lower.lastIndexOf("max")
+    val at = maxOf(minAt, maxAt)
+    if (at < 0 || at + 3 > optionName.length) return null
+    val isMin = minAt > maxAt
+    val token = optionName.substring(at, at + 3)
+    val replacement = if (isMin) "max" else "min"
+    val cased = when {
+        token == token.uppercase() -> replacement.uppercase()
+        token[0].isUpperCase() -> replacement.replaceFirstChar { it.uppercaseChar() }
+        else -> replacement
+    }
+    return OptionPair(optionName.substring(0, at) + cased + optionName.substring(at + 3), isMin)
 }

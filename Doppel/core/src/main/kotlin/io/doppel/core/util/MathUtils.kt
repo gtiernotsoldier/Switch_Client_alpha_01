@@ -10,16 +10,27 @@ object MathUtils {
     
     /**
      * Generate random float in range [min, max].
+     *
+     * Swapped bounds are ordered rather than trusted: a `Min` above its `Max` would otherwise return
+     * values *below* the minimum. The option layer keeps ranges ordered (`ConfigManager`), so this
+     * is the backstop for anything that reads a pair before that.
      */
     fun randomFloat(min: Float, max: Float): Float {
-        return min + Random.nextFloat() * (max - min)
+        val lo = minOf(min, max)
+        val hi = maxOf(min, max)
+        return lo + Random.nextFloat() * (hi - lo)
     }
-    
+
     /**
      * Generate random int in range [min, max] (inclusive).
+     *
+     * `Random.nextInt` throws when `min > max`, which is a whole-tick crash rather than a bad value,
+     * so the bounds are ordered here too.
      */
     fun randomInt(min: Int, max: Int): Int {
-        return Random.nextInt(min, max + 1)
+        val lo = minOf(min, max)
+        val hi = maxOf(min, max)
+        return Random.nextInt(lo, hi + 1)
     }
     
     /**

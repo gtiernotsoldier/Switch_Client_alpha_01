@@ -1450,6 +1450,32 @@ fn run_dump(path: &str, args: &Args, runtime: Rect, source: RectSource) -> Resul
             .max()
             .unwrap_or(0),
     );
+    // A3: the dump is how the overlay is reviewed with no game running, so the glyph-coverage
+    // answer belongs here too. `--dump` draws the state file's own rows and nickname, so it can
+    // catch a character the embedded face cannot draw even when nothing is injected.
+    {
+        const SAMPLE: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 %/.-:()[]";
+        let total = SAMPLE.chars().count();
+        let missing = text.missing_glyphs(text::FontId::Body, SAMPLE);
+        println!(
+            "glyphs: body face draws {}/{} sample characters{}",
+            total - missing.len(),
+            total,
+            if missing.is_empty() {
+                " — no tofu source in this face".to_string()
+            } else {
+                format!(" — MISSING {missing:?}: these would draw as boxes")
+            }
+        );
+        if !config.nickname.is_empty() {
+            let missing = text.missing_glyphs(text::FontId::Name, &config.nickname);
+            println!(
+                "glyphs: nickname {:?} — {} character(s) the name face cannot draw",
+                config.nickname,
+                missing.len()
+            );
+        }
+    }
     // The measured HUD: the mode's metrics, the watermark run and every row's box,
     // insets, bar and tag colour. Printed from the same layout the painter used, so
     // a dump that looks wrong can be checked against real numbers.

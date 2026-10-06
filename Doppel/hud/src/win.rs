@@ -34,6 +34,9 @@ pub fn enable_dpi_awareness() {
 
 pub type Hwnd = *mut c_void;
 pub type Hinstance = *mut c_void;
+/// A kernel handle (`HANDLE`). Only the process liveness check below opens one,
+/// and it closes it before returning: this process holds no other.
+pub type Handle = *mut c_void;
 pub type Hdc = *mut c_void;
 pub type Hbrush = *mut c_void;
 pub type Hicon = *mut c_void;
@@ -356,6 +359,89 @@ extern "system" {
     /// Fills in the system time in the machine's local zone — the overlay's log
     /// timestamp. No return value, so there is nothing to check.
     pub fn GetLocalTime(time: *mut SystemTimeW);
+    /// Opens a process by id with the narrowest access right that still answers
+    /// the only question the overlay has about the game: is it still there (see
+    /// `process_alive`). A NULL return is not by itself "gone" — the error code
+    /// says which refusal it was, and `alive_after_failed_open` reads it.
+    pub fn OpenProcess(desired_access: u32, inherit_handle: i32, pid: u32) -> Handle;
+    /// The process's exit code, or `STILL_ACTIVE` while it is still running. Only
+    /// meaningful for a handle `OpenProcess` gave us, and that handle is closed
+    /// on both paths.
+    pub fn GetExitCodeProcess(handle: Handle, code: *mut u32) -> i32;
+    /// Releases a kernel handle. The overlay holds one for the length of a single
+    /// liveness poll, so a run that lives exactly as long as the game must not
+    /// leak one per second.
+    pub fn CloseHandle(handle: Handle) -> i32;
+}
+
+// ── kernel32: is the game still running? ────────────────────────────────────
+//
+// `--follow-pid` makes the game's own process the authority on "the game is
+// gone" (main.rs: `verdict`). The state file's mtime cannot answer that: 1.8
+// blocks its render thread for seconds while it generates terrain, so a run with
+// no published frame is a world load and not an exit, and reading the two the
+// same way is what killed the overlay mid-load.
+
+/// `OpenProcess`'s access right: the narrowest one that still answers
+/// `GetExitCodeProcess`. `PROCESS_QUERY_INFORMATION` would do the same job with a
+/// wider right, and asking for more than the question needs is what turns a
+/// process we may legitimately watch into an access-denied answer.
+pub const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x0000_1000;
+
+/// What `GetExitCodeProcess` reports while the process has not exited. A process
+/// is allowed to exit *with* this code, which would then read as alive for one
+/// poll; the alternative, `WaitForSingleObject(handle, 0)`, has the mirror-image
+/// edge case, and a false "alive" is the harmless direction — it delays an exit,
+/// it never kills the overlay of a running game.
+pub const STILL_ACTIVE: u32 = 259;
+
+/// `ERROR_INVALID_PARAMETER`: what `OpenProcess` reports for a pid that no longer
+/// exists (and for the System process, pid 0, which `--follow-pid` already
+/// refuses at parse time). It is the only failed open that means "gone".
+pub const ERROR_INVALID_PARAMETER: u32 = 87;
+
+/// Is the process `pid` still running? The overlay's authoritative liveness check
+/// whenever the injector passed `--follow-pid`.
+///
+/// Anything that is not an explicit "no such process" answers **alive**, and that
+/// is the point of the rule: `OpenProcess` refuses a process it may not touch with
+/// ERROR_ACCESS_DENIED (a protected process, a game at another integrity level),
+/// which says nothing at all about whether the game is running. Killing the HUD on
+/// a permissions quirk is the failure this function exists to prevent.
+pub fn process_alive(pid: u32) -> bool {
+    // SAFETY: `OpenProcess` is handed plain values and returns a kernel handle this
+    // process owns; every path below closes it exactly once, and
+    // `GetExitCodeProcess` writes to a `u32` on this stack frame.
+    unsafe {
+        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if handle.is_null() {
+            // The error is read before anything else can overwrite it. std's
+            // `last_os_error` is the GetLastError wrapper, and main.rs reads an
+            // UpdateLayeredWindow failure the same way, so GetLastError is not
+            // declared a second time here.
+            let code = std::io::Error::last_os_error().raw_os_error().map(|code| code as u32);
+            return alive_after_failed_open(code);
+        }
+        let mut code: u32 = STILL_ACTIVE;
+        let queried = GetExitCodeProcess(handle, &mut code) != 0;
+        // The handle is the only thing this process holds on another one, so it is
+        // closed on both paths — one leaked per poll would be a slow leak in a run
+        // meant to live as long as the game does.
+        CloseHandle(handle);
+        // A handle that opened but would not answer is no evidence of an exit.
+        !queried || code == STILL_ACTIVE
+    }
+}
+
+/// What a failed `OpenProcess` means, as a pure rule over the error code — so the
+/// access-denied case, the one that must never kill the HUD, is tested without a
+/// process, a game or a permission to lose.
+///
+/// `None` (no error code at all) is alive too: the default has to be the safe one,
+/// and only `ERROR_INVALID_PARAMETER` is a positive statement that the pid does
+/// not exist.
+pub fn alive_after_failed_open(last_error: Option<u32>) -> bool {
+    last_error != Some(ERROR_INVALID_PARAMETER)
 }
 
 // ── constants ───────────────────────────────────────────────────────────────
@@ -558,5 +644,51 @@ mod tests {
         let text = describe_ex_style(with_stranger);
         assert!(text.contains("WS_EX_LAYERED"), "{text}");
         assert!(text.contains("0x00040000"), "{text}");
+    }
+
+    /// 1.8 blocks its render thread for seconds while it generates terrain, so the
+    /// state file can go stale while the game is perfectly healthy. The process is
+    /// the signal that cannot be confused that way — and the one case that must
+    /// *not* read as gone is a process we are simply not allowed to open.
+    #[test]
+    fn a_process_that_cannot_be_opened_is_alive_not_dead() {
+        // ERROR_ACCESS_DENIED (5): the process is there, we may not look at it.
+        // This is the case that killed the HUD on a permissions quirk.
+        assert!(alive_after_failed_open(Some(5)));
+        // Anything else the call might have failed with is alive as well: only one
+        // error is a positive statement that the pid does not exist.
+        assert!(alive_after_failed_open(Some(6)));
+        assert!(alive_after_failed_open(None), "no error code is not an exit either");
+        // ERROR_INVALID_PARAMETER is what a pid that no longer exists reports.
+        assert!(!alive_after_failed_open(Some(ERROR_INVALID_PARAMETER)));
+    }
+
+    /// The constants are transcribed by hand from the documented prototypes, so
+    /// they are pinned: a wrong access right or "still running" value would be a
+    /// silent liveness bug that only shows up with a real game attached.
+    #[test]
+    fn the_process_liveness_constants_are_the_documented_values() {
+        assert_eq!(PROCESS_QUERY_LIMITED_INFORMATION, 0x0000_1000);
+        assert_eq!(STILL_ACTIVE, 259);
+        assert_eq!(ERROR_INVALID_PARAMETER, 87);
+    }
+
+    /// The one check here that reaches a real process: it needs no game, and it
+    /// proves the `OpenProcess` + `GetExitCodeProcess` + `CloseHandle` path works
+    /// rather than merely compiling.
+    #[test]
+    fn a_live_process_reads_as_alive_and_an_exited_one_does_not() {
+        assert!(process_alive(std::process::id()), "this test's own process is running");
+
+        // A real child, waited for. `cmd /c exit` leaves a process whose exit code
+        // is not 259, so the answer comes from `GetExitCodeProcess` rather than
+        // from the open failing.
+        let mut child = std::process::Command::new("cmd")
+            .args(["/c", "exit"])
+            .spawn()
+            .expect("spawn cmd.exe");
+        let pid = child.id();
+        let _ = child.wait();
+        assert!(!process_alive(pid), "pid {pid} has exited, so the overlay would exit");
     }
 }

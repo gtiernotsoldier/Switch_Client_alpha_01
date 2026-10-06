@@ -28,6 +28,13 @@
 // really do differ from the last; a waveless Default HUD is genuinely static and
 // those frames are skipped.
 //
+// Where a run ends is the injector's pid when there is one (see `verdict`): the
+// state file's mtime cannot tell a world load from a quit — 1.8 blocks its render
+// thread while it generates terrain, so nothing is published for seconds at a
+// time — and the game's own process can. A pid that no longer exists ends the run;
+// a pid that does keeps the last frame on screen, stale file and all. With no pid
+// the mtime rule stands, three seconds and a fade.
+//
 // Zero third-party dependencies, same rule as the injector: kernel32/user32/gdi32
 // through raw extern "system" FFI, declared in win.rs. The pixel work lives in
 // draw.rs (pure), the text in text.rs (GDI), the HUD in hud.rs (pure geometry).
@@ -102,7 +109,10 @@ const BACKDROP: u32 = argb(0x22, 0x26, 0x2E, 0xFF);
 /// continuous, so 60 Hz is smooth and the loop is idle-cheap (a state read and a
 /// hash) whenever nothing is moving.
 const FRAME_MS: u64 = 16;
-/// "The game is gone": nothing has written the state file for this long.
+/// "The game is gone", for the run that has nothing better to go on: nothing has
+/// written the state file for this long. Only the no-pid rule reads it (`verdict`)
+/// — with `--follow-pid` the game process itself answers, so a world load that
+/// blocks the render thread past this is not mistaken for an exit.
 const STALE_SECS: f32 = 3.0;
 /// Silence tolerated BEFORE the first successful read. The injector starts this process while the
 /// game is still loading, and Forge + OptiFine + world load routinely take longer than three
@@ -119,6 +129,14 @@ const FADE_SECS: f32 = 0.35;
 /// says the overlay really has been overtaken (`win::topmost_lost`), so a settled
 /// session costs no `SetWindowPos` calls — just a 2-second poll.
 const TOPMOST_CHECK_MS: u64 = 2_000;
+
+/// How often the followed pid is asked whether it is still running.
+///
+/// Slow on purpose: the answer only ever changes when the game exits, and a 60 Hz
+/// loop has no business opening (and closing) a process handle every frame. Until
+/// the first poll the process is assumed alive, which is the safe direction — a
+/// wrong "gone" kills the HUD, a wrong "alive" costs one second of a ghost window.
+const LIVENESS_POLL_MS: u64 = 1_000;
 
 const USAGE: &str = "\
 usage: doppel-hud [options]
@@ -142,9 +160,14 @@ usage: doppel-hud [options]
                        fullscreen switch, a window resize or a move to another
                        monitor leaves the overlay on the old rect. A
                        missing/minimised window changes nothing (the last good
-                       rect is kept). NOTE: under EXCLUSIVE fullscreen no external
-                       overlay can ever be visible — the display belongs to the
-                       game; windowed or borderless fullscreen is required.
+                       rect is kept). The pid is also the liveness rule: while
+                       that process exists the overlay stays up, whatever the
+                       state file's mtime says — a world load publishes no frame
+                       for seconds, and that is not an exit — and the run ends,
+                       without a fade, when the pid is gone. NOTE: under
+                       EXCLUSIVE fullscreen no external overlay can ever be
+                       visible — the display belongs to the game; windowed or
+                       borderless fullscreen is required.
   --x <i32>            adjust the chosen rect's x (default: the rect's own)
   --y <i32>            adjust the chosen rect's y
   --w <u32>            adjust the chosen rect's width
@@ -237,10 +260,14 @@ gets above it) — without that the game covers the HUD as soon as it has focus.
 Run the game in windowed or borderless-fullscreen mode: under exclusive
 fullscreen the desktop compositor is bypassed and a layered window is never drawn.
 
-The process exits by itself when the game does — three seconds without the state
-file being written, then a short fade. Stop it early from Task Manager, from
-`taskkill /IM doppel-hud.exe` (without /F, which posts WM_CLOSE), or with Ctrl+C
-in this console.";
+The process exits by itself when the game does. With `--follow-pid` the game
+process itself is the signal — while that pid exists the overlay stays up even
+though the state file has gone quiet (a world load blocks the game's render
+thread for seconds), and the run ends when the pid is gone. Without a pid there
+is nothing better to go on, so the old rule stands: three seconds without the
+state file being written, then a short fade. Stop it early from Task Manager,
+from `taskkill /IM doppel-hud.exe` (without /F, which posts WM_CLOSE), or with
+Ctrl+C in this console.";
 
 // ── command line ────────────────────────────────────────────────────────────
 //
@@ -252,7 +279,9 @@ struct Args {
     rect: Option<Rect>,
     /// `--follow-pid <pid>`: re-read the game window's rect every second and re-place
     /// the overlay when it changes. `None` keeps the overlay on the rect it was
-    /// created with, which is what the injector's one-shot `--rect` gives it.
+    /// created with, which is what the injector's one-shot `--rect` gives it. It is
+    /// also the overlay's liveness signal: while that process exists the run stays
+    /// alive whatever the state file says (see `verdict`).
     follow_pid: Option<u32>,
     /// Per-field adjustments applied on top of whichever rect was chosen. `None`
     /// keeps the rect's own value, which is what makes the monitor the default
@@ -862,6 +891,75 @@ fn signature(entries: &[Entry], fade: f32, header: Option<&state::Header>) -> u6
     hash
 }
 
+// ── game liveness ───────────────────────────────────────────────────────────
+
+/// What the liveness rule decides for one frame.
+///
+/// Reached only through `verdict` below, which is pure and takes plain values: the
+/// rule — with a pid the process is the authority and the state file's mtime is
+/// ignored, without one the mtime is all there is — is then checked without a
+/// game, a process or a state file. A world load cannot be staged in a test; this
+/// is what stands in for one.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Verdict {
+    /// The game is there as far as anything can tell: keep presenting the last
+    /// frame and let the next publish repaint it.
+    Alive,
+    /// The followed pid no longer exists. The pid is the authority whenever there
+    /// is one, so this ends the run whatever the state file says.
+    Gone,
+    /// No pid to ask, and nothing has written the state file since `STALE_SECS`:
+    /// the old rule — fade over `FADE_SECS`, then exit.
+    Stale,
+}
+
+/// The rule, from the three plain facts the frame loop has: whether the injector
+/// gave a pid, whether that pid is still alive, and whether the state file has
+/// gone stale (`STALE_SECS` against its own mtime).
+///
+/// The pid wins outright, and that is the whole fix. Minecraft 1.8 blocks its
+/// render thread for several seconds while it generates terrain, so no frame is
+/// published and the file goes stale during a *world load*; reading that as "the
+/// game is gone" is what killed the overlay mid-load. A process that still exists
+/// is a game still running, so `stale` is deliberately not consulted when there is
+/// a pid: the last frame stays on screen, at full alpha, until the game publishes
+/// again.
+fn verdict(has_pid: bool, pid_alive: bool, stale: bool) -> Verdict {
+    if has_pid {
+        // `false` here really is "gone": `win::process_alive` reports a process it
+        // cannot open at all (access denied) as alive, so a permissions quirk
+        // never reaches this branch.
+        if pid_alive { Verdict::Alive } else { Verdict::Gone }
+    } else if stale {
+        Verdict::Stale
+    } else {
+        Verdict::Alive
+    }
+}
+
+/// Why a pid run ended, in the one shape the exit line logs. Split out from the
+/// loop so the wording a user reads back — "the HUD exited while the game was
+/// loading" has to be distinguishable from "the game exited" — is pinned by a test.
+fn gone_reason(pid: u32) -> String {
+    format!("game process {pid} exited")
+}
+
+/// Which liveness rule this run is under, for the startup line. The exit line says
+/// *that* a run ended; without this the log cannot say which rule ended it, and
+/// "state stale" means nothing until you know whether a pid was ever consulted.
+fn liveness_rule(pid: Option<u32>) -> String {
+    match pid {
+        Some(pid) => format!(
+            "pid {pid} (the game process, polled every {LIVENESS_POLL_MS} ms; a stale state \
+             file does not end the run)"
+        ),
+        None => format!(
+            "state file mtime (no --follow-pid: stale after {STALE_SECS:.0}s, then a \
+             {FADE_SECS:.2}s fade)"
+        ),
+    }
+}
+
 // ── entry points ────────────────────────────────────────────────────────────
 
 /// The overlay's drawing surface: a memory DC with a top-down 32-bit DIB selected into
@@ -958,9 +1056,12 @@ fn run(args: &Args) -> Result<(), String> {
     // Logging the request alone would say "mode default" for a run that is about
     // to draw Tesseract because the game's combo says so.
     let effective = config_from(args, 1.0, first_read.as_ref().ok().and_then(|snap| snap.header.as_ref()));
+    // The startup line also names the liveness rule this run is under: the exit line
+    // says *that* it stopped, and "state stale" cannot be read back without knowing
+    // whether a pid was ever consulted.
     log.line(&format!(
         "start: rect {}x{} at ({}, {}) [{}], position {:?}, mode {} (scale {:.2}), \
-         opacity {:.0}%, rows {}, watermark {}, wave {}, state {} readable: {}",
+         opacity {:.0}%, rows {}, watermark {}, wave {}, state {} readable: {}, liveness {}",
         rect.w,
         rect.h,
         rect.x,
@@ -977,7 +1078,8 @@ fn run(args: &Args) -> Result<(), String> {
         match &first_read {
             Ok(snapshot) => describe_state(snapshot),
             Err(refusal) => format!("no ({})", refusal.describe()),
-        }
+        },
+        liveness_rule(args.follow_pid)
     ));
 
     // The text engine takes the *effective* scale, not `--scale`: contract v3's
@@ -1190,7 +1292,9 @@ fn run(args: &Args) -> Result<(), String> {
         // it is re-applied to the config every frame, not just at start.
         let mut header: Option<state::Header> =
             first_read.as_ref().ok().and_then(|snap| snap.header.clone());
-        // Last write time of the state file — the game's own liveness signal.
+        // Last write time of the state file. Only the no-pid run reads it as a
+        // liveness signal (`verdict`): with `--follow-pid` the game's own process is
+        // the authority, and a file that stops being written is a paused game.
         let mut last_write: Option<std::time::SystemTime> = None;
         let mut fade = 1.0f32;
         let mut last_signature = 0u64;
@@ -1202,6 +1306,15 @@ fn run(args: &Args) -> Result<(), String> {
         // exit line, which keeps its existing shape.
         let mut next_topmost_check = started + Duration::from_millis(TOPMOST_CHECK_MS);
         let mut reasserts: u64 = 0;
+        // The injector's pid, read once. It is both the follow target for the rect
+        // (A2) and, now, the authority on whether the game is still running.
+        let follow_pid = args.follow_pid;
+        // Whether the followed process was alive at the last poll. Starts `true`
+        // because the first poll is one interval out and assuming a live game is the
+        // safe direction; only an explicit "no such process" ever clears it, so a
+        // process we are not allowed to open (access denied) can never end the run.
+        let mut pid_alive = true;
+        let mut next_liveness_check = started + Duration::from_millis(LIVENESS_POLL_MS);
         // A2: when the followed game window's rect is read next. The first poll is one
         // interval out, not immediate: `--rect` already carries the injector's own
         // fresh reading, so polling at t=0 would only repeat the same answer.
@@ -1278,7 +1391,7 @@ fn run(args: &Args) -> Result<(), String> {
             // clamped to a monitor, same rule as `resolve_rect`), and `None` — the game briefly
             // minimised, or between two windows mid-switch — keeps the last good rect instead of
             // teleporting the HUD.
-            if let Some(pid) = args.follow_pid {
+            if let Some(pid) = follow_pid {
                 if now >= next_follow_check {
                     next_follow_check = now + Duration::from_millis(follow::POLL_MS);
                     if let Some(found) = follow::game_window_rect(pid) {
@@ -1356,29 +1469,57 @@ fn run(args: &Args) -> Result<(), String> {
                 }
             }
 
-            // The game is gone when nothing has written the file for three seconds; fading out and
-            // exiting beats leaving a ghost HUD on the desktop. Before the FIRST write the overlay
-            // is still waiting for a game that may be loading, so it gets a much longer grace
-            // instead (see FIRST_WRITE_GRACE_SECS).
+            // Who says the game is gone. With `--follow-pid` it is the process itself,
+            // polled slowly (LIVENESS_POLL_MS) rather than every frame: the answer only
+            // changes when the game exits, and this loop has no business opening a
+            // process handle 60 times a second.
+            if let Some(pid) = follow_pid {
+                if now >= next_liveness_check {
+                    next_liveness_check = now + Duration::from_millis(LIVENESS_POLL_MS);
+                    pid_alive = win::process_alive(pid);
+                }
+            }
+
+            // The old signal, now consulted only by the run that has nothing better.
+            // Before the FIRST write the overlay is still waiting for a game that may be
+            // loading, so it gets a much longer grace instead (see
+            // FIRST_WRITE_GRACE_SECS); after one, `STALE_SECS` of silence is the rule.
             let stale = match last_write {
                 Some(written) => written.elapsed().map(|d| d.as_secs_f32() > STALE_SECS).unwrap_or(false),
                 None => started.elapsed().as_secs_f32() > FIRST_WRITE_GRACE_SECS,
             };
-            if stale {
-                fade -= dt / FADE_SECS;
-                if fade <= 0.0 {
-                    // "Never wrote" and "stopped writing" are different reports:
-                    // the first means the game never came up, the second that it
-                    // went away. Both exit 0 — a game that quits is not an error.
-                    exit_reason = match last_write {
-                        Some(_) => format!("state stale (no write for {STALE_SECS:.0}s)"),
-                        None => format!(
-                            "state file never appeared (first-write grace of \
-                             {FIRST_WRITE_GRACE_SECS:.0}s timed out)"
-                        ),
-                    };
+
+            match (verdict(follow_pid.is_some(), pid_alive, stale), follow_pid) {
+                // The process the injector pointed at is gone. No fade and no grace: a
+                // process that has exited is not a process that is slow, and its window
+                // went with it.
+                (Verdict::Gone, Some(pid)) => {
+                    exit_reason = gone_reason(pid);
                     break;
                 }
+                // The no-pid rule, unchanged: fade out, then exit. Fading beats leaving
+                // a ghost HUD on the desktop.
+                (Verdict::Stale, _) => {
+                    fade -= dt / FADE_SECS;
+                    if fade <= 0.0 {
+                        // "Never wrote" and "stopped writing" are different reports:
+                        // the first means the game never came up, the second that it
+                        // went away. Both exit 0 — a game that quits is not an error.
+                        exit_reason = match last_write {
+                            Some(_) => format!("state stale (no write for {STALE_SECS:.0}s)"),
+                            None => format!(
+                                "state file never appeared (first-write grace of \
+                                 {FIRST_WRITE_GRACE_SECS:.0}s timed out)"
+                            ),
+                        };
+                        break;
+                    }
+                }
+                // The game is there — a stale file with a live pid included: keep the
+                // last frame on screen, at full alpha, until the game publishes again.
+                // (`Gone` without a pid cannot happen: `verdict` answers it only for a
+                // run that has one.)
+                _ => {}
             }
 
             // The slide state, the frame delta and the accent clock all advance
@@ -2027,5 +2168,64 @@ mod tests {
             signature(&fading, 1.0, Some(&v3)),
             "a decaying pulse repaints"
         );
+    }
+
+    /// The rule this change is about, and the one a game is needed to see in the
+    /// wild: while the injector's pid exists the overlay stays up even though the
+    /// state file has gone quiet. 1.8 blocks its render thread for seconds while it
+    /// generates terrain, so that is a world load — the case that used to fade out
+    /// and exit.
+    #[test]
+    fn a_live_pid_keeps_the_overlay_up_through_a_stale_state_file() {
+        assert_eq!(verdict(true, true, true), Verdict::Alive, "a world load is not an exit");
+        assert_eq!(verdict(true, true, false), Verdict::Alive, "a fresh file is alive too");
+        // A pid that is really gone ends the run whatever the state file says.
+        assert_eq!(verdict(true, false, true), Verdict::Gone);
+        assert_eq!(verdict(true, false, false), Verdict::Gone);
+    }
+
+    /// Without a pid nothing changed: three seconds of silence, then the fade and
+    /// the exit. `pid_alive` is not even read in this run, so no value of it can
+    /// turn a stale file into an exit or a fresh one into a hang.
+    #[test]
+    fn without_a_pid_the_stale_rule_is_unchanged() {
+        assert_eq!(verdict(false, true, false), Verdict::Alive);
+        assert_eq!(verdict(false, false, false), Verdict::Alive);
+        assert_eq!(verdict(false, true, true), Verdict::Stale);
+        assert_eq!(verdict(false, false, true), Verdict::Stale);
+    }
+
+    /// The exit line is the only record of *why* a run stopped, so the dead-pid
+    /// wording is pinned: "the HUD exited" and "the game exited" have to be
+    /// distinguishable from the log alone.
+    #[test]
+    fn a_dead_pid_is_reported_by_id() {
+        assert_eq!(gone_reason(1234), "game process 1234 exited");
+        assert_eq!(gone_reason(4), "game process 4 exited");
+    }
+
+    /// The startup line has to name the rule in force, or the exit line cannot be
+    /// read back — "state stale" says nothing until you know whether a pid was ever
+    /// consulted.
+    #[test]
+    fn the_startup_line_names_the_liveness_rule_in_force() {
+        let with_pid = liveness_rule(Some(4242));
+        assert!(with_pid.contains("4242"), "{with_pid}");
+        assert!(with_pid.contains("stale state file does not end the run"), "{with_pid}");
+
+        let without = liveness_rule(None);
+        assert!(without.contains("mtime"), "{without}");
+        assert!(without.contains("no --follow-pid"), "{without}");
+        assert!(without.contains("3s"), "{without}");
+        assert!(!without.contains("pid "), "no pid is named here: {without}");
+    }
+
+    /// The poll is deliberately far slower than the frame interval: one process
+    /// handle per frame is not an acceptable cost in a 60 Hz loop, and it is still
+    /// quick enough that a run does not outlive the game by more than a moment.
+    #[test]
+    fn the_liveness_poll_is_not_a_per_frame_call() {
+        assert!(LIVENESS_POLL_MS >= 10 * FRAME_MS, "{LIVENESS_POLL_MS} ms");
+        assert!(LIVENESS_POLL_MS <= 5_000, "a run should not outlive the game by much");
     }
 }

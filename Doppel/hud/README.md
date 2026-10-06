@@ -3,8 +3,15 @@
 A standalone Win32 process that puts the **OpenCommunity in-game HUD** on top of
 the Minecraft client: the watermark run and the module list, in **all four of the
 source's modes** — Default, Rise, VapeV4, Tesseract. Its layered window covers the
-whole primary monitor — or the rect `--rect` names — and the HUD is drawn only at
-the source's own margins; every other pixel is fully transparent.
+**game window** — the rect the injector reads with `GetWindowRect` on Minecraft's
+own window and passes as `--rect`, or the whole primary monitor when there is no
+game window to follow — and the HUD is drawn only at the source's own margins;
+every other pixel is fully transparent.
+
+It stays **above the game** (`WS_EX_TOPMOST`, re-asserted whenever something gets
+in front of it) and **never touches the mouse or the focus**: click-through, no
+activation, no taskbar entry. It draws in the reference's **own Play typeface**,
+embedded in the executable, not a substitute.
 
 The HUD is a **port, not a re-design**: the user reviewed the source HUD and asked
 for it to be copied, so the geometry, the colours and the animations in
@@ -14,12 +21,101 @@ for it to be copied, so the geometry, the colours and the animations in
 | --------- | -------------- |
 | `runtime/src/features/render/HUD.cpp` (654 lines) | everything: the four modes, the watermark, the rows, the accent functions, the entrance animation, the text shadow |
 | `runtime/src/features/render/HUD.h` (49 lines) | the slide-progress map keyed by module name, the per-frame delta, the font roles |
+| `runtime/src/features/render/RenderHook.cpp` | the font roles and the faces themselves: Play regular + Play bold, embedded as C arrays (see [Fonts](#fonts)) |
 | `runtime/src/features/visuals/ArrayList.h` (106 lines) | the module options the HUD reads: mode, watermark, spaced modules, wave, the two wave colours |
 | `shared/common/ModuleConfig.h` | the `HUD{}` block: the same toggles, the same colour defaults (`78,86,107` → `120,146,214`), `m_WaveSpeed` |
 
 Every constant in `src/hud.rs` carries the source line it came from, so the two
 can be diffed by eye. Nothing is injected, no game class is touched, and the
 overlay cannot crash the game by drawing.
+
+## Floating above the game (`WS_EX_TOPMOST`)
+
+A layered window with `WS_EX_TRANSPARENT` and no `WS_EX_TOPMOST` is click-through,
+focus-less, invisible in Alt-Tab — and **completely covered the moment the game has
+focus**, which is the one thing it must not be. That was the bug: the HUD was
+drawing correctly, into a window that the game was sitting on top of.
+
+The window is now created with `WS_EX_TOPMOST` and raised once, immediately after
+creation:
+
+```c
+SetWindowPos(hwnd, HWND_TOPMOST, x, y, w, h,
+             SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_SHOWWINDOW);
+```
+
+* **`SWP_NOACTIVATE` is not optional.** The overlay must never take the foreground
+  (see [Hard prerequisite](#hard-prerequisite-windowed--borderless-fullscreen-only)
+  and the no-focus rule below), and raising a window without it would.
+* **Topmost is not permanent.** A fullscreen transition, a shell surface, another
+  always-on-top window or a driver can drop the overlay out of the band, and the
+  user then sees nothing. Every **2 s** the frame loop checks two cheap things —
+  `GetWindowLong(GWL_EXSTYLE) & WS_EX_TOPMOST`, and
+  `GetWindow(hwnd, GW_HWNDPREV) != NULL` (something now sits above us) — and
+  re-applies `SetWindowPos` only when one of them says the overlay has been
+  overtaken. A settled session issues no `SetWindowPos` at all, just the poll.
+  Re-asserts are logged (the first five, then every fiftieth) so a desktop that
+  keeps something above the overlay is visible in the log rather than invisible.
+* **`--no-topmost`** leaves the band entirely — the escape hatch. See the stealth
+  note below for why it exists and why it is not the default.
+
+The startup line in `%TEMP%\doppel-hud.log` records the outcome: the requested
+state, the extended-style word **as read back from the window** with its flags
+spelled out, whether `SetWindowPos` succeeded, and whether anything is above the
+window. `--dump` and `--hide` print the topmost state too.
+
+### Stealth: topmost is the more conspicuous combination
+
+Plan §7 treats the overlay as something that should not advertise itself, and
+**`WS_EX_TOPMOST` is the more conspicuous combination of the two**: a
+non-topmost layered window can hide behind any ordinary window, while a topmost
+one is in the always-on-top band for as long as it runs, is enumerated as such by
+anything that walks the Z-order, and re-raises itself in front of whatever the
+user brings forward. `WS_EX_TOPMOST` is a flag a checker can read off the window
+in one call.
+
+It is still the default, because **it is required for the overlay to be visible
+over the game at all**: without it the focused Minecraft window covers the HUD
+completely and the feature does not exist. That is the whole trade — the plan's
+stealth note loses to the feature working. `--no-topmost` gives the stealthier
+window back for anyone who needs it, at the cost of the HUD being hidden whenever
+the game has focus.
+
+## The rect: the game window, not the monitor
+
+The overlay anchors its layout to the rect it is handed, so the rect decides
+where the HUD lands. Two steps produce it:
+
+1. **The injector** (`Doppel/injector/src/resource.rs`) finds Minecraft's window —
+   the same `EnumWindows` search that already labels the process list, which now
+   records the `HWND` alongside the window title — and reads its rect with
+   `GetWindowRect`. Those corner coordinates become `--rect x y w h` on the
+   overlay's command line, and `%TEMP%\doppel-hud-launch.log` records the rect and
+   where it came from.
+2. **The overlay** takes that rect **verbatim**. It is deliberately *not* clamped
+   to, or intersected with, any monitor: a second monitor to the left of the
+   primary one gives a negative `x`, one above gives a negative `y`, and a windowed
+   game is narrower than the screen. Clamping would put the HUD somewhere the game
+   is not.
+
+When the window cannot be found — the game is not running yet, is minimised
+(`IsIconic`), or reports a degenerate rect — the injector passes **no `--rect` at
+all**, and the overlay falls back to the whole primary monitor
+(`GetSystemMetrics(SM_CXSCREEN / SM_CYSCREEN)`), which is what the injector's
+launch log says happened.
+
+The one wrinkle is DPI. The overlay calls `SetProcessDPIAware`, so it wants
+physical pixels; the injector is a plain DPI-unaware GUI app (making it aware
+process-wide would re-scale its own launcher window), and on a scaled display
+`GetWindowRect` would answer in virtualised coordinates — a 1920x1080 game
+reported as 1280x720 on a 150 % display, and an overlay in the wrong place. The
+HUD-launching thread therefore asks for
+`SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)`, which
+is per-thread and leaves the launcher alone. It is resolved with `GetProcAddress`
+rather than imported, because the call only exists from Windows 10 1703 and a
+static import would stop the injector from *loading* on anything older. When it is
+unavailable the launch log says so explicitly rather than passing off possibly
+virtualised numbers as correct.
 
 ## The four modes
 
@@ -106,6 +202,55 @@ is what HUD.cpp:556 does, and the README says so because the prompt's summary
 * **The only text effect** is the source's: a 1 px down-right copy of the glyph run
   in `rgba(0,0,0,120)`. No outline, no glow, no letter spacing.
 
+## Fonts
+
+The HUD draws in the reference's **own typeface**: OpenCommunity embeds **Play**
+(regular and bold) as C byte arrays and loads them through ImGui
+(`runtime/src/features/render/RenderHook.cpp:408-437`). Those same bytes are now
+in this executable.
+
+* **Extraction.** `tools/extract_oc_fonts.py` parses
+  `deps/imgui/fonts/play_regular_font.h` and `play_bold_font.h` — the
+  `static const unsigned char play_*_data[171084] = { 0x00,0x01,... };` literals —
+  checks each array against its `play_*_size` constant, and writes
+  `assets/Play-Regular.ttf` (171,084 bytes) and `assets/Play-Bold.ttf`
+  (170,232 bytes). It then reads each file's `name` table, so the family the Rust
+  side asks GDI for is the font's own word for itself rather than a guess:
+  `family = "Play"`, `subfamily = "Regular"` / `"Bold"`, version 1.002.
+* **Embedding.** Both files are pulled in with `include_bytes!`, not shipped as
+  sidecars: the injector embeds *this executable* as resource `RCDATA 103` and
+  extracts it to `%TEMP%` on its own, so a `.ttf` sitting next to the build
+  machine's exe would not travel with it.
+* **Registration.** `AddFontMemResourceEx` registers the two faces at startup,
+  then `CreateFontW` creates them by family name at **16 px × `--scale`** —
+  `FW_BOLD` for module names (Default mode) and the watermark title, `FW_NORMAL`
+  for tags, values and everything else. That is `RenderHook.cpp:530`'s
+  `HUD::SetFonts(regular, bold, vape)` mapping; the reference's third face (a
+  "vape font" read from disk) is substituted with regular Play exactly as
+  `RenderHook.cpp:511-512` does when its file is missing.
+* **Verification, not assumption.** After creating them, `GetTextFaceW` is asked
+  which face GDI actually selected. If it is not the Play family — a driver that
+  refuses memory fonts, a name-table mismatch — **both** roles are rebuilt as
+  **Segoe UI Semibold / Segoe UI** (the previous substitute pair) and the startup
+  log line says so. `%TEMP%\doppel-hud.log` and `--dump` both print the resolved
+  face names, so "it fell back" is never a silent state.
+* **Licence.** Play is under the **SIL Open Font License 1.1**
+  (`Copyright (c) 2011, Jonas Hecksher, Playtypes, e-types AS`, licence URL
+  `http://scripts.sil.org/OFL`). The reference tree carries no font licence file
+  of its own, so `assets/FONTS.md` reproduces what each font declares about
+  itself, records the sha256 of both files, and says what is required if this
+  overlay is ever distributed on its own. **Read it before shipping the assets.**
+* **What is deliberately not bundled.** The reference also embeds Inter regular +
+  bold, but `RenderHook.cpp:533` hands those to `Notifications::SetFonts` — a
+  subsystem this overlay does not have — so its ~670 KB of glyphs would ship for
+  nothing. Same for Open Sans, SF UI Display and the reference's compressed
+  variants.
+
+**Size.** The overlay executable grew from **530,142 to 890,137 bytes**
+(+359,995, +67.9 %): 341,316 bytes of that is the two TTFs, 12,413 bytes is the
+PE section alignment around them, and 6,266 bytes is the new code (measured by
+building the same sources with empty placeholder `.ttf` files: 536,408 bytes).
+
 ## GDI adaptations (the three things Win32 cannot do the way ImGui does)
 
 1. **Per-corner rounding.** Tesseract's chips and VapeV4's panel are rounded on
@@ -115,14 +260,17 @@ is what HUD.cpp:556 does, and the README says so because the prompt's summary
    per-pixel alpha for `UpdateLayeredWindow`. The fill in `src/draw.rs` selects the
    radius per quadrant of its signed-distance field instead — the same cost as the
    single-radius fill, and the rim stays antialiased. Documented at the function.
-2. **Fonts.** The source embeds the **Play** face (regular and bold) at 16 px
-   through ImGui. Play is not installed here and may not be on the target's, so
-   names use **Segoe UI Semibold** and everything else **Segoe UI**, still at
-   **16 px** — one em is one em, so every constant taken from the source keeps its
-   value, and `lineHeight` stays exactly the font size (HUD.cpp:472). Text is
-   placed with the top of its em box at the source's `textY`, which is where
-   ImGui's `AddText` puts the top of the line box; the substitute face's metrics
-   are not Play's, so glyph placement is within a pixel or two rather than exact.
+2. **Fonts: memory-resident, not installed.** ImGui loads a TTF from a byte array
+   and rasterises it itself. GDI can do the same thing — `AddFontMemResourceEx`
+   plus `CreateFontW` — but the face has to be *registered* rather than merely
+   pointed at, the buffer has to stay valid for as long as the face is used (which
+   `include_bytes!` data does for the whole process), and GDI can quietly
+   substitute another family if the registration did not take. Hence the
+   `GetTextFaceW` read-back and the explicit fallback pair above. Text placement is
+   unchanged: the top of the run's em box goes at the source's `textY`, where
+   ImGui's `AddText` puts the top of the line box, with `internal_leading` rows of
+   compensation for GDI's taller cell. Now that the face is Play, its metrics are
+   the reference's, so the ink lands where the source puts it.
 3. **`--scale <f>`.** The source has no DPI or scaling handling at all — every
    number in it is a physical pixel. `--scale` (default 1.0, allowed 0.5..4.0)
    multiplies every metric and the font size so the HUD can be made readable on a
@@ -133,7 +281,6 @@ is what HUD.cpp:556 does, and the README says so because the prompt's summary
 
 * **The FPS segment and the nickname** in the watermark — the state contract has
   neither (see the TODO above).
-* **The Play typeface** — substituted, see above.
 * **Minecraft `§` colour codes in a tag.** The source has a formatted-tag painter
   (`DrawFormattedTag` / `CalcFormattedTagWidth`, HUD.cpp:311-434) for tags that
   carry `§a`-style codes. This side of the contract publishes plain UTF-8 values
@@ -157,11 +304,23 @@ cargo build --release
 
 Zero third-party dependencies: user32, gdi32 and kernel32 are called through raw
 `extern "system"` FFI. `cargo test` covers the pixel blending and the per-corner
-distance field, the state parser, the log, and the port's pure geometry: the
+distance field, the state parser, the log, the port's pure geometry: the
 per-mode master constants (pitch, insets, bar width, chip radii, margins), the
 scale multiplier, the row box arithmetic, the tag gap, the wedge sort, the
 anchoring on the monitor rect, the entrance rate, the HSV conversion, all four
-accent functions at known timestamps and indices, and the repaint rule.
+accent functions at known timestamps and indices, the repaint rule — plus the
+behaviour added since: **whether topmost needs re-asserting** (`win::topmost_lost`)
+and the ex-style flag rendering, **the family match that decides whether the
+embedded face was really selected**, the embedded TTFs' own sanity checks (sfnt
+magic, the `Play` name, the size budget), and **the argument and rect rules**
+(`--no-topmost`'s default, and that a `--rect` is never clamped to a monitor).
+
+Regenerating the assets (only needed if the reference fonts change):
+
+```sh
+python tools/extract_oc_fonts.py
+```
+
 
 ## Running
 
@@ -182,6 +341,7 @@ target/release/doppel-hud.exe [options]
 | `--no-wave` | flat primary accent in Default mode | wave on |
 | `--no-watermark` | no watermark run (and no Rise/VapeV4 panel) | watermark on |
 | `--spaced` | split `CamelCase` module names (`AutoClicker` → `Auto Clicker`) | off |
+| `--no-topmost` | do **not** put the overlay in the always-on-top band; the game then covers the HUD whenever it has focus (see [Floating above the game](#floating-above-the-game-ws_ex_topmost)) | topmost on |
 | `--dump <path.bmp>` | render one representative frame to a 32-bit BMP on the fixed 520x400 review canvas, print the measured geometry, an ASCII preview and the runtime rect, create no window, exit 0 | — |
 | `--hide` | print one line, create no window, exit 0 | — |
 | `--help` | print usage, exit 0 | — |
@@ -193,7 +353,9 @@ that call gives nothing usable. **This is the placement fix**: the window used t
 be a 520x400 stage at `(0, 0)`, and since the HUD anchors to the edges of whatever
 rect it is given, the list landed around x = 400 — the middle of a 1920-wide screen
 — with the rest of the window transparent. The layout was never wrong; the rect it
-hung off was. `--rect` is the hook a later caller uses to follow the game window.
+hung off was. `--rect` is the hook the injector now uses to follow the game window
+(see [The rect](#the-rect-the-game-window-not-the-monitor)); whatever rect arrives,
+it is used exactly as given and never clamped to a monitor.
 
 `stacked` (and `stack`/`default`) is still accepted as a synonym of `right`.
 
@@ -232,14 +394,24 @@ desktop cannot give:
   (primary monitor / fallback / `--rect`), the position, the **mode and scale**,
   the watermark/wave switches, the resolved state path and whether that file was
   readable *and* parseable;
+* one line on the **faces** it will draw with — whether the embedded Play faces
+  registered, and the face names GDI resolved for the name and body roles, so a
+  silent fallback to Segoe UI is visible;
+* one line on **topmost** — requested or disabled, the extended-style word as read
+  back from the window with its flags spelled out, whether `SetWindowPos` succeeded,
+  and whether anything sits above the window;
+* one line per **re-assert** (the first five, then every fiftieth) when the overlay
+  is put back above something that overtook it;
 * one line on exit — the reason (`window lost`, `state stale`, `state file never
   appeared`, or `error: <Win32 error>`) and how many frames it pushed to the
   compositor.
 
 Zero frames drawn plus a start line means the state file never appeared; frames
-drawn plus "nothing on screen" means the rect line is the thing to read. Logging is
-best-effort and can never fail the overlay, and a log over 64 KB is truncated on
-the next start.
+drawn plus "nothing on screen" means the rect line and the topmost line are the
+things to read. Logging is best-effort and can never fail the overlay, and a log
+over 64 KB is truncated on the next start. The injector's half of the hand-off —
+including the exact `--rect` it passed and where that rect came from — is in
+`%TEMP%\doppel-hud-launch.log`.
 
 Stop the overlay from that console with Ctrl+C, from Task Manager, or with
 `taskkill /IM doppel-hud.exe` (without `/F`: a plain `taskkill` posts `WM_CLOSE`,
@@ -247,8 +419,11 @@ which the window procedure turns into a clean `PostQuitMessage` and exit 0).
 
 ## What the window actually is
 
-* Style `WS_POPUP`; extended styles `WS_EX_LAYERED | WS_EX_TOOLWINDOW |
-  WS_EX_NOACTIVATE | WS_EX_TRANSPARENT`.
+* Style `WS_POPUP`; extended styles `WS_EX_LAYERED | WS_EX_TOPMOST |
+  WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT` (drop
+  `WS_EX_TOPMOST` with `--no-topmost`). `SetWindowPos(HWND_TOPMOST, ...)` with
+  `SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_SHOWWINDOW` raises it into the
+  always-on-top band, and the frame loop re-asserts it when it is lost.
 * The window **covers the whole rect it was given** and the HUD is drawn at the
   mode's margins inside it; every other pixel of the window stays fully
   transparent.
@@ -264,10 +439,13 @@ which the window procedure turns into a clean `PostQuitMessage` and exit 0).
   antialiasing ends up in the same premultiplied buffer as the chips.
 * **It never takes focus.** No `SetForegroundWindow`, no `SetFocus`, no
   `SetActiveWindow`, and `ShowWindow` is called with `SW_SHOWNOACTIVATE` — never
-  `SW_SHOW`. Taking the foreground from the game is what makes a fullscreen game
-  stop rendering, so it is the one thing this process must never do.
+  `SW_SHOW`. The `SetWindowPos` that keeps the overlay on top carries
+  `SWP_NOACTIVATE` for the same reason: raising a window does not have to focus it.
+  Taking the foreground from the game is what makes a fullscreen game stop
+  rendering, so it is the one thing this process must never do.
 * **Click-through.** `WS_EX_TRANSPARENT` plus `WM_NCHITTEST` returning
-  `HTTRANSPARENT`: every click goes to the game, none are swallowed.
+  `HTTRANSPARENT`: every click goes to the game, none are swallowed. `WS_EX_TOPMOST`
+  changes only which band the window is drawn in, not how it is hit-tested.
 * Not in the taskbar and not in Alt-Tab (`WS_EX_TOOLWINDOW`).
 
 ### The tag colour rule
@@ -321,20 +499,27 @@ place the binary's name appears, and renaming it in D6 is a `Cargo.toml` change.
 
 ## Layout of the code
 
-* `src/main.rs` — argument parsing (including `--mode`, `--scale` and the `HUD{}`
-  switches), the window class and window, the rect the window covers
-  (`--rect` / the primary monitor), the DIB/blit path, the frame loop, `--dump`,
+* `src/main.rs` — argument parsing (including `--mode`, `--scale`, `--no-topmost`
+  and the `HUD{}` switches), the window class and window, the rect the window covers
+  (`--rect` / the primary monitor, taken verbatim), the topmost raise and its 2 s
+  re-assert check, the DIB/blit path, the frame loop, `--dump`,
   `WM_DESTROY` / `WM_CLOSE` / `WM_NCHITTEST`.
 * `src/win.rs` — every Win32 type, constant and `extern "system"` declaration, so
-  the window code, the text rasteriser and the log share one transcription.
+  the window code, the text rasteriser and the log share one transcription; also
+  the two pure helpers `--dump` and the log build their lines from
+  (`describe_ex_style`, `topmost_lost`).
 * `src/draw.rs` — the pure pixel layer: a premultiplied BGRA canvas, colour packing,
   coverage antialiasing, and the per-corner rounded-box distance field the ported
   chips and panels need. No Win32, so it is covered by unit tests that run anywhere.
   The canvas also records which screen point its `(0, 0)` is (`Canvas::placed`),
   which is what the layout anchors to.
-* `src/text.rs` — the GDI text rasteriser: a scratch 32bpp DIB, the two 16 px faces
-  (`--scale`-multiplied), the em-box placement and the coverage blit into the
-  canvas.
+* `src/text.rs` — the GDI text rasteriser: a scratch 32bpp DIB, the two embedded
+  Play faces (`AddFontMemResourceEx` + `CreateFontW`, at 16 px × `--scale`), the
+  `GetTextFaceW` read-back and the Segoe UI fallback, the em-box placement and the
+  coverage blit into the canvas.
+* `assets/` — `Play-Regular.ttf` and `Play-Bold.ttf`, extracted from the reference,
+  plus `FONTS.md` (licence and provenance). `tools/extract_oc_fonts.py` regenerates
+  them.
 * `src/hud.rs` — the ported HUD: the four modes and their metrics, the palette, the
   accent functions (including HSV→RGB), the entrance state, the screen `Rect` and
   the edge-anchoring helpers, the painting, and the `--dump` description. Every
@@ -345,6 +530,12 @@ place the binary's name appears, and renaming it in D6 is a `Cargo.toml` change.
   and best-effort throughout.
 * `src/preview.rs` — the `--dump` output: a 32-bit BMP writer and the ASCII
   downsample. Not used by the live overlay.
+
+The injector's half of the same two features lives outside this crate:
+`Doppel/injector/src/process.rs` finds the game window and turns its `GetWindowRect`
+corners into a `--rect` (`WindowRect::from_corners`, a pure function with its own
+tests), and `Doppel/injector/src/resource.rs` passes those arguments when it spawns
+this executable.
 
 ## Status
 
@@ -359,6 +550,7 @@ place the binary's name appears, and renaming it in D6 is a `Cargo.toml` change.
 | **D6** | De-characterised naming across the whole pipeline | partially — see above |
 | **D7** | Re-skin to the designer's mockup | **superseded** |
 | **D8** | **Port the OpenCommunity HUD: all four modes, accents, `--scale`** | **done** |
+| **D9** | **Visible over the game: `WS_EX_TOPMOST` + re-assert, the game window's own rect as `--rect`, and the reference's own Play faces embedded** | **done** |
 
 Until D5 lands, nothing publishes the state file, so the overlay renders an empty
 HUD (with the watermark's count at 0) and exits once its 30-second first-write

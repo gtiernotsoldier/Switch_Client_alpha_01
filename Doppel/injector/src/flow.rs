@@ -185,10 +185,10 @@ pub fn run(target_pid: Option<u32>, rep: &dyn Reporter) -> Result<Outcome, FlowE
     rep.step_ok(3, t3.elapsed().as_secs_f32());
 
     // The external HUD overlay is cosmetic and separate from the injection: start it only once the
-    // game has published its first state block (see resource::launch_hud_when_ready). It runs on a
-    // detached thread, so a missing or slow overlay can never delay — or fail — the injection that
-    // just succeeded.
-    resource::launch_hud_when_ready();
+    // game has published its first state block (see resource::launch_hud_when_ready), and tell it
+    // to cover *this* game's window rather than the primary monitor. It runs on a detached thread,
+    // so a missing or slow overlay can never delay — or fail — the injection that just succeeded.
+    resource::launch_hud_when_ready(mc.pid);
 
     Ok(Outcome {
         pid: mc.pid,

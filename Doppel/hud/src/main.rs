@@ -108,6 +108,15 @@ const STALE_SECS: f32 = 3.0;
 const FIRST_WRITE_GRACE_SECS: f32 = 30.0;
 /// How long the HUD takes to fade out once that happens.
 const FADE_SECS: f32 = 0.35;
+/// How often the overlay checks whether it is still above the game.
+///
+/// Topmost is not permanent: a fullscreen transition, a shell surface, another
+/// always-on-top window or a driver can drop the overlay out of the band, and the
+/// user then sees nothing at all. The check itself is two cheap calls
+/// (`GetWindowLongW` + `GetWindow`) and the re-raise only happens when one of them
+/// says the overlay really has been overtaken (`win::topmost_lost`), so a settled
+/// session costs no `SetWindowPos` calls — just a 2-second poll.
+const TOPMOST_CHECK_MS: u64 = 2_000;
 
 const USAGE: &str = "\
 usage: doppel-hud [options]
@@ -146,6 +155,12 @@ usage: doppel-hud [options]
   --no-wave            draw the Default mode's accent as a flat primary colour.
   --no-watermark       do not draw the watermark run (m_Watermark, default on).
   --spaced             split CamelCase module names (Spaced Modules, default off).
+  --no-topmost         do NOT put the overlay in the always-on-top band. Without
+                       WS_EX_TOPMOST the game covers the HUD the moment it has
+                       focus, which is what the overlay exists to avoid; this is
+                       the escape hatch, not the normal mode. It is the more
+                       conspicuous combination to leave on (see README: stealth),
+                       but it is also the only thing that keeps the HUD visible.
   --dump <path.bmp>    render one representative frame to a 32-bit BMP on the
                        fixed 520x400 review canvas, print the measured geometry,
                        an ASCII preview and the runtime rect the live window
@@ -163,9 +178,11 @@ readable), one on exit (why it stopped, and how many frames it drew). Logging ca
 never affect the overlay, and a log over 64 KB is truncated on the next start.
 
 It never takes focus (no SetForegroundWindow / SetFocus / SW_SHOW) and every
-click passes through it, so Minecraft keeps the foreground and the mouse. Run the
-game in windowed or borderless-fullscreen mode: under exclusive fullscreen the
-desktop compositor is bypassed and a layered window is never drawn.
+click passes through it, so Minecraft keeps the foreground and the mouse. It does
+keep itself in the always-on-top band (WS_EX_TOPMOST, re-asserted when something
+gets above it) — without that the game covers the HUD as soon as it has focus.
+Run the game in windowed or borderless-fullscreen mode: under exclusive
+fullscreen the desktop compositor is bypassed and a layered window is never drawn.
 
 The process exits by itself when the game does — three seconds without the state
 file being written, then a short fade. Stop it early from Task Manager, from
@@ -203,6 +220,8 @@ struct Args {
     secondary: [f32; 3],
     /// `m_SpacedModules`.
     spaced: bool,
+    /// `--no-topmost`: leave the overlay in the desktop's normal Z-order band.
+    topmost: bool,
     /// Headless render to a BMP, no window.
     dump: Option<String>,
     /// Headless check: prove the binary starts and links without opening a window.
@@ -227,6 +246,7 @@ impl Default for Args {
             primary: hud::DEFAULT_PRIMARY,
             secondary: hud::DEFAULT_SECONDARY,
             spaced: false,
+            topmost: true,
             dump: None,
             hide: false,
             help: false,
@@ -280,6 +300,10 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
             }
             "--spaced" => {
                 args.spaced = true;
+                i += 1;
+            }
+            "--no-topmost" => {
+                args.topmost = false;
                 i += 1;
             }
             "--dump" => {
@@ -603,6 +627,19 @@ fn run(args: &Args) -> Result<(), String> {
             return Err(reason);
         }
     };
+    // Which faces the HUD will actually draw with, on every run. The two pairs
+    // produce an equally plausible HUD, so "the embedded Play faces did not load"
+    // is otherwise only visible by looking very closely at a screenshot.
+    {
+        let setup = text.setup();
+        log.line(&format!(
+            "faces: {} — name role {:?}, body role {:?} at {:.0}px em",
+            setup.summary(),
+            text.face_name(text::FontId::Name),
+            text.face_name(text::FontId::Body),
+            text.em_px(text::FontId::Body)
+        ));
+    }
 
     let mut config = config_from(args, 1.0);
     // How many frames reached the compositor. Zero on a run that ended by itself
@@ -646,9 +683,26 @@ fn run(args: &Args) -> Result<(), String> {
 
         // The window *is* the rect: created at its corner, sized to it, so an
         // element laid out MARGIN inside the canvas is MARGIN inside the screen.
+        //
+        // The rect is taken verbatim, and deliberately NOT clamped to any monitor:
+        // the caller (`--rect`, normally the game window's own `GetWindowRect`)
+        // decides what the overlay covers. On a multi-monitor desktop, or with a
+        // game that is not maximised, the game's rect is not inside the primary
+        // monitor at all, and a clamp would put the HUD somewhere the game is not.
+        //
+        // `WS_EX_TOPMOST` is the style the overlay cannot be seen without: a plain
+        // layered window lives in the desktop's normal band, so the focused game
+        // covers it completely. The `SetWindowPos` below puts it at the top of the
+        // always-on-top band as well as in the style word, and the frame loop
+        // re-asserts it whenever it is lost (see `TOPMOST_CHECK_MS`).
+        let ex_style = WS_EX_LAYERED
+            | WS_EX_TOOLWINDOW
+            | WS_EX_NOACTIVATE
+            | WS_EX_TRANSPARENT
+            | if args.topmost { WS_EX_TOPMOST } else { 0 };
         let title = wide("");
         let hwnd = CreateWindowExW(
-            WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT,
+            ex_style,
             class_name.as_ptr(),
             title.as_ptr(),
             WS_POPUP,
@@ -665,6 +719,42 @@ fn run(args: &Args) -> Result<(), String> {
             log.line(&format!("exit: error: CreateWindowExW failed, {frames} frames drawn"));
             return Err("CreateWindowExW failed".to_string());
         }
+
+        // Raise into the always-on-top band. `SWP_NOACTIVATE` is what keeps the
+        // game's foreground rights while this happens — taking focus is the one
+        // thing that stops an exclusive-fullscreen game rendering, and `SWP_SHOWWINDOW`
+        // makes the raise the show as well. The window is shown here rather than
+        // only after the first frame, which is harmless: a layered window has no
+        // surface until the first `UpdateLayeredWindow`, so there is nothing to
+        // flash — the first pixels the desktop sees are still a finished HUD.
+        let raised = if args.topmost {
+            SetWindowPos(
+                hwnd,
+                HWND_TOPMOST,
+                rect.x,
+                rect.y,
+                rect.w,
+                rect.h,
+                SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_SHOWWINDOW,
+            ) != 0
+        } else {
+            false
+        };
+        let read_back = GetWindowLongW(hwnd, GWL_EXSTYLE) as u32;
+        // The one line that answers "why is the overlay not on top of the game":
+        // what was asked for, what Windows actually left in the style word, and
+        // whether the window above it is now nothing at all.
+        log.line(&format!(
+            "topmost: {} — ex-style 0x{read_back:08X} [{}], SetWindowPos {}, {} window above",
+            if args.topmost {
+                if raised { "applied" } else { "FAILED (SetWindowPos returned 0)" }
+            } else {
+                "disabled (--no-topmost)"
+            },
+            describe_ex_style(read_back),
+            if raised { "ok" } else { "not ok" },
+            if GetWindow(hwnd, GW_HWNDPREV).is_null() { "no" } else { "a" }
+        ));
 
         // A never-showing, never-focusing window is also never painted, so the
         // HUD is rendered into a DIB and pushed through UpdateLayeredWindow;
@@ -723,6 +813,11 @@ fn run(args: &Args) -> Result<(), String> {
         let mut animating = true;
         let mut shown = false;
         let mut result: Result<(), String> = Ok(());
+        // When the topmost check runs next, and how many times it has actually had
+        // to re-raise. The count is logged (throttled) rather than carried into the
+        // exit line, which keeps its existing shape.
+        let mut next_topmost_check = started + Duration::from_millis(TOPMOST_CHECK_MS);
+        let mut reasserts: u64 = 0;
 
         let mut previous_frame = started;
         let mut msg: Msg = std::mem::zeroed();
@@ -748,6 +843,45 @@ fn run(args: &Args) -> Result<(), String> {
             let now = Instant::now();
             let dt = now.saturating_duration_since(previous_frame).as_secs_f32();
             previous_frame = now;
+
+            // Keep the overlay above the game. Topmost is not a property Windows
+            // guarantees: a fullscreen transition, a shell surface or another
+            // always-on-top window can drop the overlay out of the band, and the
+            // HUD then simply is not on screen. Two cheap reads decide whether the
+            // raise is needed at all; a settled session raises nothing.
+            if args.topmost && now >= next_topmost_check {
+                next_topmost_check = now + Duration::from_millis(TOPMOST_CHECK_MS);
+                let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE) as u32;
+                let above = !GetWindow(hwnd, GW_HWNDPREV).is_null();
+                if topmost_lost(ex_style, above) {
+                    // A pure Z-order change: the rect is fixed at creation, so
+                    // there is nothing to move and nothing to resize.
+                    let ok = SetWindowPos(
+                        hwnd,
+                        HWND_TOPMOST,
+                        0,
+                        0,
+                        0,
+                        0,
+                        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER,
+                    ) != 0;
+                    reasserts += 1;
+                    // Throttled: a desktop that keeps something above the overlay
+                    // would otherwise write a line every two seconds and grind the
+                    // capped log down to nothing but re-asserts.
+                    if reasserts <= 5 || reasserts % 50 == 0 {
+                        let after = GetWindowLongW(hwnd, GWL_EXSTYLE) as u32;
+                        log.line(&format!(
+                            "topmost re-asserted (#{reasserts}): ex-style was 0x{ex_style:08X} \
+                             [{}]{}; SetWindowPos {}; now 0x{after:08X} [{}]",
+                            describe_ex_style(ex_style),
+                            if above { ", a window above" } else { "" },
+                            if ok { "ok" } else { "FAILED" },
+                            describe_ex_style(after)
+                        ));
+                    }
+                }
+            }
 
             // D2: read the published block. A missing, short or foreign file
             // leaves the last good frame on screen — never garbage.
@@ -830,9 +964,12 @@ fn run(args: &Args) -> Result<(), String> {
                 }
                 frames += 1;
 
-                // Shown only once a finished HUD is in the window, so the first
-                // thing the desktop sees is the HUD rather than an empty window,
-                // and shown without activation.
+                // The topmost raise above already showed the window (its
+                // `SWP_SHOWWINDOW`), and there are no pixels to flash either way:
+                // a layered window has no surface until this call. The explicit
+                // show stays for the `--no-topmost` path, which reaches here with
+                // the window still hidden, and it is always the non-activating
+                // form — `SW_SHOW` would take the foreground from the game.
                 if !shown {
                     ShowWindow(hwnd, SW_SHOWNOACTIVATE);
                     shown = true;
@@ -912,7 +1049,8 @@ fn run_dump(path: &str, args: &Args, runtime: Rect, source: RectSource) -> Resul
     println!(
         "runtime window: {}x{} at ({}, {}) [{}] — the live layered window covers that rect, so the \
          watermark run ({}px) starts at ({}, {}) and the first row is flushed to the {} edge, \
-         {}px inside it; the live layout is the same as this dump's, only measured against that rect",
+         {}px inside it; topmost {}; the live layout is the same as this dump's, only measured \
+         against that rect",
         runtime.w,
         runtime.h,
         runtime.x,
@@ -926,14 +1064,20 @@ fn run_dump(path: &str, args: &Args, runtime: Rect, source: RectSource) -> Resul
             Position::Left => "left",
         },
         metrics.right_margin,
+        if args.topmost { "on" } else { "off (--no-topmost)" },
     );
     // The numbers behind the picture: a dump that looks wrong is much easier to
-    // fix when the face metrics are on screen next to it.
+    // fix when the face metrics are on screen next to it. The face names are the
+    // ones GDI actually resolved, so "the embedded Play faces did not load" shows
+    // up here as `Segoe UI Semibold` instead of `Play`.
     println!(
-        "faces: name (Segoe UI Semibold) {}px em / {}px cell, body (Segoe UI) {}px em / {}px cell | \
+        "faces: {} — name ({}) {}px em / {}px cell, body ({}) {}px em / {}px cell | \
          {} published rows, {} listed | widest value {}px",
+        text.setup().summary(),
+        text.face_name(text::FontId::Name),
         text.em_px(text::FontId::Name).round(),
         text.cell_height(text::FontId::Name),
+        text.face_name(text::FontId::Body),
         text.em_px(text::FontId::Body).round(),
         text.cell_height(text::FontId::Body),
         entries.len(),
@@ -1004,7 +1148,7 @@ fn main() {
         };
         println!(
             "{} {} — ok, no window created (window rect {}x{} at ({}, {}) [{}], layout {:?}, mode {} \
-             at scale {:.2})",
+             at scale {:.2}, topmost {})",
             env!("CARGO_PKG_NAME"),
             env!("CARGO_PKG_VERSION"),
             rect.w,
@@ -1015,6 +1159,7 @@ fn main() {
             args.position,
             args.mode.label(),
             args.scale,
+            if args.topmost { "on" } else { "off" },
         );
         return;
     }
@@ -1022,5 +1167,69 @@ fn main() {
     if let Err(reason) = run(&args) {
         eprintln!("error: {reason}");
         std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(line: &str) -> Result<Args, String> {
+        let argv: Vec<String> = line.split_whitespace().map(str::to_string).collect();
+        parse_args(&argv)
+    }
+
+    /// Topmost is on unless `--no-topmost` says otherwise. It is the default
+    /// because without it the overlay is invisible over a focused game, and a
+    /// flag that has to be remembered for the HUD to work is a flag that will be
+    /// forgotten.
+    #[test]
+    fn topmost_is_on_by_default_and_off_with_the_escape_hatch() {
+        assert!(parse("").unwrap().topmost);
+        assert!(parse("--mode rise --scale 2").unwrap().topmost);
+        assert!(!parse("--no-topmost").unwrap().topmost);
+        // Order does not matter, and the flag takes no value.
+        assert!(!parse("--no-topmost --mode rise").unwrap().topmost);
+        assert!(!parse("--mode rise --no-topmost --scale 2").unwrap().topmost);
+    }
+
+    /// The rect is taken verbatim: `--rect` is what the injector hands the game
+    /// window's own `GetWindowRect`, and on a multi-monitor desktop (or with the
+    /// game not maximised) that rect is routinely *outside* the primary monitor,
+    /// negative origins included. Clamping it to the monitor would put the HUD
+    /// somewhere the game is not, so nothing here may clamp.
+    #[test]
+    fn the_rect_is_never_clamped_to_the_monitor() {
+        // A game on a monitor to the left of the primary one.
+        let (rect, source) = resolve_rect(&parse("--rect -1920 120 1600 900").unwrap()).unwrap();
+        assert_eq!((rect.x, rect.y, rect.w, rect.h), (-1920, 120, 1600, 900));
+        assert_eq!(source, RectSource::Override);
+
+        // A windowed game in the middle of the screen: narrower and shorter than
+        // the monitor, and it must stay that way.
+        let (rect, _) = resolve_rect(&parse("--rect 300 200 1280 720").unwrap()).unwrap();
+        assert_eq!((rect.x, rect.y, rect.w, rect.h), (300, 200, 1280, 720));
+
+        // A rect taller than the monitor (a game spanning two stacked displays).
+        let (rect, _) = resolve_rect(&parse("--rect 0 -1080 1920 2160").unwrap()).unwrap();
+        assert_eq!((rect.w, rect.h), (1920, 2160));
+    }
+
+    /// The per-field adjustments still work on top of whatever rect was chosen,
+    /// which is what lets the injector's rect be nudged without a second flag.
+    #[test]
+    fn per_field_adjustments_still_apply_to_an_override() {
+        let (rect, _) =
+            resolve_rect(&parse("--rect 300 200 1280 720 --x -10 --h 700").unwrap()).unwrap();
+        assert_eq!((rect.x, rect.y, rect.w, rect.h), (-10, 200, 1280, 700));
+    }
+
+    /// A zero-sized rect is refused rather than quietly creating a window nobody
+    /// can see — the exact mistake `--rect` exists to prevent.
+    #[test]
+    fn a_degenerate_rect_is_refused() {
+        assert!(parse("--rect 0 0 0 720").is_err());
+        assert!(parse("--rect 0 0 1280 0").is_err());
+        assert!(resolve_rect(&parse("--rect 0 0 1280 720 --w 0").unwrap()).is_err());
     }
 }

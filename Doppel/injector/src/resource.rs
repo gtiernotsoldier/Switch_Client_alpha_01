@@ -7,6 +7,8 @@
 use std::ffi::c_void;
 use std::ptr;
 
+use crate::process;
+
 // Resource IDs (must match the .rc file)
 const AGENT_JAR_RCDATA: u16 = 101;
 const PAYLOAD_DLL_RCDATA: u16 = 102;
@@ -154,8 +156,11 @@ pub fn get_embedded_hud_path() -> String {
 /// first publish (`HudStateWriter`), so the overlay never starts into the long "the game is still
 /// loading" window — and if the game never publishes, no overlay is started at all. The wait runs on
 /// a detached thread, so the injection flow itself is never delayed by it.
-pub fn launch_hud_when_ready() {
-    std::thread::spawn(|| {
+///
+/// `pid` is the game process that was just injected: its window's rect is what the overlay is told
+/// to cover (`--rect`), so the HUD sits on the game window rather than on the primary monitor.
+pub fn launch_hud_when_ready(pid: u32) {
+    std::thread::spawn(move || {
         let dir = temp_dir();
         let mut notes = String::new();
 
@@ -192,6 +197,47 @@ pub fn launch_hud_when_ready() {
             return;
         }
 
+        // The rect the overlay is told to cover: the game's own window, so the HUD follows the
+        // game wherever it is — a second monitor, a window that is not maximised, or a window
+        // smaller than the screen. `None` (no visible window, minimised, or a degenerate rect)
+        // falls back to the overlay's own default, the primary monitor.
+        let game = process::find_game_window(pid);
+        let mut command = std::process::Command::new(&exe);
+        match game.rect {
+            Some(rect) => {
+                let args = rect.rect_args();
+                command.args(&args);
+                notes.push_str(&format!(
+                    "rect: {} — from GetWindowRect of pid {}'s game window ({})\n",
+                    rect.label(),
+                    game.pid,
+                    if game.physical {
+                        "physical pixels: per-thread DPI awareness was set for the lookup"
+                    } else {
+                        "NOT verified as physical pixels: SetThreadDpiAwarenessContext is \
+                         unavailable on this Windows, so on a scaled display these numbers may be \
+                         virtualised and the overlay may not line up"
+                    }
+                ));
+            }
+            None => {
+                notes.push_str(&format!(
+                    "rect: (none) — pid {} has no usable visible window \
+                     (not running, minimised, or zero-sized); the overlay falls back to the \
+                     primary monitor\n",
+                    game.pid
+                ));
+            }
+        }
+        notes.push_str(&format!(
+            "rect args passed: {}\n",
+            command
+                .get_args()
+                .map(|a| a.to_string_lossy().into_owned())
+                .collect::<Vec<_>>()
+                .join(" ")
+        ));
+
         // Best-effort single instance: the name is fixed for now (de-characterisation is a later
         // pass); ERROR_ALREADY_EXISTS simply means an overlay is already running for this session.
         if !claim_overlay_slot() {
@@ -199,7 +245,7 @@ pub fn launch_hud_when_ready() {
             return;
         }
 
-        match std::process::Command::new(&exe).spawn() {
+        match command.spawn() {
             Ok(child) => {
                 notes.push_str(&format!("spawned pid {}\n", child.id()));
                 write_launch_log(&dir, &notes, "ok");

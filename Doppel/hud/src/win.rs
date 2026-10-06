@@ -199,6 +199,25 @@ extern "system" {
     ) -> Hwnd;
     pub fn DefWindowProcW(hwnd: Hwnd, msg: u32, wp: Wparam, lp: Lparam) -> Lresult;
     pub fn ShowWindow(hwnd: Hwnd, cmd: i32) -> i32;
+    /// Move/size a window and/or change its Z-order without activating it. This is
+    /// the only call that can *raise* the overlay into the always-on-top band
+    /// after creation, and `SWP_NOACTIVATE` is what keeps the game's foreground
+    /// rights intact while it does (see README: no-focus is a hard rule).
+    pub fn SetWindowPos(
+        hwnd: Hwnd,
+        insert_after: Hwnd,
+        x: i32,
+        y: i32,
+        cx: i32,
+        cy: i32,
+        flags: u32,
+    ) -> i32;
+    /// Reads one 32-bit window word: the extended style (`GWL_EXSTYLE`) is how the
+    /// overlay asks "am I still topmost?" without guessing.
+    pub fn GetWindowLongW(hwnd: Hwnd, index: i32) -> i32;
+    /// Walks the Z-order: `GetWindow(hwnd, GW_HWNDPREV)` is the window directly
+    /// above ours, or NULL when we are the topmost window on the desktop.
+    pub fn GetWindow(hwnd: Hwnd, cmd: u32) -> Hwnd;
     pub fn PeekMessageW(msg: *mut Msg, hwnd: Hwnd, min: u32, max: u32, remove: u32) -> i32;
     pub fn TranslateMessage(msg: *const Msg) -> i32;
     pub fn DispatchMessageW(msg: *const Msg) -> Lresult;
@@ -249,6 +268,22 @@ extern "system" {
         face: *const u16,
     ) -> Hfont;
     pub fn GetStockObject(index: i32) -> *mut c_void;
+    /// Registers a font that lives in memory rather than in a file, and returns a
+    /// handle the caller keeps for as long as the bytes must stay valid. The
+    /// overlay uses this so the embedded Play TTFs never have to be written to
+    /// disk next to the executable (see text.rs).
+    pub fn AddFontMemResourceEx(
+        font_data: *const c_void,
+        size: u32,
+        reserved: *mut c_void,
+        fonts_added: *mut u32,
+    ) -> *mut c_void;
+    /// Releases what `AddFontMemResourceEx` registered. Called once, on drop.
+    pub fn RemoveFontMemResourceEx(handle: *mut c_void) -> i32;
+    /// The face name GDI actually selected into the DC. This is how the overlay
+    /// proves whether `CreateFontW("Play", ...)` picked the registered family or
+    /// silently substituted something else.
+    pub fn GetTextFaceW(hdc: Hdc, count: i32, face: *mut u16) -> i32;
     pub fn GetTextMetricsW(hdc: Hdc, metrics: *mut TextMetricsW) -> i32;
     pub fn GetTextExtentPoint32W(hdc: Hdc, text: *const u16, count: i32, size: *mut Size) -> i32;
     pub fn TextOutW(hdc: Hdc, x: i32, y: i32, text: *const u16, count: i32) -> i32;
@@ -269,10 +304,83 @@ extern "system" {
 // ── constants ───────────────────────────────────────────────────────────────
 
 pub const WS_POPUP: u32 = 0x8000_0000;
+/// **The style the overlay cannot be seen without.** A plain layered window sits
+/// in the desktop's normal Z-order band, so as soon as the game has focus it
+/// covers the HUD completely. `WS_EX_TOPMOST` puts the overlay in the
+/// always-on-top band instead; `--no-topmost` leaves it off.
+pub const WS_EX_TOPMOST: u32 = 0x0000_0008;
 pub const WS_EX_TRANSPARENT: u32 = 0x0000_0020;
 pub const WS_EX_TOOLWINDOW: u32 = 0x0000_0080;
 pub const WS_EX_LAYERED: u32 = 0x0008_0000;
 pub const WS_EX_NOACTIVATE: u32 = 0x0800_0000;
+
+/// `SetWindowPos`'s `hWndInsertAfter`: the pseudo-handle `(HWND)-1` that names the
+/// top of the always-on-top band. Not a real window, hence the odd definition.
+pub const HWND_TOPMOST: Hwnd = -1isize as Hwnd;
+
+/// `SetWindowPos` flags. `SWP_NOACTIVATE` keeps the game's foreground rights (the
+/// one thing this process must never take), `SWP_NOOWNERZORDER` stops an owner
+/// reshuffle nobody asked for, and `SWP_SHOWWINDOW` is what makes the raise also
+/// the show — a hidden window cannot be seen however topmost it is.
+pub const SWP_NOSIZE: u32 = 0x0001;
+pub const SWP_NOMOVE: u32 = 0x0002;
+pub const SWP_NOACTIVATE: u32 = 0x0010;
+pub const SWP_SHOWWINDOW: u32 = 0x0040;
+pub const SWP_NOOWNERZORDER: u32 = 0x0200;
+
+/// `GetWindowLongW` index for the extended style word, and `GetWindow`'s
+/// "the window directly above me in the Z-order" selector.
+pub const GWL_EXSTYLE: i32 = -20;
+pub const GW_HWNDPREV: u32 = 3;
+
+/// Render the extended-style word as the flag names it holds, so the log line says
+/// `WS_EX_LAYERED|WS_EX_TOPMOST|...` instead of a bare hex word nobody can check.
+/// Unknown bits are kept as hex: a style we did not ask for is worth seeing.
+pub fn describe_ex_style(bits: u32) -> String {
+    /// In the order a reader checks them: the ones the overlay needs first.
+    const NAMED: &[(u32, &str)] = &[
+        (WS_EX_TOPMOST, "WS_EX_TOPMOST"),
+        (WS_EX_LAYERED, "WS_EX_LAYERED"),
+        (WS_EX_TRANSPARENT, "WS_EX_TRANSPARENT"),
+        (WS_EX_TOOLWINDOW, "WS_EX_TOOLWINDOW"),
+        (WS_EX_NOACTIVATE, "WS_EX_NOACTIVATE"),
+    ];
+
+    let mut names: Vec<String> = Vec::new();
+    let mut seen = 0u32;
+    for (bit, name) in NAMED {
+        if bits & bit != 0 {
+            names.push((*name).to_string());
+            seen |= bit;
+        }
+    }
+    let unknown = bits & !seen;
+    if unknown != 0 {
+        names.push(format!("0x{unknown:08X}"));
+    }
+    if names.is_empty() {
+        return "none".to_string();
+    }
+    names.join("|")
+}
+
+/// Does the overlay need its topmost flag re-applied?
+///
+/// Two cheap signals, passed in as plain values so the rule can be tested without
+/// a window:
+///
+///   * `ex_style` — the window's current extended style. `WS_EX_TOPMOST` missing
+///     means something cleared it (a shell, a fullscreen transition, another
+///     always-on-top window taking the band over).
+///   * `window_above` — `GetWindow(hwnd, GW_HWNDPREV) != NULL`: even with the bit
+///     still set, something has since been raised above us.
+///
+/// Either one is reason enough. Nothing else is: re-applying on a timer that fires
+/// regardless would mean a `SetWindowPos` every two seconds for the whole life of
+/// the overlay, and this process is a guest on the game's desktop.
+pub fn topmost_lost(ex_style: u32, window_above: bool) -> bool {
+    ex_style & WS_EX_TOPMOST == 0 || window_above
+}
 
 pub const WM_DESTROY: u32 = 0x0002;
 pub const WM_CLOSE: u32 = 0x0010;
@@ -315,8 +423,74 @@ pub const CLIP_DEFAULT_PRECIS: u32 = 0;
 /// regular (`text.rs`).
 pub const FW_NORMAL: i32 = 400;
 pub const FW_SEMIBOLD: i32 = 600;
+/// `FW_BOLD` — the weight the reference loads Play at for its bold role
+/// (`RenderHook.cpp:430`; the face itself declares `Subfamily: Bold`).
+pub const FW_BOLD: i32 = 700;
 pub const TRANSPARENT: i32 = 1;
 /// DEFAULT_GUI_FONT — the fallback when a named face cannot be created.
 pub const DEFAULT_GUI_FONT: i32 = 17;
 /// DEFAULT_PITCH | FF_DONTCARE.
 pub const UI_PITCH_FAMILY: u32 = 0x00;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The flag word the overlay asks for, and the two ways "the game is above us"
+    /// can show up. Both are pure numbers here, so the re-assert rule is checked
+    /// without creating a window or a game.
+    #[test]
+    fn topmost_is_reasserted_only_when_it_was_lost() {
+        let wanted = WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT;
+
+        // Intact: the bit is there and nothing sits above us. Leave it alone —
+        // this is the case that must not produce a SetWindowPos every 2 s.
+        assert!(!topmost_lost(wanted, false));
+
+        // The bit was cleared (a shell or a fullscreen transition did it): raise.
+        assert!(topmost_lost(wanted & !WS_EX_TOPMOST, false));
+
+        // Bit still set but something has been raised above us: raise again.
+        assert!(topmost_lost(wanted, true));
+
+        // A window with no styles at all is the degenerate case, and it is "lost".
+        assert!(topmost_lost(0, false));
+
+        // The check reads exactly one bit: no other style can fake it.
+        assert!(!topmost_lost(WS_EX_TOPMOST, false));
+        assert!(!topmost_lost(WS_EX_TOPMOST | WS_EX_LAYERED, false));
+    }
+
+    /// `WS_EX_TOPMOST` is `0x00000008` and the pseudo-handle is `(HWND)-1`: both
+    /// are transcribed by hand, so both are pinned.
+    #[test]
+    fn the_style_and_the_insert_after_handle_are_the_documented_values() {
+        assert_eq!(WS_EX_TOPMOST, 0x0000_0008);
+        assert_eq!(HWND_TOPMOST as isize, -1);
+        assert_eq!(GWL_EXSTYLE, -20);
+        assert_eq!(GW_HWNDPREV, 3);
+        assert_eq!(
+            SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_SHOWWINDOW,
+            0x0010 | 0x0200 | 0x0040
+        );
+    }
+
+    /// The log line has to be checkable by eye: the flags the overlay sets must
+    /// come out as names, and anything it did not ask for must stay visible.
+    #[test]
+    fn the_ex_style_is_described_by_flag_name() {
+        assert_eq!(describe_ex_style(0), "none");
+        assert_eq!(describe_ex_style(WS_EX_TOPMOST), "WS_EX_TOPMOST");
+        assert_eq!(
+            describe_ex_style(
+                WS_EX_LAYERED | WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT
+            ),
+            "WS_EX_TOPMOST|WS_EX_LAYERED|WS_EX_TRANSPARENT|WS_EX_TOOLWINDOW|WS_EX_NOACTIVATE"
+        );
+        // A bit nobody asked for (WS_EX_APPWINDOW, 0x00040000) is reported, not lost.
+        let with_stranger = WS_EX_LAYERED | 0x0004_0000;
+        let text = describe_ex_style(with_stranger);
+        assert!(text.contains("WS_EX_LAYERED"), "{text}");
+        assert!(text.contains("0x00040000"), "{text}");
+    }
+}

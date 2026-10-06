@@ -139,6 +139,180 @@ extern "system" {
     fn GetWindowThreadProcessId(h_wnd: *mut c_void, lpdw_process_id: *mut u32) -> u32;
     fn IsWindowVisible(h_wnd: *mut c_void) -> i32;
     fn GetWindowTextW(h_wnd: *mut c_void, lp_string: *mut u16, n_max_count: i32) -> i32;
+    fn GetWindowRect(h_wnd: *mut c_void, rect: *mut Rect) -> i32;
+    fn IsIconic(h_wnd: *mut c_void) -> i32;
+}
+
+/// Win32 `RECT`: four LONGs, left/top/right/bottom — note the *corners*, not
+/// origin+size, which is why the conversion below subtracts rather than copies.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct Rect {
+    left: i32,
+    top: i32,
+    right: i32,
+    bottom: i32,
+}
+
+// ── the game window's rect → the overlay's `--rect` ──────────────────────────
+
+/// The rectangle the game window occupies on the virtual desktop, in physical
+/// pixels: origin plus size, which is the form `doppel-hud --rect` takes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WindowRect {
+    pub x: i32,
+    pub y: i32,
+    pub w: i32,
+    pub h: i32,
+}
+
+impl WindowRect {
+    /// Build one from a Win32 `RECT`'s corners.
+    ///
+    /// Pure on purpose: this is the arithmetic that decides where the overlay
+    /// lands, so it is tested without a window. `None` means "there is no usable
+    /// rect here" — a minimised or zero-sized window — which the caller turns into
+    /// "spawn the overlay with no `--rect`" rather than a degenerate overlay.
+    ///
+    /// Note what is *not* done: the result is never clamped or intersected with a
+    /// monitor. On a multi-monitor desktop the game's rect routinely starts at a
+    /// negative x (a monitor to the left of the primary one) or has a negative y
+    /// (one above it), and the overlay must cover the game, not the primary
+    /// monitor.
+    pub fn from_corners(left: i32, top: i32, right: i32, bottom: i32) -> Option<WindowRect> {
+        let w = right.checked_sub(left)?;
+        let h = bottom.checked_sub(top)?;
+        // A zero or negative extent is not a rect: dragging a window can produce
+        // it, and `--rect` refuses it anyway.
+        if w <= 0 || h <= 0 {
+            return None;
+        }
+        Some(WindowRect { x: left, y: top, w, h })
+    }
+
+    /// The overlay's `--rect x y w h`. Same numbers, as the strings the CLI wants.
+    pub fn rect_args(self) -> [String; 5] {
+        [
+            "--rect".to_string(),
+            self.x.to_string(),
+            self.y.to_string(),
+            self.w.to_string(),
+            self.h.to_string(),
+        ]
+    }
+
+    /// `1280x720 at (0, 0)` — the launch log's one-line form.
+    pub fn label(self) -> String {
+        format!("{}x{} at ({}, {})", self.w, self.h, self.x, self.y)
+    }
+}
+
+// ── Window rect lookup via EnumWindows ──
+
+/// Find the visible top-level window owned by `pid` and return its screen rect.
+///
+/// This is the same window `find_minecraft_window` already picks out for the
+/// process list — the search below records the `HWND` alongside the title, which
+/// is the one thing the panel's version threw away. The overlay is then spawned
+/// onto the game's own rect so it follows the game on any monitor and at any
+/// window size, instead of covering the primary monitor.
+///
+/// `None` when the process has no visible top-level window, when the window is
+/// minimised, or when its rect is degenerate; the caller then starts the overlay
+/// with no `--rect` at all (the primary monitor).
+pub fn find_game_window_rect(pid: u32) -> Option<WindowRect> {
+    find_game_window_rect_raw(pid)
+}
+
+/// The window lookup plus the one thing the rect alone cannot say: whether its
+/// numbers are in the coordinate space the overlay draws in.
+///
+/// The overlay calls `SetProcessDPIAware`, so the rect it is given must be in
+/// physical pixels. This process is a plain DPI-unaware GUI app — making it aware
+/// process-wide would re-scale the launcher window, which is not this change's
+/// business — so on a scaled display `GetWindowRect` answers in *virtualised*
+/// coordinates: a 150 % display reports a 1920x1080 game as 1280x720, and the
+/// overlay would land on the wrong part of the screen. `physical` reports whether
+/// the per-thread fix below worked; the launch log records it either way.
+pub struct GameWindow {
+    pub pid: u32,
+    pub rect: Option<WindowRect>,
+    /// True when the rect is known to be in physical pixels.
+    pub physical: bool,
+}
+
+/// Look up the game window and, best effort, in physical pixels.
+pub fn find_game_window(pid: u32) -> GameWindow {
+    // Per-thread, so the launcher window on the main thread keeps its own scaling.
+    let physical = use_physical_pixels_on_this_thread();
+    GameWindow { pid, rect: find_game_window_rect(pid), physical }
+}
+
+/// `SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)`.
+///
+/// Resolved through `GetProcAddress` rather than declared as an import: the call
+/// only exists from Windows 10 1703, and a static import of it would stop the
+/// injector from *loading* on anything older. Returns false when the API is not
+/// there, which is the signal that the rect may be virtualised.
+fn use_physical_pixels_on_this_thread() -> bool {
+    /// `DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2` is the pseudo-handle `(HANDLE)-4`.
+    const PER_MONITOR_AWARE_V2: *mut c_void = -4isize as *mut c_void;
+
+    type SetThreadDpiAwarenessContext = unsafe extern "system" fn(*mut c_void) -> *mut c_void;
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn LoadLibraryW(name: *const u16) -> *mut c_void;
+        fn GetProcAddress(module: *mut c_void, name: *const u8) -> *mut c_void;
+    }
+
+    unsafe {
+        let module: Vec<u16> = "user32.dll\0".encode_utf16().collect();
+        let handle = LoadLibraryW(module.as_ptr());
+        if handle.is_null() {
+            return false;
+        }
+        let symbol = GetProcAddress(handle, b"SetThreadDpiAwarenessContext\0".as_ptr());
+        if symbol.is_null() {
+            return false;
+        }
+        let set_context: SetThreadDpiAwarenessContext = std::mem::transmute(symbol);
+        // The return is the *previous* context, and NULL means the call failed —
+        // an unaware process reports UNAWARE, which is not NULL.
+        !set_context(PER_MONITOR_AWARE_V2).is_null()
+    }
+}
+
+fn find_game_window_rect_raw(pid: u32) -> Option<WindowRect> {
+    if pid == 0 {
+        return None;
+    }
+    let mut search = WindowSearch {
+        target_pid: pid,
+        found: false,
+        titled: false,
+        found_title: String::new(),
+        hwnd: ptr::null_mut(),
+    };
+    unsafe {
+        EnumWindows(Some(find_minecraft_window), &mut search as *mut WindowSearch as isize);
+    }
+    let hwnd = search.hwnd;
+    if hwnd.is_null() {
+        return None;
+    }
+    unsafe {
+        // A minimised window reports the classic (-32000, -32000) icon position,
+        // which would put the overlay in the corner of the virtual desktop.
+        if IsIconic(hwnd) != 0 {
+            return None;
+        }
+        let mut rect = Rect::default();
+        if GetWindowRect(hwnd, &mut rect) == 0 {
+            return None;
+        }
+        WindowRect::from_corners(rect.left, rect.top, rect.right, rect.bottom)
+    }
 }
 
 // ── Window title matching via EnumWindows ──
@@ -173,6 +347,7 @@ unsafe extern "system" fn find_minecraft_window(h_wnd: *mut c_void, l_param: isi
             st.found_title = title;
             st.found = true;
             st.titled = true;
+            st.hwnd = h_wnd;
             return 0; // stop — clear minecraft title
         }
         // Any visible window on a javaw process counts as a hit too, but keep
@@ -180,11 +355,13 @@ unsafe extern "system" fn find_minecraft_window(h_wnd: *mut c_void, l_param: isi
         if !st.found {
             st.found_title = title;
             st.found = true;
+            st.hwnd = h_wnd;
         }
     } else if !st.found {
         // Visible window with no title — still a hit (fullscreen MC).
         st.found_title = String::new();
         st.found = true;
+        st.hwnd = h_wnd;
     }
     1 // continue scanning
 }
@@ -195,6 +372,10 @@ struct WindowSearch {
     /// True when the hit came from a title that literally says minecraft.
     titled: bool,
     found_title: String,
+    /// The `HWND` behind `found_title`. Only `find_game_window_rect` uses it —
+    /// the panel listing keeps to the title — but the enum callback is where the
+    /// handle is cheapest to capture, so it is recorded for both.
+    hwnd: *mut c_void,
 }
 
 /// Read the command line of a process (NtQueryInformationProcess -> PEB ->
@@ -426,6 +607,9 @@ pub fn list_java_processes() -> Vec<ProcessInfo> {
                         found: false,
                         titled: false,
                         found_title: String::new(),
+                        // The panel only needs the title; the same callback is
+                        // what `find_game_window` reads the handle out of.
+                        hwnd: ptr::null_mut(),
                     };
                     EnumWindows(
                         Some(find_minecraft_window),
@@ -477,4 +661,75 @@ pub fn find_process_by_pid(pid: u32) -> ProcessInfo {
     // label it as Minecraft — the user knows what they clicked.
     found.valid = true;
     found
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `GetWindowRect` answers with corners; `--rect` wants origin plus size. The
+    /// subtraction is the whole conversion, and getting it wrong (passing
+    /// `right`/`bottom` as the width/height) would make the overlay enormous.
+    #[test]
+    fn a_window_rect_becomes_an_origin_and_a_size() {
+        let rect = WindowRect::from_corners(100, 50, 1380, 770).unwrap();
+        assert_eq!((rect.x, rect.y, rect.w, rect.h), (100, 50, 1280, 720));
+        assert_eq!(rect.label(), "1280x720 at (100, 50)");
+        assert_eq!(
+            rect.rect_args(),
+            ["--rect", "100", "50", "1280", "720"]
+        );
+    }
+
+    /// The rect is handed over exactly as the game reports it, including the
+    /// negative origins that are normal the moment a second monitor is involved.
+    /// The overlay must cover the *game*, so nothing here may clamp or intersect
+    /// with the primary monitor.
+    #[test]
+    fn the_game_rect_is_never_clamped_to_the_primary_monitor() {
+        // A monitor to the left of the primary one.
+        let left = WindowRect::from_corners(-1920, 120, -320, 1020).unwrap();
+        assert_eq!((left.x, left.y, left.w, left.h), (-1920, 120, 1600, 900));
+        assert_eq!(left.rect_args()[1], "-1920");
+
+        // A monitor above it.
+        let above = WindowRect::from_corners(0, -1080, 1920, 0).unwrap();
+        assert_eq!((above.x, above.y, above.w, above.h), (0, -1080, 1920, 1080));
+
+        // A windowed game smaller than the monitor stays smaller.
+        let small = WindowRect::from_corners(300, 200, 1580, 920).unwrap();
+        assert_eq!((small.w, small.h), (1280, 720));
+    }
+
+    /// A degenerate window — minimised, zero-sized, or a drag in progress — has
+    /// no usable rect, and the caller turns that into "no `--rect`" (the primary
+    /// monitor) rather than an overlay nobody can see.
+    #[test]
+    fn an_empty_window_rect_is_not_a_rect() {
+        assert_eq!(WindowRect::from_corners(0, 0, 0, 720), None);
+        assert_eq!(WindowRect::from_corners(0, 0, 1280, 0), None);
+        assert_eq!(WindowRect::from_corners(500, 500, 100, 100), None);
+        assert_eq!(WindowRect::from_corners(-32000, -32000, -32000, -32000), None);
+        // One pixel is still a window.
+        assert!(WindowRect::from_corners(9, 9, 10, 10).is_some());
+    }
+
+    /// The subtraction is checked, not wrapping: a pathological window that
+    /// reports `right < left` across the i32 range must not turn into a
+    /// 4-billion-pixel-wide overlay.
+    #[test]
+    fn an_overflowing_corner_pair_is_refused_rather_than_wrapped() {
+        assert_eq!(WindowRect::from_corners(i32::MIN, 0, i32::MAX, 100), None);
+        assert_eq!(WindowRect::from_corners(0, i32::MIN, 100, i32::MAX), None);
+    }
+
+    /// A pid of 0 means "no process was chosen"; the lookup must not enumerate
+    /// windows on behalf of nothing.
+    #[test]
+    fn a_zero_pid_has_no_window() {
+        assert_eq!(find_game_window_rect(0), None);
+        let found = find_game_window(0);
+        assert_eq!(found.pid, 0);
+        assert!(found.rect.is_none());
+    }
 }

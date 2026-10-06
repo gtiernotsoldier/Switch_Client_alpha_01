@@ -311,14 +311,12 @@ pub const ANTIALIASED_QUALITY: u32 = 4;
 pub const DEFAULT_CHARSET: u32 = 1;
 pub const OUT_TT_PRECIS: u32 = 4;
 pub const CLIP_DEFAULT_PRECIS: u32 = 0;
+/// The two weights the ported HUD's faces are created at: names semibold, the rest
+/// regular (`text.rs`).
 pub const FW_NORMAL: i32 = 400;
 pub const FW_SEMIBOLD: i32 = 600;
-pub const FW_BOLD: i32 = 700;
-pub const FW_EXTRABOLD: i32 = 800;
 pub const TRANSPARENT: i32 = 1;
 /// DEFAULT_GUI_FONT — the fallback when a named face cannot be created.
 pub const DEFAULT_GUI_FONT: i32 = 17;
-/// FIXED_PITCH | FF_MODERN, for the Consolas chip and value column.
-pub const MONO_PITCH_FAMILY: u32 = 0x31;
 /// DEFAULT_PITCH | FF_DONTCARE.
 pub const UI_PITCH_FAMILY: u32 = 0x00;

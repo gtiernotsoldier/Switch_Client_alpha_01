@@ -18,23 +18,23 @@
 // prerequisite). So the window is created with WS_EX_NOACTIVATE, shown with
 // SW_SHOWNOACTIVATE, and never asks for focus or for foreground rights.
 //
-// What the frame loop does now: read the published state block (D2), advance the
-// entrance/flash animations (D3/D4), rasterise the HUD into the canvas, push it
-// through UpdateLayeredWindow. Frames are pushed when something actually changed:
-// the signature covers the state and the fade, and `hud::paint` reports whether an
-// entrance or a flash is still moving. The status pill's ring pulses forever, and
-// that used to be the only reason a visible HUD was never static; the pill is off
-// by default now (`SHOW_STATUS_PILL` in hud.rs), so a static HUD really is static
-// and those frames are skipped.
+// What the frame loop does: read the published state block (D2), advance the
+// entrance animation and the accent clock (D3/D4), rasterise the HUD into the
+// canvas, push it through UpdateLayeredWindow. Frames are pushed when something
+// actually changed: the signature covers the state and the fade, and `hud::paint`
+// reports whether a row is still sliding in or whether the mode's accent is a
+// function of the clock. In Rise, VapeV4 and Tesseract — and in Default with the
+// wave on — the accent moves every frame, so those frames really do differ from
+// the last; a waveless Default HUD is genuinely static and those frames are
+// skipped.
 //
 // Zero third-party dependencies, same rule as the injector: kernel32/user32/gdi32
 // through raw extern "system" FFI, declared in win.rs. The pixel work lives in
 // draw.rs (pure), the text in text.rs (GDI), the HUD in hud.rs (pure geometry).
 //
-// The HUD itself is the designer's mockup (`E:\swl\doppel.html`): the client
-// watermark and the module list. The mockup's third element, the status pill, is
-// off by default — `SHOW_STATUS_PILL` in hud.rs is the switch — and hud.rs
-// documents every number it took from that stylesheet.
+// The HUD itself is a port of OpenCommunity's in-game HUD (its `HUD.cpp`), all
+// four of its modes, selectable with `--mode`; `hud.rs` cites the source line of
+// every constant it takes and the README says what could not be reproduced.
 
 mod draw;
 mod hud;
@@ -49,7 +49,7 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use draw::{argb, Canvas};
-use hud::{Anim, Config, Position, Rect};
+use hud::{Anim, Config, Mode, Position, Rect};
 use state::Entry;
 use text::TextEngine;
 use win::*;
@@ -61,18 +61,18 @@ const CLASS_NAME: &str = "WndClsA1";
 // ── window geometry ─────────────────────────────────────────────────────────
 //
 // The window covers a whole monitor rect — the primary monitor by default, or
-// whatever `--rect` names — and the HUD is drawn inside it at MARGIN from the
-// corner it occupies. Every other pixel stays fully transparent. The window is
-// click-through and never visible as a surface, so the transparent area costs
-// nothing but the DIB it needs.
+// whatever `--rect` names — and the HUD is drawn inside it at the margins the
+// ported mode asks for (4 or 6 px, HUD.cpp:489-491). Every other pixel stays
+// fully transparent. The window is click-through and never visible as a surface,
+// so the transparent area costs nothing but the DIB it needs.
 //
 // It used to be a 520x400 *stage* at (0, 0), which is exactly why the overlay
-// looked as if it were not there: the mockup anchors its blocks to the right edge
-// of whatever rect it is handed, so a 520-wide canvas put the watermark and the
-// module list around x = 400 — the top-left/middle of a 1920-wide screen — with
-// all the rest of the window transparent. The layout was never wrong; the rect it
-// hung off was. The stage that remains is `--dump`'s, and it is only a review
-// canvas: the live window is the monitor.
+// looked as if it were not there: the HUD anchors its blocks to the edges of
+// whatever rect it is handed, so a 520-wide canvas put the module list around
+// x = 400 — the top-left/middle of a 1920-wide screen — with all the rest of the
+// window transparent. The layout was never wrong; the rect it hung off was. The
+// stage that remains is `--dump`'s, and it is only a review canvas: the live
+// window is the monitor.
 
 /// The size `--dump` renders on. Deliberately *not* the live window's size: every
 /// review BMP this project has produced is comparable at 520x400, and the dump
@@ -86,15 +86,19 @@ const FALLBACK_W: i32 = 1920;
 const FALLBACK_H: i32 = 1080;
 
 /// Backdrop the `--dump` BMP is composited over: the HUD is translucent, so a
-/// dump has to sit on something. A mid-tone desk (rather than the near-black a
-/// game usually is) keeps the glass, its hairline, the row chips and the glows
-/// all distinguishable from the background, which is what makes it reviewable.
-const BACKDROP: u32 = argb(0x4A, 0x50, 0x61, 0xFF);
+/// dump has to sit on something. It is a dark game-like screen rather than the
+/// mid-tone desk the mockup skin used: the ported HUD's Default accent is a
+/// dim blue-grey (`78,86,107` at one end of its wave) that a mid-tone backdrop
+/// swallows, and the Tesseract/Rise chips are near-black panels that only read
+/// against something darker than they are. The text shadow and the accent bars
+/// stay visible against it either way.
+const BACKDROP: u32 = argb(0x22, 0x26, 0x2E, 0xFF);
 
 // ── process behaviour ───────────────────────────────────────────────────────
 
-/// Target frame interval. Animations are ~350 ms fades, so 60 Hz is smooth and
-/// the loop is idle-cheap (a state read and a hash) when nothing is moving.
+/// Target frame interval. A row's entrance is a 1/6 s slide and the accents are
+/// continuous, so 60 Hz is smooth and the loop is idle-cheap (a state read and a
+/// hash) whenever nothing is moving.
 const FRAME_MS: u64 = 16;
 /// "The game is gone": nothing has written the state file for this long.
 const STALE_SECS: f32 = 3.0;
@@ -111,10 +115,10 @@ usage: doppel-hud [options]
   --rect <x> <y> <w> <h>
                        the screen rect the overlay covers. The layered window is
                        created at (x, y) with that size and the HUD is laid out
-                       inside it, 16px in from whichever corners the mockup puts
-                       it in — a caller following the game window on a
-                       multi-monitor desktop passes that window's rect here.
-                       Default: the whole primary monitor, from
+                       inside it, at the margins the mode asks for (4 px in
+                       Rise/VapeV4, 6 px otherwise) — a caller following the game
+                       window on a multi-monitor desktop passes that window's rect
+                       here. Default: the whole primary monitor, from
                        GetSystemMetrics(SM_CXSCREEN / SM_CYSCREEN) (the primary
                        monitor's origin is (0, 0) by definition), or 1920x1080 if
                        that call gives nothing usable.
@@ -122,12 +126,26 @@ usage: doppel-hud [options]
   --y <i32>            adjust the chosen rect's y
   --w <u32>            adjust the chosen rect's width
   --h <u32>            adjust the chosen rect's height
-  --position <where>   right (default) = the mockup's own layout: the watermark
-                       and the module list in the top-right corner, plus the
-                       status pill in the bottom-right when SHOW_STATUS_PILL is
-                       on (it is off by default); left = the same HUD mirrored
-                       into the left-hand corners. `stacked` is accepted as a
-                       synonym of `right`, which is what it has always drawn.
+  --position <where>   right (default) = the ported HUD's own placement: the
+                       watermark 10 px in from the left edge and the module list
+                       flushed against the right one (HUD.cpp:537, 611); left =
+                       the same two elements on the opposite pair of edges.
+                       `stacked` is accepted as a synonym of `right`.
+  --mode <name>        default | rise | vape | tesseract. The four modes of the
+                       ported HUD (ArrayList.h:14); each one brings its own
+                       geometry, colours and accent animation. `vapev4` is
+                       accepted for `vape`. Default: default.
+  --scale <f>          multiply every metric and the font size, for a readable HUD
+                       on a high-DPI screen (0.5 .. 4.0). Default: 1.0, which is
+                       the source's own physical-pixel layout.
+  --primary <r,g,b>    the Default mode's wave colour pair (0..255 each).
+                       Default: 78,86,107 (ModuleConfig.h:65).
+  --secondary <r,g,b>  the colour the wave blends towards. Default: 120,146,214.
+  --wave-speed <f>     cycles per 2500 ms of the Default mode's wave
+                       (ModuleConfig.h:64). Default: 1.
+  --no-wave            draw the Default mode's accent as a flat primary colour.
+  --no-watermark       do not draw the watermark run (m_Watermark, default on).
+  --spaced             split CamelCase module names (Spaced Modules, default off).
   --dump <path.bmp>    render one representative frame to a 32-bit BMP on the
                        fixed 520x400 review canvas, print the measured geometry,
                        an ASCII preview and the runtime rect the live window
@@ -140,7 +158,7 @@ time (magic 0x444F5050, version 1). It opens the file read-only: there is no bac
 channel and nothing this process does can reach the game.
 
 It keeps its own breadcrumbs in %TEMP%\\doppel-hud.log: one line on start (local
-time, pid, the rect it covers, the resolved state file and whether it was
+time, pid, the rect it covers, the mode, the resolved state file and whether it was
 readable), one on exit (why it stopped, and how many frames it drew). Logging can
 never affect the overlay, and a log over 64 KB is truncated on the next start.
 
@@ -170,6 +188,21 @@ struct Args {
     w: Option<u32>,
     h: Option<u32>,
     position: Position,
+    /// `--mode`: which of the ported HUD's four modes is drawn.
+    mode: Mode,
+    /// `--scale`: the multiplier on every metric and on the font size.
+    scale: f32,
+    /// `m_Watermark`.
+    watermark: bool,
+    /// `m_Wave`.
+    wave: bool,
+    /// `m_WaveSpeed`.
+    wave_speed: f32,
+    /// `m_PrimaryColor` / `m_SecondaryColor`.
+    primary: [f32; 3],
+    secondary: [f32; 3],
+    /// `m_SpacedModules`.
+    spaced: bool,
     /// Headless render to a BMP, no window.
     dump: Option<String>,
     /// Headless check: prove the binary starts and links without opening a window.
@@ -186,6 +219,14 @@ impl Default for Args {
             w: None,
             h: None,
             position: Position::Right,
+            mode: Mode::Default,
+            scale: 1.0,
+            watermark: true,
+            wave: true,
+            wave_speed: hud::DEFAULT_WAVE_SPEED,
+            primary: hud::DEFAULT_PRIMARY,
+            secondary: hud::DEFAULT_SECONDARY,
+            spaced: false,
             dump: None,
             hide: false,
             help: false,
@@ -208,6 +249,39 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
                 let raw = next_value(argv, &mut i, flag)?;
                 args.position = parse_position(&raw)?;
             }
+            "--mode" => {
+                let raw = next_value(argv, &mut i, flag)?;
+                args.mode = Mode::parse(&raw)?;
+            }
+            "--scale" => {
+                let raw = next_value(argv, &mut i, flag)?;
+                let value: f32 = parse_num(flag, &raw)?;
+                if !value.is_finite() || !(text::MIN_SCALE..=text::MAX_SCALE).contains(&value) {
+                    return Err(format!(
+                        "--scale: expected {} .. {}, got {raw}",
+                        text::MIN_SCALE,
+                        text::MAX_SCALE
+                    ));
+                }
+                args.scale = value;
+            }
+            "--primary" => args.primary = parse_rgb(&next_value(argv, &mut i, flag)?)?,
+            "--secondary" => args.secondary = parse_rgb(&next_value(argv, &mut i, flag)?)?,
+            "--wave-speed" => {
+                args.wave_speed = parse_num(flag, &next_value(argv, &mut i, flag)?)?;
+            }
+            "--no-wave" => {
+                args.wave = false;
+                i += 1;
+            }
+            "--no-watermark" => {
+                args.watermark = false;
+                i += 1;
+            }
+            "--spaced" => {
+                args.spaced = true;
+                i += 1;
+            }
             "--dump" => {
                 args.dump = Some(next_value(argv, &mut i, flag)?);
             }
@@ -223,6 +297,24 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
         }
     }
     Ok(args)
+}
+
+/// The `HUD{}` block of the args (ModuleConfig.h:57-68, ArrayList.h:15-19), with
+/// the live fade on top. Both the frame loop and `--dump` build their config here,
+/// so a dump is exactly what the window would draw.
+fn config_from(args: &Args, alpha: f32) -> Config {
+    Config {
+        position: args.position,
+        alpha,
+        mode: args.mode,
+        scale: args.scale,
+        watermark: args.watermark,
+        wave: args.wave,
+        wave_speed: args.wave_speed,
+        primary: args.primary,
+        secondary: args.secondary,
+        spaced: args.spaced,
+    }
 }
 
 /// `--rect x y w h` — four numbers, then the cursor past all five tokens. The
@@ -249,15 +341,39 @@ fn parse_rect(argv: &[String], i: &mut usize) -> Result<Rect, String> {
     Ok(rect)
 }
 
-/// `right` is the mockup's own layout and the default. `left` mirrors it into the
-/// other pair of corners; `stacked` is kept as a synonym of `right`, because that
-/// is the corner pair the old stacked card put its brand pill in.
+/// `right` is the ported HUD's own placement and the default. `left` swaps the two
+/// elements to the other pair of corners; `stacked` is kept as a synonym of
+/// `right`, because that is the corner pair the old stacked card put its brand
+/// pill in.
 fn parse_position(raw: &str) -> Result<Position, String> {
     match raw.to_ascii_lowercase().as_str() {
         "right" | "stacked" | "stack" | "default" => Ok(Position::Right),
         "left" => Ok(Position::Left),
         other => Err(format!("--position: expected right (default) or left, got {other}")),
     }
+}
+
+/// `--primary r,g,b` / `--secondary r,g,b`, the two numbers the source's config
+/// carries as floats over 255 (ModuleConfig.h:65-66). Three channels are required:
+/// a missing one would leave a colour silently wrong, which is the one thing a
+/// colour flag must not do.
+fn parse_rgb(raw: &str) -> Result<[f32; 3], String> {
+    let parts: Vec<&str> = raw.split(',').collect();
+    if parts.len() != 3 {
+        return Err(format!("expected three channels as r,g,b (0..255 each), got {raw}"));
+    }
+    let mut out = [0.0f32; 3];
+    for (slot, text) in out.iter_mut().zip(parts) {
+        let value: f32 = text
+            .trim()
+            .parse()
+            .map_err(|_| format!("not a valid colour channel: {text}"))?;
+        if !value.is_finite() || !(0.0..=255.0).contains(&value) {
+            return Err(format!("colour channels are 0..255, got {text}"));
+        }
+        *slot = value / 255.0;
+    }
+    Ok(out)
 }
 
 /// Consume the value that follows a flag and step the cursor past both. A
@@ -375,35 +491,33 @@ unsafe extern "system" fn wnd_proc(hwnd: Hwnd, msg: u32, wp: Wparam, lp: Lparam)
 
 // ── frame content ───────────────────────────────────────────────────────────
 
-/// A representative module table for `--dump`: the mix the real HUD shows —
-/// valued and bare modules, two accent values, one module mid-flash.
+/// A representative module table for `--dump`: the mix the real HUD shows — a
+/// ten-row list, two of the rows carrying a value, one of them in use (the state's
+/// `flash` byte, which is what turns a VapeV4 tag red).
 fn demo_entries() -> Vec<Entry> {
     const DEMO: &[(&str, &str, bool)] = &[
         ("AutoClicker", "12.3 cps", true),
-        ("Velocity", "82%", true),
+        ("Velocity", "82%", false),
         ("Keystrokes", "", false),
-        ("Reach", "3.1-3.3", false),
+        ("Reach", "", false),
         ("HitSelect", "", false),
         ("BlockHit", "", false),
         ("WTap", "", false),
         ("Sprint", "", false),
+        ("Safewalk", "", false),
+        ("Timer", "", false),
     ];
 
     DEMO.iter()
-        .map(|(name, value, highlight)| Entry {
+        .map(|(name, value, flash)| Entry {
             id: state::fnv1a(name),
             enabled: true,
-            flash: false,
-            highlight: *highlight,
+            flash: *flash,
+            highlight: false,
             name: (*name).to_string(),
             value: (*value).to_string(),
         })
         .collect()
-}
-
-/// Ids the dump seeds with a partly decayed flash (255 = just fired).
-fn demo_flashes() -> Vec<(u32, u8)> {
-    vec![(state::fnv1a("Velocity"), 150)]
 }
 
 /// Cheap change detector: everything the HUD depends on except time. When it
@@ -463,13 +577,18 @@ fn run(args: &Args) -> Result<(), String> {
     // file is there but not ours".
     let first_read = state::read(&state_path);
     log.line(&format!(
-        "start: rect {}x{} at ({}, {}) [{}], position {:?}, state {} readable: {}",
+        "start: rect {}x{} at ({}, {}) [{}], position {:?}, mode {} (scale {:.2}), \
+         watermark {}, wave {}, state {} readable: {}",
         rect.w,
         rect.h,
         rect.x,
         rect.y,
         source.label(),
         args.position,
+        args.mode.label(),
+        args.scale,
+        args.watermark,
+        args.wave,
         state_path.display(),
         match &first_read {
             Some(snapshot) => format!("yes ({} entries)", snapshot.entries.len()),
@@ -477,7 +596,7 @@ fn run(args: &Args) -> Result<(), String> {
         }
     ));
 
-    let mut text = match TextEngine::new() {
+    let mut text = match TextEngine::new(args.scale) {
         Ok(text) => text,
         Err(reason) => {
             log.line(&format!("exit: error: {reason}, 0 frames drawn"));
@@ -485,7 +604,7 @@ fn run(args: &Args) -> Result<(), String> {
         }
     };
 
-    let mut config = Config { position: args.position, margin: hud::MARGIN, alpha: 1.0 };
+    let mut config = config_from(args, 1.0);
     // How many frames reached the compositor. Zero on a run that ended by itself
     // is itself a diagnosis: the state file never showed up in time.
     let mut frames: u64 = 0;
@@ -664,7 +783,11 @@ fn run(args: &Args) -> Result<(), String> {
                 }
             }
 
-            anim.update(&entries);
+            // The slide state, the frame delta and the accent clock all advance
+            // here (the delta even on a frame that is not repainted, so an idle
+            // stretch cannot turn into a catch-up jump), and `hud::paint` reports
+            // whether the frame it composed is still moving.
+            anim.tick(now);
             let current = signature(&entries, fade);
             if current != last_signature || animating {
                 config.alpha = fade;
@@ -744,89 +867,89 @@ fn run(args: &Args) -> Result<(), String> {
 /// `--dump`: render one representative frame to a BMP and print the ASCII
 /// preview. No window class is registered and no window is created — the text
 /// engine only needs a memory DC, so this works on a session with no desktop.
-/// `--position` is honoured so both layouts can be reviewed the same way.
+/// `--position`, `--mode`, `--scale` and the rest of the config are honoured, so
+/// all four modes can be reviewed the same way.
 ///
 /// `runtime` is the rect the *live* window would cover (the monitor, or `--rect`),
 /// which is printed but not drawn on: the review canvas stays the fixed 520x400
 /// every earlier dump was compared at, and the printed coordinates are therefore
 /// canvas-local. The runtime line is what says where those pixels would land on
 /// this machine's screen.
-fn run_dump(path: &str, position: Position, runtime: Rect, source: RectSource) -> Result<(), String> {
-    let mut text = TextEngine::new()?;
+fn run_dump(path: &str, args: &Args, runtime: Rect, source: RectSource) -> Result<(), String> {
+    let mut text = TextEngine::new(args.scale)?;
     let (w, h) = (DEF_W, DEF_H);
     let mut canvas = Canvas::new(w, h);
 
     let entries = demo_entries();
     let mut anim = Anim::new();
     let now = Instant::now();
-    anim.seed(&entries, now, &demo_flashes());
+    // Every row settled and the accent clock at a known 2000 ms, so the frame's
+    // colours are the accent functions at a fixed timestamp rather than whatever
+    // the wall clock happened to say.
+    anim.seed(&entries, now);
 
-    let config = Config { position, margin: hud::MARGIN, alpha: 1.0 };
+    let config = config_from(args, 1.0);
     canvas.clear();
     hud::paint(&mut canvas, &mut text, &entries, &mut anim, now, &config);
 
     preview::write_bmp(Path::new(path), &canvas, BACKDROP)
         .map_err(|e| format!("cannot write {path}: {e}"))?;
+    let metrics = hud::Metrics::new(args.mode, args.scale);
     println!(
-        "wrote {path} ({w}x{h}, 32-bit BMP, {:?} layout, composited over #{:06X})",
-        position,
+        "wrote {path} ({w}x{h}, 32-bit BMP, mode {}, {:?} layout, composited over #{:06X})",
+        args.mode.label(),
+        args.position,
         BACKDROP & 0x00FF_FFFF
     );
     // The rect the live window covers, which is *not* the review canvas: this is
-    // the number that decides whether the HUD lands in the screen's corner. The
-    // watermark's own origin is given in screen coordinates so the anchoring can
-    // be checked without running the windowed path.
-    let (wm_w, wm_h) = hud::watermark_size(&text);
-    let margin = hud::MARGIN;
+    // the number that decides whether the HUD lands against the screen's edges.
+    // Both elements' own origins are given in screen coordinates, so the anchoring
+    // can be checked without running the windowed path.
+    let name_font = args.mode.name_font();
+    let title_w = text.measure(name_font, hud::PRODUCT) as f32;
+    let segment = format!("{}{}", hud::SEGMENT_SEP, entries.len());
+    let run_w = title_w + text.measure(text::FontId::Body, &segment) as f32;
     println!(
         "runtime window: {}x{} at ({}, {}) [{}] — the live layered window covers that rect, so the \
-         {margin}px margin is at x={} and the watermark block ({}x{}) at ({}, {}); the live layout \
-         is the same as this dump's, only measured against that rect",
+         watermark run ({}px) starts at ({}, {}) and the first row is flushed to the {} edge, \
+         {}px inside it; the live layout is the same as this dump's, only measured against that rect",
         runtime.w,
         runtime.h,
         runtime.x,
         runtime.y,
         source.label(),
-        match position {
-            Position::Left => runtime.x + margin,
-            Position::Right => runtime.right() - margin,
+        run_w.round() as i32,
+        hud::watermark_x(runtime, args.position, &metrics, run_w),
+        hud::watermark_y(runtime, &metrics),
+        match args.position {
+            Position::Right => "right",
+            Position::Left => "left",
         },
-        wm_w,
-        wm_h,
-        hud::anchor_x(runtime, position, margin, wm_w),
-        hud::anchor_top(runtime, margin),
+        metrics.right_margin,
     );
     // The numbers behind the picture: a dump that looks wrong is much easier to
     // fix when the face metrics are on screen next to it.
-    let (pill_w, pill_h) = hud::pill_size(&text, entries.len());
-    let row_h = hud::row_height(&text);
     println!(
-        "faces: ui {}px cell, bold {}px cell, mark {}px cell, tiny {}px cell, \
-         mono {}px cell, mono-bold {}px cell, slogan {}px cell | pill {}x{} | \
-         {} rows of {}px (+3 gap) | widest value {}px",
-        text.height(text::FontId::Ui),
-        text.height(text::FontId::UiBold),
-        text.height(text::FontId::Mark),
-        text.height(text::FontId::UiTiny),
-        text.height(text::FontId::Mono),
-        text.height(text::FontId::MonoBold),
-        text.height(text::FontId::Slogan),
-        pill_w,
-        pill_h,
+        "faces: name (Segoe UI Semibold) {}px em / {}px cell, body (Segoe UI) {}px em / {}px cell | \
+         {} published rows, {} listed | widest value {}px",
+        text.em_px(text::FontId::Name).round(),
+        text.cell_height(text::FontId::Name),
+        text.em_px(text::FontId::Body).round(),
+        text.cell_height(text::FontId::Body),
         entries.len(),
-        row_h,
+        entries.iter().filter(|e| e.enabled).count(),
         entries
             .iter()
-            .map(|e| text.measure(text::FontId::Mono, &e.value))
+            .map(|e| text.measure(text::FontId::Body, &e.value))
             .max()
             .unwrap_or(0),
     );
-    // The measured HUD: the watermark block, the pill and each row's chip, bar and
-    // name -> value distance. Printed from the same layout the painter used, so a
-    // dump that looks wrong can be checked against real numbers.
-    print!("{}", hud::describe(&text, &entries, position, w, h));
-    // ~4x8 canvas pixels per character: the HUD's own pieces are 11..29 px tall,
-    // so anything coarser loses the bars.
+    // The measured HUD: the mode's metrics, the watermark run and every row's box,
+    // insets, bar and tag colour. Printed from the same layout the painter used, so
+    // a dump that looks wrong can be checked against real numbers.
+    print!("{}", hud::describe(&text, &entries, &config, w, h));
+    // ~4x8 canvas pixels per character: the HUD's own pieces are 16..22 px tall,
+    // so anything coarser loses the accent bars.
     print!("{}", preview::ascii_preview(&canvas, BACKDROP, (w / 4).min(160) as usize, (h / 8) as usize));
     Ok(())
 }
@@ -856,7 +979,7 @@ fn main() {
         // window would use, so a render can be checked against the real screen.
         match resolve_rect(&args) {
             Ok((rect, source)) => {
-                if let Err(reason) = run_dump(path, args.position, rect, source) {
+                if let Err(reason) = run_dump(path, &args, rect, source) {
                     eprintln!("error: {reason}");
                     std::process::exit(1);
                 }
@@ -880,7 +1003,8 @@ fn main() {
             }
         };
         println!(
-            "{} {} — ok, no window created (window rect {}x{} at ({}, {}) [{}], layout {:?})",
+            "{} {} — ok, no window created (window rect {}x{} at ({}, {}) [{}], layout {:?}, mode {} \
+             at scale {:.2})",
             env!("CARGO_PKG_NAME"),
             env!("CARGO_PKG_VERSION"),
             rect.w,
@@ -888,7 +1012,9 @@ fn main() {
             rect.x,
             rect.y,
             source.label(),
-            args.position
+            args.position,
+            args.mode.label(),
+            args.scale,
         );
         return;
     }

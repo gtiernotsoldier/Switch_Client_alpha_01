@@ -1,11 +1,10 @@
 // text.rs — the text rasteriser: GDI draws into a scratch DIB, this copies the
 // result into the premultiplied BGRA canvas.
 //
-// Why GDI at all: the HUD needs a real face (Segoe UI for everything but the
-// numbers, Consolas for the mono ones), and a hand-baked bitmap font would have
-// to be embedded in the binary and would fall apart on any string the game hands
-// us. GDI is already linked for CreateDIBSection, and it is not a third party
-// dependency.
+// Why GDI at all: the HUD needs a real face, and a hand-baked bitmap font would
+// have to be embedded in the binary and would fall apart on any string the game
+// hands us. GDI is already linked for CreateDIBSection, and it is not a third
+// party dependency.
 //
 // Why this shape: the compositor wants premultiplied BGRA, GDI will not produce
 // it. So text is drawn white-on-transparent-black into a 32bpp top-down scratch
@@ -19,81 +18,73 @@
 //
 // ── faces ───────────────────────────────────────────────────────────────────
 //
-// The mockup asks for Inter with a `system-ui … Microsoft YaHei` fallback and
-// JetBrains Mono with `ui-monospace` (Consolas on Windows). Neither webfont is
-// installed on the build machine, so this uses the stylesheet's own fallbacks:
-// **Segoe UI** for the UI text and **Consolas** for `ui-monospace`.
+// The ported HUD is OpenCommunity's `HUD.cpp`, which loads its own copy of the
+// **Play** typeface through ImGui (regular and bold) and draws all of it at
+// `fontSize = 16` (HUD.cpp:469). Play is not installed on this machine and may
+// not be on the target's, so the closest installed pair stands in:
 //
-// A CSS `font-size` is the em size, and a negative LOGFONT height is also the
-// character (em) height, so the two numbers are the same — only the integer
-// rounding differs:
+//   role                        source                 this port
+//   module names, Default mode  Play Bold 16 px        Segoe UI Semibold, lfHeight -16
+//   everything else             Play Regular 16 px     Segoe UI, lfHeight -16
 //
-//   element                      CSS size   face                lfHeight
-//   module name (`.al .t`)        12.5 px   Segoe UI 600           -13
-//   DOPPEL (`.word`)              13.5 px   Segoe UI 700           -14
-//   the D mark (`.mark`)          15   px   Segoe UI 800           -15
-//   pill label (`.s-name`)         9.5 px   Segoe UI 700           -10
-//   values / count (`#cnt`)        11  px   Consolas 400 / 600     -11
-//   slogan (`.slogan`)             9   px   Consolas 400            -9
+// The 16 px size is the source's own number and is kept exactly — one em is one
+// em, so every layout constant the port takes from the source (`lineHeight`,
+// `itemHeight`, the paddings) keeps its value. `--scale` multiplies it, which is
+// the one thing the source has no equivalent of (it has no DPI handling at all).
 //
-// `em_px` hands the *unrounded* CSS size back to `hud.rs`, which is what the
-// stylesheet's em-based letter spacing is computed from (`0.4em` of 13.5 px is
-// 5.4 px, and rounding that to 5 would visibly shorten the wordmark).
+// Placement: `ImDrawList::AddText(font, size, pos, ...)` puts `pos` at the top of
+// a `size`-tall line box, so that is what `draw`'s `y` means here too. GDI's cell
+// is taller than that box (ascent + descent + internal leading), so a run is drawn
+// `internal_leading` rows above `y`; the glyph ink then lands where ImGui would
+// have put it, and a row's background box (which the source sizes from the same
+// 16 px) keeps the text inside it. The substitute face's metrics are not Play's,
+// so this is a stand-in, not a byte-for-byte match — see the README.
 
 use std::ffi::c_void;
 
 use crate::draw::Canvas;
 use crate::win::*;
 
-/// Wide enough for a full 24-byte name or value field at any sane face size;
-/// taller than any cell we ask for, so the coverage scan never clips a glyph.
-const SCRATCH_W: i32 = 512;
-const SCRATCH_H: i32 = 64;
+/// The source's font size, HUD.cpp:469 (`fontSize = 16.0f`), the size every face
+/// here is created at. `hud.rs` reads it as the mode's `lineHeight`.
+pub const FONT_PX: f32 = 16.0;
 
+/// Room for a 24-byte name at 4x scale in one scratch row, and for the tallest
+/// scaled cell: the HUD draws one run at a time and clears only the columns it
+/// can touch, so the scratch is sized for the worst case and then left alone.
+const SCRATCH_W: i32 = 2048;
+const SCRATCH_H: i32 = 96;
+
+/// The standing-in family. Both faces are the same family at two weights, which is
+/// the closest a stock Windows install gets to Play's regular/bold pair.
 const UI_FACE: &str = "Segoe UI";
-const MONO_FACE: &str = "Consolas";
 
-const UI_HEIGHT: i32 = -13;
-const BOLD_HEIGHT: i32 = -14;
-const MARK_HEIGHT: i32 = -15;
-const TINY_HEIGHT: i32 = -10;
-const MONO_HEIGHT: i32 = -11;
-const SLOGAN_HEIGHT: i32 = -9;
+/// The largest scale `--scale` accepts; the scratch above is sized for it.
+pub const MAX_SCALE: f32 = 4.0;
+/// The smallest scale `--scale` accepts.
+pub const MIN_SCALE: f32 = 0.5;
 
-/// The CSS sizes the faces above were created from, kept unrounded so that
-/// `letter-spacing: .4em` can be turned into pixels exactly.
-const UI_EM: f32 = 12.5;
-const BOLD_EM: f32 = 13.5;
-const MARK_EM: f32 = 15.0;
-const TINY_EM: f32 = 9.5;
-const MONO_EM: f32 = 11.0;
-const SLOGAN_EM: f32 = 9.0;
-
+/// Which face a run is drawn in. The source picks between its bold and regular
+/// Play per element; everything that is not a module name in Default mode uses the
+/// regular weight.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum FontId {
-    /// Module names — `.al .t`, 12.5 px semibold.
-    Ui,
-    /// The DOPPEL wordmark — `.word`, 13.5 px bold.
-    UiBold,
-    /// The mirrored "D" — `.mark`, 15 px extrabold.
-    Mark,
-    /// The status pill's label — `.s-name`, 9.5 px bold.
-    UiTiny,
-    /// Module values — Consolas 11 px.
-    Mono,
-    /// The status pill's count — `#cnt`, Consolas 11 px semibold.
-    MonoBold,
-    /// The mono slogan — `.slogan`, 9 px.
-    Slogan,
+    /// Module names in Default mode — the source's bold Play (`nameFont`).
+    Name,
+    /// Tags, the watermark and every non-Default name — the source's regular Play.
+    Body,
 }
 
 struct Font {
     handle: Hfont,
     /// Stock fallback objects must never be deleted.
     owned: bool,
-    height: i32,
-    /// The CSS font-size this face was asked for, in pixels.
+    /// GDI's cell height (`tmHeight`), for the dump's face line.
+    cell: i32,
+    /// The source's font size this face was created from, times `--scale`.
     em: f32,
+    /// `tmInternalLeading`: how far below the cell's top the em box starts.
+    leading: i32,
 }
 
 /// The scratch DC, its DIB and the cached faces.
@@ -102,17 +93,19 @@ pub struct TextEngine {
     dib: *mut c_void,
     prev: *mut c_void,
     bits: *mut u8,
-    ui: Font,
-    bold: Font,
-    mark: Font,
-    tiny: Font,
-    mono: Font,
-    mono_bold: Font,
-    slogan: Font,
+    name: Font,
+    body: Font,
 }
 
 impl TextEngine {
-    pub fn new() -> Result<TextEngine, String> {
+    /// Create the scratch and both faces at `16 * scale` pixels. A scale outside
+    /// `MIN_SCALE..=MAX_SCALE` is clamped rather than refused: the command line
+    /// rejects it first, and this keeps a bad call from producing a 0-pixel font.
+    pub fn new(scale: f32) -> Result<TextEngine, String> {
+        let scale = if scale.is_finite() { scale.clamp(MIN_SCALE, MAX_SCALE) } else { 1.0 };
+        let em = FONT_PX * scale;
+        let height = -(em.round() as i32).max(1);
+
         // SAFETY: create a memory DC and a top-down 32bpp DIB in it, exactly as
         // the blit target is built in main.rs; the returned `bits` pointer is
         // owned by the DIB and stays valid until the DIB is deleted, which only
@@ -153,52 +146,31 @@ impl TextEngine {
             SetBkMode(dc, TRANSPARENT);
             SetTextColor(dc, 0x00FF_FFFF);
 
-            let ui = load_font(dc, UI_FACE, UI_HEIGHT, FW_SEMIBOLD, UI_PITCH_FAMILY, UI_EM);
-            let bold = load_font(dc, UI_FACE, BOLD_HEIGHT, FW_BOLD, UI_PITCH_FAMILY, BOLD_EM);
-            let mark = load_font(dc, UI_FACE, MARK_HEIGHT, FW_EXTRABOLD, UI_PITCH_FAMILY, MARK_EM);
-            let tiny = load_font(dc, UI_FACE, TINY_HEIGHT, FW_BOLD, UI_PITCH_FAMILY, TINY_EM);
-            let mono = load_font(dc, MONO_FACE, MONO_HEIGHT, FW_NORMAL, MONO_PITCH_FAMILY, MONO_EM);
-            let mono_bold =
-                load_font(dc, MONO_FACE, MONO_HEIGHT, FW_SEMIBOLD, MONO_PITCH_FAMILY, MONO_EM);
-            let slogan =
-                load_font(dc, MONO_FACE, SLOGAN_HEIGHT, FW_NORMAL, MONO_PITCH_FAMILY, SLOGAN_EM);
+            let name = load_font(dc, UI_FACE, height, FW_SEMIBOLD, UI_PITCH_FAMILY, em);
+            let body = load_font(dc, UI_FACE, height, FW_NORMAL, UI_PITCH_FAMILY, em);
 
-            Ok(TextEngine {
-                dc,
-                dib,
-                prev,
-                bits: bits as *mut u8,
-                ui,
-                bold,
-                mark,
-                tiny,
-                mono,
-                mono_bold,
-                slogan,
-            })
+            Ok(TextEngine { dc, dib, prev, bits: bits as *mut u8, name, body })
         }
     }
 
     fn font(&self, id: FontId) -> &Font {
         match id {
-            FontId::Ui => &self.ui,
-            FontId::UiBold => &self.bold,
-            FontId::Mark => &self.mark,
-            FontId::UiTiny => &self.tiny,
-            FontId::Mono => &self.mono,
-            FontId::MonoBold => &self.mono_bold,
-            FontId::Slogan => &self.slogan,
+            FontId::Name => &self.name,
+            FontId::Body => &self.body,
         }
     }
 
-    /// Cell height of a face: what the layout budgets per row.
-    pub fn height(&self, id: FontId) -> i32 {
-        self.font(id).height
-    }
-
-    /// The CSS font-size behind a face, for `letter-spacing: <em>` maths.
+    /// The source's font size for this face, times `--scale`. This is the number
+    /// the HUD's layout uses: the source's `lineHeight` is exactly the font size
+    /// (HUD.cpp:472), not the taller GDI cell.
     pub fn em_px(&self, id: FontId) -> f32 {
         self.font(id).em
+    }
+
+    /// GDI's cell height for this face, printed by `--dump` next to the em size so
+    /// the two are never confused when a face metric moves.
+    pub fn cell_height(&self, id: FontId) -> i32 {
+        self.font(id).cell
     }
 
     /// Pixel width of `text` in the given face.
@@ -219,25 +191,10 @@ impl TextEngine {
         }
     }
 
-    /// Width of `text` drawn with `track` extra pixels after every character
-    /// (`letter-spacing`; the trailing track is not counted, which is what the
-    /// stylesheet's `margin-right: -.4em` compensates for).
-    pub fn measure_tracked(&self, id: FontId, text: &str, track: f32) -> i32 {
-        let mut w = 0.0f32;
-        let mut n = 0usize;
-        for ch in text.chars() {
-            let mut one = [0u8; 4];
-            w += self.measure(id, ch.encode_utf8(&mut one)) as f32 + track;
-            n += 1;
-        }
-        if n == 0 {
-            0
-        } else {
-            (w - track).round().max(0.0) as i32
-        }
-    }
-
-    /// Draw `text` with its cell's top-left at (x, y). Returns the advance width.
+    /// Draw `text` with the top of its line box at (x, y). Returns the advance
+    /// width. `y` is the source's own `textY`: ImGui's `AddText` places the top of
+    /// a 16 px line box there, so this does the same (see the header note on
+    /// internal leading).
     pub fn draw(
         &mut self,
         canvas: &mut Canvas,
@@ -247,38 +204,11 @@ impl TextEngine {
         y: i32,
         colour: u32,
     ) -> i32 {
-        self.blit(canvas, id, text, x, y, colour, false)
-    }
-
-    /// Draw `text` mirrored about its own box, the way `transform: scaleX(-1)`
-    /// flips the mockup's accent "D". The run keeps its position and advance; the
-    /// coverage is read back to front.
-    pub fn draw_mirrored(
-        &mut self,
-        canvas: &mut Canvas,
-        id: FontId,
-        text: &str,
-        x: i32,
-        y: i32,
-        colour: u32,
-    ) -> i32 {
-        self.blit(canvas, id, text, x, y, colour, true)
-    }
-
-    fn blit(
-        &mut self,
-        canvas: &mut Canvas,
-        id: FontId,
-        text: &str,
-        x: i32,
-        y: i32,
-        colour: u32,
-        mirror: bool,
-    ) -> i32 {
         let (width, height) = match self.rasterise(id, text) {
             Some(size) => size,
             None => return 0,
         };
+        let top = y - self.font(id).leading;
 
         // SAFETY: the scratch holds SCRATCH_W x SCRATCH_H pixels and every column
         // read below is inside `width` (<= SCRATCH_W) and every row inside
@@ -286,22 +216,17 @@ impl TextEngine {
         unsafe {
             for row in 0..height {
                 let row_base = (row * SCRATCH_W * 4) as isize;
-                // The advance box is the run width less the two overhang columns.
-                let advance = width - 2;
+                // Every column the run touched, the two overhang ones included: a
+                // glyph may reach past its advance, and clipping that off would
+                // shave the last stem. `blend_pixel` clamps to the canvas.
                 for col in 0..width {
-                    // A mirrored run reads the coverage back to front inside its
-                    // own advance box, so the glyph flips in place.
-                    let src = if mirror { advance - 1 - col } else { col };
-                    if src < 0 || src >= width {
-                        continue;
-                    }
-                    let off = row_base + (src * 4) as isize;
+                    let off = row_base + (col * 4) as isize;
                     let b = *self.bits.offset(off) as u32;
                     let g = *self.bits.offset(off + 1) as u32;
                     let r = *self.bits.offset(off + 2) as u32;
                     let coverage = b.max(g).max(r);
                     if coverage > 0 {
-                        canvas.blend_pixel(x + col, y + row, colour, coverage as f32 / 255.0);
+                        canvas.blend_pixel(x + col, top + row, colour, coverage as f32 / 255.0);
                     }
                 }
             }
@@ -310,129 +235,17 @@ impl TextEngine {
         self.measure(id, text)
     }
 
-    /// Draw `text` scaled about the centre of its own box — the status pill's
-    /// count "pop" (`@keyframes pop { 45% { transform: scale(1.45) } }`). The
-    /// coverage is resampled bilinearly, because the face is 11 px and a
-    /// nearest-neighbour scale of a 1.45x jump is visibly stepped on a digit.
-    /// Returns the unscaled advance, so the caller's layout does not move.
-    pub fn draw_scaled(
-        &mut self,
-        canvas: &mut Canvas,
-        id: FontId,
-        text: &str,
-        x: i32,
-        y: i32,
-        scale: f32,
-        colour: u32,
-    ) -> i32 {
-        if scale <= 0.0 {
-            return 0;
-        }
-        if (scale - 1.0).abs() < 0.01 {
-            return self.draw(canvas, id, text, x, y, colour);
-        }
-        let advance = self.measure(id, text);
-        let (width, height) = match self.rasterise(id, text) {
-            Some(size) => size,
-            None => return 0,
-        };
-
-        let out_w = ((width as f32) * scale).ceil().max(1.0) as i32;
-        let out_h = ((height as f32) * scale).ceil().max(1.0) as i32;
-        // Scale about the run's centre: the box keeps its place in the pill.
-        let cx = x as f32 + width as f32 / 2.0;
-        let cy = y as f32 + height as f32 / 2.0;
-        let x0 = (cx - out_w as f32 / 2.0).round() as i32;
-        let y0 = (cy - out_h as f32 / 2.0).round() as i32;
-
-        for dy in 0..out_h {
-            for dx in 0..out_w {
-                let sx = (dx as f32 + 0.5) / scale - 0.5;
-                let sy = (dy as f32 + 0.5) / scale - 0.5;
-                let coverage = self.sample(sx, sy, width, height);
-                if coverage > 0.0 {
-                    canvas.blend_pixel(x0 + dx, y0 + dy, colour, coverage);
-                }
-            }
-        }
-
-        advance
-    }
-
-    /// Bilinear coverage of the scratch at a fractional position, 0 outside the
-    /// run. Only the first `width` columns of each of the `height` rows were
-    /// cleared by `rasterise`, which is exactly the sampled area.
-    fn sample(&self, x: f32, y: f32, width: i32, height: i32) -> f32 {
-        if x < -1.0 || y < -1.0 || x > width as f32 || y > height as f32 {
-            return 0.0;
-        }
-        let x0 = x.floor();
-        let y0 = y.floor();
-        let fx = x - x0;
-        let fy = y - y0;
-        let (x0, y0) = (x0 as i32, y0 as i32);
-
-        // SAFETY: guarded by the bounds check above plus the per-tap check below.
-        let tap = |px: i32, py: i32| -> f32 {
-            if px < 0 || py < 0 || px >= width || py >= height {
-                return 0.0;
-            }
-            let off = (py * SCRATCH_W + px) as isize * 4;
-            unsafe {
-                let b = *self.bits.offset(off) as f32;
-                let g = *self.bits.offset(off + 1) as f32;
-                let r = *self.bits.offset(off + 2) as f32;
-                b.max(g).max(r) / 255.0
-            }
-        };
-
-        let top = tap(x0, y0) * (1.0 - fx) + tap(x0 + 1, y0) * fx;
-        let bottom = tap(x0, y0 + 1) * (1.0 - fx) + tap(x0 + 1, y0 + 1) * fx;
-        top * (1.0 - fy) + bottom * fy
-    }
-
-    /// Draw `text` one character at a time with `track` extra pixels between
-    /// characters, asking `colour` for each one's ARGB. Returns the advance.
-    pub fn draw_tracked<F>(
-        &mut self,
-        canvas: &mut Canvas,
-        id: FontId,
-        text: &str,
-        x: i32,
-        y: i32,
-        track: f32,
-        mut colour: F,
-    ) -> i32
-    where
-        F: FnMut(usize, char) -> u32,
-    {
-        let mut cx = x as f32;
-        let mut count = 0usize;
-        for (i, ch) in text.chars().enumerate() {
-            let mut one = [0u8; 4];
-            let s = ch.encode_utf8(&mut one);
-            let w = self.draw(canvas, id, s, cx.round() as i32, y, colour(i, ch));
-            cx += w as f32 + track;
-            count = i + 1;
-        }
-        if count == 0 {
-            0
-        } else {
-            (cx - track).round() as i32 - x
-        }
-    }
-
     /// Clear the scratch and ask GDI for one run, white on transparent. Returns
     /// the run's box, or None when there is nothing to draw.
     ///
     /// Only the columns this run can touch are cleared: a glyph is ~15 px wide
-    /// inside a 512 px scratch row, and the HUD now draws tracked text (one call
-    /// per character), so clearing the whole row would be ~34x the work.
+    /// inside a 2048 px scratch row, and clearing the whole row would be ~130x the
+    /// work for the one short run a row draws.
     fn rasterise(&self, id: FontId, text: &str) -> Option<(i32, i32)> {
         if text.is_empty() {
             return None;
         }
-        let height = self.height(id).min(SCRATCH_H);
+        let height = self.font(id).cell.min(SCRATCH_H);
         // Two extra columns: a glyph may overhang its advance slightly (italic
         // bearings, hinting), and clipping that off would shave the last stem.
         let width = (self.measure(id, text) + 2).min(SCRATCH_W);
@@ -471,15 +284,7 @@ impl Drop for TextEngine {
         unsafe {
             SelectObject(self.dc, GetStockObject(DEFAULT_GUI_FONT));
             SelectObject(self.dc, self.prev);
-            for font in [
-                &self.ui,
-                &self.bold,
-                &self.mark,
-                &self.tiny,
-                &self.mono,
-                &self.mono_bold,
-                &self.slogan,
-            ] {
+            for font in [&self.name, &self.body] {
                 if font.owned && !font.handle.is_null() {
                     DeleteObject(font.handle);
                 }
@@ -490,9 +295,9 @@ impl Drop for TextEngine {
     }
 }
 
-/// Create a face and read back its cell height. A face that cannot be created
-/// falls back to the stock GUI font: a missing font must not cost the HUD all of
-/// its text.
+/// Create a face and read back its cell height and internal leading. A face that
+/// cannot be created falls back to the stock GUI font: a missing font must not
+/// cost the HUD all of its text.
 fn load_font(dc: Hdc, face: &str, height: i32, weight: i32, family: u32, em: f32) -> Font {
     let face_w: Vec<u16> = face.encode_utf16().chain(std::iter::once(0)).collect();
     // SAFETY: the DC is live; the face string is NUL-terminated and outlives the
@@ -522,13 +327,13 @@ fn load_font(dc: Hdc, face: &str, height: i32, weight: i32, family: u32, em: f32
 
         let previous = SelectObject(dc, handle);
         let mut metrics: TextMetricsW = std::mem::zeroed();
-        let measured = if GetTextMetricsW(dc, &mut metrics) != 0 {
-            metrics.height
+        let (cell, leading) = if GetTextMetricsW(dc, &mut metrics) != 0 {
+            (metrics.height, metrics.internal_leading)
         } else {
-            -height
+            (-height, 0)
         };
         SelectObject(dc, previous);
 
-        Font { handle, owned, height: measured.max(1), em }
+        Font { handle, owned, cell: cell.max(1), em, leading: leading.max(0) }
     }
 }

@@ -1,234 +1,414 @@
-// hud.rs — the external HUD, re-skinned to the designer's mockup.
+// hud.rs — the OpenCommunity in-game HUD, ported.
 //
-// The mockup is `E:\swl\doppel.html` (its `<style>` block is also on disk as
-// `.dsh-tmp/doppel-design.css`). It draws exactly three client elements over the
-// game frame, and this file draws the same three — except that the third, the
-// status pill, is **off by default** at the user's request (see
-// `SHOW_STATUS_PILL`, which is the one switch that brings it back):
+// The reference is `E:\swl\OpenCommunity\runtime\src\features\render\HUD.cpp`
+// (654 lines, with its `HUD.h`, the module options in
+// `runtime\src\features\visuals\ArrayList.h` and the `HUD{}` block of
+// `shared\common\ModuleConfig.h`). The user reviewed that HUD and asked for it to
+// be **copied**, not reinterpreted, so this file is a port: the four modes, their
+// geometry, their colours and their animations are transcribed from the source
+// rather than composed here. Every constant below carries the source line it came
+// from so the two can be diffed by eye.
 //
-//   1. **the client watermark** — the two-D mark, `DOPPEL` with the two P's in
-//      the accent, the accent→accent2 hairline and the mono slogan, with no
-//      panel behind any of it (the mockup has none).
-//   2. **the module list** — one chip per module: a 3x11 spine bar, the name and
-//      that module's own value, flushed against the screen edge.
-//   3. **the status pill** — the pulsing accent dot, the `ENABLED` label, a
-//      hairline separator and the enabled-module count. Not drawn by default;
-//      its metrics, its painter and their tests are kept as the spec for it.
+// ── what is drawn ────────────────────────────────────────────────────────────
 //
-// Every number here is transcribed from that stylesheet. Three of its features
-// cannot be expressed on a canvas that is composited straight onto the game, and
-// each is approximated the cheapest way that still reads correctly:
+//   1. **the watermark** — one inline run on a single baseline: the product name
+//      in the mode's accent, then ` | `, then the module count (HUD.cpp:508-563).
+//      The source's run is `name | nickname | "<n> FPS"`; this side of the state
+//      contract carries no nickname and no frame counter (it publishes a module
+//      table, see `state.rs`), so the middle segment is the enabled-module count
+//      and the FPS segment is omitted. The README carries the TODO for the
+//      contract v2 that would complete it. In the Rise/VapeV4 modes the run sits
+//      in the source's panel: a `rgba(0,0,0,88)` fill with the accent as a 2 px bar
+//      down its right edge (VapeV4 rounds that panel's left corners by 6 px).
+//   2. **the module list** — one row per enabled module, `NAME  TAG` on one
+//      baseline, the block right-aligned so the rows form the width-descending
+//      wedge (HUD.cpp:565-645). The accent bar is at the row's **right** edge (2 px
+//      in Rise/VapeV4, 3 px in Tesseract), the name is painted in the row's
+//      animated accent and the tag in the mode's muted grey — red `(255,85,85)` in
+//      VapeV4 while the module is in use, which is what the state's `flash` byte
+//      reports (HUD.cpp:640).
 //
-//   * `backdrop-filter: blur()` — there is no framebuffer to sample behind the
-//     overlay, so the glass is the flat `rgba(13,18,28,.55)` the mockup also
-//     paints underneath it.
-//   * `box-shadow` glows — no blur passes here: two expanding, fading fills of
-//     the same shape at low alpha (`glow`), which is what a 9-12 px blur of a
-//     3x11 bar looks like at its centre.
-//   * `text-shadow: 0 1px 6px rgba(0,0,0,.7)` — one 1 px dark offset copy of the
-//     glyph run (`draw_shadowed`), not a real 6 px blur.
+// ── animations, exactly as the source ────────────────────────────────────────
 //
-// The em-based letter spacing the mockup leans on (`0.4em` on the wordmark,
-// `0.32em` on the pill label) is done per character in `TextEngine`, because it
-// is 5.4 px and 3.04 px: rounding either to a whole pixel is visible.
+//   * **entrance**: a row slides in from the screen's right edge,
+//     `progress += dt * 6`, eased with `1 - (1-p)^3` (easeOutCubic), with the frame
+//     delta clamped to 0.1 s (HUD.cpp:502-506, 590-612). There is no opacity ramp;
+//     a row is opaque from the first frame it exists.
+//   * **exit**: instant — the row is dropped and the rows below it snap up. The
+//     source does that by erasing the `m_SlideProgress` entries of modules that
+//     are no longer enabled (HUD.cpp:647-653).
+//   * **accent**: per-row phase offsets, one function per mode (HUD.cpp:249-309).
+//     Default blends the two configurable colours on a cosine over
+//     `2500 / max(speed, 0.01)` ms with `+400 ms` per row; Rise maps
+//     `0.5 + 0.5*sin(t*1.35 + i*0.5)` onto an HSV hue sweep; VapeV4 lerps purple
+//     to pink on `sin(t*1.55 + i*0.45)`; Tesseract walks the hue by the golden
+//     ratio, `hue = fmod(t_ms/2000 + i*0.618034, 1)`. HSV→RGB is implemented here
+//     because the source gets it from ImGui.
+//   * a row's **shadow** is the source's only text effect: a 1 px down-right copy
+//     of the glyph run in `rgba(0,0,0,120)` (HUD.cpp:79-82). No outline, no glow,
+//     no letter spacing.
+//
+// ── the GDI adaptations ──────────────────────────────────────────────────────
+//
+//   * **per-corner rounding.** The source rounds whole shapes with ImGui's
+//     `ImDrawFlags_RoundCornersLeft`: Tesseract's row chips and VapeV4's panel are
+//     rounded on their left corners only, square on the right where the accent bar
+//     sits. GDI's `RoundRect` takes one radius for all four corners, so the fill in
+//     `draw.rs` selects the radius per quadrant of its distance field instead (a
+//     region from `CreateRoundRectRgn` would be opaque and jagged). Documented at
+//     the function.
+//   * **fonts.** The source loads the **Play** face at 16 px; Play is not installed
+//     here, so names use Segoe UI Semibold and everything else Segoe UI, still at
+//     16 px (see `text.rs`).
+//   * **`--scale`.** The source has no DPI handling at all — every number above is
+//     physical pixels. `--scale <f>` (default 1.0) multiplies each metric and the
+//     font size, so the HUD can be made readable on a 4K screen; 1.0 is the
+//     faithful setting.
+//
+// ── infrastructure that is deliberately unchanged ────────────────────────────
+//
+// The window, the state contract and its parser, `--rect`/`--x`/`--y`/`--w`/`--h`
+// and `--position`, `--dump`, `--hide`, the log lines and the exit rules are all
+// the same as before. Because the source anchors the two elements to *opposite*
+// screen edges (watermark left, list right), the anchoring helpers below are the
+// port's successors of the mockup's `anchor_x`/`anchor_top`: same `Rect`, same
+// meaning of `--position`, different element placement because the source's own
+// placement is what is being ported.
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use crate::draw::{argb, Canvas};
 use crate::state::Entry;
-use crate::text::{FontId, TextEngine};
+use crate::text::{FontId, TextEngine, FONT_PX, MAX_SCALE, MIN_SCALE};
 
-// ── palette (`:root` of the mockup) ─────────────────────────────────────────
+// ── the four modes (HUD.cpp:463-468, ArrayList.h:14) ────────────────────────
 
-/// `--acc` #22D3EE — the accent: bars, the dot, the two P's, values on highlight.
-pub const ACCENT: u32 = argb(0x22, 0xD3, 0xEE, 0xFF);
-/// `--acc2` #A78BFA — where the spine and the hairline fade to.
-pub const ACCENT2: u32 = argb(0xA7, 0x8B, 0xFA, 0xFF);
-/// `--txt` #EDF2FA — primary text.
-pub const TEXT: u32 = argb(0xED, 0xF2, 0xFA, 0xFF);
-/// `--mut` #8B96AB — the slogan and the pill label.
-pub const MUTED: u32 = argb(0x8B, 0x96, 0xAB, 0xFF);
-/// `--glass: rgba(13,18,28,.55)` — the pill body (and the row chip, at 40 % of it).
-pub const GLASS: u32 = argb(0x0D, 0x12, 0x1C, 0x8C);
-/// `--line: rgba(148,163,184,.16)` — the pill's hairline border.
-pub const LINE: u32 = argb(0x94, 0xA3, 0xB8, 0x29);
-/// `#FF5A5A` — the flashing bar and the flash halo.
-pub const FLASH_RED: u32 = argb(0xFF, 0x5A, 0x5A, 0xFF);
-/// `#FF6B6B` — the flashing name.
-pub const FLASH_TEXT: u32 = argb(0xFF, 0x6B, 0x6B, 0xFF);
-/// `.al li.flash { background: rgba(255,90,90,.055) }`.
-const FLASH_TINT: u32 = argb(0xFF, 0x5A, 0x5A, 0x0E);
-/// `.s-sep { background: rgba(255,255,255,.14) }`.
-const SEPARATOR: u32 = argb(0xFF, 0xFF, 0xFF, 0x24);
-/// The HUD-wide `text-shadow: 0 1px 6px rgba(0,0,0,.7)`, drawn as one offset copy.
-const TEXT_SHADOW: u32 = argb(0x00, 0x00, 0x00, 0xB3);
-
-/// The row chip: `--glass` at 40 % of its alpha — the user asked for "a little
-/// background on the module list", which the mockup only paints on `:hover`.
-/// **Set this to `0.0` for a byte-for-byte faithful copy of the mockup**, which
-/// gives the rows no background at all.
-const ROW_CHIP_ALPHA: f32 = 0.4;
-
-/// Element 3 of the mockup, the bottom-corner status pill. The designer's mockup
-/// includes it; after reviewing the render **the user asked for it not to be on
-/// screen**, so it is off by default. **Flipping this to `true` restores the
-/// element unchanged** — the layout metrics (`pill_size_from`, `pill_size`), the
-/// painter (`paint_pill`) and their tests are all still in the tree. It gates two
-/// things and nothing else: whether `paint` draws the pill, and whether a visible
-/// HUD counts as permanently animating (the ring). The geometry is measured and
-/// printed either way, so the pill's numbers never rot.
-const SHOW_STATUS_PILL: bool = false;
-
-// ── strings ─────────────────────────────────────────────────────────────────
-
-pub const MARK: &str = "D";
-pub const WORDMARK: &str = "DOPPEL";
-/// The two P's of `DOPPEL` carry the accent (`.word b`).
-const WORDMARK_ACCENT: [usize; 2] = [2, 3];
-const SLOGAN: &str = "statistically you.";
-const LABEL: &str = "ENABLED";
-
-// ── geometry, transcribed from the stylesheet ───────────────────────────────
-//
-// The mockup's frame is much larger than this overlay's stage, but every element
-// is inset from a corner, so only the insets and the element-local numbers
-// matter here.
-
-/// Inset of all three elements from the corner they occupy (`right: 16px`,
-/// `bottom: 16px`, `.wm-col { top: 16px }`).
-pub const MARGIN: i32 = 16;
-
-/// `.wm-col { top: 16px }`.
-const WATERMARK_TOP: i32 = MARGIN;
-/// `.mark { width: 21px; height: 15px }`.
-const MARK_W: i32 = 21;
-const MARK_H: i32 = 15;
-/// `.mark i.d { left: 7px }` — where the mirrored accent D sits inside the box.
-const MARK_ECHO_X: i32 = 7;
-/// `.mark i { opacity: .62 }` — the ghost D.
-const MARK_OPACITY: f32 = 0.62;
-/// `.mark i.d { opacity: .92 }` — the mirrored accent D.
-const MARK_ECHO_OPACITY: f32 = 0.92;
-/// `.wm { gap: 11px }`.
-const WM_GAP: i32 = 11;
-/// `.word { letter-spacing: .4em }`, and the same trailing space is taken back
-/// by `margin-right: -.4em` — which is why the tracked measure drops it.
-const WORD_TRACK_EM: f32 = 0.4;
-/// `.wm-line { margin-top: 8px }`, and its own height.
-const RULE_GAP: i32 = 8;
-const RULE_H: i32 = 1;
-/// `.wm-line` background: `linear-gradient(90deg, acc, acc2 46%, transparent)`.
-const RULE_ACCENT2_STOP: f32 = 0.46;
-/// `.slogan { margin-top: 6px; letter-spacing: .06em }`.
-const SLOGAN_GAP: i32 = 6;
-const SLOGAN_TRACK_EM: f32 = 0.06;
-
-/// Gap from the bottom of the watermark block to the top of the list. The mockup
-/// pins the list at `top: 74px`; with the mockup's own block height that is 14 px
-/// below it, and expressing it as a gap from the block means the two cannot
-/// overlap if a face metric moves by a pixel.
-const LIST_TOP_GAP: i32 = 14;
-
-/// `.al li { padding: 3px 8px; border-radius: 5px }` and `.al { gap: 3px }`.
-const ROW_PAD_Y: i32 = 3;
-const ROW_PAD_X: i32 = 8;
-const ROW_RADIUS: f32 = 5.0;
-const ROW_GAP: i32 = 3;
-/// `.al .bar { width: 3px; height: 11px; border-radius: 2px }`.
-const BAR_W: i32 = 3;
-const BAR_H: i32 = 11;
-const BAR_RADIUS: f32 = 2.0;
-/// `.al li { gap: 8px }` — between the bar and the name.
-const BAR_GAP: i32 = 8;
-/// `.al .t { letter-spacing: .04em }`.
-const NAME_TRACK_EM: f32 = 0.04;
-/// The one number the mockup does not have: the user asked for the module's value
-/// "~10 px after the name", in the mono face.
-const ROW_VALUE_GAP: i32 = 10;
-/// `.al .bar { box-shadow: 0 0 9px rgba(34,211,238,.35) }`, and the flash's
-/// `0 0 12px rgba(255,90,90,.85)`.
-const BAR_GLOW: f32 = 0.35;
-const BAR_GLOW_FLASH: f32 = 0.85;
-/// `.al li.flash .t { text-shadow: 0 0 10px rgba(255,90,90,.7) }`.
-const FLASH_TEXT_GLOW: f32 = 0.7;
-
-/// `.status { padding: 8px 13px; border-radius: 9px; gap: 9px }`.
-const PILL_PAD_X: i32 = 13;
-const PILL_PAD_Y: i32 = 8;
-const PILL_RADIUS: f32 = 9.0;
-const PILL_GAP: i32 = 9;
-/// `.dot { width: 7px; height: 7px }`, and `.dot::after { inset: -1px }` — the
-/// pulsing ring is the dot expanded by 1 px on every side.
-const DOT_D: i32 = 7;
-const RING_INSET: i32 = 1;
-/// `.s-sep { width: 1px; height: 11px }`.
-const SEP_W: i32 = 1;
-const SEP_H: i32 = 11;
-/// `.s-name { letter-spacing: .32em }`.
-const LABEL_TRACK_EM: f32 = 0.32;
-/// `.dot { box-shadow: 0 0 8px rgba(34,211,238,.9) }`.
-const DOT_GLOW: f32 = 0.9;
-/// `@keyframes pulse`, 2.4 s, `ease-out`: scale .6 → 2.4 while opacity .8 → 0,
-/// with the last quarter of the cycle holding the end state.
-const PULSE_MS: f32 = 2400.0;
-const PULSE_DECAY: f32 = 0.75;
-const PULSE_MIN: f32 = 0.6;
-const PULSE_MAX: f32 = 2.4;
-const PULSE_ALPHA: f32 = 0.8;
-
-// ── motion, transcribed from the stylesheet ─────────────────────────────────
-
-/// `--curve: cubic-bezier(.22,1,.36,1)`.
-const DESIGN_CURVE: (f32, f32, f32, f32) = (0.22, 1.0, 0.36, 1.0);
-/// `@keyframes rise` over `.wm-col { animation: rise .8s var(--curve) .15s }`.
-const WM_DELAY_MS: f32 = 150.0;
-const WM_MS: f32 = 800.0;
-const WM_RISE: f32 = 10.0;
-/// `.al li` — opacity/transform in, `transform: translateX(18px)` out. The
-/// mockup staggers 60 ms per row from 140 ms; the spec asks for 45 ms.
-const ROW_DELAY_MS: f32 = 140.0;
-const ROW_STAGGER_MS: f32 = 45.0;
-const ROW_MS: f32 = 550.0;
-const ROW_SLIDE: f32 = 18.0;
-/// `.status { animation: rise .8s var(--curve) .5s }`.
-const PILL_DELAY_MS: f32 = 500.0;
-const PILL_MS: f32 = 800.0;
-const PILL_RISE: f32 = 10.0;
-/// `@keyframes pop { 45% { transform: scale(1.45) } }` over `.3s var(--curve)`.
-const POP_MS: f32 = 300.0;
-const POP_AT: f32 = 0.45;
-const POP_SCALE: f32 = 1.45;
-/// Flash strength lost per frame: 255 / 15 ~= 17 frames ~= 280 ms at 60 Hz. This
-/// is the decay the old card used and the flash still rides on it.
-const FLASH_DECAY: u8 = 15;
-
-/// Which pair of corners the whole HUD occupies. The mockup puts all three
-/// elements in the right-hand corners, so that is the default; `Left` is the same
-/// HUD mirrored (`--position left`).
+/// `ArrayListMode` — the combo in `ArrayList.h:14`, in the source's own order.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Position {
-    Right,
-    Left,
+pub enum Mode {
+    Default,
+    Rise,
+    Vape,
+    Tesseract,
 }
 
-/// Per-frame inputs that are not part of the shared state.
-pub struct Config {
-    pub position: Position,
-    pub margin: i32,
-    /// Global fade multiplier, 1.0 normally and ramped to 0 when the game dies.
-    pub alpha: f32,
+impl Mode {
+    /// Parse `--mode`. `vapev4` is the source's own spelling of the combo entry,
+    /// so it is accepted next to the short one.
+    pub fn parse(raw: &str) -> Result<Mode, String> {
+        match raw.to_ascii_lowercase().as_str() {
+            "default" => Ok(Mode::Default),
+            "rise" => Ok(Mode::Rise),
+            "vape" | "vapev4" | "vape_v4" => Ok(Mode::Vape),
+            "tesseract" => Ok(Mode::Tesseract),
+            other => {
+                Err(format!("--mode: expected default, rise, vape or tesseract, got {other}"))
+            }
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Mode::Default => "default",
+            Mode::Rise => "rise",
+            Mode::Vape => "vape",
+            Mode::Tesseract => "tesseract",
+        }
+    }
+
+    /// `riseLikeMode` (HUD.cpp:466): Rise and VapeV4 share the panel/spacing rules.
+    pub fn is_rise_like(self) -> bool {
+        matches!(self, Mode::Rise | Mode::Vape)
+    }
+
+    /// The face a module name is drawn in: the source uses its bold face in
+    /// Default mode and the regular one everywhere else (HUD.cpp:468).
+    pub fn name_font(self) -> FontId {
+        match self {
+            Mode::Default => FontId::Name,
+            _ => FontId::Body,
+        }
+    }
+}
+
+// ── palette and master constants (HUD.cpp:471-491) ──────────────────────────
+//
+// Names are the source's, values are the source's, lines are cited so a future
+// reader can check one against the other.
+
+/// `shadowColor` (HUD.cpp:476) — the 1 px down-right glyph shadow.
+pub const SHADOW: u32 = argb(0, 0, 0, 120);
+/// `secondaryColor` for Default/Tesseract (HUD.cpp:477).
+pub const SECONDARY_TEXT: u32 = argb(200, 200, 200, 255);
+/// `secondaryColor` for Rise/VapeV4 (HUD.cpp:477).
+pub const RISE_SECONDARY_TEXT: u32 = argb(154, 154, 154, 255);
+/// `riseBackgroundColor` (HUD.cpp:478).
+pub const RISE_BACKGROUND: u32 = argb(0, 0, 0, 88);
+/// `riseWatermarkTextColor` (HUD.cpp:479) — Rise's watermark title, not the accent.
+pub const RISE_WATERMARK_TEXT: u32 = argb(232, 232, 232, 255);
+/// `vapeTagActiveColor` (HUD.cpp:480) — the tag while the module is in use.
+pub const VAPE_TAG_ACTIVE: u32 = argb(255, 85, 85, 255);
+/// `tesseractBackgroundColor` (HUD.cpp:485).
+pub const TESSERACT_BACKGROUND: u32 = argb(25, 25, 30, 240);
+
+/// The Default mode's wave colours, as `ModuleConfig.h:65-66` (and
+/// `ArrayList.h:18-19`) spells them: `78,86,107` → `120,146,214`.
+pub const DEFAULT_PRIMARY: [f32; 3] = [78.0 / 255.0, 86.0 / 255.0, 107.0 / 255.0];
+pub const DEFAULT_SECONDARY: [f32; 3] = [120.0 / 255.0, 146.0 / 255.0, 214.0 / 255.0];
+/// `m_WaveSpeed` (ModuleConfig.h:64).
+pub const DEFAULT_WAVE_SPEED: f32 = 1.0;
+
+/// `topY` (HUD.cpp:471).
+pub const TOP_Y: f32 = 4.0;
+/// `moduleSpacing` for the modes that are not Rise-like (HUD.cpp:473).
+pub const MODULE_SPACING: f32 = 2.0;
+/// `itemHeight` extras (HUD.cpp:474): `+6` Rise-like, `+4` Tesseract, `+2` Default.
+pub const RISE_ITEM_EXTRA: f32 = 6.0;
+pub const TESSERACT_ITEM_EXTRA: f32 = 4.0;
+pub const DEFAULT_ITEM_EXTRA: f32 = 2.0;
+/// `risePadX` / `risePadY` (HUD.cpp:481-482).
+pub const RISE_PAD_X: f32 = 4.0;
+pub const RISE_PAD_Y: f32 = 2.0;
+/// `riseRectWidth` (HUD.cpp:483) — the accent bar at a Rise-like row's right edge.
+pub const RISE_RECT_WIDTH: f32 = 2.0;
+/// `vapeLeftRounding` (HUD.cpp:484).
+pub const VAPE_LEFT_ROUNDING: f32 = 6.0;
+/// `tesseractPadding` / `tesseractGapAfterText` / `tesseractRectWidth`
+/// (HUD.cpp:486-488).
+pub const TESSERACT_PADDING: f32 = 6.0;
+pub const TESSERACT_GAP_AFTER_TEXT: f32 = 4.0;
+pub const TESSERACT_RECT_WIDTH: f32 = 3.0;
+/// The Tesseract chip's left-corner radius (HUD.cpp:632).
+pub const TESSERACT_CHIP_RADIUS: f32 = 5.0;
+/// `tesseractMarginRight` / `defaultRightMargin` / `riseRightMargin`
+/// (HUD.cpp:489-491).
+pub const TESSERACT_MARGIN_RIGHT: f32 = 6.0;
+pub const DEFAULT_MARGIN_RIGHT: f32 = 6.0;
+pub const RISE_MARGIN_RIGHT: f32 = 4.0;
+/// `cursorX`'s and the panel's inset from the left edge (HUD.cpp:537, 545).
+pub const WATERMARK_X: f32 = 10.0;
+/// Tesseract's watermark baseline and the Tesseract rows' own base y
+/// (HUD.cpp:536, 613).
+pub const TESSERACT_WATERMARK_Y: f32 = 6.0;
+pub const TESSERACT_BASE_Y: f32 = 2.0;
+/// Tesseract's text inset inside its chip (HUD.cpp:617).
+pub const TESSERACT_TEXT_INSET_Y: f32 = 2.0;
+/// `2500.0f / max(speed, 0.01f)` ms per wave cycle, `+400 ms` per row
+/// (HUD.cpp:258-261, 581).
+pub const WAVE_CYCLE_MS: f32 = 2500.0;
+pub const WAVE_ROW_OFFSET_MS: f32 = 400.0;
+pub const WAVE_MIN_SPEED: f32 = 0.01;
+/// `progress += deltaTime * 6.0f` (HUD.cpp:592) and the 0.1 s delta clamp
+/// (HUD.cpp:504).
+pub const SLIDE_RATE: f32 = 6.0;
+pub const MAX_DELTA_S: f32 = 0.1;
+/// The golden-ratio hue walk of Tesseract (HUD.cpp:296).
+pub const GOLDEN_RATIO: f32 = 0.618_034;
+/// The product name in the watermark's title slot. The source writes
+/// "OpenCommunity" there (HUD.cpp:539); this overlay's own name goes in its place.
+pub const PRODUCT: &str = "DOPPEL";
+/// The source's separator between the watermark's segments (HUD.cpp:535).
+pub const SEGMENT_SEP: &str = " | ";
+/// The module the source deliberately never lists (HUD.cpp:326-328).
+pub const SELF_MODULE: &str = "ArrayList";
+
+// ── the mode's metrics ──────────────────────────────────────────────────────
+
+/// The source's master constants after `--scale`. At scale 1.0 every field is the
+/// number the source computes at HUD.cpp:469-491.
+#[derive(Clone, Copy, Debug)]
+pub struct Metrics {
+    pub mode: Mode,
+    pub scale: f32,
+    /// `fontSize` (HUD.cpp:469) and therefore `lineHeight` (HUD.cpp:472).
+    pub font_px: f32,
+    pub line_height: f32,
+    /// `topY` (HUD.cpp:471).
+    pub top_y: f32,
+    /// `moduleSpacing` (HUD.cpp:473): 0 for Rise-like, 2 otherwise.
+    pub module_spacing: f32,
+    /// `itemHeight` (HUD.cpp:474).
+    pub item_height: f32,
+    pub rise_pad_x: f32,
+    pub rise_pad_y: f32,
+    pub rise_rect_w: f32,
+    pub vape_left_rounding: f32,
+    pub tesseract_padding: f32,
+    pub tesseract_gap: f32,
+    pub tesseract_rect_w: f32,
+    pub tesseract_chip_radius: f32,
+    /// The mode's right margin (HUD.cpp:610).
+    pub right_margin: f32,
+    /// The watermark run's inset from the edge it hangs off (HUD.cpp:537).
+    pub watermark_x: f32,
+    /// The watermark run's own y (HUD.cpp:536).
+    pub watermark_y: f32,
+    /// The first row's y (HUD.cpp:613).
+    pub base_y: f32,
+    /// `textX`/`textY` inside a row (HUD.cpp:616-617).
+    pub text_inset_x: f32,
+    pub text_inset_y: f32,
+}
+
+impl Metrics {
+    /// The source's numbers, multiplied by `scale`.
+    pub fn new(mode: Mode, scale: f32) -> Metrics {
+        let scale = if scale.is_finite() { scale.clamp(MIN_SCALE, MAX_SCALE) } else { 1.0 };
+        let s = scale;
+        let rise_like = mode.is_rise_like();
+        let tesseract = mode == Mode::Tesseract;
+
+        let font_px = FONT_PX * s;
+        // `lineHeight = max(tagSize, nameSize)` (HUD.cpp:472). Both faces are
+        // created at the source's single `fontSize`, so this is that size.
+        let line_height = font_px;
+        let item_height = if rise_like {
+            line_height + RISE_ITEM_EXTRA * s
+        } else if tesseract {
+            font_px + TESSERACT_ITEM_EXTRA * s
+        } else {
+            line_height + DEFAULT_ITEM_EXTRA * s
+        };
+
+        Metrics {
+            mode,
+            scale: s,
+            font_px,
+            line_height,
+            top_y: TOP_Y * s,
+            module_spacing: if rise_like { 0.0 } else { MODULE_SPACING * s },
+            item_height,
+            rise_pad_x: RISE_PAD_X * s,
+            rise_pad_y: RISE_PAD_Y * s,
+            rise_rect_w: RISE_RECT_WIDTH * s,
+            vape_left_rounding: VAPE_LEFT_ROUNDING * s,
+            tesseract_padding: TESSERACT_PADDING * s,
+            tesseract_gap: TESSERACT_GAP_AFTER_TEXT * s,
+            tesseract_rect_w: TESSERACT_RECT_WIDTH * s,
+            tesseract_chip_radius: TESSERACT_CHIP_RADIUS * s,
+            right_margin: if rise_like {
+                RISE_MARGIN_RIGHT * s
+            } else if tesseract {
+                TESSERACT_MARGIN_RIGHT * s
+            } else {
+                DEFAULT_MARGIN_RIGHT * s
+            },
+            watermark_x: WATERMARK_X * s,
+            watermark_y: if rise_like {
+                TOP_Y * s + RISE_PAD_Y * s
+            } else if tesseract {
+                TESSERACT_WATERMARK_Y * s
+            } else {
+                TOP_Y * s
+            },
+            base_y: if tesseract { TESSERACT_BASE_Y * s } else { TOP_Y * s },
+            text_inset_x: if rise_like {
+                RISE_PAD_X * s
+            } else if tesseract {
+                TESSERACT_PADDING * s
+            } else {
+                0.0
+            },
+            text_inset_y: if rise_like {
+                RISE_PAD_Y * s
+            } else if tesseract {
+                TESSERACT_TEXT_INSET_Y * s
+            } else {
+                0.0
+            },
+        }
+    }
+}
+
+/// Row pitch: `itemHeight + moduleSpacing` (HUD.cpp:614).
+pub fn row_pitch(m: &Metrics) -> f32 {
+    m.item_height + m.module_spacing
+}
+
+/// The accent bar's width at a row's right edge: Rise/VapeV4 2 px, Tesseract 3 px,
+/// Default none (HUD.cpp:619-634).
+pub fn bar_width(m: &Metrics) -> f32 {
+    if m.mode.is_rise_like() {
+        m.rise_rect_w
+    } else if m.mode == Mode::Tesseract {
+        m.tesseract_rect_w
+    } else {
+        0.0
+    }
+}
+
+/// The four corner radii of a row's chip, (top-left, top-right, bottom-right,
+/// bottom-left): only the left corners are rounded, because the accent bar sits
+/// square against the right edge (HUD.cpp:622-633).
+pub fn chip_corners(m: &Metrics) -> [f32; 4] {
+    match m.mode {
+        Mode::Vape => [m.vape_left_rounding, 0.0, 0.0, m.vape_left_rounding],
+        Mode::Tesseract => [m.tesseract_chip_radius, 0.0, 0.0, m.tesseract_chip_radius],
+        _ => [0.0; 4],
+    }
+}
+
+/// The chip the row sits on: Rise/VapeV4 `rgba(0,0,0,88)` over the whole row,
+/// Tesseract `rgba(25,25,30,240)`, Default none (`Option::None`).
+pub fn chip_colour(m: &Metrics) -> Option<u32> {
+    match m.mode {
+        Mode::Rise | Mode::Vape => Some(RISE_BACKGROUND),
+        Mode::Tesseract => Some(TESSERACT_BACKGROUND),
+        Mode::Default => None,
+    }
+}
+
+/// The tag's colour: muted grey, and `(255,85,85)` in VapeV4 while the module is
+/// in use (HUD.cpp:640). The source applies the active colour in VapeV4 only; the
+/// other modes keep the grey whatever the flash byte says.
+pub fn tag_colour(m: &Metrics, flash: bool) -> u32 {
+    if m.mode == Mode::Vape && flash {
+        VAPE_TAG_ACTIVE
+    } else if m.mode.is_rise_like() {
+        RISE_SECONDARY_TEXT
+    } else {
+        SECONDARY_TEXT
+    }
+}
+
+/// The gap between a row's name and its tag: one space glyph, or Tesseract's own
+/// 4 px (HUD.cpp:639).
+pub fn tag_gap(m: &Metrics, space_w: f32) -> f32 {
+    if m.mode == Mode::Tesseract {
+        m.tesseract_gap
+    } else {
+        space_w
+    }
+}
+
+/// `boxWidth` (HUD.cpp:607-609): the row's own content plus the mode's padding and
+/// accent bar. Default adds nothing at all.
+pub fn box_width(m: &Metrics, layout_w: f32) -> f32 {
+    if m.mode.is_rise_like() {
+        layout_w + m.rise_pad_x * 2.0 + m.rise_rect_w + 1.0
+    } else if m.mode == Mode::Tesseract {
+        layout_w + m.tesseract_padding + m.tesseract_gap + m.tesseract_rect_w
+    } else {
+        layout_w
+    }
+}
+
+/// The Rise-like watermark panel's width (HUD.cpp:544). The source adds the FPS
+/// run's width to it; this overlay has no frame counter, so that term is the zero
+/// the port's watermark run does not have (see the header note).
+pub fn watermark_panel_width(m: &Metrics, title_w: f32, segment_w: f32) -> f32 {
+    title_w + segment_w + m.rise_pad_x * 2.0 + m.rise_rect_w + 1.0
 }
 
 // ── the screen rect the window covers ───────────────────────────────────────
 //
-// This is the fix for "the overlay does not appear on the window": the thing the
-// HUD is laid out inside is a monitor rect, not a 520x400 stage parked at (0, 0).
-// The window is created at `(rect.x, rect.y)` with `rect.w x rect.h` and the
-// canvas is its surface, so an element measured `anchor_x(rect, ..)` from an edge
-// of the rect lands on the corresponding edge of the screen. `--rect` supplies
-// the rect directly (a caller following the game window on a multi-monitor setup
-// will use it); by default it is the primary monitor, via `GetSystemMetrics`.
+// Unchanged infrastructure: the layered window is created at the rect's corner and
+// sized to it, and the canvas that fills it carries that origin (`Canvas::placed`),
+// so a block measured in screen coordinates lands on the screen edge the caller
+// asked for. `--rect` supplies the rect directly (a caller following the game
+// window on a multi-monitor desktop passes that window's rect); by default it is
+// the primary monitor.
 
 /// A rectangle in physical screen pixels.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -261,546 +441,394 @@ impl Rect {
     }
 }
 
-/// Screen x of a `block_w`-wide block hung `margin` inside `rect`: the rect's
-/// right edge for `Position::Right` — the mockup's own layout, `.wm-col { right:
-/// 16px }` — and its left edge for the mirrored `Position::Left`.
-pub fn anchor_x(rect: Rect, position: Position, margin: i32, block_w: i32) -> i32 {
+/// Which pair of screen edges the HUD hangs off. The source itself puts the
+/// watermark by the left edge (`cursorX = 10`, HUD.cpp:537) and the module list
+/// against the right one (`targetX = screenW - boxWidth - rightMargin`,
+/// HUD.cpp:611), so `--position right` (the default) is that arrangement verbatim
+/// and `left` swaps the two elements to the other pair of corners — the same
+/// `--position` switch the mockup skin had, now with the source's own placement.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Position {
+    Right,
+    Left,
+}
+
+/// Screen x of the watermark run's title (and of its panel, which starts there).
+pub fn watermark_x(rect: Rect, position: Position, m: &Metrics, run_w: f32) -> i32 {
     match position {
-        Position::Right => rect.right() - margin - block_w,
-        Position::Left => rect.x + margin,
+        Position::Right => (rect.x as f32 + m.watermark_x).round() as i32,
+        Position::Left => (rect.right() as f32 - m.watermark_x - run_w).round() as i32,
     }
 }
 
-/// Screen y of a block hung off the rect's top margin (`.wm-col { top: 16px }`).
-pub fn anchor_top(rect: Rect, margin: i32) -> i32 {
-    rect.y + margin
+/// Screen y of the watermark run's line box.
+pub fn watermark_y(rect: Rect, m: &Metrics) -> i32 {
+    (rect.y as f32 + m.watermark_y).round() as i32
 }
 
-/// Screen y of a block hung off the rect's bottom margin (`bottom: 16px`) — the
-/// status pill's corner. Not drawn while `SHOW_STATUS_PILL` is false; its geometry
-/// is still the spec for it.
-pub fn anchor_bottom(rect: Rect, margin: i32, block_h: i32) -> i32 {
-    rect.bottom() - margin - block_h
+/// The screen edge the rows are flushed against — the source's `screenW` for the
+/// right-hand layout, the mirrored edge for `--position left`. It is the raw edge:
+/// the mode's margin is applied per row, in `row_target_x`.
+pub fn list_edge_x(rect: Rect, position: Position) -> i32 {
+    match position {
+        Position::Right => rect.right(),
+        Position::Left => rect.x,
+    }
+}
+
+/// Screen x of a row's box at rest: the source's `targetX` (HUD.cpp:611).
+pub fn row_target_x(rect: Rect, position: Position, m: &Metrics, box_w: f32) -> f32 {
+    match position {
+        Position::Right => rect.right() as f32 - box_w - m.right_margin,
+        Position::Left => rect.x as f32 + m.right_margin,
+    }
+}
+
+/// Screen x a row slides in from. The source starts every row at `screenW`, the
+/// screen's right edge (HUD.cpp:612), which is off-screen to the right of its
+/// right-flushed target; for a left-flushed row the mirror of that is its own
+/// width off the left edge.
+pub fn row_slide_origin(rect: Rect, position: Position, box_w: f32) -> f32 {
+    match position {
+        Position::Right => rect.right() as f32,
+        Position::Left => rect.x as f32 - box_w,
+    }
+}
+
+/// Screen y of row `index` (HUD.cpp:614).
+pub fn row_y(rect: Rect, m: &Metrics, index: usize) -> i32 {
+    (rect.y as f32 + m.base_y + index as f32 * row_pitch(m)).round() as i32
 }
 
 // ── colour maths ────────────────────────────────────────────────────────────
 
-/// Colour with its alpha channel scaled (Theme.withAlpha).
+/// HSV → RGB, the conversion the source borrows from ImGui
+/// (`ImGui::ColorConvertHSVtoRGB`) in all four accent functions. `h` is 0..1 and
+/// wraps; the six sectors are the definitional ones, so this matches ImGui's
+/// implementation term for term.
+pub fn hsv_to_rgb(h: f32, s: f32, v: f32) -> [f32; 3] {
+    let s = s.clamp(0.0, 1.0);
+    let v = v.clamp(0.0, 1.0);
+    if s == 0.0 {
+        return [v, v, v];
+    }
+    let hh = h.rem_euclid(1.0) * 6.0;
+    let sector = hh.floor();
+    let f = hh - sector;
+    let p = v * (1.0 - s);
+    let q = v * (1.0 - s * f);
+    let t = v * (1.0 - s * (1.0 - f));
+    match sector as i32 {
+        0 => [v, t, p],
+        1 => [q, v, p],
+        2 => [p, v, t],
+        3 => [p, q, v],
+        4 => [t, p, v],
+        _ => [v, p, q],
+    }
+}
+
+/// The clock the source's accent functions read straight off the wall. The port
+/// takes it as a value so a frame's colours are a pure function of it (and so a
+/// review dump can freeze them at a known timestamp).
+#[derive(Clone, Copy, Debug)]
+pub struct Stamp {
+    /// `steady_clock` seconds — Rise, VapeV4 and the Default wave (HUD.cpp:274, 282).
+    pub seconds: f32,
+    /// `system_clock` milliseconds — Tesseract (HUD.cpp:294).
+    pub millis: f64,
+}
+
+/// The Default mode's wave (HUD.cpp:249-270): a cosine blend between the two
+/// configurable colours over `2500 / max(speed, 0.01)` ms, `offset_ms` in.
+///
+/// The source computes the phase with `fmodf` over a float `time_since_epoch()`
+/// in ms — a number around 1e12, where a float has ~65 000 ms of resolution and
+/// the blend is effectively arbitrary. The port keeps the formula exactly
+/// (`fmod(elapsed, cycle) / cycle`, `0.5 - 0.5*cos(progress*2pi)`, lerp) but does
+/// the modulus in f64, so the animation is smooth instead of quantised.
+pub fn wave_rgb(
+    primary: [f32; 3],
+    secondary: [f32; 3],
+    elapsed_ms: f64,
+    offset_ms: f32,
+    speed: f32,
+) -> [f32; 3] {
+    let speed = speed.max(WAVE_MIN_SPEED);
+    let cycle_ms = (WAVE_CYCLE_MS / speed) as f64;
+    let elapsed = elapsed_ms + offset_ms as f64;
+    let progress = elapsed.rem_euclid(cycle_ms) / cycle_ms;
+    let blend = 0.5 - 0.5 * (progress * std::f64::consts::TAU).cos();
+    let blend = blend as f32;
+    [
+        primary[0] + (secondary[0] - primary[0]) * blend,
+        primary[1] + (secondary[1] - primary[1]) * blend,
+        primary[2] + (secondary[2] - primary[2]) * blend,
+    ]
+}
+
+/// Rise (HUD.cpp:272-278): `phase = 0.5 + 0.5*sin(t*1.35 + i*0.5)`, then
+/// `hue = 0.58 - phase*0.18` at saturation 0.72 and value 0.95.
+pub fn rise_rgb(seconds: f32, index: f32) -> [f32; 3] {
+    let phase = 0.5 + 0.5 * (seconds * 1.35 + index * 0.5).sin();
+    hsv_to_rgb(0.58 - phase * 0.18, 0.72, 0.95)
+}
+
+/// VapeV4 (HUD.cpp:280-291): `phase = 0.5 + 0.5*sin(t*1.55 + i*0.45)`, lerping
+/// soft purple `(0.82, 0.50, 0.98)` towards pink `(1.0, 0.43, 0.74)`.
+pub fn vape_rgb(seconds: f32, index: f32) -> [f32; 3] {
+    let phase = 0.5 + 0.5 * (seconds * 1.55 + index * 0.45).sin();
+    let soft_purple = [0.82, 0.50, 0.98];
+    let pink = [1.0, 0.43, 0.74];
+    [
+        soft_purple[0] + (pink[0] - soft_purple[0]) * phase,
+        soft_purple[1] + (pink[1] - soft_purple[1]) * phase,
+        soft_purple[2] + (pink[2] - soft_purple[2]) * phase,
+    ]
+}
+
+/// Tesseract (HUD.cpp:293-301): `hue = fmod(t_ms / 2000 + i * 0.618034, 1)` at
+/// saturation 0.75 and value 0.9.
+pub fn tesseract_rgb(millis: f64, index: f32) -> [f32; 3] {
+    let base = (millis / 2000.0).rem_euclid(1.0) as f32;
+    let offset = (index * GOLDEN_RATIO).rem_euclid(1.0);
+    hsv_to_rgb((base + offset).rem_euclid(1.0), 0.75, 0.9)
+}
+
+/// Tesseract's watermark colour (HUD.cpp:303-309): the hue steps once every 20 ms
+/// through 360 discrete values, `state = ceil((t_ms + offset) / 20)`,
+/// `hue = fmod(state, 360) / 360`, at saturation 0.7 and value 0.8.
+pub fn tesseract_header_rgb(millis: f64, offset_ms: f32) -> [f32; 3] {
+    let state = ((millis + offset_ms as f64) / 20.0).ceil();
+    let hue = (state.rem_euclid(360.0) / 360.0) as f32;
+    hsv_to_rgb(hue, 0.7, 0.8)
+}
+
+// ── per-frame inputs ────────────────────────────────────────────────────────
+
+/// Everything the HUD needs that is not the published state: which mode, how big,
+/// and the source's `HUD{}` config block (ModuleConfig.h:57-68 / ArrayList.h:15-19).
+#[derive(Clone, Copy, Debug)]
+pub struct Config {
+    pub position: Position,
+    /// Global fade multiplier, 1.0 normally and ramped to 0 when the game dies.
+    /// The source has no overlay fade; this is the port's exit ramp.
+    pub alpha: f32,
+    pub mode: Mode,
+    /// `--scale`: 1.0 is the source's own physical-pixel layout.
+    pub scale: f32,
+    /// `m_Watermark` (ModuleConfig.h:59).
+    pub watermark: bool,
+    /// `m_Wave` (ModuleConfig.h:62) — the Default mode's animation switch.
+    pub wave: bool,
+    /// `m_WaveSpeed` (ModuleConfig.h:64).
+    pub wave_speed: f32,
+    /// `m_PrimaryColor` / `m_SecondaryColor` (ModuleConfig.h:65-66).
+    pub primary: [f32; 3],
+    pub secondary: [f32; 3],
+    /// `m_SpacedModules` (ModuleConfig.h:60): split `CamelCase` names.
+    pub spaced: bool,
+}
+
+impl Default for Config {
+    fn default() -> Config {
+        Config {
+            position: Position::Right,
+            alpha: 1.0,
+            mode: Mode::Default,
+            scale: 1.0,
+            watermark: true,
+            wave: true,
+            wave_speed: DEFAULT_WAVE_SPEED,
+            primary: DEFAULT_PRIMARY,
+            secondary: DEFAULT_SECONDARY,
+            spaced: false,
+        }
+    }
+}
+
+/// The accent colour of row `index`.
+pub fn accent(cfg: &Config, stamp: Stamp, index: usize) -> [f32; 3] {
+    match cfg.mode {
+        Mode::Rise => rise_rgb(stamp.seconds, index as f32),
+        Mode::Vape => vape_rgb(stamp.seconds, index as f32),
+        Mode::Tesseract => tesseract_rgb(stamp.millis, index as f32),
+        Mode::Default => {
+            if cfg.wave {
+                wave_rgb(
+                    cfg.primary,
+                    cfg.secondary,
+                    stamp.millis,
+                    index as f32 * WAVE_ROW_OFFSET_MS,
+                    cfg.wave_speed,
+                )
+            } else {
+                cfg.primary
+            }
+        }
+    }
+}
+
+/// The watermark's accent. Tesseract has its own, faster header sweep
+/// (HUD.cpp:516-517); every other mode is the row function at offset 0, which is
+/// what the source passes for the watermark (`GetWaveRGB(config, 0)`,
+/// HUD.cpp:519).
+pub fn watermark_accent(cfg: &Config, stamp: Stamp) -> [f32; 3] {
+    match cfg.mode {
+        Mode::Tesseract => tesseract_header_rgb(stamp.millis, 0.0),
+        _ => accent(cfg, stamp, 0),
+    }
+}
+
+/// Whether the accent keeps moving on its own. Default is time-driven only while
+/// the wave is on; the other three modes are functions of the clock by
+/// construction, so a frame with them on screen is never static. This is what the
+/// overlay's repaint decision hangs on (see `paint`).
+pub fn accent_is_animated(cfg: &Config) -> bool {
+    cfg.mode != Mode::Default || cfg.wave
+}
+
+fn pack(rgb: [f32; 3], alpha: f32) -> u32 {
+    let ch = |v: f32| (v.clamp(0.0, 1.0) * 255.0 + 0.5) as u32;
+    (ch(alpha) << 24) | (ch(rgb[0]) << 16) | (ch(rgb[1]) << 8) | ch(rgb[2])
+}
+
+/// Colour with its alpha channel scaled (the overlay's fade-out).
 pub fn with_alpha(colour: u32, mul: f32) -> u32 {
     let a = ((colour >> 24) & 0xFF) as f32 * mul.clamp(0.0, 1.0);
     ((a.round().clamp(0.0, 255.0) as u32) << 24) | (colour & 0x00FF_FFFF)
 }
 
-/// Linear interpolation of two ARGB colours (Theme.lerpArgb).
-pub fn lerp_argb(a: u32, b: u32, t: f32) -> u32 {
-    let t = t.clamp(0.0, 1.0);
-    let mix = |x: u32, y: u32| -> u32 {
-        (x as f32 + (y as f32 - x as f32) * t).round().clamp(0.0, 255.0) as u32
-    };
-    (mix((a >> 24) & 0xFF, (b >> 24) & 0xFF) << 24)
-        | (mix((a >> 16) & 0xFF, (b >> 16) & 0xFF) << 16)
-        | (mix((a >> 8) & 0xFF, (b >> 8) & 0xFF) << 8)
-        | mix(a & 0xFF, b & 0xFF)
-}
-
-/// Row `index` of `count` on the list spine: cyan at the top, violet at the
-/// bottom (the mockup's `barColor`). Also the colour under the watermark's rule.
-pub fn spine_color(index: usize, count: usize) -> u32 {
-    let t = if count <= 1 { 0.0 } else { index as f32 / (count - 1) as f32 };
-    lerp_argb(ACCENT, ACCENT2, t)
-}
-
-// ── easing ──────────────────────────────────────────────────────────────────
-
-/// One axis of a cubic Bézier from (0,0) to (1,1) with the two control points.
-fn bezier_axis(u: f32, p1: f32, p2: f32) -> f32 {
-    let v = 1.0 - u;
-    3.0 * v * v * u * p1 + 3.0 * v * u * u * p2 + u * u * u
-}
-
-/// The CSS timing function `cubic-bezier(x1, y1, x2, y2)` evaluated at `t`.
-///
-/// Bisection, not Newton: `ease-out` has x1 = 0, where Newton's derivative is
-/// zero and the iteration stalls, and 24 halvings of [0,1] resolve the parameter
-/// far below a pixel for the handful of calls a frame makes.
-pub fn cubic_bezier(x1: f32, y1: f32, x2: f32, y2: f32, t: f32) -> f32 {
-    let t = t.clamp(0.0, 1.0);
-    if t <= 0.0 {
-        return 0.0;
-    }
-    if t >= 1.0 {
-        return 1.0;
-    }
-    let (mut lo, mut hi) = (0.0f32, 1.0f32);
-    let mut u = t;
-    for _ in 0..24 {
-        let x = bezier_axis(u, x1, x2);
-        if (x - t).abs() < 1e-5 {
-            break;
+/// `FormatModuleName` (HUD.cpp:125-150): insert a space before an interior capital
+/// that follows a lowercase letter, or that ends an acronym run (an upper-case
+/// letter with a lowercase one after it). Gated on `Spaced Modules`, which is off
+/// by default (ArrayList.h:16).
+pub fn spaced_name(name: &str) -> String {
+    let chars: Vec<char> = name.chars().collect();
+    let mut out = String::with_capacity(name.len() + 4);
+    for (i, &c) in chars.iter().enumerate() {
+        if i > 0 && c.is_ascii_uppercase() {
+            let previous = chars[i - 1];
+            let follows_lowercase = previous.is_ascii_lowercase();
+            let breaks_acronym = previous.is_ascii_uppercase()
+                && chars.get(i + 1).map(|n| n.is_ascii_lowercase()).unwrap_or(false);
+            if follows_lowercase || breaks_acronym {
+                out.push(' ');
+            }
         }
-        if x < t {
-            lo = u;
-        } else {
-            hi = u;
-        }
-        u = 0.5 * (lo + hi);
+        out.push(c);
     }
-    bezier_axis(u, y1, y2)
-}
-
-/// The mockup's own curve, `cubic-bezier(.22,1,.36,1)`.
-pub fn design_curve(t: f32) -> f32 {
-    cubic_bezier(DESIGN_CURVE.0, DESIGN_CURVE.1, DESIGN_CURVE.2, DESIGN_CURVE.3, t)
-}
-
-/// The `@keyframes pulse` ring: `(scale, alpha)` at `t_ms` into the 2.4 s cycle.
-pub fn pulse_ring(t_ms: f32) -> (f32, f32) {
-    let phase = t_ms.rem_euclid(PULSE_MS) / (PULSE_MS * PULSE_DECAY);
-    let e = cubic_bezier(0.0, 0.0, 0.58, 1.0, phase.clamp(0.0, 1.0));
-    (PULSE_MIN + (PULSE_MAX - PULSE_MIN) * e, PULSE_ALPHA * (1.0 - e))
-}
-
-/// The count's pop, at `p` of its 300 ms: 1 → 1.45 at 45 % → 1.
-pub fn pop_scale(p: f32) -> f32 {
-    let p = p.clamp(0.0, 1.0);
-    let rise = POP_SCALE - 1.0;
-    if p < POP_AT {
-        1.0 + rise * design_curve(p / POP_AT)
-    } else {
-        1.0 + rise * (1.0 - design_curve((p - POP_AT) / (1.0 - POP_AT)))
-    }
-}
-
-// ── pure geometry ───────────────────────────────────────────────────────────
-
-/// Width of the watermark block: the 21 px mark box, the 11 px gap and the
-/// tracked wordmark (`.wm { gap: 11px }`).
-pub fn watermark_width(mark_w: i32, word_w: i32) -> i32 {
-    mark_w + WM_GAP + word_w
-}
-
-/// Height of the watermark block: the mark's 15 px box against the wordmark's
-/// line box, whichever is taller (`.wm` is `align-items: center`).
-pub fn watermark_height(mark_box_h: i32, word_cell_h: i32) -> i32 {
-    mark_box_h.max(word_cell_h)
-}
-
-/// The hairline's y: `margin-top: 8px` below the block.
-pub fn watermark_rule_y(block_top: i32, block_h: i32) -> i32 {
-    block_top + block_h + RULE_GAP
-}
-
-/// Row height: the name's cell (never smaller than the 11 px bar) plus the row's
-/// 3 px vertical padding on both sides.
-pub fn row_height_from(name_cell_h: i32) -> i32 {
-    name_cell_h.max(BAR_H) + ROW_PAD_Y * 2
-}
-
-/// The status pill's size from its pieces: `[dot][gap][label][gap][sep][gap]
-/// [count]` with 13 px of padding either side, and the tallest piece plus 8 px
-/// above and below.
-pub fn pill_size_from(label_w: i32, count_w: i32, label_h: i32, count_h: i32) -> (i32, i32) {
-    let inner_h = DOT_D.max(SEP_H).max(label_h).max(count_h);
-    let w = PILL_PAD_X * 2 + DOT_D + PILL_GAP * 3 + label_w + SEP_W + count_w;
-    (w, inner_h + PILL_PAD_Y * 2)
-}
-
-/// Where the three pieces of one row sit. `edge_x` is the screen edge the row is
-/// flushed against — the right edge for the mockup's layout, the left one when
-/// the whole HUD is mirrored.
-#[derive(Debug, PartialEq, Eq)]
-pub struct RowGeometry {
-    /// Left edge and width of the row's chip (its padding included).
-    pub row_x: i32,
-    pub row_w: i32,
-    /// Left edge of the 3x11 spine bar.
-    pub bar_x: i32,
-    /// Left edge of the name. The value's left edge is `ROW_VALUE_GAP` past the
-    /// name's end, on the side away from the bar.
-    pub name_x: i32,
-    pub value_x: i32,
-}
-
-/// Lay one row out. `bars_left` means the bar is on the screen-edge side, which
-/// is the mockup's arrangement: `[bar][8px][name]`, plus `[10px][value]` when the
-/// row has one. The mirrored list keeps the same gaps with everything flipped.
-pub fn row_geometry(edge_x: i32, name_w: i32, value_w: i32, bars_left: bool) -> RowGeometry {
-    let inner = BAR_W + BAR_GAP + name_w + if value_w > 0 { ROW_VALUE_GAP + value_w } else { 0 };
-    let row_w = inner + ROW_PAD_X * 2;
-    let row_x = if bars_left { edge_x } else { edge_x - row_w };
-    let bar_x = if bars_left { row_x + ROW_PAD_X } else { row_x + row_w - ROW_PAD_X - BAR_W };
-    let name_x = if bars_left { bar_x + BAR_W + BAR_GAP } else { bar_x - BAR_GAP - name_w };
-    let value_x =
-        if bars_left { name_x + name_w + ROW_VALUE_GAP } else { name_x - ROW_VALUE_GAP - value_w };
-    RowGeometry { row_x, row_w, bar_x, name_x, value_x }
-}
-
-// ── measured sizes (the same numbers, through the text engine) ──────────────
-
-/// Width of `DOPPEL` with `.word { letter-spacing: .4em }`.
-pub fn wordmark_width(text: &TextEngine) -> i32 {
-    text.measure_tracked(FontId::UiBold, WORDMARK, WORD_TRACK_EM * text.em_px(FontId::UiBold))
-}
-
-/// The watermark block's size for the current face metrics.
-pub fn watermark_size(text: &TextEngine) -> (i32, i32) {
-    (
-        watermark_width(MARK_W, wordmark_width(text)),
-        watermark_height(MARK_H, text.height(FontId::UiBold)),
-    )
-}
-
-/// Row height for the current face metrics.
-pub fn row_height(text: &TextEngine) -> i32 {
-    row_height_from(text.height(FontId::Ui))
-}
-
-/// The status pill's size for the current face metrics and a given count.
-pub fn pill_size(text: &TextEngine, count: usize) -> (i32, i32) {
-    let label_w = text.measure_tracked(
-        FontId::UiTiny,
-        LABEL,
-        LABEL_TRACK_EM * text.em_px(FontId::UiTiny),
-    );
-    let count_w = text.measure(FontId::MonoBold, &count.to_string());
-    pill_size_from(label_w, count_w, text.height(FontId::UiTiny), text.height(FontId::MonoBold))
+    out
 }
 
 // ── animation state ─────────────────────────────────────────────────────────
 
-/// What this side animates on top of the published state: when a row first
-/// appeared, how hot a module's flash still is, and the two one-shot entrances
-/// that are measured from process start.
+/// What this side animates on top of the published state: how far each row has
+/// slid in, and the clock the accent functions read. The source keeps
+/// `m_SlideProgress` keyed by module name, an `m_LastFrameTime` for the delta and
+/// `m_Fps`; the FPS counter has no input on this side of the contract (see the
+/// header note), so it is not ported.
 pub struct Anim {
-    start: Instant,
-    appear: HashMap<String, Instant>,
-    flash: HashMap<u32, u8>,
-    /// The last count the pill showed, and when it changed (the pop).
-    count: Option<usize>,
-    pop_at: Option<Instant>,
-    /// Phase offset for the endless pulse, so `--dump` can freeze it mid-ring.
-    pulse_offset_ms: f32,
+    /// When the accent clock was zeroed. Seeded so a review dump is deterministic.
+    origin: Instant,
+    last: Option<Instant>,
+    dt: f32,
+    slide: HashMap<String, f32>,
+}
+
+/// How far into the accent clock `Anim::seed` puts a review frame: 2000 ms, which
+/// gives every mode a mid-animation, per-row-distinct set of colours.
+pub const SEED_MS: u64 = 2000;
+
+impl Default for Anim {
+    fn default() -> Anim {
+        Anim::new()
+    }
 }
 
 impl Anim {
     pub fn new() -> Anim {
-        Anim {
-            start: Instant::now(),
-            appear: HashMap::new(),
-            flash: HashMap::new(),
-            count: None,
-            pop_at: None,
-            pulse_offset_ms: 0.0,
-        }
+        Anim { origin: Instant::now(), last: None, dt: 0.0, slide: HashMap::new() }
     }
 
-    /// Drop state for modules that are no longer published, then decay the
-    /// flash strengths: a set flag means 255, a clear one loses 15 per frame.
-    pub fn update(&mut self, entries: &[Entry]) {
-        self.appear.retain(|name, _| entries.iter().any(|e| &e.name == name));
-        self.flash.retain(|id, _| entries.iter().any(|e| e.id == *id));
+    /// Take the frame's timestamp: the delta is clamped to 0.1 s exactly like
+    /// HUD.cpp:502-506, so a stalled or debugger-paused process does not teleport
+    /// a row. Called once per loop iteration, even on a frame the overlay decides
+    /// not to repaint, so a row that appears after an idle stretch still gets one
+    /// ordinary step rather than a catch-up jump.
+    pub fn tick(&mut self, now: Instant) {
+        self.dt = match self.last {
+            Some(previous) => {
+                now.saturating_duration_since(previous).as_secs_f32().min(MAX_DELTA_S)
+            }
+            None => 0.0,
+        };
+        self.last = Some(now);
+    }
 
-        for e in entries {
-            match self.flash.get_mut(&e.id) {
-                Some(strength) => {
-                    if e.flash {
-                        *strength = 255;
-                    } else {
-                        *strength = strength.saturating_sub(FLASH_DECAY);
-                    }
-                }
-                None => {
-                    if e.flash {
-                        self.flash.insert(e.id, 255);
-                    }
-                }
+    /// Forget the slide state of modules that are no longer listed — the source's
+    /// instant exit, so a module that comes back starts its entrance from the edge
+    /// rather than from wherever it was dropped (HUD.cpp:647-653).
+    pub fn retain(&mut self, live: &[String]) {
+        self.slide.retain(|name, _| live.iter().any(|live| live == name));
+    }
+
+    /// The wall clock the accent functions are evaluated at.
+    pub fn stamp(&self, now: Instant) -> Stamp {
+        let elapsed = now.saturating_duration_since(self.origin);
+        Stamp { seconds: elapsed.as_secs_f32(), millis: elapsed.as_secs_f64() * 1000.0 }
+    }
+
+    /// One row's entrance progress: `progress += dt * 6`, clamped to 1
+    /// (HUD.cpp:590-596). A row seen for the first time starts at 0 and takes this
+    /// frame's step, exactly as the source's `m_SlideProgress[mod.name]` does, and
+    /// nothing here fades opacity.
+    pub fn progress(&mut self, name: &str, dt: f32) -> f32 {
+        let progress = self.slide.entry(name.to_string()).or_insert(0.0);
+        if *progress < 1.0 {
+            *progress = (*progress + dt * SLIDE_RATE).min(1.0);
+        }
+        *progress
+    }
+
+    /// Dump hook: every row is treated as long settled (as if it had appeared
+    /// before the seed) and the accent clock starts at exactly `SEED_MS`, so a
+    /// review frame's colours are the accent functions evaluated at a known
+    /// timestamp — what the README's sampled numbers are checked against.
+    pub fn seed(&mut self, entries: &[Entry], now: Instant) {
+        self.origin = now.checked_sub(Duration::from_millis(SEED_MS)).unwrap_or(now);
+        self.last = None;
+        self.dt = 0.0;
+        self.slide.clear();
+        for entry in entries {
+            if !entry.name.is_empty() {
+                self.slide.insert(entry.name.clone(), 1.0);
             }
         }
     }
-
-    /// 0 -> 1 progress of the watermark's `rise`, eased with the design curve.
-    pub fn watermark(&self, now: Instant) -> f32 {
-        entrance(self.start, now, WM_DELAY_MS, WM_MS)
-    }
-
-    /// 0 -> 1 progress of the status pill's delayed `rise`.
-    pub fn pill(&self, now: Instant) -> f32 {
-        entrance(self.start, now, PILL_DELAY_MS, PILL_MS)
-    }
-
-    /// 0 -> 1 entrance progress for a row, staggered by its index in the list. A
-    /// row scheduled for a later slot returns 0 until its turn arrives.
-    pub fn ease(&mut self, name: &str, index: usize, now: Instant) -> f32 {
-        let delay = ROW_DELAY_MS + index as f32 * ROW_STAGGER_MS;
-        let ts = *self.appear.entry(name.to_string()).or_insert_with(|| {
-            now + Duration::from_millis(delay as u64)
-        });
-        entrance(ts, now, 0.0, ROW_MS)
-    }
-
-    /// Current flash strength for a module, 0..=255.
-    pub fn strength(&self, id: u32) -> u8 {
-        *self.flash.get(&id).unwrap_or(&0)
-    }
-
-    /// The pulsing ring's `(scale, alpha)` right now. It never stops, so a frame
-    /// with the pill on screen is never static.
-    pub fn pulse(&self, now: Instant) -> (f32, f32) {
-        pulse_ring(now.saturating_duration_since(self.start).as_secs_f32() * 1000.0
-            + self.pulse_offset_ms)
-    }
-
-    /// The count's pop scale for this frame, plus whether it is still running.
-    /// The first count seen is not a change: the pill must not pop on start-up.
-    pub fn pop(&mut self, count: usize, now: Instant) -> (f32, bool) {
-        if let Some(previous) = self.count {
-            if previous != count {
-                self.pop_at = Some(now);
-            }
-        }
-        self.count = Some(count);
-
-        match self.pop_at {
-            Some(at) => {
-                let p = now.saturating_duration_since(at).as_secs_f32() * 1000.0 / POP_MS;
-                if p >= 1.0 {
-                    self.pop_at = None;
-                    (1.0, false)
-                } else {
-                    (pop_scale(p), true)
-                }
-            }
-            None => (1.0, false),
-        }
-    }
-
-    /// Dump/test hook: pretend every row entered two seconds ago, put the pulse
-    /// mid-ring and seed the given flash strengths, so a still frame is
-    /// representative of a live HUD.
-    pub fn seed(&mut self, entries: &[Entry], now: Instant, flashes: &[(u32, u8)]) {
-        const AGE_MS: f32 = 2000.0;
-        // Where in the 2.4 s ring the dump freezes: expanded past the dot, its
-        // opacity still a quarter rather than faded out.
-        const RING_AT_MS: f32 = 900.0;
-
-        let past = now.checked_sub(Duration::from_millis(AGE_MS as u64)).unwrap_or(now);
-        self.start = past;
-        // `pulse` adds the elapsed time, so the offset has to take back the age
-        // the block has already been running for.
-        self.pulse_offset_ms = (RING_AT_MS - AGE_MS).rem_euclid(PULSE_MS);
-        for e in entries {
-            if !e.name.is_empty() {
-                self.appear.insert(e.name.clone(), past);
-            }
-        }
-        for (id, strength) in flashes {
-            self.flash.insert(*id, *strength);
-        }
-    }
-}
-
-/// 0 -> 1 progress of an entrance that starts `delay_ms` after `start`, runs for
-/// `dur_ms` and is eased with the mockup's curve.
-fn entrance(start: Instant, now: Instant, delay_ms: f32, dur_ms: f32) -> f32 {
-    let elapsed = now.saturating_duration_since(start).as_secs_f32() * 1000.0 - delay_ms;
-    if elapsed <= 0.0 {
-        return 0.0;
-    }
-    design_curve((elapsed / dur_ms).clamp(0.0, 1.0))
 }
 
 // ── layout ──────────────────────────────────────────────────────────────────
 
-/// One measured row, positioned at rest. `paint` adds the entrance slide to the
-/// x values; nothing else about a row depends on time.
-struct RowLayout {
-    /// Index into the entry slice this layout was measured from.
-    index: usize,
-    name_w: i32,
-    value_w: i32,
-    row_x: i32,
-    row_w: i32,
-    bar_x: i32,
-    name_x: i32,
-    value_x: i32,
+/// One measured row, in the source's own terms: `layoutWidth` is the run the mode
+/// lays out (HUD.cpp:599-605) and `boxWidth` the chip/padding/bar around it.
+struct Row {
+    /// Index into the published slice this row was measured from.
+    entry: usize,
+    /// The source's `mod.name` — the key of the slide state (HUD.cpp:590).
+    key: String,
+    /// The name as drawn, after `m_SpacedModules` formatting.
+    name: String,
+    name_w: f32,
+    tag_w: f32,
+    /// The width the wedge is sorted by (HUD.cpp:340-342).
+    sort_w: f32,
+    /// `layoutWidth` for this row's mode — the run a row's own gap rule produces
+    /// (HUD.cpp:599-605).
+    layout_w: f32,
+    /// `boxWidth` for this row's mode.
+    box_w: f32,
 }
-
-/// The status pill's pieces, all at rest.
-struct PillLayout {
-    x: i32,
-    y: i32,
-    w: i32,
-    h: i32,
-    dot_x: i32,
-    dot_y: i32,
-    label_x: i32,
-    label_y: i32,
-    label_w: i32,
-    label_track: f32,
-    sep_x: i32,
-    sep_y: i32,
-    count_x: i32,
-    count_y: i32,
-    count_w: i32,
-}
-
-/// A still HUD: the watermark block, the rows and the pill. Everything `paint`
-/// needs except the current time.
-struct Layout {
-    wm_x: i32,
-    wm_w: i32,
-    wm_h: i32,
-    mark_x: i32,
-    mark_y: i32,
-    word_x: i32,
-    word_y: i32,
-    word_w: i32,
-    word_track: f32,
-    rule_y: i32,
-    slogan_x: i32,
-    slogan_y: i32,
-    slogan_w: i32,
-    slogan_track: f32,
-    list_y: i32,
-    row_h: i32,
-    row_step: i32,
-    bars_left: bool,
-    content_w: i32,
-    rows: Vec<RowLayout>,
-    pill: PillLayout,
-}
-
-/// Measure the whole HUD for the current text metrics. Shared by `paint` and
-/// `describe`, so the picture and the printed numbers cannot disagree.
-///
-/// `rect` is the screen rectangle the layered window covers (the whole primary
-/// monitor, or whatever `--rect` chose). Every origin is taken from one of the
-/// `anchor_*` helpers in *screen* coordinates and then shifted back by the rect's
-/// origin, because the canvas is the window's own surface and painting is
-/// surface-local. Anchoring to the rect is the whole point: a 1920-wide rect puts
-/// the right-hand blocks at x = 1920 - 16 - w, a 520-wide one at 520 - 16 - w,
-/// and only the first of those is on the screen's edge.
-fn measure_layout(text: &TextEngine, entries: &[Entry], cfg: &Config, rect: Rect) -> Layout {
-    let margin = cfg.margin;
-    let bars_left = cfg.position == Position::Left;
-    // The blocks in the top corner hang off the top margin; `WATERMARK_TOP` is
-    // that margin, kept as the constant the `--dump` description prints.
-    let top = anchor_top(rect, WATERMARK_TOP) - rect.y;
-
-    // ── watermark ──
-    let word_track = WORD_TRACK_EM * text.em_px(FontId::UiBold);
-    let word_w = wordmark_width(text);
-    let (wm_w, wm_h) = watermark_size(text);
-    let wm_x = anchor_x(rect, cfg.position, margin, wm_w) - rect.x;
-    let mark_x = wm_x;
-    let mark_y = top + (wm_h - text.height(FontId::Mark)) / 2;
-    let word_x = wm_x + MARK_W + WM_GAP;
-    let word_y = top + (wm_h - text.height(FontId::UiBold)) / 2;
-    let rule_y = watermark_rule_y(top, wm_h);
-    let slogan_track = SLOGAN_TRACK_EM * text.em_px(FontId::Slogan);
-    let slogan_w = text.measure_tracked(FontId::Slogan, SLOGAN, slogan_track);
-    let slogan_y = rule_y + RULE_H + SLOGAN_GAP;
-    // `.wm-col { align-items: flex-end }`: the slogan hangs off the same edge the
-    // whole block does, so it ends where the wordmark ends.
-    let slogan_x = wm_x + wm_w - slogan_w;
-    let block_h = slogan_y + text.height(FontId::Slogan) - top;
-    let list_y = top + block_h + LIST_TOP_GAP;
-
-    // ── rows: everything with a name, sorted width-descending (the mockup's
-    // `measure()` staircase). ──
-    let name_track = NAME_TRACK_EM * text.em_px(FontId::Ui);
-    let mut measured: Vec<(usize, i32, i32)> = Vec::new();
-    for (index, entry) in entries.iter().enumerate() {
-        if entry.name.is_empty() {
-            continue;
-        }
-        let name_w = text.measure_tracked(FontId::Ui, &entry.name, name_track);
-        let value_w = if entry.value.is_empty() { 0 } else { text.measure(FontId::Mono, &entry.value) };
-        measured.push((index, name_w, value_w));
-    }
-    measured.sort_by(|a, b| b.1.cmp(&a.1));
-
-    // The edge the rows' chips are flushed against: the rect's right or left edge,
-    // whichever corner this layout occupies.
-    let edge_x = anchor_x(rect, cfg.position, margin, 0) - rect.x;
-    let rows: Vec<RowLayout> = measured
-        .iter()
-        .map(|&(index, name_w, value_w)| {
-            let g = row_geometry(edge_x, name_w, value_w, bars_left);
-            RowLayout {
-                index,
-                name_w,
-                value_w,
-                row_x: g.row_x,
-                row_w: g.row_w,
-                bar_x: g.bar_x,
-                name_x: g.name_x,
-                value_x: g.value_x,
-            }
-        })
-        .collect();
-    let content_w = rows.iter().map(|r| r.row_w).max().unwrap_or(0);
-
-    // ── status pill ──
-    let label_track = LABEL_TRACK_EM * text.em_px(FontId::UiTiny);
-    let label_w = text.measure_tracked(FontId::UiTiny, LABEL, label_track);
-    let count_w = text.measure(FontId::MonoBold, &rows.len().to_string());
-    let (pill_w, pill_h) = pill_size_from(
-        label_w,
-        count_w,
-        text.height(FontId::UiTiny),
-        text.height(FontId::MonoBold),
-    );
-    let pill_x = anchor_x(rect, cfg.position, margin, pill_w) - rect.x;
-    let pill_y = anchor_bottom(rect, margin, pill_h) - rect.y;
-    let dot_x = pill_x + PILL_PAD_X;
-    let label_x = dot_x + DOT_D + PILL_GAP;
-    let sep_x = label_x + label_w + PILL_GAP;
-    let count_x = sep_x + SEP_W + PILL_GAP;
-    let pill = PillLayout {
-        x: pill_x,
-        y: pill_y,
-        w: pill_w,
-        h: pill_h,
-        dot_x,
-        dot_y: pill_y + (pill_h - DOT_D) / 2,
-        label_x,
-        label_y: pill_y + (pill_h - text.height(FontId::UiTiny)) / 2,
-        label_w,
-        label_track,
-        sep_x,
-        sep_y: pill_y + (pill_h - SEP_H) / 2,
-        count_x,
-        count_y: pill_y + (pill_h - text.height(FontId::MonoBold)) / 2,
-        count_w,
-    };
-
-    Layout {
-        wm_x,
-        wm_w,
-        wm_h,
-        mark_x,
-        mark_y,
-        word_x,
-        word_y,
-        word_w,
-        word_track,
-        rule_y,
-        slogan_x,
-        slogan_y,
-        slogan_w,
-        slogan_track,
-        list_y,
-        row_h: row_height(text),
-        row_step: row_height(text) + ROW_GAP,
-        bars_left,
-        content_w,
-        rows,
-        pill,
-    }
-}
-
-// ── painting ────────────────────────────────────────────────────────────────
 
 /// The screen rect a canvas covers — the layered window's own surface. The canvas
 /// carries where the window was created, so the layout anchors to the monitor (or
@@ -810,13 +838,95 @@ fn canvas_rect(canvas: &Canvas) -> Rect {
     Rect::new(x, y, canvas.width() as i32, canvas.height() as i32)
 }
 
+/// Measure the rows the way `HUD::GetActiveModules` does (HUD.cpp:311-345):
+/// enabled modules only, `ArrayList` itself never listed, each name measured in
+/// the mode's name face, the tag one gap later, and the whole list sorted by width
+/// descending — the wedge.
+fn measure_rows(
+    text: &TextEngine,
+    entries: &[Entry],
+    cfg: &Config,
+    m: &Metrics,
+) -> Vec<Row> {
+    let name_font = cfg.mode.name_font();
+    let space_w = text.measure(FontId::Body, " ") as f32;
+    let mut rows: Vec<Row> = Vec::new();
+
+    for (index, entry) in entries.iter().enumerate() {
+        if !entry.enabled || entry.name.is_empty() || entry.name == SELF_MODULE {
+            continue;
+        }
+        let name = if cfg.spaced { spaced_name(&entry.name) } else { entry.name.clone() };
+        let name_w = text.measure(name_font, &name) as f32;
+        let tag_w = text.measure(FontId::Body, &entry.value) as f32;
+        let has_tag = !entry.value.is_empty();
+        // The source measures the sort key with the space glyph for every mode and
+        // only then re-measures Tesseract's layout with its own 4 px gap
+        // (HUD.cpp:332-335, 600-605).
+        let sort_w = name_w + if has_tag { space_w + tag_w } else { 0.0 };
+        let layout_w = if cfg.mode == Mode::Tesseract {
+            name_w + if has_tag { m.tesseract_gap + tag_w } else { 0.0 }
+        } else {
+            sort_w
+        };
+        rows.push(Row {
+            entry: index,
+            key: entry.name.clone(),
+            name,
+            name_w,
+            tag_w,
+            sort_w,
+            layout_w,
+            box_w: box_width(m, layout_w),
+        });
+    }
+
+    rows.sort_by(|a, b| b.sort_w.partial_cmp(&a.sort_w).unwrap_or(std::cmp::Ordering::Equal));
+    rows
+}
+
+// ── painting ────────────────────────────────────────────────────────────────
+
+/// Everything a frame needs that is not the entries or the canvas.
+struct Frame<'a> {
+    cfg: &'a Config,
+    m: &'a Metrics,
+    stamp: Stamp,
+    /// The overlay's global fade (1.0 live).
+    global: f32,
+    /// The frame delta for the rows' entrance.
+    dt: f32,
+}
+
+/// Draw a run with the source's only text effect: a 1 px down-right copy in
+/// `rgba(0,0,0,120)` under the glyphs (HUD.cpp:79-82).
+fn draw_shadowed(
+    text: &mut TextEngine,
+    canvas: &mut Canvas,
+    id: FontId,
+    s: &str,
+    x: i32,
+    y: i32,
+    colour: u32,
+    global: f32,
+) {
+    if s.is_empty() {
+        return;
+    }
+    text.draw(canvas, id, s, x + 1, y + 1, with_alpha(SHADOW, global));
+    text.draw(canvas, id, s, x, y, with_alpha(colour, global));
+}
+
 /// Compose one frame of the HUD. Returns true while something is still moving,
 /// which the caller uses to decide whether the next frame needs to be pushed to
-/// the compositor. With the status pill on screen its ring pulses forever and a
-/// frame therefore always reports true; with the pill hidden (`SHOW_STATUS_PILL`,
-/// the default) nothing is endless, so this reports true only while an entrance
-/// or a flash is still moving and the caller repaints on a content-signature
-/// change alone.
+/// the compositor.
+///
+/// "Moving" is the entrance of any row (the source's slide) **or** a live accent:
+/// in Rise, VapeV4 and Tesseract the accent is a function of the clock, and with
+/// the Default mode's wave on it is too, so those frames genuinely differ from the
+/// last one. With the wave off in Default mode nothing is time-driven, so a
+/// settled HUD reports false and the caller repaints only when the state, the
+/// mode or the fade moved.
 pub fn paint(
     canvas: &mut Canvas,
     text: &mut TextEngine,
@@ -830,595 +940,327 @@ pub fn paint(
         return false;
     }
 
-    let layout = measure_layout(text, entries, cfg, canvas_rect(canvas));
-    let count = layout.rows.len();
+    let m = Metrics::new(cfg.mode, cfg.scale);
+    let rect = canvas_rect(canvas);
+    let rows = measure_rows(text, entries, cfg, &m);
+    let live: Vec<String> = rows.iter().map(|row| row.key.clone()).collect();
+    anim.retain(&live);
+    let frame = Frame { cfg, m: &m, stamp: anim.stamp(now), global, dt: anim.dt };
 
-    let rows_moving = paint_rows(canvas, text, entries, anim, now, &layout, count, global);
-    let mark_moving = paint_watermark(canvas, text, anim, now, &layout, global);
-    // The pill is the mockup's third element and the user asked for it off, so it
-    // is only painted when the switch is on. The call stays here either way, which
-    // is what keeps `paint_pill`, its metrics and their tests live code.
-    let pill_moving = if SHOW_STATUS_PILL {
-        paint_pill(canvas, text, anim, now, &layout, count, global)
-    } else {
-        false
-    };
-    // Repaint policy. `global > 0.0` is the "always repaint a visible HUD" term,
-    // and the only thing that ever needed it was the pill's ring: it pulses for as
-    // long as the pill is on screen, so a visible HUD is never static. With the
-    // pill hidden (the default) that term is gone: this reports true only while a
-    // row/watermark entrance or a flash is still moving, and the caller then
-    // pushes a frame only when the state changed — the fade-out is quantised into
-    // the caller's signature, so the ramp still repaints.
-    rows_moving || mark_moving || pill_moving || (SHOW_STATUS_PILL && global > 0.0)
+    if cfg.watermark {
+        paint_watermark(canvas, text, &frame, rect, rows.len());
+    }
+    let rows_moving = paint_rows(canvas, text, entries, anim, &frame, rect, &rows);
+
+    // The repaint rule: an entrance in flight, or an accent that moves with the
+    // clock while something is actually on screen.
+    rows_moving || (accent_is_animated(cfg) && !(rows.is_empty() && !cfg.watermark))
 }
 
-/// The module list: one chip, one bar and one name (plus its value) per row.
+/// The watermark: one inline run on one baseline — the product name in the mode's
+/// accent, ` | ` and the enabled-module count in the muted grey — plus, in
+/// Rise/VapeV4, the source's panel behind it with the accent bar down its right
+/// edge (HUD.cpp:508-563).
+fn paint_watermark(
+    canvas: &mut Canvas,
+    text: &mut TextEngine,
+    frame: &Frame,
+    rect: Rect,
+    count: usize,
+) {
+    let m = frame.m;
+    let name_font = frame.cfg.mode.name_font();
+    let title_w = text.measure(name_font, PRODUCT) as f32;
+    let segment = format!("{SEGMENT_SEP}{count}");
+    let segment_w = text.measure(FontId::Body, &segment) as f32;
+    let run_w = title_w + segment_w;
+
+    let accent = watermark_accent(frame.cfg, frame.stamp);
+    let box_x = watermark_x(rect, frame.cfg.position, m, run_w);
+    let rise_like = m.mode.is_rise_like();
+
+    if rise_like {
+        let panel_w = watermark_panel_width(m, title_w, segment_w);
+        canvas.fill_rounded_rect_corners(
+            box_x,
+            rect.y + m.top_y.round() as i32,
+            panel_w.round().max(1.0) as u32,
+            m.item_height.round().max(1.0) as u32,
+            chip_corners(m),
+            with_alpha(RISE_BACKGROUND, frame.global),
+        );
+        canvas.fill_rect(
+            (box_x as f32 + panel_w - m.rise_rect_w).round() as i32,
+            rect.y + m.top_y.round() as i32,
+            m.rise_rect_w.round().max(1.0) as u32,
+            m.item_height.round().max(1.0) as u32,
+            with_alpha(pack(accent, 1.0), frame.global),
+        );
+    }
+
+    let text_x = (box_x as f32 + if rise_like { m.rise_pad_x } else { 0.0 }).round() as i32;
+    let text_y = (rect.y as f32 + m.watermark_y).round() as i32;
+    // Rise paints its title in `riseWatermarkTextColor` and leaves the accent to
+    // the panel's bar (HUD.cpp:556); every other mode paints it in the accent.
+    let title_colour = if m.mode == Mode::Rise {
+        RISE_WATERMARK_TEXT
+    } else {
+        pack(accent, 1.0)
+    };
+    let secondary = if rise_like { RISE_SECONDARY_TEXT } else { SECONDARY_TEXT };
+
+    draw_shadowed(text, canvas, name_font, PRODUCT, text_x, text_y, title_colour, frame.global);
+    draw_shadowed(
+        text,
+        canvas,
+        FontId::Body,
+        &segment,
+        (text_x as f32 + title_w).round() as i32,
+        text_y,
+        secondary,
+        frame.global,
+    );
+}
+
+/// The module list (HUD.cpp:565-645). Returns true while any row is still sliding.
 fn paint_rows(
     canvas: &mut Canvas,
     text: &mut TextEngine,
     entries: &[Entry],
     anim: &mut Anim,
-    now: Instant,
-    layout: &Layout,
-    count: usize,
-    global: f32,
+    frame: &Frame,
+    rect: Rect,
+    rows: &[Row],
 ) -> bool {
-    let name_cell = text.height(FontId::Ui);
-    let value_cell = text.height(FontId::Mono);
-    let name_track = NAME_TRACK_EM * text.em_px(FontId::Ui);
-    let mut animating = false;
-    let mut y = layout.list_y;
+    let m = frame.m;
+    let name_font = frame.cfg.mode.name_font();
+    let space_w = text.measure(FontId::Body, " ") as f32;
+    let bar_w = bar_width(m);
+    let mut moving = false;
 
-    for (i, row) in layout.rows.iter().enumerate() {
-        let entry = &entries[row.index];
-        let ease = anim.ease(&entry.name, i, now);
-        if ease <= 0.0 {
-            // Not this row's turn yet: the slot is reserved, nothing is drawn.
-            y += layout.row_step;
-            animating = true;
-            continue;
+    for (index, row) in rows.iter().enumerate() {
+        // The source advances every listed row's progress every frame
+        // (HUD.cpp:590-596); the first frame a row exists it takes one step in
+        // from the edge, so it is never drawn at an unstepped position.
+        let progress = anim.progress(&row.key, frame.dt);
+        if progress < 1.0 {
+            moving = true;
         }
-        let alpha = ease * global;
-        // The row slides in from the edge it is flushed against: outward is +x on
-        // the right, -x on the left.
-        let slide = ((1.0 - ease) * ROW_SLIDE).round() as i32;
-        let shift = if layout.bars_left { -slide } else { slide };
-        let row_x = row.row_x + shift;
-        let bar_x = row.bar_x + shift;
-        let name_x = row.name_x + shift;
-        let value_x = row.value_x + shift;
-        let strength = anim.strength(entry.id) as f32 / 255.0;
+        // `eased = 1 - pow(1 - progress, 3)` (HUD.cpp:598).
+        let eased = 1.0 - (1.0 - progress).powi(3);
+        let target = row_target_x(rect, frame.cfg.position, m, row.box_w);
+        let origin = row_slide_origin(rect, frame.cfg.position, row.box_w);
+        let current = origin + (target - origin) * eased;
 
-        // The chip the rows sit on: `--glass` at ROW_CHIP_ALPHA, then the flash
-        // tint on top of it.
-        if ROW_CHIP_ALPHA > 0.0 {
-            canvas.fill_rounded_rect(
-                row_x,
+        // One rounding for the whole row, so the chip, its text and its bar cannot
+        // disagree by a pixel about where the row is.
+        let box_x = current.round() as i32 - rect.x;
+        let y = row_y(rect, m, index) - rect.y;
+        let item_h = m.item_height.round().max(1.0) as u32;
+        let accent = pack(accent(frame.cfg, frame.stamp, index), 1.0);
+
+        // The chip: Rise/VapeV4 fill the whole row, Tesseract its own dark one,
+        // Default nothing at all — and only ever the left corners are rounded
+        // (HUD.cpp:619-634).
+        if let Some(colour) = chip_colour(m) {
+            canvas.fill_rounded_rect_corners(
+                box_x,
                 y,
-                row.row_w as u32,
-                layout.row_h as u32,
-                ROW_RADIUS,
-                with_alpha(GLASS, ROW_CHIP_ALPHA * alpha),
+                row.box_w.round().max(1.0) as u32,
+                item_h,
+                chip_corners(m),
+                with_alpha(colour, frame.global),
             );
         }
-        if strength > 0.0 {
-            canvas.fill_rounded_rect(
-                row_x,
+        // The accent bar, square, flush against the row's right edge.
+        if bar_w > 0.0 {
+            canvas.fill_rect(
+                (box_x as f32 + row.box_w - bar_w).round() as i32,
                 y,
-                row.row_w as u32,
-                layout.row_h as u32,
-                ROW_RADIUS,
-                with_alpha(FLASH_TINT, strength * alpha),
+                bar_w.round().max(1.0) as u32,
+                item_h,
+                with_alpha(accent, frame.global),
             );
         }
 
-        // The spine bar, with the mockup's box-shadow glow: cyan at 35 %, red at
-        // 85 % while the module is working.
-        let bar_y = y + (layout.row_h - BAR_H) / 2;
-        let bar_colour = lerp_argb(spine_color(i, count), FLASH_RED, strength);
-        let (glow_colour, glow_alpha) = if strength > 0.0 {
-            (FLASH_RED, BAR_GLOW + (BAR_GLOW_FLASH - BAR_GLOW) * strength)
-        } else {
-            (ACCENT, BAR_GLOW)
-        };
-        glow(canvas, bar_x, bar_y, BAR_W, BAR_H, BAR_RADIUS, glow_colour, glow_alpha, alpha);
-        canvas.fill_rounded_rect(
-            bar_x,
-            bar_y,
-            BAR_W as u32,
-            BAR_H as u32,
-            BAR_RADIUS,
-            with_alpha(bar_colour, alpha),
-        );
+        let text_x = (box_x as f32 + m.text_inset_x).round() as i32;
+        let text_y = (y as f32 + m.text_inset_y).round() as i32;
+        let entry = &entries[row.entry];
 
-        // The name, reddened and haloed while the module works.
-        let text_y = y + (layout.row_h - name_cell) / 2;
-        let name_colour = lerp_argb(TEXT, FLASH_TEXT, strength);
-        if strength > 0.0 {
-            for (ox, oy) in [(-1, 0), (1, 0), (0, -1), (0, 1)] {
-                text.draw_tracked(
-                    canvas,
-                    FontId::Ui,
-                    &entry.name,
-                    name_x + ox,
-                    text_y + oy,
-                    name_track,
-                    |_, _| with_alpha(FLASH_RED, FLASH_TEXT_GLOW * 0.3 * strength * alpha),
-                );
-            }
-        }
-        draw_shadowed_tracked(
-            text,
-            canvas,
-            FontId::Ui,
-            &entry.name,
-            name_x,
-            text_y,
-            name_track,
-            alpha,
-            |_, _| name_colour,
-        );
+        draw_shadowed(text, canvas, name_font, &row.name, text_x, text_y, accent, frame.global);
 
-        if row.value_w > 0 {
-            let colour = if entry.highlight { ACCENT } else { MUTED };
+        if row.tag_w > 0.0 {
+            let tag_x = (text_x as f32 + row.name_w + tag_gap(m, space_w)).round() as i32;
             draw_shadowed(
                 text,
                 canvas,
-                FontId::Mono,
+                FontId::Body,
                 &entry.value,
-                value_x,
-                y + (layout.row_h - value_cell) / 2,
-                alpha,
-                colour,
+                tag_x,
+                text_y,
+                tag_colour(m, entry.flash),
+                frame.global,
             );
         }
-
-        if ease < 1.0 || strength > 0.0 {
-            animating = true;
-        }
-        y += layout.row_step;
     }
 
-    animating
-}
-
-/// The client watermark: the mark, the wordmark, the accent rule and the slogan,
-/// with no panel behind any of it — only the text shadow the mockup relies on.
-fn paint_watermark(
-    canvas: &mut Canvas,
-    text: &mut TextEngine,
-    anim: &Anim,
-    now: Instant,
-    layout: &Layout,
-    global: f32,
-) -> bool {
-    let ease = anim.watermark(now);
-    if ease <= 0.0 {
-        return true;
-    }
-    let alpha = ease * global;
-    // `@keyframes rise`: 10 px up while fading in.
-    let dy = ((1.0 - ease) * WM_RISE).round() as i32;
-
-    // The hairline first: accent -> accent2 at 46 % -> transparent, 1 px, the
-    // full width of the block, 8 px under the wordmark's line.
-    draw_rule(canvas, layout.wm_x, layout.rule_y + dy, layout.wm_w, alpha);
-
-    // The two D's of `.mark`: a 62 % ghost at the box origin and the mirrored
-    // accent D seven pixels to its right, painted over it.
-    draw_shadowed(
-        text,
-        canvas,
-        FontId::Mark,
-        MARK,
-        layout.mark_x,
-        layout.mark_y + dy,
-        alpha * MARK_OPACITY,
-        TEXT,
-    );
-    let echo_x = layout.mark_x + MARK_ECHO_X;
-    text.draw(
-        canvas,
-        FontId::Mark,
-        MARK,
-        echo_x,
-        layout.mark_y + dy + 1,
-        with_alpha(TEXT_SHADOW, MARK_ECHO_OPACITY * alpha),
-    );
-    text.draw_mirrored(
-        canvas,
-        FontId::Mark,
-        MARK,
-        echo_x,
-        layout.mark_y + dy,
-        with_alpha(ACCENT, MARK_ECHO_OPACITY * alpha),
-    );
-
-    // `DOPPEL` at 13.5 px, 0.4 em of tracking, the two P's in the accent.
-    draw_shadowed_tracked(
-        text,
-        canvas,
-        FontId::UiBold,
-        WORDMARK,
-        layout.word_x,
-        layout.word_y + dy,
-        layout.word_track,
-        alpha,
-        |i, _| if WORDMARK_ACCENT.contains(&i) { ACCENT } else { TEXT },
-    );
-
-    // `statistically you.` in the mono face, right-aligned to the same edge.
-    draw_shadowed_tracked(
-        text,
-        canvas,
-        FontId::Slogan,
-        SLOGAN,
-        layout.slogan_x,
-        layout.slogan_y + dy,
-        layout.slogan_track,
-        alpha,
-        |_, _| MUTED,
-    );
-
-    ease < 1.0
-}
-
-/// The status pill: glass, hairline, the pulsing dot, `ENABLED`, the separator
-/// and the count.
-fn paint_pill(
-    canvas: &mut Canvas,
-    text: &mut TextEngine,
-    anim: &mut Anim,
-    now: Instant,
-    layout: &Layout,
-    count: usize,
-    global: f32,
-) -> bool {
-    let ease = anim.pill(now);
-    if ease <= 0.0 {
-        return true;
-    }
-    let alpha = ease * global;
-    let dy = ((1.0 - ease) * PILL_RISE).round() as i32;
-    let pill = &layout.pill;
-    let (x, y, w, h) = (pill.x, pill.y + dy, pill.w, pill.h);
-
-    canvas.fill_rounded_rect(x, y, w as u32, h as u32, PILL_RADIUS, with_alpha(GLASS, alpha));
-    canvas.stroke_rounded_rect(
-        x,
-        y,
-        w as u32,
-        h as u32,
-        PILL_RADIUS,
-        1.0,
-        with_alpha(LINE, alpha),
-    );
-
-    // The dot: a 7 px accent circle with its 8 px glow, wrapped by the ring that
-    // scales 0.6 -> 2.4 while fading 0.8 -> 0.
-    let dot_x = pill.dot_x;
-    let dot_y = pill.dot_y + dy;
-    let (scale, ring_alpha) = anim.pulse(now);
-    let ring_r = (DOT_D + RING_INSET * 2) as f32 / 2.0 * scale;
-    let ring_side = (ring_r * 2.0).round().max(1.0) as u32;
-    let ring_x = (dot_x as f32 + DOT_D as f32 / 2.0 - ring_r).round() as i32;
-    let ring_y = (dot_y as f32 + DOT_D as f32 / 2.0 - ring_r).round() as i32;
-    if ring_alpha > 0.0 && ring_r > 0.5 {
-        canvas.stroke_rounded_rect(
-            ring_x,
-            ring_y,
-            ring_side,
-            ring_side,
-            ring_r,
-            scale.max(0.6),
-            with_alpha(ACCENT, ring_alpha * alpha),
-        );
-    }
-
-    glow(canvas, dot_x, dot_y, DOT_D, DOT_D, DOT_D as f32 / 2.0, ACCENT, DOT_GLOW, alpha);
-    canvas.fill_rounded_rect(
-        dot_x,
-        dot_y,
-        DOT_D as u32,
-        DOT_D as u32,
-        DOT_D as f32 / 2.0,
-        with_alpha(ACCENT, alpha),
-    );
-
-    // `ENABLED` at 9.5 px with 0.32 em of tracking, in the muted colour.
-    draw_shadowed_tracked(
-        text,
-        canvas,
-        FontId::UiTiny,
-        LABEL,
-        pill.label_x,
-        pill.label_y + dy,
-        pill.label_track,
-        alpha,
-        |_, _| MUTED,
-    );
-
-    // The hairline separator.
-    canvas.fill_rect(
-        pill.sep_x,
-        pill.sep_y + dy,
-        SEP_W as u32,
-        SEP_H as u32,
-        with_alpha(SEPARATOR, alpha),
-    );
-
-    // The count, with its short pop when it changes.
-    let (pop, popping) = anim.pop(count, now);
-    draw_shadowed_scaled(
-        text,
-        canvas,
-        FontId::MonoBold,
-        &count.to_string(),
-        pill.count_x,
-        pill.count_y + dy,
-        pop,
-        alpha,
-        ACCENT,
-    );
-
-    ease < 1.0 || popping
-}
-
-/// A cheap box-shadow: two expanding, fading fills of the same shape. The shape
-/// itself is painted afterwards and covers the middle, so only the halo shows.
-fn glow(
-    canvas: &mut Canvas,
-    x: i32,
-    y: i32,
-    w: i32,
-    h: i32,
-    radius: f32,
-    colour: u32,
-    peak: f32,
-    alpha: f32,
-) {
-    if alpha <= 0.0 {
-        return;
-    }
-    canvas.fill_rounded_rect(
-        x - 2,
-        y - 2,
-        (w + 4) as u32,
-        (h + 4) as u32,
-        radius + 2.0,
-        with_alpha(colour, peak * 0.16 * alpha),
-    );
-    canvas.fill_rounded_rect(
-        x - 1,
-        y - 1,
-        (w + 2) as u32,
-        (h + 2) as u32,
-        radius + 1.0,
-        with_alpha(colour, peak * 0.30 * alpha),
-    );
-}
-
-/// The watermark's 1 px rule: `linear-gradient(90deg, var(--acc), var(--acc2)
-/// 46%, rgba(167,139,250,0))`, one column at a time.
-fn draw_rule(canvas: &mut Canvas, x: i32, y: i32, w: i32, alpha: f32) {
-    if w <= 0 || alpha <= 0.0 {
-        return;
-    }
-    for col in 0..w {
-        let t = (col as f32 + 0.5) / w as f32;
-        let (colour, cover) = if t <= RULE_ACCENT2_STOP {
-            (lerp_argb(ACCENT, ACCENT2, t / RULE_ACCENT2_STOP), 1.0)
-        } else {
-            (ACCENT2, 1.0 - (t - RULE_ACCENT2_STOP) / (1.0 - RULE_ACCENT2_STOP))
-        };
-        canvas.blend_pixel(x + col, y, with_alpha(colour, cover * alpha), 1.0);
-    }
-}
-
-// ── text with the mockup's global text-shadow ───────────────────────────────
-
-/// Draw a run with the HUD-wide `text-shadow: 0 1px 6px rgba(0,0,0,.7)`,
-/// approximated by one 1 px dark offset copy underneath it.
-fn draw_shadowed(
-    text: &mut TextEngine,
-    canvas: &mut Canvas,
-    id: FontId,
-    s: &str,
-    x: i32,
-    y: i32,
-    alpha: f32,
-    colour: u32,
-) {
-    text.draw(canvas, id, s, x, y + 1, with_alpha(TEXT_SHADOW, alpha));
-    text.draw(canvas, id, s, x, y, with_alpha(colour, alpha));
-}
-
-/// `draw_shadowed` for a tracked run, with a per-character colour.
-fn draw_shadowed_tracked<F>(
-    text: &mut TextEngine,
-    canvas: &mut Canvas,
-    id: FontId,
-    s: &str,
-    x: i32,
-    y: i32,
-    track: f32,
-    alpha: f32,
-    colour: F,
-) where
-    F: Fn(usize, char) -> u32,
-{
-    text.draw_tracked(canvas, id, s, x, y + 1, track, |_, _| with_alpha(TEXT_SHADOW, alpha));
-    text.draw_tracked(canvas, id, s, x, y, track, |i, c| with_alpha(colour(i, c), alpha));
-}
-
-/// `draw_shadowed` for the count, which may be mid-pop.
-fn draw_shadowed_scaled(
-    text: &mut TextEngine,
-    canvas: &mut Canvas,
-    id: FontId,
-    s: &str,
-    x: i32,
-    y: i32,
-    scale: f32,
-    alpha: f32,
-    colour: u32,
-) {
-    text.draw_scaled(canvas, id, s, x, y + 1, scale, with_alpha(TEXT_SHADOW, alpha));
-    text.draw_scaled(canvas, id, s, x, y, scale, with_alpha(colour, alpha));
+    moving
 }
 
 // ── the numbers behind the picture ──────────────────────────────────────────
 
-/// The geometry behind the picture, for `--dump`: the watermark block, the pill
-/// and, per row, the chip, the bar and the name -> value distance. Measured
-/// through the same `measure_layout` the painter uses, so a review dump and the
-/// printed numbers cannot drift apart.
-pub fn describe(
-    text: &TextEngine,
-    entries: &[Entry],
-    position: Position,
-    canvas_w: u32,
-    canvas_h: u32,
-) -> String {
-    let cfg = Config { position, margin: MARGIN, alpha: 1.0 };
-    // `--dump` renders on the fixed review canvas, whose surface starts at the
-    // origin: the numbers below are canvas-local, and the live runtime rect is
-    // printed separately by the dump (it is what the window actually covers).
-    let layout = measure_layout(text, entries, &cfg, Rect::new(0, 0, canvas_w as i32, canvas_h as i32));
+fn hex(colour: u32) -> String {
+    format!(
+        "#{:02X}{:02X}{:02X} @{:.0}%",
+        (colour >> 16) & 0xFF,
+        (colour >> 8) & 0xFF,
+        colour & 0xFF,
+        (colour >> 24) as f32 / 255.0 * 100.0
+    )
+}
+
+fn rgb_text(rgb: [f32; 3]) -> String {
+    format!(
+        "({:.0},{:.0},{:.0})",
+        rgb[0] * 255.0,
+        rgb[1] * 255.0,
+        rgb[2] * 255.0
+    )
+}
+
+/// The geometry behind the picture, for `--dump`: the mode's metrics, the
+/// watermark run and panel, and every row's box, insets, bar and tag colour —
+/// measured through the same `Metrics` and helpers the painter uses, so a review
+/// dump and the printed numbers cannot drift apart. The numbers are canvas-local
+/// (the review canvas starts at the origin).
+pub fn describe(text: &TextEngine, entries: &[Entry], cfg: &Config, canvas_w: u32, canvas_h: u32) -> String {
+    let m = Metrics::new(cfg.mode, cfg.scale);
+    let rect = Rect::new(0, 0, canvas_w as i32, canvas_h as i32);
+    let rows = measure_rows(text, entries, cfg, &m);
     let mut out = String::new();
 
     out.push_str(&format!(
-        "watermark: block {}x{} at ({}, {}), {}\n",
-        layout.wm_w,
-        layout.wm_h,
-        layout.wm_x,
-        WATERMARK_TOP,
-        if layout.bars_left { "left-anchored" } else { "right-anchored" },
+        "mode {} (HUD.cpp) | scale {:.2} | font {}px | lineHeight {} | topY {} | moduleSpacing {} | \
+         itemHeight {} | pitch {}\n",
+        cfg.mode.label(),
+        m.scale,
+        m.font_px,
+        m.line_height,
+        m.top_y,
+        m.module_spacing,
+        m.item_height,
+        row_pitch(&m),
     ));
     out.push_str(&format!(
-        "  mark {}x{} at ({}, {}) | ghost \"{MARK}\" #EDF2FA @{:.0}%, mirrored \"{MARK}\" #22D3EE \
-         @{:.0}% at x={} (left +{MARK_ECHO_X})\n",
-        MARK_W,
-        MARK_H,
-        layout.mark_x,
-        layout.mark_y,
-        MARK_OPACITY * 100.0,
-        MARK_ECHO_OPACITY * 100.0,
-        layout.mark_x + MARK_ECHO_X,
+        "  margins right {} | rows base y {} | text inset ({}, {}) | bar {}px at the right edge | \
+         tag gap {} | chip {} radius {:?} | risePad {}x{} | shadow {} | secondary {}\n",
+        m.right_margin,
+        m.base_y,
+        m.text_inset_x,
+        m.text_inset_y,
+        bar_width(&m),
+        tag_gap(&m, text.measure(FontId::Body, " ") as f32),
+        match chip_colour(&m) {
+            Some(colour) => hex(colour),
+            None => "none (Default)".to_string(),
+        },
+        chip_corners(&m),
+        m.rise_pad_x,
+        m.rise_pad_y,
+        hex(SHADOW),
+        if m.mode.is_rise_like() { hex(RISE_SECONDARY_TEXT) } else { hex(SECONDARY_TEXT) },
     ));
     out.push_str(&format!(
-        "  word \"{WORDMARK}\" {}px wide ({:.0}px per char at {:.1}px) at ({}, {}), P's in #22D3EE\n",
-        layout.word_w,
-        layout.word_track,
-        text.em_px(FontId::UiBold),
-        layout.word_x,
-        layout.word_y,
-    ));
-    out.push_str(&format!(
-        "  rule 1x{} at ({}, {}): #22D3EE -> #A78BFA @{:.0}% -> transparent\n",
-        layout.wm_w, layout.wm_x, layout.rule_y, RULE_ACCENT2_STOP * 100.0,
-    ));
-    out.push_str(&format!(
-        "  slogan \"{SLOGAN}\" {}px wide ({:.2}px per char at {:.1}px) at ({}, {}), #8B96AB\n",
-        layout.slogan_w,
-        layout.slogan_track,
-        text.em_px(FontId::Slogan),
-        layout.slogan_x,
-        layout.slogan_y,
+        "  review rect {}x{} at ({}, {})..({}, {}) | list edge x={} | --position {:?} | {} rows, \
+         widest box {}px\n",
+        rect.w,
+        rect.h,
+        rect.x,
+        rect.y,
+        rect.right(),
+        rect.bottom(),
+        list_edge_x(rect, cfg.position),
+        cfg.position,
+        rows.len(),
+        rows.iter().map(|r| r.box_w).fold(0.0f32, f32::max),
     ));
 
-    out.push_str(&format!(
-        "list: {} rows of {}px (name cell {} + 2x{ROW_PAD_Y}), step {}px (gap {ROW_GAP}), first y={}, \
-         widest row {}px, edge x={}\n",
-        layout.rows.len(),
-        layout.row_h,
-        text.height(FontId::Ui),
-        layout.row_step,
-        layout.list_y,
-        layout.content_w,
-        MARGIN,
-    ));
-    for (slot, row) in layout.rows.iter().enumerate() {
-        let entry = &entries[row.index];
+    if cfg.watermark {
+        let name_font = cfg.mode.name_font();
+        let title_w = text.measure(name_font, PRODUCT) as f32;
+        let segment = format!("{SEGMENT_SEP}{}", rows.len());
+        let segment_w = text.measure(FontId::Body, &segment) as f32;
+        let run_w = title_w + segment_w;
+        let box_x = watermark_x(rect, cfg.position, &m, run_w);
         out.push_str(&format!(
-            "  row {slot} {}: chip {ROW_PAD_X}|{}|{ROW_PAD_X} = {}px at x={} (y {}..{}), bar {BAR_W}x{BAR_H} \
-             r{BAR_RADIUS:.0} at x={} (glow {BAR_GLOW}), name {}px at x={} (track {NAME_TRACK_EM}em = {:.1}px)\n",
-            entry.name,
-            row.row_w - ROW_PAD_X * 2,
-            row.row_w,
-            row.row_x,
-            layout.list_y + slot as i32 * layout.row_step,
-            layout.list_y + slot as i32 * layout.row_step + layout.row_h,
-            row.bar_x,
-            row.name_w,
-            row.name_x,
-            NAME_TRACK_EM * text.em_px(FontId::Ui),
+            "  watermark \"{PRODUCT}\" {:.0}px + \"{segment}\" {:.0}px = {:.0}px at ({}, {}){}",
+            title_w, segment_w, run_w, box_x, watermark_y(rect, &m),
+            if m.mode == Mode::Rise { " title #E8E8E8 (riseWatermarkTextColor)" } else { " title in the accent" },
         ));
-        if row.value_w > 0 {
-            let gap = if layout.bars_left {
-                row.value_x - (row.name_x + row.name_w)
-            } else {
-                row.name_x - (row.value_x + row.value_w)
-            };
+        if m.mode.is_rise_like() {
+            let panel_w = watermark_panel_width(&m, title_w, segment_w);
             out.push_str(&format!(
-                "      value \"{}\" {}px at x={} (gap {gap}px after the name, after = toward x {})\n",
-                entry.value,
-                row.value_w,
-                row.value_x,
-                if layout.bars_left { "right" } else { "left" },
+                ", panel {:.0}x{:.0} at ({}, {}) {} corners {:?}, bar {:.0}px {}",
+                panel_w,
+                m.item_height,
+                box_x,
+                (rect.y as f32 + m.top_y).round() as i32,
+                hex(RISE_BACKGROUND),
+                chip_corners(&m),
+                m.rise_rect_w,
+                if m.mode == Mode::Vape { "left-rounded 6px" } else { "square" },
             ));
         }
-    }
-    if layout.rows.is_empty() {
-        out.push_str("  (no named rows: nothing to draw)\n");
-    }
-
-    // The pill is off by default — the mockup's third element, hidden at the
-    // user's request after the review — so this describes the geometry that is
-    // drawn. The pill's own numbers are still measured (the helpers and
-    // `paint_pill` are kept for whenever it is switched back on) and its rect is
-    // still reported, but the line says plainly that nothing is painted there and
-    // that no other element is inset by it.
-    let pill = &layout.pill;
-    if SHOW_STATUS_PILL {
+        out.push('\n');
         out.push_str(&format!(
-            "pill: {}x{} at ({}, {}), r{PILL_RADIUS:.0}, body #0D121C @{:.0}%, border #94A3B8 @{:.0}%, \
-             pad {PILL_PAD_Y}/{PILL_PAD_X}, gap {PILL_GAP}\n",
-            pill.w,
-            pill.h,
-            pill.x,
-            pill.y,
-            (GLASS >> 24) as f32 / 255.0 * 100.0,
-            (LINE >> 24) as f32 / 255.0 * 100.0,
-        ));
-        out.push_str(&format!(
-            "  dot {DOT_D}px at ({}, {}) #22D3EE, glow {DOT_GLOW}, ring {PULSE_MIN}->{PULSE_MAX} over {:.0}ms\n",
-            pill.dot_x, pill.dot_y, PULSE_MS,
-        ));
-        out.push_str(&format!(
-            "  label \"{LABEL}\" {}px at ({}, {}) #8B96AB, track {LABEL_TRACK_EM}em = {:.2}px per char\n",
-            pill.label_w, pill.label_x, pill.label_y, pill.label_track,
-        ));
-        out.push_str(&format!(
-            "  sep {SEP_W}x{SEP_H} at ({}, {}) rgba(255,255,255,.14) | count {}px at ({}, {}) #22D3EE \
-             600, pop x{POP_SCALE} over {POP_MS:.0}ms\n",
-            pill.sep_x, pill.sep_y, pill.count_w, pill.count_x, pill.count_y,
+            "  watermark accent now {} | wave {} (speed {}) | primary {} secondary {}\n",
+            rgb_text(watermark_accent(cfg, Stamp { seconds: SEED_MS as f32 / 1000.0, millis: SEED_MS as f64 })),
+            cfg.wave,
+            cfg.wave_speed,
+            rgb_text(cfg.primary),
+            rgb_text(cfg.secondary),
         ));
     } else {
-        out.push_str(&format!(
-            "pill: NOT DRAWN (SHOW_STATUS_PILL = false) — the mockup's third element, off at the \
-             user's request; it would be {}x{} at ({}, {}), nothing is painted there and no other \
-             element is inset by it\n",
-            pill.w, pill.h, pill.x, pill.y,
-        ));
+        out.push_str("  watermark: off (m_Watermark = false)\n");
     }
+
+    for (slot, row) in rows.iter().enumerate() {
+        let entry = &entries[row.entry];
+        out.push_str(&format!(
+            "  row {slot} \"{}\"{}: box {:.0}px (content {:.0}px) at x={} (y {}..{}), name {:.0}px at x={}, \
+             bar {}x{} at x={}",
+            row.name,
+            if entry.value.is_empty() { String::new() } else { format!(" tag \"{}\"", entry.value) },
+            row.box_w,
+            row.layout_w,
+            row_target_x(rect, cfg.position, &m, row.box_w).round() as i32,
+            (rect.y as f32 + m.base_y + slot as f32 * row_pitch(&m)).round() as i32,
+            (rect.y as f32 + m.base_y + slot as f32 * row_pitch(&m) + m.item_height).round() as i32,
+            row.name_w,
+            (row_target_x(rect, cfg.position, &m, row.box_w) + m.text_inset_x).round() as i32,
+            bar_width(&m).round(),
+            m.item_height.round(),
+            (row_target_x(rect, cfg.position, &m, row.box_w) + row.box_w - bar_width(&m)).round() as i32,
+        ));
+        if row.tag_w > 0.0 {
+            out.push_str(&format!(
+                " (gap {:.0}), tag {:.0}px {}",
+                tag_gap(&m, text.measure(FontId::Body, " ") as f32),
+                row.tag_w,
+                hex(tag_colour(&m, entry.flash)),
+            ));
+        }
+        out.push('\n');
+    }
+    if rows.is_empty() {
+        out.push_str("  (no listed modules: nothing to draw)\n");
+    }
+
     out.push_str(&format!(
-        "motion: curve cubic-bezier({:.2},{:.0},{:.2},{:.0}) | watermark {:.0}ms +{WM_DELAY_MS:.0}ms \
-         rise {WM_RISE:.0} | rows {ROW_MS:.0}ms +{ROW_DELAY_MS:.0}ms +{ROW_STAGGER_MS:.0}ms/row slide \
-         {ROW_SLIDE:.0} | pill {PILL_MS:.0}ms +{PILL_DELAY_MS:.0}ms rise {PILL_RISE:.0} | flash decay \
-         {FLASH_DECAY}/frame\n",
-        DESIGN_CURVE.0, DESIGN_CURVE.1, DESIGN_CURVE.2, DESIGN_CURVE.3, WM_MS,
+        "motion: entrance slide from the screen edge, progress += dt*{SLIDE_RATE} (dt clamped to \
+         {MAX_DELTA_S}s), easeOutCubic; exit instant | accent {} | defaults wave cycle \
+         {WAVE_CYCLE_MS}ms/{WAVE_ROW_OFFSET_MS}ms per row\n",
+        if accent_is_animated(cfg) { "time-driven (repaints)" } else { "static" },
     ));
     out
 }
@@ -1427,256 +1269,466 @@ pub fn describe(
 mod tests {
     use super::*;
 
-    /// The mockup's row: `[8px pad][3x11 bar][8px gap][name][8px pad]`, flushed to
-    /// the screen edge, with the value 10 px past the name.
-    #[test]
-    fn a_row_is_the_mockups_padding_bar_gap_name() {
-        let g = row_geometry(MARGIN, 52, 0, true);
-        assert_eq!((BAR_W, BAR_H, BAR_RADIUS), (3, 11, 2.0));
-        assert_eq!(g.row_x, MARGIN);
-        assert_eq!(g.row_w, ROW_PAD_X + BAR_W + BAR_GAP + 52 + ROW_PAD_X);
-        assert_eq!(g.bar_x, MARGIN + ROW_PAD_X);
-        assert_eq!(g.name_x, g.bar_x + BAR_W + BAR_GAP, "8px between bar and name");
-        assert_eq!(g.value_x, g.name_x + 52 + ROW_VALUE_GAP);
+    fn near(a: f32, b: f32) -> bool {
+        (a - b).abs() < 1e-4
     }
 
-    /// Mirrored, the row is flushed against the other edge and every gap is the
-    /// same, with the bar still on the outside.
-    #[test]
-    fn a_mirrored_row_keeps_the_same_gaps() {
-        let edge = 520 - MARGIN;
-        let g = row_geometry(edge, 52, 31, false);
-        assert_eq!(g.row_x + g.row_w, edge, "the chip ends on the edge");
-        assert_eq!(g.bar_x + BAR_W, edge - ROW_PAD_X, "8px of padding outside the bar");
-        assert_eq!(g.name_x + 52, g.bar_x - BAR_GAP);
-        assert_eq!(g.value_x + 31, g.name_x - ROW_VALUE_GAP);
+    fn rgb_near(got: [f32; 3], want: [f32; 3]) -> bool {
+        near(got[0], want[0]) && near(got[1], want[1]) && near(got[2], want[2])
     }
 
-    /// The watermark is the mark box, the 11 px gap and the tracked wordmark; the
-    /// rule is 8 px under it whatever the face metrics do.
-    #[test]
-    fn the_watermark_is_mark_gap_word_with_the_rule_eight_below() {
-        assert_eq!(watermark_width(21, 80), 21 + 11 + 80);
-        assert_eq!(watermark_height(15, 19), 19, "the taller of the box and the line");
-        assert_eq!(watermark_height(15, 12), 15);
-        assert_eq!(watermark_rule_y(16, 19), 16 + 19 + 8);
-        assert_eq!((MARK_W, WM_GAP, MARK_ECHO_X), (21, 11, 7));
+    fn entry(id: u32, name: &str, value: &str, flash: bool) -> Entry {
+        Entry {
+            id,
+            enabled: true,
+            flash,
+            highlight: false,
+            name: name.to_string(),
+            value: value.to_string(),
+        }
     }
 
-    /// The bug this fixes: the HUD used to be laid out inside a 520x400 stage
-    /// parked at (0, 0), so the mockup's right-anchored blocks landed around
-    /// x = 400 — the middle of a 1920-wide screen, with everything else
-    /// transparent. Anchored to the rect the window actually covers, the same
-    /// block sits on the screen's own right edge.
+    /// The master constants of HUD.cpp:469-491, mode by mode: font, topY,
+    /// lineHeight, moduleSpacing, itemHeight, row pitch, the text insets, the bar
+    /// width and the right margin.
     #[test]
-    fn the_hud_hangs_off_the_rects_corner() {
-        let stage = Rect::new(0, 0, 520, 400);
-        let monitor = Rect::new(0, 0, 1920, 1080);
-        let wm_w = 112; // the 21px mark box, the 11px gap and the tracked wordmark
-
-        assert_eq!(anchor_x(stage, Position::Right, MARGIN, wm_w), 520 - MARGIN - wm_w);
-        assert_eq!(anchor_x(monitor, Position::Right, MARGIN, wm_w), 1920 - MARGIN - wm_w);
-        assert_eq!(
-            anchor_x(monitor, Position::Left, MARGIN, wm_w),
-            MARGIN,
-            "mirrored, the same block hangs off the screen's left edge"
-        );
-        assert_eq!(anchor_top(monitor, MARGIN), MARGIN);
-        assert_eq!(anchor_bottom(monitor, MARGIN, 29), 1080 - MARGIN - 29);
-        assert_eq!((monitor.right(), monitor.bottom()), (1920, 1080));
-        assert!(!monitor.is_empty() && Rect::new(0, 0, 0, 1080).is_empty());
-    }
-
-    /// `--rect` (the multi-monitor hook) moves the whole HUD with the rect: a
-    /// monitor at x = 1920 gets the same layout 1920 px to the right, and one
-    /// *below* the first moves the top blocks down instead.
-    #[test]
-    fn a_rect_override_moves_the_whole_hud() {
-        let second = Rect::new(1920, 0, 1920, 1080);
-        assert_eq!(anchor_x(second, Position::Right, MARGIN, 112), 1920 + 1920 - MARGIN - 112);
-        assert_eq!(anchor_x(second, Position::Left, MARGIN, 112), 1920 + MARGIN);
-        assert_eq!(anchor_bottom(second, MARGIN, 29), 1080 - MARGIN - 29);
-
-        let below = Rect::new(0, 1080, 1920, 1080);
-        assert_eq!(anchor_top(below, MARGIN), 1080 + MARGIN);
-        assert_eq!(anchor_bottom(below, MARGIN, 29), 1080 + 1080 - MARGIN - 29);
-    }
-
-    /// The same HUD measured in a monitor-sized rect lands in that rect's corners,
-    /// and the surface-local layout does not move when the rect does — only where
-    /// the window is created moves.
-    #[test]
-    fn the_layout_lands_in_the_rects_corners() {
-        let text = TextEngine::new().expect("GDI text engine (--dump needs it too)");
-        let entries = vec![
-            Entry {
-                id: 1,
-                enabled: true,
-                flash: false,
-                highlight: true,
-                name: "Velocity".to_string(),
-                value: "82%".to_string(),
-            },
-            Entry {
-                id: 2,
-                enabled: true,
-                flash: false,
-                highlight: false,
-                name: "Reach".to_string(),
-                value: "3.1-3.3".to_string(),
-            },
+    fn the_four_modes_are_the_sources_master_constants() {
+        let cases: [(Mode, [f32; 10]); 4] = [
+            // font, topY, lineHeight, spacing, itemHeight, pitch, insetX, insetY, bar, margin
+            (Mode::Default, [16.0, 4.0, 16.0, 2.0, 18.0, 20.0, 0.0, 0.0, 0.0, 6.0]),
+            (Mode::Rise, [16.0, 4.0, 16.0, 0.0, 22.0, 22.0, 4.0, 2.0, 2.0, 4.0]),
+            (Mode::Vape, [16.0, 4.0, 16.0, 0.0, 22.0, 22.0, 4.0, 2.0, 2.0, 4.0]),
+            (Mode::Tesseract, [16.0, 4.0, 16.0, 2.0, 20.0, 22.0, 6.0, 2.0, 3.0, 6.0]),
         ];
-        let (wm_w, _) = watermark_size(&text);
-        let monitor = Rect::new(0, 0, 1920, 1080);
-        let right = Config { position: Position::Right, margin: MARGIN, alpha: 1.0 };
-        let r = measure_layout(&text, &entries, &right, monitor);
 
-        assert_eq!(r.wm_x, anchor_x(monitor, Position::Right, MARGIN, wm_w));
-        assert_eq!(r.wm_x + r.wm_w, 1920 - MARGIN, "the block ends 16px inside the screen edge");
-        assert_eq!(r.rows[0].row_x + r.rows[0].row_w, 1920 - MARGIN, "the chips are flushed to it");
-        assert_eq!(r.pill.x + r.pill.w, 1920 - MARGIN);
-        assert_eq!(r.pill.y + r.pill.h, 1080 - MARGIN);
-
-        let left = Config { position: Position::Left, margin: MARGIN, alpha: 1.0 };
-        let l = measure_layout(&text, &entries, &left, monitor);
-        assert_eq!(l.wm_x, MARGIN, "mirrored: the block starts on the screen's left edge");
-        assert_eq!(l.rows[0].row_x, MARGIN);
-        assert_eq!(l.rows[0].bar_x, MARGIN + ROW_PAD_X, "the spine moves to the outside edge");
-
-        // A rect further right changes where the surface sits, not how it is laid
-        // out: the local origin is identical and the screen origin moves with it.
-        let shifted = Rect::new(1920, 0, 1920, 1080);
-        let s = measure_layout(&text, &entries, &right, shifted);
-        assert_eq!(s.wm_x, r.wm_x);
-        assert_eq!(1920 + s.wm_x, anchor_x(shifted, Position::Right, MARGIN, wm_w));
-    }
-
-    /// The pill is its pieces: pad, dot, three 9 px gaps, label, separator, count,
-    /// pad — and the tallest piece plus 8 px of padding above and below.
-    #[test]
-    fn the_pill_measures_its_pieces() {
-        assert_eq!(pill_size_from(70, 10, 13, 13), (13 * 2 + 7 + 9 * 3 + 70 + 1 + 10, 13 + 8 * 2));
-        assert_eq!(pill_size_from(70, 10, 10, 10), (141, 11 + 16), "the separator sets the floor");
-        assert_eq!(row_height_from(17), 17 + 3 * 2);
-        assert_eq!(row_height_from(9), BAR_H + 3 * 2, "the bar sets the floor");
-    }
-
-    /// The row bar is cyan at the top of the list and violet at the bottom.
-    #[test]
-    fn the_spine_fades_accent_to_accent2() {
-        assert_eq!(spine_color(0, 8), ACCENT);
-        assert_eq!(spine_color(7, 8), ACCENT2);
-        assert_eq!(spine_color(0, 1), ACCENT, "a single row gets the top colour");
-        assert_eq!(spine_color(1, 8), lerp_argb(ACCENT, ACCENT2, 1.0 / 7.0));
-    }
-
-    /// The design curve is pinned at both ends and never goes backwards.
-    #[test]
-    fn the_design_curve_is_monotonic() {
-        assert_eq!(design_curve(0.0), 0.0);
-        assert_eq!(design_curve(1.0), 1.0);
-        let mut previous = 0.0;
-        for step in 0..=100 {
-            let y = design_curve(step as f32 / 100.0);
-            assert!(y >= previous, "curve dipped at {step}");
-            previous = y;
-        }
-        // Ease-out: already well past half way at the half-way point.
-        assert!(design_curve(0.5) > 0.5);
-    }
-
-    /// The ring starts small and opaque, expands while fading, and holds the
-    /// faded end state for the last quarter of its 2.4 s cycle.
-    #[test]
-    fn the_pulse_ring_expands_while_it_fades() {
-        let (scale, alpha) = pulse_ring(0.0);
-        assert!((scale - PULSE_MIN).abs() < 1e-4);
-        assert!((alpha - PULSE_ALPHA).abs() < 1e-4);
-
-        let (mid, mid_alpha) = pulse_ring(900.0);
-        assert!(mid > PULSE_MIN && mid < PULSE_MAX);
-        assert!(mid_alpha < PULSE_ALPHA && mid_alpha > 0.0);
-
-        let (end, end_alpha) = pulse_ring(PULSE_MS * PULSE_DECAY);
-        assert!((end - PULSE_MAX).abs() < 1e-4);
-        assert!(end_alpha.abs() < 1e-4);
-        assert_eq!(pulse_ring(PULSE_MS), pulse_ring(0.0), "the cycle repeats");
-    }
-
-    /// The count pops to 1.45 at 45 % of its 300 ms and is back to 1 at both ends.
-    #[test]
-    fn the_count_pops_at_forty_five_percent() {
-        assert!((pop_scale(0.0) - 1.0).abs() < 1e-4);
-        assert!((pop_scale(POP_AT) - POP_SCALE).abs() < 1e-4);
-        assert!((pop_scale(1.0) - 1.0).abs() < 1e-4);
-        assert!(pop_scale(0.2) > 1.0 && pop_scale(0.7) > 1.0);
-    }
-
-    /// The palette is the mockup's, to the byte: `rgba(13,18,28,.55)`,
-    /// `rgba(148,163,184,.16)`, `rgba(255,90,90,.055)`, `rgba(255,255,255,.14)`.
-    #[test]
-    fn the_translucent_tokens_are_the_mockups_alphas() {
-        assert_eq!(GLASS >> 24, (0.55f32 * 255.0).round() as u32);
-        assert_eq!(LINE >> 24, (0.16f32 * 255.0).round() as u32);
-        assert_eq!(FLASH_TINT >> 24, (0.055f32 * 255.0).round() as u32);
-        assert_eq!(SEPARATOR >> 24, (0.14f32 * 255.0).round() as u32);
-        assert_eq!(GLASS & 0x00FF_FFFF, 0x0D_121C);
-        assert_eq!(LINE & 0x00FF_FFFF, 0x94_A3B8);
-        assert_eq!(ACCENT & 0x00FF_FFFF, 0x22_D3EE);
-        assert_eq!(ACCENT2 & 0x00FF_FFFF, 0xA7_8BFA);
-        assert_eq!(TEXT & 0x00FF_FFFF, 0xED_F2FA);
-        assert_eq!(MUTED & 0x00FF_FFFF, 0x8B_96AB);
-        assert_eq!(FLASH_RED & 0x00FF_FFFF, 0xFF_5A5A);
-        assert_eq!(FLASH_TEXT & 0x00FF_FFFF, 0xFF_6B6B);
-    }
-
-    /// The chip is a fraction of the glass token, so setting it to 0 leaves the
-    /// mockup's own (background-less) row.
-    #[test]
-    fn the_row_chip_is_a_fraction_of_the_glass_token() {
-        assert_eq!(ROW_CHIP_ALPHA, 0.4);
-        let chip = with_alpha(GLASS, ROW_CHIP_ALPHA);
-        assert_eq!(chip >> 24, ((GLASS >> 24) as f32 * 0.4).round() as u32);
-        assert!(chip >> 24 < GLASS >> 24, "the chip must be lighter than the pill");
-        assert_eq!(with_alpha(GLASS, 0.0) >> 24, 0, "0 is a faithful copy of the mockup");
-    }
-
-    /// The pill's endless ring used to be the only reason `paint` never went
-    /// static: it reported "still moving" on every frame so the compositor always
-    /// got a push. With the pill off (the default) a settled frame reports
-    /// `false`, so the caller's content signature is what drives the repaint — and
-    /// with the pill on it reports `true` forever, exactly as it did before.
-    ///
-    /// Gated on the constant on purpose, so flipping the pill back on leaves this
-    /// test green; the expected value *is* the flag's two meanings.
-    #[test]
-    fn a_settled_frame_is_static_unless_the_pill_pulses() {
-        let mut entries = Vec::new();
-        for (id, name, value) in [(1u32, "Reach", "3.1-3.3"), (2, "Velocity", "82%")] {
-            entries.push(Entry {
-                id,
-                enabled: true,
-                flash: false,
-                highlight: false,
-                name: name.to_string(),
-                value: value.to_string(),
-            });
+        for (mode, want) in cases {
+            let m = Metrics::new(mode, 1.0);
+            let got = [
+                m.font_px,
+                m.top_y,
+                m.line_height,
+                m.module_spacing,
+                m.item_height,
+                row_pitch(&m),
+                m.text_inset_x,
+                m.text_inset_y,
+                bar_width(&m),
+                m.right_margin,
+            ];
+            for (a, b) in got.iter().zip(want.iter()) {
+                assert!(near(*a, *b), "{mode:?}: got {got:?}, want {want:?}");
+            }
         }
 
-        let mut text = TextEngine::new().expect("GDI text engine (--dump needs it too)");
-        let mut canvas = Canvas::new(520, 400);
-        let config = Config { position: Position::Right, margin: MARGIN, alpha: 1.0 };
+        // The two y origins the source derives rather than shares: the watermark's
+        // own baseline and the first row's.
+        assert_eq!(Metrics::new(Mode::Default, 1.0).base_y, 4.0);
+        assert_eq!(Metrics::new(Mode::Default, 1.0).watermark_y, 4.0);
+        assert_eq!(Metrics::new(Mode::Rise, 1.0).watermark_y, 6.0, "topY + risePadY");
+        assert_eq!(Metrics::new(Mode::Vape, 1.0).watermark_y, 6.0);
+        assert_eq!(Metrics::new(Mode::Tesseract, 1.0).watermark_y, 6.0);
+        assert_eq!(Metrics::new(Mode::Tesseract, 1.0).base_y, 2.0, "Tesseract rows");
+        assert_eq!(Metrics::new(Mode::Default, 1.0).watermark_x, 10.0, "cursorX = 10");
+    }
+
+    /// `--scale` multiplies every metric and the font size; 1.0 is the source.
+    #[test]
+    fn scale_multiplies_every_metric() {
+        let one = Metrics::new(Mode::Vape, 1.0);
+        let two = Metrics::new(Mode::Vape, 2.0);
+        assert_eq!(two.font_px, one.font_px * 2.0);
+        assert_eq!(two.item_height, one.item_height * 2.0);
+        assert_eq!(row_pitch(&two), row_pitch(&one) * 2.0);
+        assert_eq!(two.text_inset_x, one.text_inset_x * 2.0);
+        assert_eq!(two.text_inset_y, one.text_inset_y * 2.0);
+        assert_eq!(bar_width(&two), bar_width(&one) * 2.0);
+        assert_eq!(two.right_margin, one.right_margin * 2.0);
+        assert_eq!(two.watermark_x, 20.0);
+        assert_eq!(two.watermark_y, 12.0);
+        assert_eq!(two.base_y, 8.0);
+
+        // Out-of-range scales are clamped, exactly as the text engine clamps its
+        // face size, so the layout and the glyphs cannot disagree.
+        assert_eq!(Metrics::new(Mode::Default, 99.0).scale, MAX_SCALE);
+        assert_eq!(Metrics::new(Mode::Default, 0.0).scale, MIN_SCALE);
+        assert_eq!(Metrics::new(Mode::Default, f32::NAN).scale, 1.0);
+    }
+
+    /// Only the modes the source rounds on the left corners are rounded, and the
+    /// right corners stay square for the accent bar: VapeV4 6 px, Tesseract 5 px.
+    #[test]
+    fn the_chip_rounds_only_the_left_corners() {
+        assert_eq!(chip_corners(&Metrics::new(Mode::Default, 1.0)), [0.0; 4]);
+        assert_eq!(chip_corners(&Metrics::new(Mode::Rise, 1.0)), [0.0; 4]);
+        assert_eq!(chip_corners(&Metrics::new(Mode::Vape, 1.0)), [6.0, 0.0, 0.0, 6.0]);
+        assert_eq!(chip_corners(&Metrics::new(Mode::Tesseract, 1.0)), [5.0, 0.0, 0.0, 5.0]);
+        assert_eq!(chip_corners(&Metrics::new(Mode::Vape, 2.0)), [12.0, 0.0, 0.0, 12.0]);
+
+        // The chip fills: the source's own background colours, and none in Default.
+        assert_eq!(chip_colour(&Metrics::new(Mode::Default, 1.0)), None);
+        assert_eq!(chip_colour(&Metrics::new(Mode::Rise, 1.0)), Some(RISE_BACKGROUND));
+        assert_eq!(chip_colour(&Metrics::new(Mode::Vape, 1.0)), Some(RISE_BACKGROUND));
+        assert_eq!(chip_colour(&Metrics::new(Mode::Tesseract, 1.0)), Some(TESSERACT_BACKGROUND));
+        assert_eq!(TESSERACT_BACKGROUND >> 24, 240);
+    }
+
+    /// `boxWidth` (HUD.cpp:607-609): Rise-like adds `padX*2 + rectW + 1`, Tesseract
+    /// adds `padding + gapAfterText + rectW`, Default adds nothing.
+    #[test]
+    fn the_row_box_adds_the_modes_padding_and_bar() {
+        assert_eq!(box_width(&Metrics::new(Mode::Default, 1.0), 100.0), 100.0);
+        assert_eq!(box_width(&Metrics::new(Mode::Rise, 1.0), 100.0), 100.0 + 8.0 + 2.0 + 1.0);
+        assert_eq!(box_width(&Metrics::new(Mode::Vape, 1.0), 100.0), 111.0);
+        assert_eq!(box_width(&Metrics::new(Mode::Tesseract, 1.0), 100.0), 100.0 + 6.0 + 4.0 + 3.0);
+
+        // The panel the watermark sits in: the run plus the same padding and bar,
+        // and no FPS term (this overlay has no frame counter).
+        assert_eq!(watermark_panel_width(&Metrics::new(Mode::Rise, 1.0), 74.0, 33.0), 74.0 + 33.0 + 11.0);
+    }
+
+    /// The tag sits one space glyph after the name — except in Tesseract, which
+    /// uses its own 4 px gap (HUD.cpp:639, 603).
+    #[test]
+    fn the_tag_gap_is_a_space_but_four_pixels_in_tesseract() {
+        let space = 4.0;
+        assert_eq!(tag_gap(&Metrics::new(Mode::Default, 1.0), space), 4.0);
+        assert_eq!(tag_gap(&Metrics::new(Mode::Rise, 1.0), space), 4.0);
+        assert_eq!(tag_gap(&Metrics::new(Mode::Vape, 1.0), space), 4.0);
+        assert_eq!(tag_gap(&Metrics::new(Mode::Tesseract, 1.0), space), TESSERACT_GAP_AFTER_TEXT);
+        assert_eq!(tag_gap(&Metrics::new(Mode::Tesseract, 2.0), 4.0), 8.0, "and it scales");
+    }
+
+    /// HSV → RGB against the definition, including the sector the Rise hue lands
+    /// in and the saturation-0 shortcut.
+    #[test]
+    fn hsv_to_rgb_matches_the_definition() {
+        assert_eq!(hsv_to_rgb(0.0, 0.0, 1.0), [1.0, 1.0, 1.0], "no saturation is grey");
+        assert_eq!(hsv_to_rgb(0.0, 1.0, 1.0), [1.0, 0.0, 0.0]);
+        assert_eq!(hsv_to_rgb(1.0 / 3.0, 1.0, 1.0), [0.0, 1.0, 0.0]);
+        assert_eq!(hsv_to_rgb(0.5, 1.0, 1.0), [0.0, 1.0, 1.0]);
+        assert_eq!(hsv_to_rgb(0.75, 1.0, 1.0), [0.5, 0.0, 1.0]);
+
+        // (0.5, 0.72, 0.95) is sector 3 with f = 0: p = v(1-s), q = t = v.
+        let c = hsv_to_rgb(0.5, 0.72, 0.95);
+        assert!(rgb_near(c, [0.95 * 0.28, 0.95, 0.95]), "{c:?}");
+
+        // The hue wraps, and 1.0 is 0.0.
+        assert_eq!(hsv_to_rgb(1.25, 1.0, 1.0), hsv_to_rgb(0.25, 1.0, 1.0));
+        assert_eq!(hsv_to_rgb(1.0, 1.0, 1.0), hsv_to_rgb(0.0, 1.0, 1.0));
+    }
+
+    /// The Default wave: a cosine between the two configurable colours with a
+    /// `2500 / speed` ms cycle and `+400 ms` per row.
+    #[test]
+    fn the_wave_is_a_cosine_blend_on_the_sources_cycle() {
+        let primary = DEFAULT_PRIMARY;
+        let secondary = DEFAULT_SECONDARY;
+
+        // At the start of a cycle the blend is 0, half way through it is 1 — the
+        // primary and secondary colours exactly.
+        assert!(rgb_near(wave_rgb(primary, secondary, 0.0, 0.0, 1.0), primary));
+        assert!(rgb_near(wave_rgb(primary, secondary, 1250.0, 0.0, 1.0), secondary));
+
+        // A row's `index * 400` offset is the same as being 400 ms further in.
+        let row3 = wave_rgb(primary, secondary, 850.0, 1200.0, 1.0);
+        assert!(rgb_near(row3, wave_rgb(primary, secondary, 2050.0, 0.0, 1.0)));
+
+        // Speed divides the cycle: at 2x the same phase arrives in half the time.
+        assert!(rgb_near(wave_rgb(primary, secondary, 625.0, 0.0, 2.0), secondary));
+
+        // The cycle repeats, and a zero speed is floored at 0.01 rather than
+        // dividing by zero (HUD.cpp:258).
+        assert!(rgb_near(wave_rgb(primary, secondary, 2500.0, 0.0, 1.0), primary));
+        assert!(wave_rgb(primary, secondary, 5000.0, 0.0, 0.0)[0].is_finite());
+
+        // Two different rows are on different phases — the effect the whole mode
+        // is for.
+        let a = wave_rgb(primary, secondary, 2000.0, 0.0, 1.0);
+        let b = wave_rgb(primary, secondary, 2000.0, WAVE_ROW_OFFSET_MS, 1.0);
+        assert!(!rgb_near(a, b), "row 1 must not match row 0: {a:?} vs {b:?}");
+    }
+
+    /// Rise: `hue = 0.58 - phase*0.18` with `phase = 0.5 + 0.5*sin(t*1.35 + i*0.5)`
+    /// at saturation 0.72 and value 0.95 — checked at hand-computed phases.
+    #[test]
+    fn rise_spreads_a_hue_band_over_the_rows() {
+        // t = 0, i = 0 -> phase 0.5 -> hue 0.49.
+        assert!(rgb_near(rise_rgb(0.0, 0.0), hsv_to_rgb(0.49, 0.72, 0.95)));
+        // t = 0, i = 1 -> phase 0.5 + 0.5*sin(0.5) = 0.73971277 -> hue 0.44685170.
+        assert!(rgb_near(rise_rgb(0.0, 1.0), hsv_to_rgb(0.446_851_7, 0.72, 0.95)));
+        // t = 0, i = 2 -> phase 0.5 + 0.5*sin(1.0) = 0.92073548 -> hue 0.41426761.
+        assert!(rgb_near(rise_rgb(0.0, 2.0), hsv_to_rgb(0.414_267_6, 0.72, 0.95)));
+
+        // Every hue the phase can reach is inside the [0.40, 0.58] band, and the
+        // band is a fifth of the wheel rather than a full rainbow.
+        for step in 0..40 {
+            let t = step as f32 * 0.37;
+            for index in 0..4 {
+                let c = rise_rgb(t, index as f32);
+                assert!(c.iter().all(|v| (0.0..=1.0).contains(v)), "{c:?}");
+            }
+        }
+    }
+
+    /// VapeV4: `sin(t*1.55 + i*0.45)` lerping soft purple to pink — at phase 0.5
+    /// the colour is exactly the midpoint of the two source colours.
+    #[test]
+    fn vape_lerps_purple_to_pink() {
+        let mid = vape_rgb(0.0, 0.0);
+        assert!(rgb_near(mid, [(0.82 + 1.0) / 2.0, (0.50 + 0.43) / 2.0, (0.98 + 0.74) / 2.0]));
+
+        // A quarter cycle later `sin` is at its positive peak: pure pink.
+        let t = std::f32::consts::FRAC_PI_2 / 1.55;
+        assert!(rgb_near(vape_rgb(t, 0.0), [1.0, 0.43, 0.74]));
+        // And at the negative peak, pure purple.
+        let t = -std::f32::consts::FRAC_PI_2 / 1.55;
+        assert!(rgb_near(vape_rgb(t, 0.0), [0.82, 0.50, 0.98]));
+
+        // Rows differ by 0.45 rad of phase each.
+        assert!(!rgb_near(vape_rgb(0.3, 0.0), vape_rgb(0.3, 1.0)));
+    }
+
+    /// Tesseract: the golden-ratio hue walk at saturation 0.75 and value 0.9.
+    #[test]
+    fn tesseract_walks_the_hue_by_the_golden_ratio() {
+        // t = 0, i = 0 -> hue 0.
+        assert!(rgb_near(tesseract_rgb(0.0, 0.0), hsv_to_rgb(0.0, 0.75, 0.9)));
+        // t = 0, i = 1 -> hue 0.618034.
+        assert!(rgb_near(tesseract_rgb(0.0, 1.0), hsv_to_rgb(GOLDEN_RATIO, 0.75, 0.9)));
+        // t = 2000 ms is one full turn of the base hue: back to the start.
+        assert!(rgb_near(tesseract_rgb(2000.0, 0.0), hsv_to_rgb(0.0, 0.75, 0.9)));
+        // t = 1000 ms is half a turn.
+        assert!(rgb_near(tesseract_rgb(1000.0, 0.0), hsv_to_rgb(0.5, 0.75, 0.9)));
+
+        // The spread: consecutive rows are a golden ratio apart, so any four rows
+        // are four clearly different colours.
+        let colours: Vec<[f32; 3]> = (0..4).map(|i| tesseract_rgb(2000.0, i as f32)).collect();
+        for i in 0..colours.len() {
+            for j in (i + 1)..colours.len() {
+                assert!(!rgb_near(colours[i], colours[j]), "rows {i} and {j} collided");
+            }
+        }
+    }
+
+    /// Tesseract's watermark header steps once every 20 ms through 360 hues
+    /// (HUD.cpp:303-309).
+    #[test]
+    fn the_tesseract_header_steps_every_twenty_milliseconds() {
+        assert!(rgb_near(tesseract_header_rgb(0.0, 0.0), hsv_to_rgb(0.0, 0.7, 0.8)));
+        // ceil(20/20) = 1 -> hue 1/360.
+        assert!(rgb_near(tesseract_header_rgb(20.0, 0.0), hsv_to_rgb(1.0 / 360.0, 0.7, 0.8)));
+        // Half a second in: ceil(500/20) = 25 -> hue 25/360.
+        assert!(rgb_near(tesseract_header_rgb(500.0, 0.0), hsv_to_rgb(25.0 / 360.0, 0.7, 0.8)));
+        // It wraps every 7.2 s, and it is not the row function.
+        assert!(rgb_near(tesseract_header_rgb(7200.0, 0.0), hsv_to_rgb(0.0, 0.7, 0.8)));
+        assert!(!rgb_near(tesseract_header_rgb(500.0, 0.0), tesseract_rgb(500.0, 0.0)));
+    }
+
+    /// The repaint rule: Default with the wave off is static once settled; every
+    /// other combination is time-driven, because its accent is.
+    #[test]
+    fn only_a_waveless_default_hud_is_static() {
+        let mut cfg = Config::default();
+        assert!(accent_is_animated(&cfg), "Default + wave");
+        cfg.wave = false;
+        assert!(!accent_is_animated(&cfg), "Default without the wave");
+        for mode in [Mode::Rise, Mode::Vape, Mode::Tesseract] {
+            let cfg = Config { mode, wave: false, ..Config::default() };
+            assert!(accent_is_animated(&cfg), "{mode:?} is always animated");
+        }
+    }
+
+    /// The rows slide in from the edge at `dt * 6` per frame, clamped at 1, and
+    /// the delta itself is clamped to 0.1 s (HUD.cpp:504, 592).
+    #[test]
+    fn a_row_slides_in_at_six_per_second() {
+        let mut anim = Anim::new();
+        assert!(near(anim.progress("Velocity", 0.05), 0.3));
+        assert!(near(anim.progress("Velocity", 0.1), 0.9));
+        assert!(near(anim.progress("Velocity", 0.1), 1.0), "clamped at 1");
+        assert!(near(anim.progress("Velocity", 0.1), 1.0), "and it stays there");
+        // Rows keep their own progress.
+        assert!(near(anim.progress("Reach", 0.05), 0.3));
+
+        // A dt of 0.2 s advances the row by one clamped step, not two.
         let now = Instant::now();
         let mut anim = Anim::new();
-        // Every entrance has long finished and no flash is decaying: nothing is
-        // moving except the pill's ring.
-        anim.seed(&entries, now, &[]);
-        canvas.clear();
+        anim.tick(now);
+        anim.tick(now + Duration::from_millis(200));
+        assert!(near(anim.dt, MAX_DELTA_S), "the frame delta is clamped to 0.1s");
+        assert!(near(anim.progress("Velocity", anim.dt), 0.6));
 
-        assert_eq!(
-            paint(&mut canvas, &mut text, &entries, &mut anim, now, &config),
-            SHOW_STATUS_PILL,
-            "the status pill's ring is the only endless animation",
+        // A module that is no longer listed loses its state — the source's instant
+        // exit, so it cannot slide in again from where it left off.
+        let mut anim = Anim::new();
+        anim.progress("Gone", 0.05);
+        anim.retain(&["Velocity".to_string()]);
+        assert!(near(anim.progress("Gone", 0.01), 0.06), "restarted from 0");
+    }
+
+    /// The list is the source's wedge: sorted by measured width, descending.
+    #[test]
+    fn the_rows_are_sorted_by_width_descending() {
+        let text = TextEngine::new(1.0).expect("GDI text engine");
+        let entries = vec![
+            entry(1, "Reach", "3.1-3.3", false),
+            entry(2, "AutoClicker", "12.3 cps", false),
+            entry(3, "Velocity", "82%", false),
+            entry(4, "Sprint", "", false),
+        ];
+        let cfg = Config::default();
+        let rows = measure_rows(&text, &entries, &cfg, &Metrics::new(cfg.mode, 1.0));
+
+        assert_eq!(rows.len(), 4, "every enabled module is listed");
+        for pair in rows.windows(2) {
+            assert!(pair[0].sort_w >= pair[1].sort_w, "the wedge is width-descending");
+        }
+        // The disabled module, the empty name and ArrayList itself are never rows.
+        let skipped = vec![
+            Entry { enabled: false, ..entry(5, "Hidden", "", false) },
+            entry(6, "", "", false),
+            entry(7, SELF_MODULE, "", false),
+        ];
+        assert!(measure_rows(&text, &skipped, &cfg, &Metrics::new(cfg.mode, 1.0)).is_empty());
+    }
+
+    /// The anchoring, on the rect the window covers: the source's own placement is
+    /// watermark left, rows right, and `--position left` swaps the pair.
+    #[test]
+    fn the_hud_hangs_off_the_rects_edges() {
+        let monitor = Rect::new(0, 0, 1920, 1080);
+        let m = Metrics::new(Mode::Default, 1.0);
+
+        assert_eq!(watermark_x(monitor, Position::Right, &m, 100.0), 10, "cursorX = 10");
+        assert_eq!(watermark_y(monitor, &m), 4);
+        assert_eq!(row_target_x(monitor, Position::Right, &m, 120.0), 1920.0 - 120.0 - 6.0);
+        assert_eq!(row_slide_origin(monitor, Position::Right, 120.0), 1920.0, "from screenW");
+        assert_eq!(row_y(monitor, &m, 0), 4);
+        assert_eq!(row_y(monitor, &m, 3), 4 + 3 * 20, "pitch 20 in Default");
+        assert_eq!(list_edge_x(monitor, Position::Right), 1920);
+
+        // Mirrored, the watermark ends 10 px inside the other edge and the rows are
+        // flushed against it; a row still slides in from off-screen, not from its
+        // own resting place.
+        let left = Position::Left;
+        assert_eq!(watermark_x(monitor, left, &m, 100.0), 1920 - 10 - 100);
+        assert!(watermark_x(monitor, left, &m, 100.0) + 100 <= 1920);
+        assert_eq!(row_target_x(monitor, left, &m, 120.0), 6.0);
+        assert_eq!(row_slide_origin(monitor, left, 120.0), -120.0);
+        assert_eq!(list_edge_x(monitor, left), 0);
+
+        // A rect that is not at the origin moves the whole HUD with it, and a
+        // second monitor below the first moves the top blocks down.
+        let second = Rect::new(1920, 0, 1920, 1080);
+        assert_eq!(watermark_x(second, Position::Right, &m, 100.0), 1920 + 10);
+        assert_eq!(row_target_x(second, Position::Right, &m, 120.0), 3840.0 - 126.0);
+        let below = Rect::new(0, 1080, 1920, 1080);
+        assert_eq!(watermark_y(below, &m), 1084);
+        assert_eq!(row_y(below, &m, 0), 1084);
+        assert_eq!(below.bottom(), 2160);
+
+        // Rise's own margin and row pitch.
+        let rise = Metrics::new(Mode::Rise, 1.0);
+        assert_eq!(row_target_x(monitor, Position::Right, &rise, 120.0), 1920.0 - 120.0 - 4.0);
+        assert_eq!(row_y(monitor, &rise, 2), 4 + 44);
+        let tesseract = Metrics::new(Mode::Tesseract, 1.0);
+        assert_eq!(row_y(monitor, &tesseract, 2), 2 + 44, "base y 2, pitch 22");
+    }
+
+    /// A settled Default frame with the wave off reports nothing moving — the
+    /// on-demand repaint rule; every other mode keeps the compositor fed because
+    /// its accent is a function of the clock.
+    #[test]
+    fn a_settled_frame_is_static_only_without_a_live_accent() {
+        let entries =
+            vec![entry(1, "Velocity", "82%", false), entry(2, "Reach", "3.1-3.3", false)];
+        let mut text = TextEngine::new(1.0).expect("GDI text engine");
+        let mut canvas = Canvas::new(520, 400);
+        let now = Instant::now();
+
+        for (mode, wave, want) in [
+            (Mode::Default, false, false),
+            (Mode::Default, true, true),
+            (Mode::Rise, false, true),
+            (Mode::Vape, false, true),
+            (Mode::Tesseract, false, true),
+        ] {
+            let cfg = Config { mode, wave, ..Config::default() };
+            let mut anim = Anim::new();
+            anim.seed(&entries, now);
+            canvas.clear();
+            assert_eq!(
+                paint(&mut canvas, &mut text, &entries, &mut anim, now, &cfg),
+                want,
+                "{mode:?} with wave {wave}"
+            );
+        }
+
+        // Nothing on screen at all is also not animating, even in Rise — but with
+        // the watermark still drawn, Rise's panel bar keeps moving, so that frame
+        // is still one to push.
+        let cfg = Config { mode: Mode::Rise, ..Config::default() };
+        let mut anim = Anim::new();
+        let mut canvas = Canvas::new(520, 400);
+        assert!(
+            paint(&mut canvas, &mut text, &[], &mut anim, now, &cfg),
+            "Rise's watermark panel still animates"
         );
+        let cfg = Config { mode: Mode::Rise, watermark: false, ..Config::default() };
+        let mut anim = Anim::new();
+        assert!(
+            !paint(&mut canvas, &mut text, &[], &mut anim, now, &cfg),
+            "nothing drawn, nothing moving"
+        );
+    }
+
+    /// A seeded frame draws every row at rest, with the pixels where the geometry
+    /// says they are: the bars sit against the right margin of each mode, and a
+    /// VapeV4 row is the only one whose tag turns red while the module is in use.
+    #[test]
+    fn a_seeded_frame_lands_the_rows_on_the_modes_margins() {
+        let entries = vec![entry(1, "Velocity", "82%", true)];
+        let canvas = Canvas::placed(0, 0, 1920, 1080);
+
+        // (mode, right margin, the mode's own base y for the first row)
+        for (mode, margin, base_y) in [
+            (Mode::Default, 6, 4),
+            (Mode::Rise, 4, 4),
+            (Mode::Vape, 4, 4),
+            (Mode::Tesseract, 6, 2),
+        ] {
+            let text = TextEngine::new(1.0).expect("GDI text engine");
+            let cfg = Config { mode, ..Config::default() };
+            let m = Metrics::new(mode, 1.0);
+            let rows = measure_rows(&text, &entries, &cfg, &m);
+            let box_w = rows[0].box_w;
+            let box_x = row_target_x(canvas_rect(&canvas), Position::Right, &m, box_w).round() as i32;
+            let bar_right = box_x + box_w.round() as i32;
+
+            assert_eq!(bar_right, 1920 - margin, "{mode:?}: the row is flushed to its margin");
+            assert_eq!(row_y(canvas_rect(&canvas), &m, 0), base_y, "{mode:?}");
+        }
+
+        // The tag colour rule the source encodes at HUD.cpp:640: the active red is
+        // VapeV4's alone; every other mode stays grey whatever the flash says.
+        for mode in [Mode::Default, Mode::Rise, Mode::Tesseract] {
+            let m = Metrics::new(mode, 1.0);
+            assert_eq!(tag_colour(&m, true), tag_colour(&m, false), "{mode:?} keeps its grey");
+        }
+        let vape = Metrics::new(Mode::Vape, 1.0);
+        assert_eq!(tag_colour(&vape, true), VAPE_TAG_ACTIVE);
+        assert_eq!(tag_colour(&vape, false), RISE_SECONDARY_TEXT);
+    }
+
+    /// `FormatModuleName` (HUD.cpp:125-150) for `--spaced`: interior capitals are
+    /// split off, including the end of an acronym run.
+    #[test]
+    fn spaced_names_split_camel_case_like_the_source() {
+        assert_eq!(spaced_name("AutoClicker"), "Auto Clicker");
+        assert_eq!(spaced_name("ArrayList"), "Array List");
+        assert_eq!(spaced_name("WTap"), "W Tap");
+        assert_eq!(spaced_name("Velocity"), "Velocity");
+        assert_eq!(spaced_name(""), "");
+        assert_eq!(spaced_name("HitSelect"), "Hit Select");
     }
 }

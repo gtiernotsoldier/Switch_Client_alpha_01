@@ -17,6 +17,7 @@ import io.doppel.adapter.common.module.render.JumpTiming
 import io.doppel.adapter.common.module.render.KnockbackDisplay
 import io.doppel.adapter.common.module.render.WebUI
 import io.doppel.adapter.common.module.world.FastPlace
+import io.doppel.adapter.common.module.world.NoCameraBob
 import io.doppel.adapter.common.hud.HudStateWriter
 import io.doppel.adapter.common.render.OverlayRenderer
 import io.doppel.adapter.common.render.RenderContext
@@ -129,7 +130,7 @@ object ForgeBootstrap {
             Fullbright, HUD, NoHurtCam, Keystrokes, Speedometer, VelocityDisplay, JumpStatus,
             JumpTiming, KnockbackDisplay,
             WebUI,
-            FastPlace
+            FastPlace, NoCameraBob
         )
         ModuleRegistry.initSafetyIntegration()
         // Restore the saved configuration before anything reads it. Module keybinds and the

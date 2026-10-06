@@ -1270,12 +1270,88 @@ object ForgeEventBridge : IEventBridge {
         } catch (_: Exception) {}
     }
 
+    // ── NoCameraBob: vanilla's "View Bobbing" option, found by shape, never by name ──
+    //
+    // At runtime FML deobfuscates **class** names to MCP but leaves **members** SRG, and the settings
+    // file carries no mapping for `viewBobbing`. A name lookup would therefore be a guess — exactly
+    // the failure mode that made `Blocks.AIR` resolve to nothing and left Eagle silently dead. So the
+    // option is found structurally instead: on `GameSettings.Options` the only declared no-argument
+    // method returning String is `getEnumString()`, the only declared void method taking one float is
+    // `setValue(float)`, and the only float-returning float-taking one is `getValue(float)`.
+    private val gameSettingsOptionsClass by lazy {
+        try { Class.forName("net.minecraft.client.settings.GameSettings\$Options") } catch (_: Exception) { null }
+    }
+    private val optionsEnumStringMethod by lazy {
+        gameSettingsOptionsClass?.declaredMethods?.firstOrNull {
+            it.parameterCount == 0 && it.returnType == String::class.java &&
+                it.declaringClass == gameSettingsOptionsClass
+        }
+    }
+    private val optionsSetValueMethod by lazy {
+        gameSettingsOptionsClass?.declaredMethods?.firstOrNull {
+            it.parameterCount == 1 && it.parameterTypes[0] == Float::class.javaPrimitiveType &&
+                it.returnType == Void.TYPE
+        }
+    }
+    private val optionsGetValueMethod by lazy {
+        gameSettingsOptionsClass?.declaredMethods?.firstOrNull {
+            it.parameterCount == 1 && it.parameterTypes[0] == Float::class.javaPrimitiveType &&
+                it.returnType == Float::class.javaPrimitiveType
+        }
+    }
+
+    /** The enum constant whose language key is `options.viewBobbing`, or null if anything moved. */
+    private val viewBobbingOption by lazy {
+        val cls = gameSettingsOptionsClass ?: return@lazy null
+        val key = optionsEnumStringMethod ?: return@lazy null
+        cls.enumConstants?.firstOrNull {
+            try {
+                (key.invoke(it) as? String)?.equals("options.viewBobbing", ignoreCase = true) == true
+            } catch (_: Exception) {
+                false
+            }
+        }
+    }
+
+    /** The player's own value while the module is on; null = we are not overriding anything. */
+    @Volatile private var savedViewBobbing: Float? = null
+
+    /**
+     * NoCameraBob — hold vanilla's View Bobbing off while the module is on, then hand the player's
+     * own value back when it goes off.
+     *
+     * Only the camera is affected, by design: 1.8.9's `ItemRenderer` reads no GameSettings field at
+     * all (verified by disassembling the official jar), so the held-item sway keeps working — which
+     * is the whole point of the module rather than simply turning bobbing off by hand.
+     */
+    private fun applyCameraBobOverride() {
+        try {
+            val option = viewBobbingOption ?: return
+            val setter = optionsSetValueMethod ?: return
+            if (EventBridge.suppressCameraBob) {
+                if (savedViewBobbing == null) {
+                    savedViewBobbing = try {
+                        (optionsGetValueMethod?.invoke(option, 1.0f) as? Float) ?: 1.0f
+                    } catch (_: Exception) {
+                        1.0f
+                    }
+                }
+                setter.invoke(option, 0.0f)
+            } else {
+                val saved = savedViewBobbing ?: return
+                setter.invoke(option, saved)
+                savedViewBobbing = null
+            }
+        } catch (_: Exception) {}
+    }
+
     /**
      * Called once per rendered frame from ForgeBootstrap.render() (MC main thread).
      * No-op unless a render module asked for it.
      */
     fun applyFrameOverrides() {
         applyHurtCamOverride()
+        applyCameraBobOverride()
     }
 
     // ═══════════════════════════════════════════

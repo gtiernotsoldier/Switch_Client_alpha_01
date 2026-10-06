@@ -21,7 +21,28 @@ without re-deriving anything.
 | Launcher | restyled to the OpenCommunity dark palette with a short intro fade |
 | Option sanity | Min/Max option pairs are kept ordered on every write, so `Random.nextInt(min, max + 1)` can no longer be handed an inverted range |
 
-## Round 9 — NoFOV deleted, and Eagle's second bug
+## Round 10 — NoCameraBob (固定准星)
+
+Added `NoCameraBob` (Utility): the crosshair stays where you are aiming while you walk, and the
+held-item sway stays exactly as it was.
+
+The first claim about this was wrong. I had said the two could not be separated because vanilla
+drives both from `GameSettings.viewBobbing`. Disassembling the official 1.8.9 jar settles it:
+`ItemRenderer` reads **no GameSettings field at all** (the item bob comes from the player's walk
+distance), and only `EntityRenderer` — the camera transform — is gated on that setting. So switching
+that one setting off stops the camera sway and leaves the hand alone: no bytecode hook needed, which
+is why this module is trivial where Freelook is not.
+
+The setting is found **by shape, not by name**: at runtime FML deobfuscates class names to MCP but
+leaves members SRG, and the settings file has no `viewBobbing` mapping. So the platform locates the
+`GameSettings.Options` constant whose language key is `options.viewBobbing` through structural
+reflection — the only declared no-arg String method on that enum (`getEnumString`), the only declared
+void method taking one float (`setValue`), the only float-returning one (`getValue`). That is the
+lesson from `Blocks.AIR`: never resolve an obfuscated member by a guessed name.
+
+The player's own preference is preserved — whatever the setting was when the module went on is
+restored when it goes off.
+
 
 ### NoFOV is gone
 The user asked for it to be removed, so the module, its registration (Forge + the AgentBridge

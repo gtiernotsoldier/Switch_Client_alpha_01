@@ -43,11 +43,13 @@ class RenderOverrideContractTest {
     private fun disableModules() {
         NoHurtCam.disable()
         InvMove.disable()
+        io.doppel.adapter.common.module.world.NoCameraBob.disable()
     }
 
     @Test
     fun `the contract is inert by default`() {
         assertFalse(EventBridge.suppressHurtCam)
+        assertFalse(EventBridge.suppressCameraBob)
         assertFalse(EventBridge.keepMovementInGui)
         assertFalse(EventBridge.guiMovementKeepSprint)
         assertFalse(EventBridge.guiMovementOnlyInventory)
@@ -117,15 +119,31 @@ class RenderOverrideContractTest {
     }
 
     @Test
+    fun `NoCameraBob asks for the camera sway to be suppressed, and only while it is on`() {
+        val module = io.doppel.adapter.common.module.world.NoCameraBob
+        module.enable()
+        assertTrue(EventBridge.suppressCameraBob, "the platform turns vanilla's View Bobbing off")
+        assertFalse(EventBridge.suppressHurtCam, "and nothing else")
+
+        module.disable()
+        assertFalse(
+            EventBridge.suppressCameraBob,
+            "disable must clear the flag — the platform then restores the player's own setting"
+        )
+    }
+
+    @Test
     fun `EventBridge reset clears every contract flag`() {
         NoHurtCam.enable()
         InvMove.enable()
+        io.doppel.adapter.common.module.world.NoCameraBob.enable()
         EventBridge.cameraYawOverride = 90f
         EventBridge.cameraPitchOverride = 45f
 
         EventBridge.reset()
 
         assertFalse(EventBridge.suppressHurtCam)
+        assertFalse(EventBridge.suppressCameraBob)
         assertFalse(EventBridge.keepMovementInGui)
         assertFalse(EventBridge.guiMovementKeepSprint)
         assertFalse(EventBridge.guiMovementOnlyInventory)

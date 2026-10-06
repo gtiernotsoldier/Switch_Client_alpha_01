@@ -1249,6 +1249,9 @@ object ForgeEventBridge : IEventBridge {
     /** The only value vanilla ever assigns to `maxHurtTime` (`hurtTime = maxHurtTime = 10`). */
     private const val VANILLA_MAX_HURT_TIME = 10
 
+    /** System property the injected EntityRenderer hook reads — keep in step with RenderBridge. */
+    private const val PROP_SKIP_VIEW_BOB = "doppel.skipViewBobbing"
+
     /** Whether the previous frame re-applied the movement keys (InvMove) — see [applyGuiMovement]. */
     private var guiMovementApplied = false
 
@@ -1306,19 +1309,10 @@ object ForgeEventBridge : IEventBridge {
     // float" is not a unique handle on anything, and the write went somewhere harmless. The repo's own
     // MCP table — `mappings/verify/fields.csv`, columns `searge,name,side,desc` — answers it outright:
     // `viewBobbing` is `field_74336_f`. So it is read and written as the field it actually is.
-    private val gsViewBobbingField by lazy { MappingContext.getField("forge:gs_viewBobbing") }
-
-    /** The player's own value while the module is on; null = we are not overriding anything. */
-    @Volatile private var savedViewBobbing: Boolean? = null
 
     /** One "what did I resolve" line per enable edge — see applyCameraBobOverride. */
     @Volatile private var cameraBobLogged: Boolean = false
 
-    private fun gameSettings(): Any? = try {
-        getMc()?.let { MappingContext.getFieldValue(it, "forge:mc_gameSettings") }
-    } catch (_: Exception) {
-        null
-    }
 
     /**
      * NoCameraBob — hold vanilla's View Bobbing off while the module is on, then hand the player's own
@@ -1330,33 +1324,33 @@ object ForgeEventBridge : IEventBridge {
      */
     private fun applyCameraBobOverride() {
         try {
-            val field = gsViewBobbingField
-            if (field == null) {
-                logCameraBobOnce(null)
-                return
-            }
-            val gs = gameSettings() ?: return
-            if (EventBridge.suppressCameraBob) {
-                if (savedViewBobbing == null) {
-                    val current = try { field.getBoolean(gs) } catch (_: Exception) { true }
-                    savedViewBobbing = current
-                    logCameraBobOnce(current)
+            // The camera bob is now skipped by the bytecode hook inside EntityRenderer.setupViewBobbing.
+            // The switch is a system property because the injected call site lives in a game class while
+            // RenderBridge may sit on another ClassLoader — a property is visible from both, with no
+            // resolution risk. GameSettings.viewBobbing is deliberately left ALONE: that is what keeps
+            // the held-item sway, and setting it off is what killed the arm bob on the user's client.
+            val wanted = EventBridge.suppressCameraBob
+            val current = System.getProperty(PROP_SKIP_VIEW_BOB)
+            when {
+                wanted && current != "true" -> {
+                    System.setProperty(PROP_SKIP_VIEW_BOB, "true")
+                    logCameraBobOnce()
                 }
-                if (field.getBoolean(gs)) field.setBoolean(gs, false)
-            } else {
-                val saved = savedViewBobbing ?: return
-                if (field.getBoolean(gs) != saved) field.setBoolean(gs, saved)
-                savedViewBobbing = null
-                cameraBobLogged = false
+                !wanted && current == "true" -> {
+                    System.setProperty(PROP_SKIP_VIEW_BOB, "false")
+                    logCameraBobOnce()
+                }
             }
         } catch (_: Exception) {}
     }
 
-    private fun logCameraBobOnce(current: Boolean?) {
+    private fun logCameraBobOnce() {
+        if (!EventBridge.suppressCameraBob) cameraBobLogged = false
         if (cameraBobLogged) return
         cameraBobLogged = true
         io.doppel.core.logging.CoreLogger.info(
-            "[NoCameraBob] field=${gsViewBobbingField != null} current=$current -> off"
+            "[NoCameraBob] camera-bob skip -> ${EventBridge.suppressCameraBob} via the EntityRenderer hook " +
+                "(viewBobbing left untouched, so the hand keeps swaying)"
         )
     }
 

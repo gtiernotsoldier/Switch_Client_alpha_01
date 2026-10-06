@@ -113,4 +113,136 @@ if (invalid.length || mismatched.length) {
   console.log('\nFAIL — fix the mapping table before merging.');
   process.exit(1);
 }
-console.log('\nOK — every mapping entry resolves to a real 1.8.9 member.');
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 3. Call-site kind check
+//
+// A table can be perfectly valid and still be read wrong. MappingContext resolves
+// fields and methods through different entry keys ("field" vs "method"), and a
+// mismatch fails closed: invokeMethod() on a FIELD entry logs one line, returns
+// null, and the caller's `?: 0` turns that into a plausible-looking value. The
+// feature dies with no visible symptom.
+//
+// That is not hypothetical. forge:keybinding_keyCode is a FIELD (field_74512_d)
+// and every physical-key check read it with invokeMethod(), so the key code was
+// always 0 and each synthetic-tap module (WTap/STap/BlockTap) believed no key was
+// ever held. forge:entity_isInWeb had the same shape. None of it shows up in the
+// name checks above, which is exactly why this pass exists.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const ACCESSORS = {
+  invokeMethod: 'method',
+  getMethod: 'method',
+  getFieldValue: 'field',
+  getField: 'field',
+};
+
+// alias / bare-key resolution, mirroring MappingContext.resolveKey
+const byAlias = new Map();
+for (const [key, entry] of Object.entries(mapping)) {
+  if (!entry || typeof entry !== 'object') continue;
+  byAlias.set(key, { key, entry });
+  for (const alias of entry.aliases || []) {
+    byAlias.set(alias, { key, entry });
+    byAlias.set(`forge:${alias}`, { key, entry });
+  }
+  const bare = key.replace(/^forge:/, '');
+  if (!byAlias.has(bare)) byAlias.set(bare, { key, entry });
+}
+function lookupEntry(rawKey) {
+  return byAlias.get(rawKey) || byAlias.get(`forge:${rawKey}`) || null;
+}
+
+const SRC_ROOT = path.join(root, 'Doppel');
+const SOURCE_EXT = new Set(['.kt', '.java']);
+function walk(dir, out = []) {
+  for (const item of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (item.isDirectory()) {
+      if (['build', 'target', '.git', 'node_modules', '.gradle'].includes(item.name)) continue;
+      walk(path.join(dir, item.name), out);
+    } else if (SOURCE_EXT.has(path.extname(item.name))) {
+      out.push(path.join(dir, item.name));
+    }
+  }
+  return out;
+}
+
+const badKind = [];
+const unknownKey = [];
+let callSites = 0;
+
+const CALL_RE = /MappingContext\s*\.\s*(invokeMethod|getMethod|getFieldValue|getField)\s*\(/g;
+// adapter/fabric is dormant and carries its own table (mappings/fabric/*), so its
+// call sites cannot be checked against the 1.8.9 table.
+const SKIP_DIRS = ['adapter/fabric'];
+for (const file of walk(SRC_ROOT)) {
+  const text = fs.readFileSync(file, 'utf8');
+  const rel = path.relative(root, file);
+  if (SKIP_DIRS.some((d) => rel.replace(/\\/g, '/').includes(d))) continue;
+  let m;
+  CALL_RE.lastIndex = 0;
+  while ((m = CALL_RE.exec(text)) !== null) {
+    const accessor = m[1];
+    // find the matching close paren of this call
+    let depth = 1;
+    let i = CALL_RE.lastIndex;
+    for (; i < text.length && depth > 0; i++) {
+      if (text[i] === '(') depth++;
+      else if (text[i] === ')') depth--;
+    }
+    const args = text.slice(CALL_RE.lastIndex, i - 1);
+    // Split the argument list on top-level commas. The key is argument 2 for
+    // (target, key, ...extra) accessors and argument 1 for single-argument ones, and it
+    // is only statically checkable when that argument is exactly a string literal.
+    // Taking "the last literal in the call" instead produced false positives on
+    // invokeMethod(x, "forge:nbtBase_hasKey", "display", 10) — extra literal arguments
+    // are normal (NBT key names, equipment slots).
+    const parts = [];
+    let d = 0;
+    let cur = '';
+    for (const ch of args) {
+      if (ch === '(' || ch === '[') d++;
+      else if (ch === ')' || ch === ']') d--;
+      if (ch === ',' && d === 0) { parts.push(cur); cur = ''; continue; }
+      cur += ch;
+    }
+    parts.push(cur);
+    const keyPart = accessor === 'invokeMethod' || accessor === 'getFieldValue' ? parts[1] : parts[0];
+    const lit = keyPart && keyPart.trim().match(/^"([^"\\]*)"$/);
+    if (!lit) continue; // dynamic key — not statically checkable
+    const rawKey = lit[1];
+    const line = text.slice(0, m.index).split('\n').length;
+    const hit = lookupEntry(rawKey);
+    if (!hit) {
+      unknownKey.push(`${rel}:${line} ${accessor}("${rawKey}") — no such mapping key`);
+      continue;
+    }
+    callSites++;
+    const want = ACCESSORS[accessor];
+    const has = hit.entry.method ? 'method' : hit.entry.field ? 'field' : 'neither';
+    if (has !== want) {
+      badKind.push(
+        `${rel}:${line} ${accessor}("${rawKey}") reads a ${has.toUpperCase()} mapping (${hit.key}); ` +
+          `must use ${want === 'field' ? 'getFieldValue/getField' : 'invokeMethod/getMethod'}`,
+      );
+    }
+  }
+}
+
+console.log(`\ncall sites checked        : ${callSites}`);
+console.log(`accessor/kind mismatches  : ${badKind.length}`);
+console.log(`unknown mapping keys      : ${unknownKey.length}`);
+if (badKind.length) {
+  console.log('\nmismatches (the entry exists but is read the wrong way → always null):');
+  for (const line of badKind) console.log(`  ${line}`);
+}
+if (unknownKey.length) {
+  console.log('\nunknown keys:');
+  for (const line of unknownKey) console.log(`  ${line}`);
+}
+if (badKind.length) {
+  console.log('\nFAIL — fix the accessor or the mapping table before merging.');
+  process.exit(1);
+}
+
+console.log('\nOK — every mapping entry resolves to a real 1.8.9 member and every call site reads it correctly.');

@@ -171,7 +171,17 @@ public class MappingContext {
                 String className = entry.get("class");
                 String methodName = entry.get("method");
                 if (className == null || methodName == null) {
-                    logErr("Missing 'class' or 'method' in mapping for key: " + k);
+                    // The usual cause is calling invokeMethod() on a FIELD entry. Say so
+                    // explicitly: the caller turns the null into a default value, so the only
+                    // symptom is a feature that quietly does nothing — which is exactly how
+                    // forge:keybinding_keyCode disabled every physical-key check.
+                    Object fieldName = entry.get("field");
+                    if (className != null && fieldName != null) {
+                        logErr("Mapping '" + k + "' is a FIELD (" + className + "." + fieldName
+                                + ") but was read with invokeMethod() — use getFieldValue()");
+                    } else {
+                        logErr("Missing 'class' or 'method' in mapping for key: " + k);
+                    }
                     return null;
                 }
                 Class<?> clazz = Class.forName(className);
@@ -251,7 +261,15 @@ public class MappingContext {
                 className = entry.get("class");
                 fieldName = entry.get("field");
                 if (className == null || fieldName == null) {
-                    logErr("Missing 'class' or 'field' in mapping for key: " + k);
+                    // Mirror of the message in getMethod(): name the mismatch instead of
+                    // leaving the reader to guess which of class/field/method is wrong.
+                    Object methodName = entry.get("method");
+                    if (className != null && methodName != null) {
+                        logErr("Mapping '" + k + "' is a METHOD (" + className + "." + methodName
+                                + ") but was read with getFieldValue() — use invokeMethod()");
+                    } else {
+                        logErr("Missing 'class' or 'field' in mapping for key: " + k);
+                    }
                     return null;
                 }
                 Class<?> clazz = Class.forName(className);
@@ -306,10 +324,23 @@ public class MappingContext {
         try {
             Field field = getField(key);
             if (field == null) return null;
+            Class<?> declaring = field.getDeclaringClass();
+            if (!declaring.isInstance(obj)) {
+                // A wrong receiver normally surfaces as the JDK's own confusing message from
+                // Field.get — "Can not set <type> field <class>.<field> to <class>", which reads
+                // like a setter error even though nothing was written (sun.reflect's ensureObj
+                // uses that wording for reads too). Name the actual mistake instead: this is how
+                // a player object was passed where the Minecraft handle was meant.
+                logErr("Mapping '" + key + "' is declared on " + declaring.getName()
+                        + " but the receiver is " + obj.getClass().getName() + " — wrong object passed");
+                return null;
+            }
             field.setAccessible(true);
             return field.get(obj);
         } catch (Exception e) {
-            logErr("Failed to get field value for key: " + key);
+            // Include the detail: a bare "failed" line is indistinguishable from a mapping
+            // error, an access problem and a stale reflection cache.
+            logErr("Failed to get field value for key: " + key + ": " + e.getClass().getName() + ": " + e.getMessage());
             return null;
         }
     }

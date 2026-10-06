@@ -586,7 +586,9 @@ object ForgeEventBridge : IEventBridge {
                         val stack = try { MappingContext.invokeMethod(entity, "forge:entityLivingBase_getEquipmentInSlot", i) } catch (_: Exception) { null }
                             ?: continue
                         if (!itemArmorClass.isInstance(MappingContext.getFieldValue(stack, "forge:itemStack_item"))) continue
-                        val hasTag = try { MappingContext.getFieldValue(stack, "forge:itemStack_hasTagCompound") as? Boolean } catch (_: Exception) { false }
+                        // hasTagCompound() is a METHOD on ItemStack (func_77942_o) — reading it as
+                        // a field always produced null, so armour colour lookup bailed out here.
+                        val hasTag = try { MappingContext.invokeMethod(stack, "forge:itemStack_hasTagCompound") as? Boolean } catch (_: Exception) { false }
                         if (hasTag != true) continue
                         val tagCompound = try { MappingContext.getFieldValue(stack, "forge:itemStack_tagCompound") } catch (_: Exception) { null } ?: continue
                         val hasKey = try { MappingContext.invokeMethod(tagCompound, "forge:nbtBase_hasKey", "display", 10) as? Boolean } catch (_: Exception) { false }
@@ -936,7 +938,10 @@ object ForgeEventBridge : IEventBridge {
                 // attackAllowed (HitSelect) also gates here: when false the cadence is held in the
                 // release state, so the click selector can swallow AutoClicker's clicks too.
                 val now = EventBridge.syntheticAttack
-                val keyCode = (MappingContext.invokeMethod(keyBindAttack, "forge:keybinding_keyCode") as? Int) ?: 0
+                // keyCode is a FIELD on KeyBinding, not a method — invokeMethod() always
+                // returned null here, so keyCode stayed 0 and the synthetic click cadence
+                // never ran (see ForgeBootstrap for the same fix on the movement keys).
+                val keyCode = (MappingContext.getFieldValue(keyBindAttack, "forge:keybinding_keyCode") as? Int) ?: 0
                 if (now && keyCode != 0 && EventBridge.currentAttackGate()) {
                     driveClickCadence(keyCode, leftClick = true)
                 } else {
@@ -998,7 +1003,7 @@ object ForgeEventBridge : IEventBridge {
             val keyBindUse = MappingContext.getFieldValue(gs, "forge:gs_keyBindUseItem") ?: return
             if (EventBridge.syntheticUseOverride) {
                 val nowUse = EventBridge.syntheticUse
-                val useKeyCode = (MappingContext.invokeMethod(keyBindUse, "forge:keybinding_keyCode") as? Int) ?: 0
+                val useKeyCode = (MappingContext.getFieldValue(keyBindUse, "forge:keybinding_keyCode") as? Int) ?: 0
                 if (nowUse && useKeyCode != 0) {
                     driveClickCadence(useKeyCode, leftClick = false)
                 } else {

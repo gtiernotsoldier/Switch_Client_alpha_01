@@ -203,7 +203,8 @@ object ForgeBootstrap {
                     try {
                         val inWater = MappingContext.invokeMethod(player, "forge:entity_isInWater") as? Boolean ?: false
                         val inLava = MappingContext.invokeMethod(player, "forge:entity_isInLava") as? Boolean ?: false
-                        val inWeb = MappingContext.invokeMethod(player, "forge:entity_isInWeb") as? Boolean ?: false
+                        // isInWeb is a FIELD on Entity (field_70134_J), not a method — read it as one.
+                        val inWeb = MappingContext.getFieldValue(player, "forge:entity_isInWeb") as? Boolean ?: false
                         EventBridge.isInFluid = inWater || inLava || inWeb
                     } catch (_: Exception) {}
 
@@ -233,16 +234,20 @@ object ForgeBootstrap {
                             // Raven's Keyboard.isKeyDown(keyBindForward.getKeyCode()).
                             val fwdKb = MappingContext.getFieldValue(gs, "forge:gs_keyBindForward")
                             val backKb = MappingContext.getFieldValue(gs, "forge:gs_keyBindBack")
-                            val fwdKey = fwdKb?.let { MappingContext.invokeMethod(it, "forge:keybinding_keyCode") as? Int } ?: 0
-                            val backKey = backKb?.let { MappingContext.invokeMethod(it, "forge:keybinding_keyCode") as? Int } ?: 0
+                            // keyCode is a FIELD on KeyBinding (field_74512_d). Reading it with
+                            // invokeMethod() silently returned null, and the `?: 0` below turned
+                            // that into keyCode 0 — so every physical-key check was false and
+                            // every module that reads the player's real fingers went dead.
+                            val fwdKey = fwdKb?.let { MappingContext.getFieldValue(it, "forge:keybinding_keyCode") as? Int } ?: 0
+                            val backKey = backKb?.let { MappingContext.getFieldValue(it, "forge:keybinding_keyCode") as? Int } ?: 0
                             EventBridge.physicalForwardDown = fwdKey != 0 && ((keyboardIsKeyDown.invoke(null, fwdKey) as? Boolean) ?: false)
                             EventBridge.physicalBackDown = backKey != 0 && ((keyboardIsKeyDown.invoke(null, backKey) as? Boolean) ?: false)
                             // TRUE physical A/D via LWJGL — same mechanism as W/S above. ADTap
                             // reads these to never fight the player's own strafing fingers.
                             val leftKb = MappingContext.getFieldValue(gs, "forge:gs_keyBindLeft")
                             val rightKb = MappingContext.getFieldValue(gs, "forge:gs_keyBindRight")
-                            val leftKey = leftKb?.let { MappingContext.invokeMethod(it, "forge:keybinding_keyCode") as? Int } ?: 0
-                            val rightKey = rightKb?.let { MappingContext.invokeMethod(it, "forge:keybinding_keyCode") as? Int } ?: 0
+                            val leftKey = leftKb?.let { MappingContext.getFieldValue(it, "forge:keybinding_keyCode") as? Int } ?: 0
+                            val rightKey = rightKb?.let { MappingContext.getFieldValue(it, "forge:keybinding_keyCode") as? Int } ?: 0
                             EventBridge.physicalLeftDown = leftKey != 0 && ((keyboardIsKeyDown.invoke(null, leftKey) as? Boolean) ?: false)
                             EventBridge.physicalRightDown = rightKey != 0 && ((keyboardIsKeyDown.invoke(null, rightKey) as? Boolean) ?: false)
                         }

@@ -109,7 +109,11 @@ object ForgeStateExtractor : IStateExtractor {
         // Player is in a swing/attack animation when swingProgressInt > 0.
         val isSwinging = (MappingContext.getFieldValue(player, "forge:entityLivingBase_swingProgressInt") as? Int ?: 0) > 0
         val selectedSlot = try {
-            val inventory = MappingContext.getFieldValue(player, "forge:mc_thePlayer")
+            // The player's own inventory — NOT "forge:mc_thePlayer", which is a Minecraft
+            // field. Passing the player as the receiver made the JDK throw inside Field.get
+            // ("Can not set ... field ... to ...", its confusing message for a bad receiver)
+            // and the catch below swallowed it, so selectedSlot was always 0.
+            val inventory = MappingContext.getFieldValue(player, "forge:player_inventory")
                 ?.let { MappingContext.getFieldValue(it, "forge:inventory_currentItem") } as? Int
             inventory ?: 0
         } catch (_: Exception) { 0 }

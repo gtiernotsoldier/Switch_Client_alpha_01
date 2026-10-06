@@ -5,7 +5,6 @@ import io.doppel.adapter.common.module.movement.InvMove
 import io.doppel.adapter.common.option.ConfigManager
 import io.doppel.core.model.PlayerState
 import org.junit.jupiter.api.AfterEach
-import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -21,9 +20,11 @@ import org.junit.jupiter.api.Test
  *  2. the modules flip exactly their own flag and clear it again on disable — a flag left set would
  *     outlive the module and keep the platform writing to the renderer/Keyboard forever.
  *
- * Also the regression that started this: NoHurtCam/NoFOV must no longer drive the legacy per-tick
- * handlers, because those wrote `hurtTime` (killing the hit signal HitSelect/Velocity read and the red
- * damage tint) and raced the renderer's own FOV recompute.
+ * The regression that started this: NoHurtCam must not drive the legacy per-tick handler, because
+ * that one wrote `hurtTime` — the "just got hit" signal HitSelect/Velocity read, and the driver of
+ * the red damage tint.
+ *
+ * NoFOV is gone (deleted at the user's request), so the FOV half of this contract no longer exists.
  */
 class RenderOverrideContractTest {
 
@@ -41,14 +42,12 @@ class RenderOverrideContractTest {
 
     private fun disableModules() {
         NoHurtCam.disable()
-        NoFOV.disable()
         InvMove.disable()
     }
 
     @Test
     fun `the contract is inert by default`() {
         assertFalse(EventBridge.suppressHurtCam)
-        assertFalse(EventBridge.lockFovModifier)
         assertFalse(EventBridge.keepMovementInGui)
         assertFalse(EventBridge.guiMovementKeepSprint)
         assertFalse(EventBridge.guiMovementOnlyInventory)
@@ -60,7 +59,6 @@ class RenderOverrideContractTest {
     fun `NoHurtCam publishes the tilt cancellation and nothing else`() {
         NoHurtCam.enable()
         assertTrue(EventBridge.suppressHurtCam)
-        assertFalse(EventBridge.lockFovModifier)
         assertFalse(EventBridge.keepMovementInGui)
 
         NoHurtCam.disable()
@@ -77,33 +75,11 @@ class RenderOverrideContractTest {
             // and every call zeroed the player's hurtTime.
             EventBridge.onTick(PlayerState.EMPTY, null)
             EventBridge.onTick(PlayerState.EMPTY, null)
-            assertEquals(0, legacyCalls, "the module must not write hurtTime on the tick")
+            org.junit.jupiter.api.Assertions.assertEquals(
+                0, legacyCalls, "the module must not write hurtTime on the tick"
+            )
         } finally {
             EventBridge.registerResetHurtCamHandler {} // leave no handler from this test behind
-        }
-    }
-
-    @Test
-    fun `NoFOV publishes the FOV lock and nothing else`() {
-        NoFOV.enable()
-        assertTrue(EventBridge.lockFovModifier)
-        assertFalse(EventBridge.suppressHurtCam)
-
-        NoFOV.disable()
-        assertFalse(EventBridge.lockFovModifier, "disable must clear the flag — the FOV may not stay stuck")
-    }
-
-    @Test
-    fun `NoFOV no longer resets the FOV modifier from the tick`() {
-        var legacyCalls = 0
-        EventBridge.registerResetFovModifierHandler { legacyCalls++ }
-        try {
-            NoFOV.enable()
-            EventBridge.onTick(PlayerState.EMPTY, null)
-            EventBridge.onTick(PlayerState.EMPTY, null)
-            assertEquals(0, legacyCalls, "a 20 Hz write raced the renderer — the flag is the contract now")
-        } finally {
-            EventBridge.registerResetFovModifierHandler {}
         }
     }
 
@@ -143,7 +119,6 @@ class RenderOverrideContractTest {
     @Test
     fun `EventBridge reset clears every contract flag`() {
         NoHurtCam.enable()
-        NoFOV.enable()
         InvMove.enable()
         EventBridge.cameraYawOverride = 90f
         EventBridge.cameraPitchOverride = 45f
@@ -151,7 +126,6 @@ class RenderOverrideContractTest {
         EventBridge.reset()
 
         assertFalse(EventBridge.suppressHurtCam)
-        assertFalse(EventBridge.lockFovModifier)
         assertFalse(EventBridge.keepMovementInGui)
         assertFalse(EventBridge.guiMovementKeepSprint)
         assertFalse(EventBridge.guiMovementOnlyInventory)

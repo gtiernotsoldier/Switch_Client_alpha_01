@@ -1182,6 +1182,23 @@
     ],
     "mcp": "getBlockState"
   },
+  "forge:world_isAirBlock": {
+    "class": "net.minecraft.world.World",
+    "method": "func_175623_d",
+    "aliases": [
+      "world_isAirBlock",
+      "isAirBlock"
+    ],
+    "mcp": "isAirBlock"
+  },
+  "forge:blocks_air": {
+    "class": "net.minecraft.init.Blocks",
+    "field": "field_150340_c",
+    "aliases": [
+      "blocks_air"
+    ],
+    "mcp": "AIR"
+  },
   "forge:world_getEntityByID": {
     "class": "net.minecraft.world.World",
     "method": "func_73045_a",

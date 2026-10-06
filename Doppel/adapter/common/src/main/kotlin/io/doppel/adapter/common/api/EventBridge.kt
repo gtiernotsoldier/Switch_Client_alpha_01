@@ -147,10 +147,8 @@ object EventBridge {
         aimSecondOrder = false
         aimTrackInsideBox = false
         resetHurtCamHandler = null
-        resetFovModifierHandler = null
         // Render/GUI hook contract — a stale "on" flag here would outlive the module that set it.
         suppressHurtCam = false
-        lockFovModifier = false
         keepMovementInGui = false
         guiMovementKeepSprint = false
         guiMovementOnlyInventory = false
@@ -1229,12 +1227,9 @@ object EventBridge {
     // publish intent through the two flags below and the platform applies it on the render frame.
     // The handlers are kept registered-callable because the Fabric adapter still registers them.
     private var resetHurtCamHandler: (() -> Unit)? = null
-    private var resetFovModifierHandler: (() -> Unit)? = null
 
     fun resetHurtCam() { resetHurtCamHandler?.invoke() }
-    fun resetFovModifier() { resetFovModifierHandler?.invoke() }
     fun registerResetHurtCamHandler(handler: () -> Unit) { resetHurtCamHandler = handler }
-    fun registerResetFovModifierHandler(handler: () -> Unit) { resetFovModifierHandler = handler }
 
     /**
      * NoHurtCam — true while a module wants the vanilla hurt *camera tilt* cancelled.
@@ -1249,17 +1244,9 @@ object EventBridge {
      */
     @Volatile var suppressHurtCam: Boolean = false
 
-    /**
-     * NoFOV — true while a module wants the dynamic FOV (sprint, speed potion, flight) suppressed.
-     *
-     * Applied on the render frame for the same reason: `EntityRenderer.updateFovModifierHand()` runs
-     * inside `Minecraft.runTick()` and rebuilds the FOV modifier from the player's current
-     * sprint/speed multiplier, so a 20 Hz background write either lost the race or was pulled back
-     * halfway. The platform both writes the modifier and neutralises the value that per-tick
-     * recompute reads (see ForgeEventBridge), then simply stops and restores it when this flag is
-     * cleared — the renderer's own smoothing returns the FOV to vanilla with no stuck value.
-     */
-    @Volatile var lockFovModifier: Boolean = false
+    // NoFOV was deleted at the user's request, and with it the `lockFovModifier` flag it published.
+    // The approach it needed was real (a 20 Hz write could never win against
+    // `updateFovModifierHand()` inside `Minecraft.runTick()`), but the module itself was not wanted.
 
     // ========== GUI Movement (InvMove — Movement) ==========
     /**

@@ -84,7 +84,27 @@ object ForgeEventBridge : IEventBridge {
 
     // — blocks & raycast support
     private val blocksClass by lazy { Class.forName("net.minecraft.init.Blocks") }
-    private val blocksAir by lazy { blocksClass.getField("AIR").get(null) }
+
+    /**
+     * `Blocks.air`, or null when it cannot be resolved.
+     *
+     * `net.minecraft.init.Blocks` keeps its deobfuscated class name at runtime, but its **fields are
+     * SRG**: AIR is `field_150340_c`. The old `getField("AIR")` therefore threw
+     * NoSuchFieldException, the lazy initialiser handed it to the edge detector's catch, and every
+     * edge test answered "not on an edge" — the second, independent reason Eagle never pressed
+     * sneak (the first was the inverted comparison).
+     *
+     * Null is a usable answer: the caller treats "cannot tell" as "not on an edge", so a mapping
+     * change can only make the module quiet, never make it sneak at the wrong moment.
+     */
+    private val blocksAirValue: Any? by lazy {
+        val viaMapping = try { MappingContext.getField("forge:blocks_air")?.get(null) } catch (_: Exception) { null }
+        viaMapping ?: try {
+            blocksClass.getField("field_150340_c").get(null)
+        } catch (_: Exception) {
+            try { blocksClass.getField("AIR").get(null) } catch (_: Exception) { null }
+        }
+    }
     private val movingObjectTypeClass by lazy { Class.forName("net.minecraft.util.MovingObjectPosition\$MovingObjectType") }
     private val movingObjectTypeBlock by lazy { movingObjectTypeClass.enumConstants.firstOrNull { it.toString() == "BLOCK" } }
 
@@ -105,14 +125,8 @@ object ForgeEventBridge : IEventBridge {
     private val playerMaxHurtTimeField by lazy {
         resolveField("net.minecraft.entity.EntityLivingBase", "field_70738_aO", "maxHurtTime")
     }
-    private val entityRendererFovPrevField by lazy {
-        resolveField("net.minecraft.client.renderer.EntityRenderer", "field_78506_S", "fovModifierHandPrev")
-    }
     private val playerCapabilitiesField by lazy {
         resolveField("net.minecraft.entity.player.EntityPlayer", "field_71075_bZ", "capabilities")
-    }
-    private val capabilitiesWalkSpeedField by lazy {
-        resolveField("net.minecraft.entity.player.PlayerCapabilities", "field_75097_g", "walkSpeed")
     }
     private val capabilitiesAllowFlyingField by lazy {
         resolveField("net.minecraft.entity.player.PlayerCapabilities", "field_75101_c", "allowFlying")
@@ -123,7 +137,6 @@ object ForgeEventBridge : IEventBridge {
     }
     private val mcLeftClickCounterField by lazy { MappingContext.getField("forge:mc_leftClickCounter") }
     private val mcRightClickDelayField by lazy { MappingContext.getField("forge:mc_rightClickDelayTimer") }
-    private val entityRendererFovField by lazy { MappingContext.getField("forge:entityRenderer_fovModifierHand") }
     private val gsGammaField by lazy { MappingContext.getField("forge:gs_gammaSetting") }
     private val inventoryCurrentItemField by lazy { MappingContext.getField("forge:inventory_currentItem") }
     private val playerJumpTicksField by lazy { MappingContext.getField("forge:player_jumpTicks") }
@@ -503,9 +516,18 @@ object ForgeEventBridge : IEventBridge {
                 val blockPosClass = Class.forName("net.minecraft.util.BlockPos")
                 val blockPos = blockPosClass.getConstructor(Double::class.java, Double::class.java, Double::class.java)
                     .newInstance(posX, posY - yOffset, posZ)
+
+                // Ask the world directly, exactly as the reference does...
+                val asked = try {
+                    MappingContext.invokeMethod(world, "forge:world_isAirBlock", blockPos) as? Boolean
+                } catch (_: Exception) { null }
+                if (asked != null) return@registerEdgeDetector asked
+
+                // ...and fall back to comparing the block state's block against Blocks.air.
                 val bs = MappingContext.invokeMethod(world, "forge:world_getBlockState", blockPos)
                 val b = MappingContext.invokeMethod(bs, "forge:iblockstate_block")
-                b === blocksAir
+                val air = blocksAirValue
+                air != null && b === air
             } catch (_: Exception) { false }
         }
 
@@ -1199,9 +1221,6 @@ object ForgeEventBridge : IEventBridge {
     /** The only value vanilla ever assigns to `maxHurtTime` (`hurtTime = maxHurtTime = 10`). */
     private const val VANILLA_MAX_HURT_TIME = 10
 
-    /** `capabilities.walkSpeed` captured when NoFOV went on; null = not suppressing the FOV. */
-    @Volatile private var savedWalkSpeed: Float? = null
-
     /** Whether the previous frame re-applied the movement keys (InvMove) — see [applyGuiMovement]. */
     private var guiMovementApplied = false
 
@@ -1252,62 +1271,11 @@ object ForgeEventBridge : IEventBridge {
     }
 
     /**
-     * NoFOV — hold the FOV at `fovSetting` (modifier = 1) on the render frame.
-     *
-     * Two levers, both needed:
-     *  1. `EntityRenderer.fovModifierHand` / `fovModifierHandPrev` — the pair the renderer
-     *     interpolates into this frame's projection (`getFOVModifier`: `fovSetting * (prev +
-     *     (hand - prev) * partialTicks)`). Writing both = the frame renders at exactly `fovSetting`.
-     *  2. `capabilities.walkSpeed = 0` — the value the **per-tick** recompute reads. `Minecraft
-     *     .runTick()` calls `EntityRenderer.updateFovModifierHand()` between two rendered frames, and
-     *     that method rebuilds the modifier from `AbstractClientPlayer.getFovModifier()`, which
-     *     returns exactly `1.0F` for `walkSpeed == 0` (vanilla's own escape hatch:
-     *     `if (walkSpeed == 0.0F || NaN || Infinite) f = 1.0F;`). Without it the tick would pull the
-     *     modifier halfway back to the sprint/speed multiplier and one frame per tick would show the
-     *     FOV step again at 20 Hz.
-     *
-     * `walkSpeed` is FOV-only on the client, which is why this is safe: the client player's movement
-     * speed comes from the `movementSpeed` attribute (`EntityPlayer.onLivingUpdate` re-bases that
-     * attribute from `walkSpeed` only when `!worldObj.isRemote`), and 1.8.9's
-     * `NetHandlerPlayServer.processPlayerAbilities(C13PacketPlayerAbilities)` applies only `isFlying`
-     * from the packet, never the walking speed it carries. The captured value is restored on the
-     * disable edge (never 0), and `fovModifierHand` needs no restore: the next tick's update runs
-     * against the restored multiplier and the FOV eases back to vanilla on its own.
-     */
-    private fun applyFovOverride() {
-        try {
-            val mc = getMc() ?: return
-            val er = MappingContext.getFieldValue(mc, "forge:mc_entityRenderer") ?: return
-            val player = getPlayer()
-            val caps = playerCapabilitiesField?.let { f -> player?.let { f.get(it) } }
-            val walkField = capabilitiesWalkSpeedField
-
-            if (EventBridge.lockFovModifier) {
-                entityRendererFovField?.setFloat(er, 1.0f)
-                entityRendererFovPrevField?.setFloat(er, 1.0f)
-                if (caps != null && walkField != null) {
-                    val current = walkField.getFloat(caps)
-                    if (savedWalkSpeed == null && current != 0f) savedWalkSpeed = current
-                    if (current != 0f) walkField.setFloat(caps, 0f)
-                }
-            } else if (savedWalkSpeed != null) {
-                // Disable edge — restore exactly once. The `== 0f` guard keeps us from overwriting a
-                // value the game set for its own reasons while we were not looking.
-                if (caps != null && walkField != null && walkField.getFloat(caps) == 0f) {
-                    walkField.setFloat(caps, savedWalkSpeed ?: 0.1f)
-                }
-                savedWalkSpeed = null
-            }
-        } catch (_: Exception) {}
-    }
-
-    /**
      * Called once per rendered frame from ForgeBootstrap.render() (MC main thread).
      * No-op unless a render module asked for it.
      */
     fun applyFrameOverrides() {
         applyHurtCamOverride()
-        applyFovOverride()
     }
 
     // ═══════════════════════════════════════════

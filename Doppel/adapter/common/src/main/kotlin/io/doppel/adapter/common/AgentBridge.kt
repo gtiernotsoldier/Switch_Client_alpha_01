@@ -55,7 +55,6 @@ object AgentBridge {
         // Render
         "Fullbright" to "render",
         "HUD" to "render",
-        "NoFOV" to "render",
         "NoHurtCam" to "render",
         "Keystrokes" to "render",
         "Speedometer" to "render",

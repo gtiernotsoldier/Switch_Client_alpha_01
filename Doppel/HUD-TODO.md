@@ -21,6 +21,26 @@ without re-deriving anything.
 | Launcher | restyled to the OpenCommunity dark palette with a short intro fade |
 | Option sanity | Min/Max option pairs are kept ordered on every write, so `Random.nextInt(min, max + 1)` can no longer be handed an inverted range |
 
+## Round 9 — NoFOV deleted, and Eagle's second bug
+
+### NoFOV is gone
+The user asked for it to be removed, so the module, its registration (Forge + the AgentBridge
+reflection map), the `lockFovModifier` contract flag, the platform `applyFovOverride`/`walkSpeed`
+machinery and the legacy `resetFovModifier` handler are all deleted, along with its two tests.
+
+### Eagle had a second, independent bug
+Even with the comparison fixed, Eagle could never fire in a real game. The edge detector read
+`Blocks.AIR` with `getField("AIR")` — but `net.minecraft.init.Blocks` keeps its deobfuscated **class**
+name at runtime while its **fields** are SRG, so AIR is `field_150340_c` and the lookup threw
+`NoSuchFieldException`. The lazy initialiser handed that exception to the detector's `catch`, which
+answered `false`, so every edge test silently said "not on an edge".
+
+Fixed by asking the world directly — `MappingContext.invokeMethod(world, "forge:world_isAirBlock", pos)`,
+Raven's own `isAirBlock(pos)` call, with the mapping added to `mappings/forge/v1_8_9.json` — and by
+keeping the block-state comparison as a fallback that resolves `Blocks.air` through
+`forge:blocks_air` → `field_150340_c` → `AIR`. If nothing resolves, the detector returns `false`, so a
+mapping change can only make Eagle quiet, never make it sneak at the wrong moment.
+
 ## Round 8 — the real Eagle bug, reference-faithful modules, and the category names
 
 ### `isOnBlockEdge()` was inverted — that is why Eagle "did not work"

@@ -9,7 +9,6 @@ import io.doppel.adapter.common.module.player.*
 import io.doppel.adapter.common.module.render.Fullbright
 import io.doppel.adapter.common.module.render.HUD
 import io.doppel.adapter.common.module.render.Keystrokes
-import io.doppel.adapter.common.module.render.NoFOV
 import io.doppel.adapter.common.module.render.NoHurtCam
 import io.doppel.adapter.common.module.render.Speedometer
 import io.doppel.adapter.common.module.render.VelocityDisplay
@@ -127,7 +126,7 @@ object ForgeBootstrap {
             SprintReset, STap, SuperKnockback, TriggerBot, Velocity, WTap,
             NoJumpDelay, NoKeyboardFix, NoMouseFix, Sprint, Strafe, StrafeFix, InvMove,
             AntiBot, AutoTool, BridgeAssist, Eagle, ParallaxStrike, Teams, TargetFilter,
-            Fullbright, HUD, NoFOV, NoHurtCam, Keystrokes, Speedometer, VelocityDisplay, JumpStatus,
+            Fullbright, HUD, NoHurtCam, Keystrokes, Speedometer, VelocityDisplay, JumpStatus,
             JumpTiming, KnockbackDisplay,
             WebUI,
             FastPlace
@@ -294,7 +293,7 @@ object ForgeBootstrap {
             // only place that writes the real KeyBinding fields (race-free).
             try { ForgeEventBridge.applySyntheticInput() } catch (_: Exception) {}
 
-            // NoHurtCam / NoFOV: apply on the render frame, not the 20 Hz tick. Both fields the game
+            // NoHurtCam: apply on the render frame, not the 20 Hz tick, because the field the game
             // reads (hurt-cam divisor, FOV modifier) are consumed by the renderer during its own
             // pass, and the FOV modifier is additionally recomputed inside Minecraft.runTick() — the
             // module tick lost that race, which is why the FOV "did not work" and why zeroing

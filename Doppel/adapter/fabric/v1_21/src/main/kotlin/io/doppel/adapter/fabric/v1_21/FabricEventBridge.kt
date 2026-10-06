@@ -175,12 +175,10 @@ object FabricEventBridge : IEventBridge {
             }
         }
 
-        // Register render overrides (NoHurtCam, NoFOV)
+        // Register render overrides (NoHurtCam). NoFOV was deleted at the user's request, so the
+        // legacy FOV handler it registered is gone with it.
         EventBridge.registerResetHurtCamHandler {
             mc.player?.hurtTime = 0
-        }
-        EventBridge.registerResetFovModifierHandler {
-            mc.options.fovEffectScale.value = 0.0
         }
 
         // Register gamma setter (Fullbright)

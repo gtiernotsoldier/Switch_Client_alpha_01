@@ -1305,7 +1305,33 @@ object ForgeEventBridge : IEventBridge {
     // we own turns the view without touching the player's rotation — movement, hit direction and what
     // the server is told all stay where they were. A bare Entity reports an eye height of 0, so the
     // stand-in is placed at the player's eye position directly.
-    private val mcRenderViewEntityField by lazy { MappingContext.getField("forge:mc_renderViewEntity") }
+    /**
+     * `Minecraft.renderViewEntity`.
+     *
+     * The mapping is tried first, but it is not trusted: the SRG name taken from the repo's MCP table
+     * did not resolve on a real client (the log said so), and a camera that cannot be redirected is
+     * exactly the "nothing happened" the user reported. The fallback identifies the field by what it
+     * *is* rather than by what it is called — the `Entity`-typed field of Minecraft that currently holds
+     * the player. `pointedEntity` is the other Entity field, and it is null unless the crosshair is on
+     * something, so this is unambiguous in practice.
+     */
+    private val mcRenderViewEntityField by lazy {
+        MappingContext.getField("forge:mc_renderViewEntity") ?: try {
+            val mc = getMc()
+            val player = getPlayer()
+            val mcClass = Class.forName("net.minecraft.client.Minecraft")
+            mcClass.declaredFields.firstOrNull { f ->
+                f.type.name == "net.minecraft.entity.Entity" &&
+                    try { f.get(mc) === player } catch (_: Exception) { false }
+            }?.also {
+                io.doppel.core.logging.CoreLogger.info(
+                    "[Freelook] renderViewEntity resolved by shape: ${it.name}"
+                )
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
     private val gsThirdPersonViewField by lazy { MappingContext.getField("forge:gs_thirdPersonView") }
 
     /** The player's own third-person choice, put back when Freelook lets go (Raven: previousPerspective). */
@@ -1361,18 +1387,9 @@ object ForgeEventBridge : IEventBridge {
             val mc = getMc() ?: return
             val player = getPlayer() ?: return
             val field = mcRenderViewEntityField
-            if (field == null) {
-                if (!freeLookLogged) {
-                    freeLookLogged = true
-                    io.doppel.core.logging.CoreLogger.error(
-                        "[Freelook] renderViewEntity (field_71451_h) not resolved — the camera cannot be redirected"
-                    )
-                }
-                return
-            }
             if (!EventBridge.freeLookActive) {
                 if (freeLookSwapped) {
-                    field.set(mc, player)
+                    field?.set(mc, player)
                     freeLookSwapped = false
                 }
                 // Hand the player's own perspective back, exactly like Raven's resetPerspective().
@@ -1400,6 +1417,16 @@ object ForgeEventBridge : IEventBridge {
                     if (view.getInt(gs) == 0) view.setInt(gs, 1)
                 }
             } catch (_: Exception) {}
+
+            if (field == null) {
+                if (!freeLookLogged) {
+                    freeLookLogged = true
+                    io.doppel.core.logging.CoreLogger.error(
+                        "[Freelook] renderViewEntity not resolvable (mapping and shape) — the camera cannot be redirected"
+                    )
+                }
+                return
+            }
 
             val dummy = ensureFreeLookEntity() ?: return
             syncFreeLookEntity(dummy, player)

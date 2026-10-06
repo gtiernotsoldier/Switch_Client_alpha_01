@@ -235,27 +235,45 @@
         }
         .hud-panel:hover { border-color: rgba(34,211,238,0.18); }
         .hud-panel.open { border-color: rgba(34,211,238,0.22); box-shadow: 0 8px 34px rgba(0,0,0,0.32); }
-        .hud-head { display: flex; align-items: center; gap: 9px; padding: 9px 13px; cursor: pointer; }
+        /* One tidy header row: caret tile · title · count · spacer · search field. */
+        .hud-head { display: flex; align-items: center; gap: 10px; padding: 10px 12px; cursor: pointer; }
         .hud-head:hover { background: rgba(255,255,255,0.03); }
         .hud-caret {
-            color: rgba(255,255,255,0.28); font-size: 11px; line-height: 1; flex: 0 0 auto;
-            transition: transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1), color 0.3s ease;
+            width: 22px; height: 22px; flex: 0 0 auto; border-radius: 7px;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 10px; line-height: 1; color: rgba(255,255,255,0.4);
+            background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08);
+            transition: transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1), color 0.3s ease,
+                        background 0.3s ease, border-color 0.3s ease;
         }
-        .hud-panel.open .hud-caret { transform: rotate(180deg); color: rgba(34,211,238,0.7); }
+        .hud-panel.open .hud-caret {
+            transform: rotate(180deg); color: rgba(34,211,238,0.85);
+            background: rgba(34,211,238,0.10); border-color: rgba(34,211,238,0.25);
+        }
         .hud-title { font-size: 12.5px; color: rgba(255,255,255,0.85); font-weight: 500; flex: 0 0 auto; }
         .hud-count {
-            font-size: 9px; color: rgba(34,211,238,0.7); background: rgba(34,211,238,0.07);
-            padding: 1px 7px; border-radius: 30px; border: 1px solid rgba(34,211,238,0.14);
-            font-family: 'SF Mono', monospace; flex: 0 0 auto;
+            font-size: 9px; color: rgba(34,211,238,0.75); background: rgba(34,211,238,0.07);
+            padding: 2px 8px; border-radius: 30px; border: 1px solid rgba(34,211,238,0.14);
+            font-family: 'SF Mono', monospace; letter-spacing: 0.06em; flex: 0 0 auto;
         }
         .hud-head .spacer { flex: 1; }
+        /* The search field is part of the head row instead of a box bolted on top of it: the same
+           glass fill / border the rows use, and the magnifier is drawn as a background glyph so the
+           whole field stays one clickable input (clicking it never collapses the panel). */
         .hud-search {
-            width: 150px; padding: 4px 9px; font-size: 11.5px; color: #fff; flex: 0 0 auto;
-            background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.08);
-            border-radius: 7px; outline: none; user-select: text; cursor: text;
-            transition: border-color 0.2s, background 0.2s;
+            width: 188px; flex: 0 0 auto; padding: 6px 10px 6px 28px; font-size: 11.5px; color: #fff;
+            background-color: rgba(255,255,255,0.045);
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%237DE8F7' stroke-opacity='0.55' stroke-width='2.2' stroke-linecap='round'%3E%3Ccircle cx='10.5' cy='10.5' r='6.2'/%3E%3Cpath d='M15.2 15.2 20 20'/%3E%3C/svg%3E");
+            background-repeat: no-repeat; background-position: 9px 50%; background-size: 13px 13px;
+            border: 1px solid rgba(255,255,255,0.08); border-radius: 9px; outline: none;
+            user-select: text; cursor: text;
+            transition: border-color 0.25s ease, background-color 0.25s ease, box-shadow 0.25s ease;
         }
-        .hud-search:focus { border-color: rgba(34,211,238,0.45); background: rgba(34,211,238,0.07); }
+        .hud-search:hover { border-color: rgba(255,255,255,0.16); }
+        .hud-search:focus {
+            border-color: rgba(34,211,238,0.45); background-color: rgba(34,211,238,0.07);
+            box-shadow: 0 0 0 3px rgba(34,211,238,0.08);
+        }
         .hud-search::placeholder { color: rgba(255,255,255,0.24); }
         .hud-body {
             max-height: 0; opacity: 0; visibility: hidden; overflow: hidden;
@@ -264,25 +282,61 @@
                         opacity 0.35s ease, border-color 0.3s ease, visibility 0s linear 0.45s;
         }
         .hud-panel.open .hud-body {
-            max-height: 236px; opacity: 1; visibility: visible; overflow-y: auto;
+            max-height: 320px; opacity: 1; visibility: visible; overflow-y: auto;
             border-top: 1px solid rgba(34,211,238,0.10);
             transition: max-height 0.45s cubic-bezier(0.33, 1, 0.68, 1),
                         opacity 0.35s ease, border-color 0.3s ease, visibility 0s;
         }
-        .hud-rows { padding: 6px 8px 8px 8px; display: flex; flex-direction: column; gap: 3px; }
-        .hud-hint {
-            font-size: 10px; color: rgba(255,255,255,0.3); padding: 8px 12px 2px 12px;
-            font-family: 'SF Mono', monospace; letter-spacing: 0.02em; line-height: 1.4;
+        /* Captions and rows share one track list, so the name column, the value column and the
+           control cluster line up row after row. A row adds a 1px border + 12px padding inside the
+           10px list gutter, so the caption row indents by 23px to sit on the same edges. */
+        .hud-cols, .hud-row {
+            display: grid; grid-template-columns: minmax(0, 1fr) 104px 122px;
+            align-items: center; column-gap: 10px;
         }
+        .hud-cols {
+            padding: 10px 23px 6px 23px; white-space: nowrap;
+            font-family: 'SF Mono', monospace; font-size: 8.5px; line-height: 1.2;
+            letter-spacing: 0.16em; text-transform: uppercase; color: rgba(255,255,255,0.22);
+        }
+        .hud-cols .hc-val { justify-self: end; }
+        .hud-cols .hc-ctl { justify-self: end; color: rgba(255,255,255,0.18); }
+        .hud-rows { padding: 0 10px 10px 10px; display: flex; flex-direction: column; gap: 4px; }
         .hud-row {
-            display: flex; align-items: center; gap: 9px; padding: 4px 7px; border-radius: 8px;
-            background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.04);
+            position: relative; min-height: 40px; padding: 6px 12px; border-radius: 10px;
+            background: rgba(255,255,255,0.025); border: 1px solid rgba(255,255,255,0.05);
             transition: background 0.25s ease, border-color 0.25s ease, opacity 0.25s ease;
         }
-        .hud-row:hover { background: rgba(34,211,238,0.05); border-color: rgba(34,211,238,0.16); }
+        /* Listed rows carry the same thin cyan→violet accent the rail uses; unlisted rows do not. */
+        .hud-row::before {
+            content: ''; position: absolute; left: 0; top: 50%; width: 2px; height: 62%;
+            border-radius: 0 2px 2px 0; background: linear-gradient(180deg, #22D3EE, #A78BFA);
+            opacity: 0; transform: translateY(-50%) scaleY(0.4);
+            transition: opacity 0.3s ease, transform 0.35s cubic-bezier(0.22, 1, 0.36, 1);
+        }
+        .hud-row:not(.off)::before { opacity: 0.85; transform: translateY(-50%) scaleY(1); }
+        .hud-row:hover, .hud-row:focus-within {
+            background: rgba(34,211,238,0.055); border-color: rgba(34,211,238,0.18);
+        }
         /* Hidden rows read as "off" at a glance: the whole row dims, the pill is grey. */
-        .hud-row.off { opacity: 0.45; }
-        .hud-row.off:hover { opacity: 0.75; }
+        .hud-row.off { opacity: 0.5; }
+        .hud-row.off:hover, .hud-row.off:focus-within { opacity: 0.82; }
+        .hud-name {
+            font-size: 12.5px; font-weight: 500; color: rgba(255,255,255,0.9); min-width: 0;
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        }
+        .hud-row.off .hud-name { color: rgba(255,255,255,0.58); }
+        /* The module's own HUD string — same violet chip as the card header, right-aligned so the
+           column reads as one edge even when the strings differ in length. */
+        .hud-val {
+            justify-self: end; max-width: 100%; font-size: 9.5px; line-height: 1.5;
+            color: rgba(167,139,250,0.85); background: rgba(167,139,250,0.08);
+            padding: 1px 8px; border-radius: 30px; border: 1px solid rgba(167,139,250,0.16);
+            font-family: 'SF Mono', monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        }
+        .hud-val.none { color: rgba(255,255,255,0.16); background: transparent; border-color: transparent; }
+        /* Right-hand cluster: show/hide pill, red work-flash, then the ▲▼ order pair. */
+        .hud-ctl { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
         /* The same on/off pill as everywhere else, one size down so the row stays compact.
            Selectors are row-scoped so they win over the base `.toggle-switch.on::after`. */
         .hud-row .hud-toggle { width: 30px; height: 16px; }
@@ -292,30 +346,42 @@
         /* Second per-row control, next to the pill: the red work-flash. Lit red = the row flashes
            red while the module works, dim grey = it does not. Independent of show/hide. */
         .hud-red {
-            width: 22px; height: 16px; flex: 0 0 auto; border-radius: 30px; cursor: pointer;
+            width: 24px; height: 18px; flex: 0 0 auto; border-radius: 30px; cursor: pointer;
             display: flex; align-items: center; justify-content: center; font-size: 8px; line-height: 1;
             color: #F87171; background: rgba(248,113,113,0.10); border: 1px solid rgba(248,113,113,0.26);
-            transition: background 0.25s ease, border-color 0.25s ease, color 0.25s ease;
+            transition: background 0.25s ease, border-color 0.25s ease, color 0.25s ease, box-shadow 0.25s ease;
         }
         .hud-red.on { box-shadow: 0 0 10px rgba(248,113,113,0.22); }
         .hud-red.off { color: rgba(255,255,255,0.2); background: rgba(255,255,255,0.03); border-color: rgba(255,255,255,0.08); }
         .hud-red:hover { border-color: rgba(248,113,113,0.5); }
         .hud-red.off:hover { color: rgba(255,255,255,0.42); border-color: rgba(255,255,255,0.2); }
-        .hud-name { font-size: 12.5px; color: rgba(255,255,255,0.88); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .hud-val {
-            font-size: 9.5px; color: rgba(167,139,250,0.85); background: rgba(167,139,250,0.08);
-            padding: 1px 8px; border-radius: 30px; border: 1px solid rgba(167,139,250,0.16);
-            font-family: 'SF Mono', monospace; white-space: nowrap; flex: 0 0 auto;
+        /* ▲▼ are one quiet segmented control, not two loose buttons: a shared shell with a hairline
+           between the halves, so the pair reads as a single reorder affordance. */
+        .hud-order {
+            display: flex; flex: 0 0 auto; border-radius: 8px; overflow: hidden;
+            background: rgba(255,255,255,0.035); border: 1px solid rgba(255,255,255,0.07);
+            transition: background 0.25s ease, border-color 0.25s ease;
         }
-        .hud-order { margin-left: auto; display: flex; gap: 3px; flex: 0 0 auto; }
+        .hud-order:hover { background: rgba(34,211,238,0.06); border-color: rgba(34,211,238,0.26); }
         .hud-mv {
-            width: 20px; height: 20px; padding: 0; line-height: 1; font-size: 8px; cursor: pointer;
-            display: flex; align-items: center; justify-content: center; border-radius: 6px;
-            background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1);
-            color: rgba(255,255,255,0.6); transition: background 0.2s, color 0.2s, border-color 0.2s;
+            width: 24px; height: 24px; padding: 0; line-height: 1; font-size: 8px; cursor: pointer;
+            display: flex; align-items: center; justify-content: center;
+            background: transparent; border: none; color: rgba(255,255,255,0.42);
+            transition: background 0.2s ease, color 0.2s ease;
         }
-        .hud-mv:hover { background: rgba(34,211,238,0.14); color: #22D3EE; border-color: rgba(34,211,238,0.3); }
-        .hud-empty { font-size: 11px; color: rgba(255,255,255,0.22); font-style: italic; padding: 8px 6px; }
+        .hud-mv + .hud-mv { border-left: 1px solid rgba(255,255,255,0.07); }
+        .hud-mv:hover { background: rgba(34,211,238,0.16); color: #7DE8F7; }
+        .hud-mv:active { background: rgba(34,211,238,0.24); color: #fff; }
+        .hud-mv:focus-visible { outline: none; background: rgba(34,211,238,0.2); color: #fff; }
+        .hud-empty {
+            font-size: 11px; color: rgba(255,255,255,0.22); font-style: italic;
+            padding: 10px 6px; text-align: center;
+        }
+        /* Footnote under the list: what the three row controls do. */
+        .hud-hint {
+            font-size: 10px; color: rgba(255,255,255,0.3); padding: 0 14px 12px 14px;
+            font-family: 'SF Mono', monospace; letter-spacing: 0.02em; line-height: 1.5;
+        }
 
         /* =========================================================
            Module grid — two columns of cards
@@ -537,12 +603,6 @@
         }
         .hud-chip.off { color: rgba(255,255,255,0.3); background: rgba(255,255,255,0.04); border-color: rgba(255,255,255,0.08); }
         .hud-chip:hover { background: rgba(52,211,153,0.18); }
-        /* Vanilla-key cheat sheet that drops onto its own line under the chip while capturing */
-        .kb-hint {
-            flex: 1 1 100%; margin-top: 1px;
-            font-size: 9.5px; color: rgba(255,255,255,0.32);
-            font-family: 'SF Mono', monospace; letter-spacing: 0.02em; line-height: 1.4;
-        }
 
         /* ===== Toast ===== */
         #toast {
@@ -663,12 +723,22 @@
             .profile-bar, .panic-bar, .hud-head, .cat-row { flex-wrap: wrap; }
             #tabBar { flex: 1 1 100%; }
             #tabBar .tab { flex: 1 1 auto; justify-content: center; min-height: 40px; }
-            .hud-search { flex: 1 1 100%; width: auto; min-height: 40px; padding: 9px 10px; }
+            .hud-search { flex: 1 1 100%; width: auto; min-height: 40px; padding: 9px 10px 9px 32px; background-position: 11px 50%; }
             .hud-panel.open .hud-body { max-height: 46vh; }
             .hud-rows { gap: 6px; }
-            /* Two toggles + name + value + ▲▼ do not fit 360px on one line: the value and the
-               order buttons drop to a second line instead of squeezing the name to nothing. */
-            .hud-row { padding: 11px 8px; gap: 8px; flex-wrap: wrap; }
+            /* The desktop caption columns cannot line up once a row stacks, so the caption row is
+               dropped here. */
+            .hud-cols { display: none; }
+            /* Pill + red dot + ▲▼ do not fit 360px beside the name: name and value share the first
+               line, the control cluster drops to a full-width second line, right-aligned. */
+            .hud-row {
+                grid-template-columns: minmax(0, 1fr) auto;
+                grid-template-areas: "name val" "ctl ctl";
+                row-gap: 8px; column-gap: 8px; padding: 11px 10px 11px 12px;
+            }
+            .hud-name { grid-area: name; }
+            .hud-val { grid-area: val; }
+            .hud-ctl { grid-area: ctl; }
             .setting-header { padding: 11px 12px 7px 12px; gap: 6px; }
             .setting-label { gap: 4px 6px; font-size: 13px; }
             .nav-item { padding: 11px 0; }
@@ -689,10 +759,12 @@
             .hud-row .hud-toggle { width: 40px; height: 22px; }
             .hud-row .hud-toggle::after { width: 18px; height: 18px; }
             .hud-row .hud-toggle.on::after { transform: translateX(18px); }
-            .hud-mv { position: relative; width: 34px; height: 34px; font-size: 11px; }
-            .hud-mv::before { content: ''; position: absolute; top: -6px; bottom: -6px; left: 0; right: 0; }
-            .hud-red { position: relative; width: 26px; height: 22px; font-size: 9px; }
-            .hud-red::before { content: ''; position: absolute; top: -9px; bottom: -9px; left: -4px; right: -4px; }
+            /* The ▲▼ pair keeps its single shell; each half is a full 40px tap target, so no
+               invisible band is needed (the shell clips one anyway). */
+            .hud-mv { width: 40px; height: 40px; font-size: 11px; }
+            .hud-mv::before { content: none; }
+            .hud-red { position: relative; width: 28px; height: 24px; font-size: 9px; }
+            .hud-red::before { content: ''; position: absolute; top: -8px; bottom: -8px; left: -6px; right: -6px; }
             /* Slider: a full 40px tap band, the visible bar stays 6px and centred inside it. */
             .slider-track { height: 40px; background: transparent; }
             .slider-track::before {
@@ -707,7 +779,6 @@
             .num-input { width: 64px; }
             .color-hex { width: 66px; }
             .sub-select { max-width: 46%; }
-            .hud-name { flex: 1 1 auto; min-width: 0; }
             .meta-row .bd { max-width: 100%; overflow-wrap: anywhere; }
             #toast { white-space: normal; max-width: calc(100vw - 20px); text-align: center; }
             .subtitle-overlay { white-space: normal; max-width: calc(100vw - 20px); text-align: center; font-size: 12px; }
@@ -724,34 +795,6 @@
             .setting-item.expanded { background: rgba(13, 18, 28, 0.98); box-shadow: 0 6px 20px rgba(0,0,0,0.4); }
             .modal-mask { background: rgba(3, 5, 9, 0.88); }
             #toast { background: rgba(13, 18, 28, 0.98); box-shadow: 0 6px 18px rgba(0,0,0,0.45); }
-            .subtitle-overlay { background: rgba(0, 0, 0, 0.72); }
-            .rail-mark, .header-status, .toggle-switch.on, .hud-red.on, .slider-fill { box-shadow: none; }
-
-            /* --- no infinite loops, no entrance cascades, no long transitions --- */
-            *, *::before, *::after {
-                animation: none !important;
-                transition-duration: 0.12s !important;
-                transition-delay: 0s !important;
-            }
-        }
-
-        /* =========================================================
-           Reduced motion — same calm panel, zero movement. A bare
-           `*` never matched `body::before`, so the 24s aurora drift
-           kept running here; `*::before/::after` fixes that.
-           Placed last so it also wins over the phone pass above.
-           ========================================================= */
-        @media (prefers-reduced-motion: reduce) {
-            *, *::before, *::after { animation: none !important; transition: none !important; }
-            .rail, .profile-bar, .hud-panel, .setting-item, #toast, .modal-mask, .subtitle-overlay {
-                backdrop-filter: none; -webkit-backdrop-filter: none;
-            }
-            .rail { background: rgba(7, 10, 16, 0.97); box-shadow: none; }
-            .profile-bar, .hud-panel, .setting-item { background: rgba(13, 18, 28, 0.95); }
-            .setting-item:hover { background: rgba(18, 24, 36, 0.97); }
-            .setting-item.expanded { background: rgba(13, 18, 28, 0.98); box-shadow: 0 6px 20px rgba(0,0,0,0.4); }
-            .modal-mask { background: rgba(3, 5, 9, 0.88); }
-            #toast { background: rgba(13, 18, 28, 0.98); }
             .subtitle-overlay { background: rgba(0, 0, 0, 0.72); }
             .rail-mark, .header-status, .toggle-switch.on, .hud-red.on, .slider-fill { box-shadow: none; }
         }
@@ -805,8 +848,13 @@
                     <input class="hud-search" id="hudSearch" placeholder="Search modules…" autocomplete="off" spellcheck="false">
                 </div>
                 <div class="hud-body">
-                    <div class="hud-hint">Shown here = listed on the in-game HUD. The pill lists / unlists that module's line (it does not turn the module on — use its card for that), ▲▼ moves the line up or down the HUD, and the red dot switches that line's red work-flash.</div>
+                    <div class="hud-cols">
+                        <span class="hc-name">Module</span>
+                        <span class="hc-val">HUD value</span>
+                        <span class="hc-ctl">Controls</span>
+                    </div>
                     <div class="hud-rows" id="hudRows"></div>
+                    <div class="hud-hint">Shown here = listed on the in-game HUD. The pill lists / unlists that module's line (it does not turn the module on — use its card for that), ▲▼ moves the line up or down the HUD, and the red dot switches that line's red work-flash.</div>
                 </div>
             </div>
 
@@ -1056,20 +1104,26 @@
             const name = m.name;
             const shown = hudShown(m);
             const red = redOn(m);
-            // A real on/off pill per row (same control as everywhere else) plus a dimmed row when
-            // hidden, so "is this line on the HUD?" is never a guess. The red chip beside it is the
-            // separate work-flash switch — it never changes whether the line is listed.
-            return `<div class="hud-row ${shown?'':'off'}" data-hud-row="${name}">
-                <div class="toggle-switch hud-toggle ${shown?'on':''}" data-hud-toggle="${name}"
-                     title="${hudPillTitle(shown)}"><span class="pulse-ring"></span></div>
-                <span class="hud-red ${red?'on':'off'}" data-hud-red="${name}"
-                      title="${hudRedTitle(red)}">●</span>
-                <span class="hud-name">${name}</span>
-                ${m.hudValue?`<span class="hud-val">${m.hudValue}</span>`:''}
-                <span class="hud-order">
-                    <button type="button" class="hud-mv" data-hud-move="${name}" data-dir="up" title="Move up">▲</button>
-                    <button type="button" class="hud-mv" data-hud-move="${name}" data-dir="down" title="Move down">▼</button>
-                </span>
+            // Three aligned columns: name · value chip · control cluster. The value cell always
+            // exists (a dim dash when the module publishes no string) so the columns never shift.
+            // A real on/off pill lists / unlists the line, the red chip beside it is the separate
+            // work-flash switch and ▲▼ move the line — all three grouped as one right-hand cluster.
+            const val = m.hudValue
+                ? `<span class="hud-val">${m.hudValue}</span>`
+                : `<span class="hud-val none">—</span>`;
+            return `<div class="hud-row${shown?'':' off'}" data-hud-row="${name}">
+                <span class="hud-name" title="${name}">${name}</span>
+                ${val}
+                <div class="hud-ctl">
+                    <div class="toggle-switch hud-toggle ${shown?'on':''}" data-hud-toggle="${name}"
+                         title="${hudPillTitle(shown)}"><span class="pulse-ring"></span></div>
+                    <span class="hud-red ${red?'on':'off'}" data-hud-red="${name}"
+                          title="${hudRedTitle(red)}">●</span>
+                    <span class="hud-order">
+                        <button type="button" class="hud-mv" data-hud-move="${name}" data-dir="up" title="Move up">▲</button>
+                        <button type="button" class="hud-mv" data-hud-move="${name}" data-dir="down" title="Move down">▼</button>
+                    </span>
+                </div>
             </div>`;
         }
         let hudQuery = '';
@@ -1281,8 +1335,7 @@
 
         // ----- Card builder -----
         // What vanilla Minecraft already uses a key for. A module bind does not steal the key from
-        // the game, so the panel says out loud what the key does: once on the chip's tooltip and,
-        // while capturing, as a one-line cheat sheet under it (never a modal).
+        // the game, so the chip's tooltip says out loud what that key does in game.
         const KEY_USES = {
             'W':'move forward', 'A':'move left', 'S':'move back', 'D':'move right',
             'Space':'jump', 'LShift':'sneak', 'LCtrl':'sprint',
@@ -1293,7 +1346,6 @@
             'F1':'hide HUD', 'F2':'screenshot', 'F3':'debug screen', 'F5':'perspective',
             'F11':'fullscreen'
         };
-        const CAPTURE_HINT = 'Vanilla: W/A/S/D move · Space jump · LShift sneak · E inventory · Q drop · F offhand · Tab player list · T chat · 1-9 hotbar';
         function keyUse(keyName){ return KEY_USES[keyName] || ''; }
         // The server answers keyName "NONE" when a module has no key; older builds said "Unbound".
         function keyLabel(keyName){
@@ -1520,8 +1572,8 @@
 
         // ----- Clicks -----
         let capturingKey = null;
-        // Disarm a capture without binding anything: drop the highlight, the vanilla hint and put
-        // every chip back to its own keyName (English, straight from the server).
+        // Disarm a capture without binding anything: drop the highlight and put every chip back to
+        // its own keyName (English, straight from the server).
         function cancelCapture(){
             capturingKey = null;
             $$('.kb-chip[data-kb]').forEach(c => {
@@ -1529,7 +1581,6 @@
                 c.classList.remove('capturing');
                 if(m) applyKbChip(c, m.keyName);
             });
-            $$('.kb-hint').forEach(h=>h.remove());
         }
         // Typing into the HUD search box must not turn into a keybind.
         document.addEventListener('focusin', e => {
@@ -1598,10 +1649,6 @@
                 kb.classList.add('capturing');
                 kb.classList.remove('unbound');
                 kb.textContent = '[press a key…]';
-                // The hint is appended to the label row, which wraps, so it lands on its own line
-                // under the chips instead of squeezing in beside them.
-                const hintHost = kb.parentElement;
-                if(hintHost) hintHost.insertAdjacentHTML('beforeend', `<span class="kb-hint">${CAPTURE_HINT}</span>`);
                 return;
             }
             // Panic bar (two-step arm, no accidental wipes)
@@ -1869,7 +1916,6 @@
             else if(/^F([1-9]|1[0-2])$/.test(e.key)) code = 290 + (parseInt(e.key.slice(1),10) - 1);
             else return;
             capturingKey = null;
-            $$('.kb-hint').forEach(h=>h.remove());   // the vanilla cheat sheet goes with the capture
             (async () => {
                 try {
                     const r = await api('/api/modules/'+encodeURIComponent(name)+'/keybind', {method:'POST', body:JSON.stringify({key:code})});

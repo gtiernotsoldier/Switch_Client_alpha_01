@@ -33,8 +33,11 @@
 //      accent bar is at the row's **right** edge (2 px in Rise/VapeV4, 3 px in
 //      Tesseract and Modern), the name is painted in the row's animated accent and
 //      the tag in the mode's muted grey — red `(255,85,85)` in VapeV4 while the
-//      module is in use, the live accent in Modern, and a red work-pulse wash over
-//      the whole row for any mode while `flash` is non-zero (HUD.cpp:640).
+//      module is in use, and the live accent in Modern (HUD.cpp:640). A non-zero
+//      `flash` tints the row's **text** towards that same red by `flash/255` — the
+//      name and its value, each lerped from the colour it would otherwise use
+//      (`flash_tint`). No fill is drawn for it, so the card, the spine bar and the
+//      layout are the pixels they would be with no pulse at all.
 //
 // ── animations, exactly as the source ────────────────────────────────────────
 //
@@ -48,9 +51,14 @@
 //     jump. The source's own answer is to erase the `m_SlideProgress` entries of
 //     modules that are no longer enabled (HUD.cpp:647-653), which is still what
 //     happens to the slide state itself.
-//   * **work pulse**: contract v3's entry `flash` is a 0..255 strength, and a row
-//     is washed towards red by `flash/255`. It decays to nothing at 0 and the
-//     overlay never decays it itself: the writer recomputes it every publish.
+//   * **work pulse**: contract v3's entry `flash` is a 0..255 strength, and it is
+//     carried by the row's **text**: the name and the value are lerped, channel by
+//     channel, from the colour that run would otherwise be drawn in towards red by
+//     `flash/255` — so at full strength the labels are the mode's red and as the
+//     byte decays they walk back to their own colours. Nothing is filled, so the
+//     pulse cannot appear as a band behind or over the row. It decays to nothing at
+//     0 and the overlay never decays it itself: the writer recomputes it every
+//     publish.
 //   * **accent**: per-row phase offsets, one function per mode (HUD.cpp:249-309).
 //     Default blends the two configurable colours on a cosine over
 //     `2500 / max(speed, 0.01)` ms with `+400 ms` per row; Rise maps
@@ -93,7 +101,7 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-use crate::draw::{argb, Canvas};
+use crate::draw::{argb, lerp_rgb, Canvas};
 use crate::state::Entry;
 use crate::text::{FontId, TextEngine, FONT_PX, MAX_SCALE, MIN_SCALE};
 
@@ -183,18 +191,37 @@ pub const TESSERACT_BACKGROUND: u32 = argb(25, 25, 30, 240);
 //
 // `flash` stopped being a bool in v3 and became a 0..255 strength the writer
 // recomputes every publish. The overlay reads it as a level and never decays it:
-// it washes the row towards red by `flash / 255`, which is 0 at 0 (nothing at
-// all) and strongest at 255.
+// it tints the row's *text* towards red by `flash / 255`, which is the row's own
+// colour at 0 (nothing at all) and the mode's red at 255. The tint replaced a wash
+// that was filled over the whole row (contract note in the header): a working row
+// now reads as its name going red rather than as a red block appearing, and it
+// costs one lerp per run — no extra pass and no allocation.
 
-/// The colour a working row is washed towards. Red rather than the source's
-/// VapeV4 tag red `(255,85,85)`: the wash covers the whole card, so a lighter
-/// red keeps the name and tag legible through it.
-pub const FLASH_WASH: u32 = argb(200, 48, 48, 210);
+/// The red a working row's text is tinted towards: the source's own
+/// `vapeTagActiveColor` red `(255,85,85)` (HUD.cpp:480) — the one red in the
+/// reference's palette, and already what the source means by "this module is in
+/// use". A glyph tint has to be a *text* colour; the wash this replaced was a fill
+/// colour (`argb(200,48,48,210)`) blended over the card, which is exactly what the
+/// row no longer does.
+pub const FLASH_TINT: u32 = VAPE_TAG_ACTIVE;
 
 /// `flash` 0..255 → 0..1. The one place the wire value becomes a strength, so
 /// "0 means no tint at all" cannot drift between the painter and a test.
 pub fn flash_strength(flash: u8) -> f32 {
     flash as f32 / 255.0
+}
+
+/// The colour a run is drawn in while the module works: `base` — whatever colour
+/// that run would use with no pulse at all — lerped channel-wise towards
+/// `FLASH_TINT` by `flash` (0..1, from `flash_strength`). 0 is the untouched
+/// colour, 1 is the mode's red, and a decaying value lands on the straight line
+/// between them.
+///
+/// Pure, allocation-free and a handful of integer ops on the RGB bytes: it is
+/// called twice per row per frame. The base's alpha is kept, so the caller's own
+/// fade (`with_alpha`) still has the last word.
+pub fn flash_tint(base: u32, flash: f32) -> u32 {
+    lerp_rgb(base, FLASH_TINT, flash)
 }
 
 // ── Modern (this port's own mode, contract v3) ──────────────────────────────
@@ -498,8 +525,10 @@ pub fn chip_colour(m: &Metrics) -> Option<u32> {
 /// ported mode keeps the grey whatever the flash byte says.
 ///
 /// `flash` is the v3 strength, read here only as "working at all": the *degree*
-/// of the pulse is the red wash over the card (`paint_row`), which every mode
-/// gets, because a grey tag alone cannot show a 0..255 level.
+/// of the pulse is carried by the text tint (`flash_tint`, applied in `paint_row`
+/// over this colour), which every mode gets, because a grey tag alone cannot show
+/// a 0..255 level. VapeV4's active red is therefore the top of the same ramp the
+/// tint climbs — at `flash` 255 the tag here and the tag tinted are one colour.
 pub fn tag_colour(m: &Metrics, flash: bool, accent: u32) -> u32 {
     if m.mode == Mode::Modern {
         accent
@@ -1013,8 +1042,9 @@ struct RowShape {
     /// The position the row held in the list while it was live — the accent's
     /// per-row phase, and the y an exit is painted on.
     slot: usize,
-    /// The work-pulse strength at the moment the row left, so it keeps glowing
-    /// (or not) on its way out instead of snapping to a different red.
+    /// The work-pulse strength at the moment the row left, so its text keeps the
+    /// same red (or lack of it) on its way out instead of snapping to a different
+    /// colour mid-exit.
     flash: u8,
 }
 
@@ -1558,11 +1588,11 @@ fn paint_exits(
     true
 }
 
-/// Paint one row: its card, the accent bar, the work-pulse wash and its two text
-/// runs. A listed row and a row on its way out both come through here, so an exit
-/// cannot look different from the frame that preceded it. `fade` is the row's own
-/// 0..1 multiplier on top of the overlay's — 1.0 for a listed row, the exit's
-/// ramp for one on its way out.
+/// Paint one row: its card, the accent bar and its two text runs, with the work
+/// pulse carried by the **text** colour rather than by a fill. A listed row and a
+/// row on its way out both come through here, so an exit cannot look different
+/// from the frame that preceded it. `fade` is the row's own 0..1 multiplier on top
+/// of the overlay's — 1.0 for a listed row, the exit's ramp for one on its way out.
 fn paint_row(
     canvas: &mut Canvas,
     text: &mut TextEngine,
@@ -1579,6 +1609,12 @@ fn paint_row(
     let box_w = shape.box_w.round().max(1.0) as u32;
     let strength = flash_strength(shape.flash);
     let text_alpha = frame.global * fade;
+    // The work pulse, as a text tint: the name lerps from the row's animated
+    // accent and the tag from its own colour towards the mode's red, so a working
+    // row reads as its labels going red and a decaying `flash` walks them back.
+    // Nothing is filled for it — no wash above the card, the accent bar or the
+    // glyphs' shadow, and no change to the row's geometry or background.
+    let name_colour = flash_tint(accent, strength);
 
     // The chip: Rise/VapeV4 fill the whole row, Tesseract its own dark one,
     // Modern its rounded card, Default nothing at all (HUD.cpp:619-634).
@@ -1590,20 +1626,6 @@ fn paint_row(
             item_h,
             chip_corners(m),
             with_alpha(colour, frame.background * fade),
-        );
-    }
-    // The work pulse: a wash over the whole row, strongest at `flash` 255 and
-    // exactly absent at 0. It is applied above the card and below the text, and
-    // it is the part of the pulse every mode can show — Default has no card to
-    // tint, and a tag colour alone cannot carry a 0..255 level.
-    if strength > 0.0 {
-        canvas.fill_rounded_rect_corners(
-            box_x,
-            y,
-            box_w,
-            item_h,
-            chip_corners(m),
-            with_alpha(FLASH_WASH, frame.background * fade * strength),
         );
     }
     // The accent bar, flush against the row's right edge. Modern rounds its right
@@ -1631,21 +1653,17 @@ fn paint_row(
     let text_x = (box_x as f32 + m.text_inset_x).round() as i32;
     let text_y = (y as f32 + m.text_inset_y).round() as i32;
 
-    draw_shadowed(text, canvas, name_font, &shape.name, text_x, text_y, accent, text_alpha);
+    draw_shadowed(text, canvas, name_font, &shape.name, text_x, text_y, name_colour, text_alpha);
 
     if shape.tag_w > 0.0 {
         let space_w = text.measure(FontId::Body, " ") as f32;
         let tag_x = (text_x as f32 + shape.name_w + tag_gap(m, space_w)).round() as i32;
-        draw_shadowed(
-            text,
-            canvas,
-            FontId::Body,
-            &shape.value,
-            tag_x,
-            text_y,
-            tag_colour(m, shape.flash != 0, accent),
-            text_alpha,
-        );
+        // The value is tinted by the same strength as the name, from the colour
+        // this mode gives that row's tag — so "the labels go red" is one rule, not
+        // two, and the two runs cannot disagree about how far into the pulse the
+        // row is.
+        let tag = flash_tint(tag_colour(m, shape.flash != 0, accent), strength);
+        draw_shadowed(text, canvas, FontId::Body, &shape.value, tag_x, text_y, tag, text_alpha);
     }
 }
 
@@ -1714,10 +1732,10 @@ pub fn describe(text: &TextEngine, entries: &[Entry], cfg: &Config, canvas_w: u3
     ));
     out.push_str(&format!(
         "  background opacity {:.0}% of the fills only (text at 100%) | rows {} | work pulse {} \
-         washed red by flash/255\n",
+         tints the row's text by flash/255 — no fill, the card is unchanged\n",
         cfg.opacity * 100.0,
         if cfg.ordered { "in published order (orderPublished)" } else { "sorted by width (the wedge)" },
-        hex(FLASH_WASH),
+        hex(FLASH_TINT),
     ));
     out.push_str(&format!(
         "  review rect {}x{} at ({}, {})..({}, {}) | list edge x={} | --position {:?} | {} rows, \
@@ -1810,11 +1828,18 @@ pub fn describe(text: &TextEngine, entries: &[Entry], cfg: &Config, canvas_w: u3
         ));
         if row.tag_w > 0.0 {
             let accent_now = pack(accent(cfg, Stamp { seconds: SEED_MS as f32 / 1000.0, millis: SEED_MS as f64 }, slot), 1.0);
+            // The colour the painter will actually use for the tag: `tag_colour`
+            // with the pulse's own tint over it, so the dump's numbers cannot drift
+            // from the frame.
+            let tag_now = flash_tint(
+                tag_colour(&m, entry.flash != 0, accent_now),
+                flash_strength(entry.flash),
+            );
             out.push_str(&format!(
                 " (gap {:.0}), tag {:.0}px {}",
                 tag_gap(&m, text.measure(FontId::Body, " ") as f32),
                 row.tag_w,
-                hex(tag_colour(&m, entry.flash != 0, accent_now)),
+                hex(tag_now),
             ));
             if entry.flash != 0 {
                 out.push_str(&format!(", WORK PULSE {}/255", entry.flash));
@@ -2702,37 +2727,143 @@ mod tests {
 
     // ── the work pulse (contract v3's entry `flash`) ────────────────────────
 
-    /// The pulse is a strength, not a flag: 255 washes the row further towards
-    /// red than 0 (which does nothing at all), and a decaying value lands between
-    /// the two. Measured on the pixels, because "clearly visible" is the
-    /// requirement and `flash_strength` alone cannot prove it.
+    /// The tint is a pure lerp from whatever colour the run would otherwise be
+    /// drawn in, which is what makes it work in all five modes: the base is the
+    /// row's own accent (or its own tag colour), never a constant, and every base
+    /// lands on the same red at full strength.
     #[test]
-    fn a_full_flash_washes_the_row_redder_than_none() {
+    fn flash_tint_lerps_the_rows_own_colour_towards_the_red() {
+        let base = argb(0x30, 0x80, 0xC0, 0xFF);
+        assert_eq!(flash_tint(base, 0.0), base, "an idle row keeps its own colour exactly");
+        assert_eq!(
+            flash_tint(base, 1.0),
+            argb(0xFF, 0x55, 0x55, 0xFF),
+            "a full pulse is the mode's red, byte for byte"
+        );
+        assert_eq!(
+            flash_tint(base, 1.0) & 0x00FF_FFFF,
+            FLASH_TINT & 0x00FF_FFFF,
+            "and that red is the constant the painter means"
+        );
+
+        // Every mode's normal colour is a different base; the same helper has to
+        // reach the same red from each of them, which is the whole reason the base
+        // is a parameter and not a table.
+        for normal in [DEFAULT_PRIMARY, DEFAULT_SECONDARY, [1.0, 1.0, 1.0], [0.0, 0.0, 0.0]] {
+            let hot = flash_tint(pack(normal, 1.0), 1.0);
+            assert_eq!(hot & 0x00FF_FFFF, FLASH_TINT & 0x00FF_FFFF, "from {normal:?}");
+        }
+
+        // A decaying value walks the channels, it does not jump.
+        let mid = flash_tint(base, 0.5);
+        assert!(((mid >> 16) & 0xFF) > ((base >> 16) & 0xFF), "red rises");
+        assert!(((mid >> 8) & 0xFF) < ((base >> 8) & 0xFF), "green falls");
+        assert!(((mid & 0xFF)) < ((base & 0xFF)), "blue falls");
+        assert_ne!(mid, base);
+        assert_ne!(mid, flash_tint(base, 1.0));
+
+        // The alpha belongs to the caller: `with_alpha` fades the run afterwards,
+        // and an out-of-range strength cannot wrap a channel.
+        assert_eq!(flash_tint(argb(0x10, 0x20, 0x30, 0x80), 1.0) >> 24, 0x80, "alpha is kept");
+        assert_eq!(flash_tint(base, 2.0), flash_tint(base, 1.0), "clamped above");
+        assert_eq!(flash_tint(base, -1.0), base, "and below");
+    }
+
+    /// The pulse is a strength, not a flag, and it is carried by the **text**: at
+    /// 255 the row's glyphs are red where an idle row's are its accent, while every
+    /// background pixel of the card behind them is byte-for-byte what it was at 0.
+    /// Measured on the pixels, because "the name goes red, no red block appears" is
+    /// the requirement and `flash_tint` alone cannot prove the painter uses it.
+    #[test]
+    fn a_full_flash_tints_the_text_and_leaves_the_card_alone() {
         let mut text = TextEngine::new(1.0).expect("GDI text engine");
         let now = Instant::now();
         let cfg = Config { mode: Mode::Modern, ..Config::default() };
-
-        let mut redness = |flash: u8| {
-            let entries = vec![Entry {
+        let rect = Rect::new(0, 0, 520, 400);
+        let m = Metrics::new(Mode::Modern, 1.0);
+        let entries = |flash: u8| {
+            vec![Entry {
                 id: 1,
                 enabled: true,
                 flash,
                 highlight: false,
                 name: "Velocity".to_string(),
                 value: "82%".to_string(),
-            }];
+            }]
+        };
+
+        let frame = |text: &mut TextEngine, flash: u8| {
+            let entries = entries(flash);
             let mut anim = Anim::new();
             anim.seed(&entries, now);
             let mut canvas = Canvas::placed(0, 0, 520, 400);
             canvas.clear();
-            paint(&mut canvas, &mut text, &entries, &mut anim, now, &cfg);
+            paint(&mut canvas, text, &entries, &mut anim, now, &cfg);
+            canvas
+        };
 
-            // Modern's card is dark and cold, so red-minus-blue summed over the
-            // first row's band is the wash and nothing else.
-            let m = Metrics::new(Mode::Modern, 1.0);
-            let y = row_y(Rect::new(0, 0, 520, 400), &m, 0);
+        assert_eq!(flash_strength(0), 0.0);
+        assert_eq!(flash_strength(255), 1.0);
+        assert!(near(flash_strength(128), 128.0 / 255.0));
+
+        let cold = frame(&mut text, 0);
+        let mid = frame(&mut text, 128);
+        let hot = frame(&mut text, 255);
+
+        // The row's own box, measured the way the painter measures it, so the
+        // background pixel below is really the card and not the desktop.
+        let live = entries(255);
+        let box_w = measure_rows(&text, &live, &cfg, &m)[0].box_w;
+        let box_x = row_target_x(rect, cfg.position, &m, box_w).round() as i32;
+        let y = row_y(rect, &m, 0);
+        let item_h = m.item_height.round() as i32;
+
+        // ── A: the background. The card's inner left padding, at the row's
+        // vertical middle: no glyph is drawn there (the text starts 6 px in), and
+        // the wash this change removed covered exactly this pixel. It must not move.
+        let mut background = 0;
+        for px in (box_x + 1)..(box_x + 5) {
+            for py in (y + 8)..(y + item_h - 8) {
+                let (px, py) = (px as u32, py as u32);
+                assert!(cold.pixel(px, py) >> 24 > 0, "the card is there to be tinted");
+                assert_eq!(
+                    cold.pixel(px, py),
+                    hot.pixel(px, py),
+                    "background pixel ({px}, {py}) moved with the pulse"
+                );
+                assert_eq!(cold.pixel(px, py), mid.pixel(px, py), "…at any strength");
+                background += 1;
+            }
+        }
+        assert!(background >= 16, "the padding strip was really sampled: {background}");
+
+        // ── B: the text. A full pulse leaves strongly red glyphs where the idle row
+        // has none at all, and the mid strength lands between the two.
+        let strongly_red = |canvas: &Canvas| -> usize {
+            let mut n = 0;
+            for py in y..(y + item_h) {
+                for px in 0..520u32 {
+                    let p = canvas.pixel(px, py as u32);
+                    let (r, g, b) = ((p >> 16) & 0xFF, (p >> 8) & 0xFF, p & 0xFF);
+                    if r > 150 && r > g + 80 && r > b + 80 {
+                        n += 1;
+                    }
+                }
+            }
+            n
+        };
+        assert_eq!(strongly_red(&cold), 0, "an idle Modern row has no red text");
+        assert!(
+            strongly_red(&hot) > 200,
+            "a working row's text is red: {} pixels",
+            strongly_red(&hot)
+        );
+
+        // Red-minus-blue summed over the row's band rises with the strength, which
+        // is the level reading as a level rather than as a flag.
+        let redness = |canvas: &Canvas| -> i64 {
             let mut sum = 0i64;
-            for py in y..y + m.item_height.round() as i32 {
+            for py in y..(y + item_h) {
                 for px in 0..520u32 {
                     let p = canvas.pixel(px, py as u32);
                     sum += ((p >> 16) & 0xFF) as i64 - (p & 0xFF) as i64;
@@ -2740,17 +2871,13 @@ mod tests {
             }
             sum
         };
-
-        assert_eq!(flash_strength(0), 0.0);
-        assert_eq!(flash_strength(255), 1.0);
-        assert!(near(flash_strength(128), 128.0 / 255.0));
-
-        let cold = redness(0);
-        let hot = redness(255);
-        let mid = redness(128);
-        assert!(hot > cold, "flash 255 must tint more than 0: {hot} vs {cold}");
-        assert!(mid > cold && mid < hot, "a decaying pulse lands between: {cold} < {mid} < {hot}");
-        assert_eq!(redness(0), cold, "0 is deterministic — no wash at all");
+        let (cold_r, mid_r, hot_r) = (redness(&cold), redness(&mid), redness(&hot));
+        assert!(hot_r > cold_r, "flash 255 must tint more than 0: {hot_r} vs {cold_r}");
+        assert!(
+            mid_r > cold_r && mid_r < hot_r,
+            "a decaying pulse lands between: {cold_r} < {mid_r} < {hot_r}"
+        );
+        assert_eq!(redness(&frame(&mut text, 0)), cold_r, "0 is deterministic — no tint at all");
     }
 
     // ── the two v3 config knobs ─────────────────────────────────────────────

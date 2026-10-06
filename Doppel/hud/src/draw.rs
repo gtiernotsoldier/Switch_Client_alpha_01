@@ -233,6 +233,32 @@ fn rounded_box_sdf(
     outside + qx.max(qy).min(0.0) - radius
 }
 
+/// Linear blend between two 0xAARRGGBB colours, channel by channel on the RGB
+/// bytes, with `t` clamped to 0..1. The result keeps **`from`'s alpha**: every
+/// caller here is recolouring a run it has already resolved, and the fade is
+/// applied to that colour afterwards (`with_alpha`), so a lerp that took the
+/// target's alpha would quietly change how opaque the run is.
+///
+/// `t = 0` returns `from` exactly and `t = 1` its RGB replaced by `to`'s, both
+/// without a round trip through floats, so "no tint" is bit-for-bit the colour
+/// the caller passed. A non-finite `t` is treated as 0 rather than as a wild
+/// colour.
+pub fn lerp_rgb(from: u32, to: u32, t: f32) -> u32 {
+    let t = if t.is_finite() { t.clamp(0.0, 1.0) } else { 0.0 };
+    if t <= 0.0 {
+        return from;
+    }
+    if t >= 1.0 {
+        return (from & 0xFF00_0000) | (to & 0x00FF_FFFF);
+    }
+    let mix = |shift: u32| {
+        let a = ((from >> shift) & 0xFF) as f32;
+        let b = ((to >> shift) & 0xFF) as f32;
+        (a + (b - a) * t).round().clamp(0.0, 255.0) as u32
+    };
+    (from & 0xFF00_0000) | (mix(16) << 16) | (mix(8) << 8) | mix(0)
+}
+
 /// Split 0xAARRGGBB into its channel bytes, as (r, g, b, a).
 fn unpack(colour: u32) -> (u8, u8, u8, u8) {
     (
@@ -302,6 +328,25 @@ mod tests {
             assert!(((p >> 8) & 0xFF) <= a, "green channel exceeds alpha");
             assert!(((p >> 16) & 0xFF) <= a, "red channel exceeds alpha");
         }
+    }
+
+    /// The work-pulse tint's channel maths, in isolation: 0 leaves the colour
+    /// exactly alone, 1 replaces its RGB with the target's and keeps its alpha, and
+    /// a decaying value lands on the straight line between the two.
+    #[test]
+    fn lerp_rgb_walks_each_channel_and_keeps_the_bases_alpha() {
+        let base = argb(0x20, 0x40, 0x80, 0x7F);
+        let red = argb(0xFF, 0x00, 0x00, 0xFF);
+
+        assert_eq!(lerp_rgb(base, red, 0.0), base, "0 is the untouched colour");
+        assert_eq!(lerp_rgb(base, red, 1.0), argb(0xFF, 0x00, 0x00, 0x7F), "1 is the target's RGB");
+        assert_eq!(lerp_rgb(base, red, 0.5), argb(0x90, 0x20, 0x40, 0x7F), "midway, channel-wise");
+
+        // Out-of-range and non-finite strengths cannot wrap a channel or produce a
+        // colour outside the two endpoints.
+        assert_eq!(lerp_rgb(base, red, -1.0), base);
+        assert_eq!(lerp_rgb(base, red, 2.0), lerp_rgb(base, red, 1.0));
+        assert_eq!(lerp_rgb(base, red, f32::NAN), base, "NaN is no tint, not a wild colour");
     }
 
     /// A canvas knows where its surface sits on the monitor, which is what lets

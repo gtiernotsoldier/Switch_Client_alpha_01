@@ -8,15 +8,49 @@ everything under "Still open" is scoped so it can be picked up without re-derivi
 
 | Item | State |
 | --- | --- |
-| Local `main` | round 1: `2f9451e`, `9f03f5a`, `c489f73`, `19f267c`, `6429935`. Round 2 (this pass) adds the commits listed under "Round 2" below. **Not pushed to GitLab yet** |
-| Testable binary | `C:\Users\Administrator\Desktop\swl\doppel-injector-fixed.exe`, rebuilt 17:32:20 with the current agent jar and overlay; both embedded RCDATA blobs hash-match their sources |
-| Kotlin build | `:adapter:common:compileKotlin`, `:adapter:common:test` (71 tests, 10 classes), `:adapter:forge:v1_8_9:compileKotlin`, `:agent:jar` all green |
+| Local `main` | round 1: `2f9451e`, `9f03f5a`, `c489f73`, `19f267c`, `6429935`. Round 2: `a29fb8e`, `75b1c6a`, `0d946be`, `e7ad03b`. Round 3 (this pass) adds the commits listed under "Round 3". **Not pushed to GitLab yet** |
+| Testable binary | `C:\Users\Administrator\Desktop\swl\doppel-injector-fixed.exe`, rebuilt 18:02:51 with the current agent jar and overlay; both embedded RCDATA blobs hash-match their sources |
+| Kotlin build | `:core:test` (94 tests), `:adapter:common:compileKotlin`, `:adapter:common:test` (88 tests, 17 classes), `:adapter:forge:v1_8_9:compileKotlin`, `:agent:jar` all green |
 | Rust builds | `hud`: 72 tests green. `injector`: 10 tests green, only the 3 pre-existing warnings (`flow.rs` platform, `inject.rs` WAIT_TIMEOUT, `process.rs` GetLastError) |
 | State contract | **v3**, writer and reader, verified against each other across the two languages; v1 and v2 are still read so a stale file cannot break the overlay |
 | Overlay | always-on-top click-through layered window anchored to the game window's **client area** (below the title bar) and following it (`--follow-pid`); **five** modes (Default/Rise/VapeV4/Tesseract/**Modern**); row entrance **and exit** animation; decaying red **work flash**; user-set scale, line spacing, background opacity and row order |
 | In-game Keystrokes | reads *effective* key states, so WTap/STap/ADTap/JumpReset light the boxes; Rainbow no longer touches AWT |
-| WebUI | keyboard-only numeric fields (slider + typed value), colour pickers, a HUD list panel (search, show/hide, up/down), English key names with a vanilla-key clash hint |
+| WebUI | keyboard-only numeric fields (slider + an underlined typed value), colour pickers, a HUD list panel (search, pill show/hide, up/down), keybind chips beside the module name reading `[NONE]`/`[N]` |
 | Launcher | restyled to the OpenCommunity dark palette with a short intro fade |
+| Option sanity | Min/Max option pairs are kept ordered on every write, so `Random.nextInt(min, max + 1)` can no longer be handed an inverted range |
+
+## Round 3 — the user's second round of feedback
+
+### A Min above its Max was a crash, not just a bad number
+Every ranged module feeds its two options straight into `Random.nextInt(min, max + 1)`, which
+**throws** when `min > max` — a whole-tick crash — and the float paths silently returned values
+outside the range. Nothing stopped the panel, a hand-edited config or a half-applied import from
+inverting a pair. `ConfigManager` now keeps them ordered on every write (and on `resetOption` /
+`resetAll`, which bypass `set`): setting the minimum above the maximum raises the maximum, and the
+reverse lowers the minimum. The sibling is derived from the option's *name* (`optionPairOf`, the last
+`min`/`max` token, casing preserved), so no module has to declare its pairs and a module added later
+gets the behaviour for free; the 20 real pairs in the tree are pinned by a test. `MathUtils` is
+defensive as well, as a backstop for anything that reads a pair before the option layer sees it.
+
+### Velocity's HUD value was a number nobody configured
+`hudValue()` printed the *midpoint* of each range, so 0%..100% showed as "50%". It now prints the
+ranges the user actually set — `Legit 80%-100%/100%`, collapsing an axis to one value when both ends
+are equal — and Click mode reports its click burst instead of the ranges it does not use.
+
+### The keybind is visible, and the HUD row carries it
+The HUD row appends the bound key (`Human: ... [N]`), because an unbound module showing nothing is
+exactly the ambiguity that made the user ask whether binding had worked. The panel's keybind chip
+moved out of the drawer to the card header, immediately right of the module name, and reads `[NONE]`
+when unbound — with a toast naming the module and the key on a successful bind, and one on Esc.
+`KeyNames` (in `api`, so the module layer can use it without depending on the HTTP server) is the one
+table behind both.
+
+### WebUI readability
+Module names were being ellipsised: the columns are wider now, the label row wraps instead of
+truncating, and the chips are slightly smaller. The HUD list's ambiguous `◉` dot became a real pill
+toggle with the row dimmed while hidden and a `shown / total` count. The precise numeric field is the
+underlined blank the user asked for — transparent, a single bottom rule, the number right-aligned
+inside it — with the commit behaviour (clamp and snap to the declared step) unchanged.
 
 ## Round 2 — what the user asked for and where it landed
 
@@ -181,14 +215,14 @@ Scoped, all of it cosmetic or environmental rather than broken:
 
 ## Verification (copy-paste)
 
-Kotlin (71 tests, 10 classes):
+Kotlin (adapter/common 88 tests + core 94 tests):
 ```powershell
 $ws='C:\Users\Administrator\Desktop\swl'; $t="$ws\.tools"
 $env:JAVA_HOME="$t\jdk8\jdk8u504-b01"; $env:GRADLE_USER_HOME="$t\gradle-home"
 $env:CARGO_HOME="$t\cargo"; $env:RUSTUP_HOME="$t\rustup"; $env:TEMP="$t\tmp"; $env:TMP="$t\tmp"
 $env:JAVA_TOOL_OPTIONS="-Dfile.encoding=UTF-8 -Dsun.jnu.encoding=UTF-8"
 $env:PATH="$env:JAVA_HOME\bin;$t\w64devkit\w64devkit\bin;$t\gradle-8.5\bin;$t\MinGit\cmd;$t\cargo\bin;$env:PATH"
-cd "$ws\doppel-final\Doppel"; gradle --offline --no-daemon --console=plain :adapter:common:compileKotlin :adapter:common:test :adapter:forge:v1_8_9:compileKotlin :agent:jar
+cd "$ws\doppel-final\Doppel"; gradle --offline --no-daemon --console=plain :core:test :adapter:common:compileKotlin :adapter:common:test :adapter:forge:v1_8_9:compileKotlin :agent:jar
 ```
 Rust (hud 72 / injector 10):
 ```powershell

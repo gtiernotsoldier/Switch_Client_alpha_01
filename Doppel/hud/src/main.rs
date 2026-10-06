@@ -35,6 +35,16 @@
 // a pid that does keeps the last frame on screen, stale file and all. With no pid
 // the mtime rule stands, three seconds and a fade.
 //
+// Where the HUD can be seen is the same pid, asked a different question (A1). The
+// overlay is on screen only while a window of the followed process is the
+// foreground window; when the user alt-tabs to a browser the window is hidden
+// (`SW_HIDE`) instead of floating over it, and it is shown again the moment the
+// game is in front. The process deliberately keeps running while hidden: exiting
+// would mean no HUD when the game comes back, and "hidden" here means "no window
+// on screen", not "not running". Without `--follow-pid` there is no way to tell
+// which window is the game, so that run keeps the old always-shown behaviour —
+// said in the usage text, in the startup log and in `follow::should_show`.
+//
 // Zero third-party dependencies, same rule as the injector: kernel32/user32/gdi32
 // through raw extern "system" FFI, declared in win.rs. The pixel work lives in
 // draw.rs (pure), the text in text.rs (GDI), the HUD in hud.rs (pure geometry).
@@ -164,8 +174,17 @@ usage: doppel-hud [options]
                        that process exists the overlay stays up, whatever the
                        state file's mtime says — a world load publishes no frame
                        for seconds, and that is not an exit — and the run ends,
-                       without a fade, when the pid is gone. NOTE: under
-                       EXCLUSIVE fullscreen no external overlay can ever be
+                       without a fade, when the pid is gone. It also decides WHERE
+                       the HUD may be seen: while a window of that process is the
+                       foreground window the overlay is shown, and when any other
+                       application is in front the window is hidden (SW_HIDE) so
+                       nothing floats over it — re-checked about once a second,
+                       never per frame, and the process keeps running while hidden
+                       so the HUD is back the moment the game is. A minimised game
+                       counts as not in front. Without --follow-pid there is no way
+                       to tell which window is the game, so the overlay is always
+                       shown, the behaviour it had before this gate existed. NOTE:
+                       under EXCLUSIVE fullscreen no external overlay can ever be
                        visible — the display belongs to the game; windowed or
                        borderless fullscreen is required.
   --x <i32>            adjust the chosen rect's x (default: the rect's own)
@@ -259,6 +278,14 @@ keep itself in the always-on-top band (WS_EX_TOPMOST, re-asserted when something
 gets above it) — without that the game covers the HUD as soon as it has focus.
 Run the game in windowed or borderless-fullscreen mode: under exclusive
 fullscreen the desktop compositor is bypassed and a layered window is never drawn.
+
+With `--follow-pid` the overlay is also only on screen while the game is the
+window in front: alt-tab to a browser and the window is hidden (SW_HIDE) rather
+than floating over it, and it comes back with the game. Hidden means no window on
+screen, not \"not running\" — the process and its frame loop keep going, because
+exiting would mean no HUD when the game returns. Without a pid there is nothing to
+identify the game window by, so the overlay stays visible over everything, which
+is also why the injector always passes one.
 
 The process exits by itself when the game does. With `--follow-pid` the game
 process itself is the signal — while that pid exists the overlay stays up even
@@ -960,6 +987,26 @@ fn liveness_rule(pid: Option<u32>) -> String {
     }
 }
 
+/// Which visibility rule this run is under, for the startup line.
+///
+/// The exit line says *that* the overlay stopped drawing, and "the HUD was not on
+/// screen" cannot be read back from the log without knowing whether the overlay
+/// ever meant to hide itself. It mirrors `liveness_rule`: the two are decided by
+/// the same `--follow-pid`, and a run with none is the one that behaves as it did
+/// before the gate existed.
+fn visibility_rule(pid: Option<u32>) -> String {
+    match pid {
+        Some(pid) => format!(
+            "pid-gated (shown only while a window of pid {pid} is the foreground window and not \
+             minimised, re-checked every {POLL_MS} ms; hidden — not exited — otherwise)",
+            POLL_MS = follow::POLL_MS
+        ),
+        None => "always shown (no --follow-pid: without a pid there is no way to tell which \
+                 window is the game)"
+            .to_string(),
+    }
+}
+
 // ── entry points ────────────────────────────────────────────────────────────
 
 /// The overlay's drawing surface: a memory DC with a top-down 32-bit DIB selected into
@@ -1058,10 +1105,14 @@ fn run(args: &Args) -> Result<(), String> {
     let effective = config_from(args, 1.0, first_read.as_ref().ok().and_then(|snap| snap.header.as_ref()));
     // The startup line also names the liveness rule this run is under: the exit line
     // says *that* it stopped, and "state stale" cannot be read back without knowing
-    // whether a pid was ever consulted.
+    // whether a pid was ever consulted. The visibility rule is named for the mirror
+    // reason: "I did not see the HUD" is otherwise indistinguishable from "the HUD
+    // was hidden because the game was not in front", and the two need opposite
+    // diagnoses.
     log.line(&format!(
         "start: rect {}x{} at ({}, {}) [{}], position {:?}, mode {} (scale {:.2}), \
-         opacity {:.0}%, rows {}, watermark {}, wave {}, state {} readable: {}, liveness {}",
+         opacity {:.0}%, rows {}, watermark {}, wave {}, state {} readable: {}, liveness {}, \
+         visibility {}",
         rect.w,
         rect.h,
         rect.x,
@@ -1079,7 +1130,8 @@ fn run(args: &Args) -> Result<(), String> {
             Ok(snapshot) => describe_state(snapshot),
             Err(refusal) => format!("no ({})", refusal.describe()),
         },
-        liveness_rule(args.follow_pid)
+        liveness_rule(args.follow_pid),
+        visibility_rule(args.follow_pid)
     ));
 
     // The text engine takes the *effective* scale, not `--scale`: contract v3's
@@ -1300,6 +1352,13 @@ fn run(args: &Args) -> Result<(), String> {
         let mut last_signature = 0u64;
         let mut animating = true;
         let mut shown = false;
+        // A1: whether the visibility gate currently believes a window is on screen.
+        // Seeded `true` — "the overlay means to be visible" — because that is the
+        // state every run starts in: the topmost path has already shown the window
+        // with `SWP_SHOWWINDOW`, the `--no-topmost` path shows it on its first frame
+        // (the `shown` flag below), and a run with no pid never hides itself at all.
+        // Only the gate clears it, and only with a `SW_HIDE` to match.
+        let mut visible = true;
         let mut result: Result<(), String> = Ok(());
         // When the topmost check runs next, and how many times it has actually had
         // to re-raise. The count is logged (throttled) rather than carried into the
@@ -1320,6 +1379,14 @@ fn run(args: &Args) -> Result<(), String> {
         // fresh reading, so polling at t=0 would only repeat the same answer.
         let mut next_follow_check = started + Duration::from_millis(follow::POLL_MS);
         let mut follows: u64 = 0;
+        // A1: when the visibility gate re-decides, and how many times it has changed
+        // its mind. The first check is immediate, unlike the follow poll's: `--rect`
+        // is a fresh reading of where the game is, but nothing the injector passed
+        // says who is in front *now*, and the first second of a run over a browser is
+        // exactly the frame the user complained about. Both Win32 reads are cheap
+        // enough that a gate at t=0 costs nothing.
+        let mut next_visibility_check = started;
+        let mut visibility_changes: u64 = 0;
 
         let mut previous_frame = started;
         let mut msg: Msg = std::mem::zeroed();
@@ -1459,6 +1526,61 @@ fn run(args: &Args) -> Result<(), String> {
                 }
             }
 
+            // A1: only be on screen while the game is the window in front. The overlay
+            // used to be an always-on-top layered window over *every* application, so
+            // alt-tabbing to a browser left the HUD glued on top of it — useless, and
+            // the opposite of stealthy. `--follow-pid` is what makes the game
+            // identifiable, so this gate only exists for a run that has one; with no
+            // pid the overlay cannot tell which window is the game and stays shown
+            // (`follow::should_show`, which is where the rule and its reasons live).
+            //
+            // The same slow cadence as the follow poll, never every frame: the answer
+            // only changes when the user switches windows, and a `ShowWindow` per frame
+            // on a heuristic that flickers would be worse than the bug.
+            //
+            // Hidden means *no window on screen*, not "not running": the process, the
+            // frame loop, the liveness poll and the follow poll all keep going, because
+            // exiting would mean no HUD when the game comes back.
+            if let Some(pid) = follow_pid {
+                if now >= next_visibility_check {
+                    next_visibility_check = now + Duration::from_millis(follow::POLL_MS);
+                    let fg = follow::foreground_state(pid);
+                    let want = follow::should_show(true, fg.game, fg.minimised);
+                    if want != visible {
+                        // `SW_SHOWNOACTIVATE` / `SW_HIDE`, never `SW_SHOW`: taking the
+                        // foreground from the game is the one thing this process must
+                        // never do (an exclusive-fullscreen game stops rendering).
+                        ShowWindow(hwnd, if want { SW_SHOWNOACTIVATE } else { SW_HIDE });
+                        visible = want;
+                        if want {
+                            // Shown again: the pixels the compositor kept are from
+                            // before the hide, and the state may have moved on since,
+                            // so the reveal is always followed by one repaint.
+                            animating = true;
+                            // This call *was* the show, so the first-frame path below
+                            // has nothing left to do.
+                            shown = true;
+                        }
+                        visibility_changes += 1;
+                        // Throttled like the topmost re-assert: someone alt-tabbing
+                        // all evening would otherwise fill the capped log with these.
+                        if visibility_changes <= 5 || visibility_changes % 20 == 0 {
+                            log.line(&format!(
+                                "visibility (#{visibility_changes}): {} — pid {pid}, \
+                                 game in front {}, minimised {}",
+                                if want {
+                                    "shown (game in front)"
+                                } else {
+                                    "hidden (another window is in front)"
+                                },
+                                fg.game,
+                                fg.minimised
+                            ));
+                        }
+                    }
+                }
+            }
+
             // D2: read the published block. A missing, short or foreign file
             // leaves the last good frame on screen — never garbage.
             if let Some(snapshot) = state::read(&state_path) {
@@ -1528,7 +1650,12 @@ fn run(args: &Args) -> Result<(), String> {
             // whether the frame it composed is still moving.
             anim.tick(now);
             let current = signature(&entries, fade, header.as_ref());
-            if current != last_signature || animating {
+            // A1: while the window is hidden there is nothing to composite — and the
+            // grid of pixels to draw into is the expensive part of a frame, so a run
+            // that spends the evening behind a browser spends it idle. The reveal
+            // (the gate above) sets `animating`, so the first visible frame is always
+            // repainted from scratch and no stale pixels can survive the hide.
+            if visible && (current != last_signature || animating) {
                 // Rebuilt every frame the HUD is drawn: the header's switches are
                 // the defaults and the command line overrides them, so a game that
                 // changes its mode combo repaints without a restart. The fade is
@@ -1581,11 +1708,13 @@ fn run(args: &Args) -> Result<(), String> {
                 // `SWP_SHOWWINDOW`), and there are no pixels to flash either way:
                 // a layered window has no surface until this call. The explicit
                 // show stays for the `--no-topmost` path, which reaches here with
-                // the window still hidden, and it is always the non-activating
-                // form — `SW_SHOW` would take the foreground from the game.
+                // the window still hidden — and for the no-pid run, which has no
+                // gate to show it. It is always the non-activating form —
+                // `SW_SHOW` would take the foreground from the game.
                 if !shown {
                     ShowWindow(hwnd, SW_SHOWNOACTIVATE);
                     shown = true;
+                    visible = true;
                 }
             }
 
@@ -2218,6 +2347,27 @@ mod tests {
         assert!(without.contains("no --follow-pid"), "{without}");
         assert!(without.contains("3s"), "{without}");
         assert!(!without.contains("pid "), "no pid is named here: {without}");
+    }
+
+    /// The startup line has to name the visibility rule for the same reason it names
+    /// the liveness one: "I never saw the HUD" has to be readable as "the overlay was
+    /// deliberately hidden because the game was not in front" rather than as a bug,
+    /// and a no-pid run is the one that is allowed to float over everything.
+    #[test]
+    fn the_startup_line_names_the_visibility_rule_in_force() {
+        let gated = visibility_rule(Some(4242));
+        assert!(gated.contains("pid-gated"), "{gated}");
+        assert!(gated.contains("4242"), "{gated}");
+        assert!(gated.contains("foreground"), "{gated}");
+        assert!(gated.contains("not exited"), "hidden is not an exit: {gated}");
+
+        let always = visibility_rule(None);
+        assert!(always.contains("always shown"), "{always}");
+        assert!(always.contains("no --follow-pid"), "{always}");
+        assert!(
+            !always.chars().any(|c| c.is_ascii_digit()),
+            "no pid number is named by the no-pid rule: {always}"
+        );
     }
 
     /// The poll is deliberately far slower than the frame interval: one process

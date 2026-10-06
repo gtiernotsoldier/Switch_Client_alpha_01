@@ -250,12 +250,20 @@ extern "system" {
     /// startup applies to the `GetWindowRect` calls it makes (`follow.rs`).
     pub fn EnumWindows(callback: EnumWindowsProc, param: Lparam) -> i32;
     /// The process that owns a window — how the follow search tells the game's own
-    /// windows from every other application's.
+    /// windows from every other application's, and how the visibility gate
+    /// attributes `GetForegroundWindow`'s answer to a pid rather than to a title.
     pub fn GetWindowThreadProcessId(hwnd: Hwnd, pid: *mut u32) -> u32;
+    /// The window the user's input is going to right now — "which application is in
+    /// front?". On its own it names a window, not a game; paired with
+    /// `GetWindowThreadProcessId` it answers the one question the visibility gate
+    /// has (`follow::should_show`).
+    pub fn GetForegroundWindow() -> Hwnd;
     pub fn GetWindowTextW(hwnd: Hwnd, text: *mut u16, max_count: i32) -> i32;
     pub fn IsWindowVisible(hwnd: Hwnd) -> i32;
     /// A minimised window's rect is the classic (-32000, -32000) icon position, so
-    /// it is refused rather than used to place the overlay in a desktop corner.
+    /// it is refused rather than used to place the overlay in a desktop corner. The
+    /// visibility gate asks the same question about the *foreground* window: a
+    /// minimised game is not one the HUD should be floating over.
     pub fn IsIconic(hwnd: Hwnd) -> i32;
     /// The window's **client** rect: the drawable area, with (0, 0) at its own
     /// top-left and `right`/`bottom` carrying its size. Unlike `GetWindowRect`
@@ -544,6 +552,15 @@ pub const HTTRANSPARENT: Lresult = -1;
 /// SW_SHOWNOACTIVATE. Deliberately not SW_SHOW: see the header note on focus.
 pub const SW_SHOWNOACTIVATE: i32 = 4;
 
+/// `SW_HIDE` — take the window off the screen without ending the process. The
+/// visibility gate's other half: while another application owns the foreground the
+/// overlay must not float over it, and hiding the window is the whole of "not
+/// there" (`follow::should_show`). Not `SW_MINIMIZE`: a minimised window's rect
+/// becomes the (-32000, -32000) icon position that `IsIconic` exists to refuse, and
+/// this process wants the rect, the DIB and the Z-order left exactly as they are —
+/// showing it again is then one `ShowWindow` call.
+pub const SW_HIDE: i32 = 0;
+
 pub const DIB_RGB_COLORS: u32 = 0;
 pub const BI_RGB: u32 = 0;
 
@@ -621,6 +638,11 @@ mod tests {
         assert_eq!(HWND_TOPMOST as isize, -1);
         assert_eq!(GWL_EXSTYLE, -20);
         assert_eq!(GW_HWNDPREV, 3);
+        // The two `ShowWindow` commands the visibility gate chooses between. A
+        // transposed pair would hide the HUD over the game and show it over the
+        // browser — the exact inversion of what the gate is for.
+        assert_eq!(SW_HIDE, 0);
+        assert_eq!(SW_SHOWNOACTIVATE, 4);
         assert_eq!(
             SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_SHOWWINDOW,
             0x0010 | 0x0200 | 0x0040

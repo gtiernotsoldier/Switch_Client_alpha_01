@@ -20,15 +20,23 @@
 // Note for the user, repeated in the usage text: under **exclusive** fullscreen no external
 // overlay can ever be visible — Windows hands the display to the game and a layered window is
 // simply not composited. Windowed or borderless fullscreen is required.
+//
+// The same pid and the same poll also answer the newer question "is the game the window in
+// front?" — see `should_show` at the bottom. The overlay's window is shown only while it is,
+// and hidden (not exited) the rest of the time, so nothing floats over a browser the user has
+// alt-tabbed to.
 
 use crate::hud::Rect;
 use crate::win::*;
 
-/// How often the game window is re-read.
+/// How often the game window is re-read, and how often the "is the game in front?"
+/// gate below re-decides.
 ///
 /// One second: a resolution switch or a drag ends well inside that, and the poll is one
 /// `EnumWindows` pass over the desktop's top-level windows — tens of microseconds, once a
-/// second, next to a 60 Hz render loop.
+/// second, next to a 60 Hz render loop. The gate rides the same cadence for the same reason:
+/// `GetForegroundWindow` is cheap, but the answer only changes when the user switches windows,
+/// and a per-frame `ShowWindow` would be a flicker waiting to happen.
 pub const POLL_MS: u64 = 1_000;
 
 /// One window the search looked at.
@@ -178,6 +186,78 @@ pub fn game_window_rect(pid: u32) -> Option<Rect> {
     choose_window(&search.candidates)
 }
 
+// ── is the game the window in front? ────────────────────────────────────────
+//
+// A1: the overlay used to be an always-on-top layered window over *every*
+// application — alt-tab to a browser and the HUD stayed glued on top of it, which
+// is neither useful nor stealthy. The gate below is the fix: the window is shown
+// only while the game is the one in front, and hidden otherwise.
+//
+// The same `--follow-pid` that names the game for the rect names it here, and the
+// same slow poll drives both. The *rule* is pure (`should_show`) so it is tested
+// without a game; only the two Win32 reads that feed it need a desktop.
+
+/// The two facts the visibility gate reads from the desktop, as plain values so the
+/// rule over them can be tested (`should_show`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Foreground {
+    /// `GetForegroundWindow()` is a window this pid owns — i.e. the game is the
+    /// application in front.
+    pub game: bool,
+    /// That window is minimised. Only meaningful when `game` is set; a game that is
+    /// both "in front" and minimised is still a game the user cannot see.
+    pub minimised: bool,
+}
+
+/// Ask the desktop which window is in front and whose it is.
+///
+/// `GetForegroundWindow` reports NULL while the session has no foreground window at
+/// all (a lock screen, a desktop switch). That is answered exactly like "not the
+/// game": hiding is the direction that cannot be wrong, and the next poll a second
+/// later puts the HUD back. A pid that owns no window simply never matches.
+///
+/// pid 0 is refused before Win32 is asked anything — `--follow-pid` already rejects
+/// it at parse time, and no window can belong to it.
+pub fn foreground_state(pid: u32) -> Foreground {
+    let none = Foreground { game: false, minimised: false };
+    if pid == 0 {
+        return none;
+    }
+    unsafe {
+        let hwnd = GetForegroundWindow();
+        if hwnd.is_null() {
+            return none;
+        }
+        let mut owner: u32 = 0;
+        GetWindowThreadProcessId(hwnd, &mut owner);
+        if owner != pid {
+            return none;
+        }
+        Foreground { game: true, minimised: IsIconic(hwnd) != 0 }
+    }
+}
+
+/// Should the overlay's window be on screen, given what is known about the game?
+///
+/// Pure on purpose: this is the whole of the new behaviour, and the only way to
+/// check it without a game, a second application and a human alt-tabbing between
+/// them is to make it a function of three booleans.
+///
+///   * **No pid** — nothing says which window is the game, so there is nothing to
+///     gate on and the overlay keeps the behaviour it had before this rule existed:
+///     always shown. The injector always passes `--follow-pid`; a hand-run
+///     `doppel-hud.exe --rect ...` is the case this branch is for.
+///   * **A pid** — shown while a window of that process is the foreground window
+///     and is not minimised, hidden otherwise. While hidden the *process* keeps
+///     running on purpose (see main.rs): exiting would mean no HUD when the game
+///     comes back, and "hidden" here means "no window on screen", not "not running".
+pub fn should_show(has_pid: bool, game_in_front: bool, game_minimised: bool) -> bool {
+    if !has_pid {
+        return true;
+    }
+    game_in_front && !game_minimised
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -278,5 +358,37 @@ mod tests {
     fn an_empty_candidate_list_is_none_not_a_default_rect() {
         // `None` has to mean "no information" so the caller keeps the last good rect.
         assert_eq!(choose_window(&[]), None);
+    }
+
+    /// The rule this change is about, and the one that needs a game, a browser and
+    /// a human alt-tabbing between them to see for real: the overlay is on screen
+    /// exactly while the game is the window in front.
+    #[test]
+    fn the_hud_is_shown_only_over_the_game() {
+        // No pid: nothing identifies the game window, so there is nothing to gate
+        // on and the overlay keeps the always-shown behaviour it had before.
+        assert!(should_show(false, false, false), "no pid: shown");
+        assert!(should_show(false, true, false), "no pid: shown whatever is in front");
+        assert!(should_show(false, true, true), "no pid: even a minimised game is not ours to judge");
+        assert!(should_show(false, false, true), "no pid: shown");
+
+        // A pid: the game is the foreground window and is not minimised.
+        assert!(should_show(true, true, false), "pid + game in front: shown");
+
+        // Any other application in front: hidden, whatever its own minimised state.
+        assert!(!should_show(true, false, false), "pid + another app in front: hidden");
+        assert!(!should_show(true, false, true));
+
+        // Minimised is hidden even when the pid's window reads as the foreground one:
+        // a minimised window is not something the HUD can be usefully over.
+        assert!(!should_show(true, true, true), "pid + minimised: hidden");
+    }
+
+    /// The gate's query needs no desktop for the one answer it can give by itself:
+    /// pid 0 owns no window (`--follow-pid` refuses it at parse time), so it is
+    /// refused before Win32 is asked anything.
+    #[test]
+    fn pid_zero_is_never_the_games_foreground_window() {
+        assert_eq!(foreground_state(0), Foreground { game: false, minimised: false });
     }
 }

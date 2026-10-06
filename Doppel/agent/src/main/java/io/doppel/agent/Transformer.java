@@ -39,9 +39,6 @@ public class Transformer implements ClassFileTransformer {
     private static boolean hooked = false;
     private static volatile boolean installed = false;
 
-    /** Whether the EntityRenderer.setupViewBobbing hook was installed (NoCameraBob). */
-    private static volatile boolean bobHooked = false;
-
     /**
      * ASM api level to declare — deliberately NOT Opcodes.ASM9, and this is load-bearing.
      *
@@ -113,21 +110,6 @@ public class Transformer implements ClassFileTransformer {
 
                     // CRITICAL: retransformClasses() does NOT throw if transform() returns null.
                     // We must check the 'hooked' flag to know if the bytecode was actually modified.
-                    // Second hook: EntityRenderer.setupViewBobbing (NoCameraBob). Best-effort — if the
-                    // class is not loaded yet the transformer picks it up on load, and if this fails the
-                    // module simply does nothing.
-                    try {
-                        Class<?> erClass = findEntityRendererClass();
-                        if (erClass != null && inst.isModifiableClass(erClass)) {
-                            inst.retransformClasses(erClass);
-                            Agent.log("[Transformer] EntityRenderer retransform requested; bob hook = " + bobHooked);
-                        } else {
-                            Agent.log("[Transformer] EntityRenderer not loaded yet — the transformer will catch it on load");
-                        }
-                    } catch (Throwable erEx) {
-                        Agent.log("[Transformer] EntityRenderer retransform failed (not fatal): " + erEx);
-                    }
-
                     if (hooked) {
                         Agent.log("[Transformer] Display.update() hooked via Instrumentation.retransformClasses");
                         installed = true;
@@ -204,13 +186,6 @@ public class Transformer implements ClassFileTransformer {
     public byte[] transform(ClassLoader loader, String className,
                            Class<?> classBeingRedefined, ProtectionDomain protectionDomain,
                            byte[] classfileBuffer) {
-        // NoCameraBob: skip the camera view-bob. The class reaches us under its deobfuscated name once
-        // FML's remapper has run, and under its obfuscated name if it has not — accept both spellings.
-        if ("net/minecraft/client/renderer/EntityRenderer".equals(className) || "bfk".equals(className)) {
-            if (bobHooked) return null;
-            return transformEntityRenderer(classfileBuffer);
-        }
-
         // Handle the HUD render hook (Display) only.
         if (!"org/lwjgl/opengl/Display".equals(className)) {
             return null;
@@ -374,118 +349,6 @@ public class Transformer implements ClassFileTransformer {
         if (needsFrames) {
             // Where the original body resumes: entry locals, empty stack.
             mv.visitFrame(Opcodes.F_NEW, entryLocals.length, entryLocals, 0, new Object[0]);
-        }
-    }
-
-    /**
-     * Inject the NoCameraBob early return into EntityRenderer.setupViewBobbing(float).
-     *
-     * Same shape as transformDisplay and for the same reasons: frames are written by hand (computing
-     * them would need to resolve game types this ClassLoader cannot see), the original body is left
-     * untouched, and only a single guarded jump is added at method entry.
-     *
-     * Accepts both the deobfuscated name and the SRG name because either may be in effect depending on
-     * whether FML's remapper has already run when this class is presented to us.
-     */
-    private byte[] transformEntityRenderer(byte[] classfileBuffer) {
-        try {
-            ClassReader reader = new ClassReader(classfileBuffer);
-            final boolean needsFrames = (reader.readShort(6) & 0xffff) >= 50;
-            final boolean[] injected = new boolean[] { false };
-            final StringBuilder seenFloat = new StringBuilder();
-            ClassWriter writer = new ClassWriter(reader, ClassWriter.COMPUTE_MAXS);
-            ClassVisitor injector = new ClassVisitor(COMPAT_API, writer) {
-                @Override
-                public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
-                    MethodVisitor mv = super.visitMethod(access, name, descriptor, signature, exceptions);
-                    if (mv == null) return null;
-                    if ("(F)V".equals(descriptor)) seenFloat.append(name).append(' ');
-                    // Three spellings, because the class reaches us at different remap stages: the MCP
-                    // name, the SRG name, and the obfuscated name `e`. The third one is the reason the
-                    // first version of this hook did nothing on a real client — verified against the
-                    // official jar, `e` is the private (float) method of EntityRenderer that reads
-                    // EntityPlayer.cameraYaw, which is setupViewBobbing before anything renames it.
-                    boolean isBob = ("setupViewBobbing".equals(name) || "func_78475_f".equals(name) || "e".equals(name))
-                            && "(F)V".equals(descriptor);
-                    if (!injected[0] && isBob) {
-                        injected[0] = true;
-                        final Object[] entryLocals = (access & Opcodes.ACC_STATIC) != 0
-                                ? new Object[] { Opcodes.FLOAT }
-                                : new Object[] { reader.getClassName(), Opcodes.FLOAT };
-                        return new MethodVisitor(COMPAT_API, mv) {
-                            @Override
-                            public void visitCode() {
-                                super.visitCode();
-                                emitSkipHook(this, entryLocals, needsFrames);
-                            }
-                        };
-                    }
-                    return mv;
-                }
-            };
-            reader.accept(injector, 0);
-            if (!injected[0]) {
-                Agent.log("[Transformer] EntityRenderer: setupViewBobbing (F)V not found — bob hook NOT installed. (F)V methods present: " + seenFloat);
-                return null;
-            }
-            byte[] out = writer.toByteArray();
-            bobHooked = true;
-            Agent.log("[Transformer] EntityRenderer.setupViewBobbing hooked — NoCameraBob can skip the camera bob");
-            return out;
-        } catch (Throwable t) {
-            // Failing here is safe: returning null leaves the class exactly as it was, so the worst case
-            // is a module that does nothing, never a client that does not start.
-            Agent.log("[Transformer] EntityRenderer transform failed (hook NOT installed): " + t);
-            return null;
-        }
-    }
-
-    /**
-     * Emit, at method entry: `try { if (RenderBridge.skipViewBobbing()) return; } catch (Throwable) {}`.
-     *
-     * The reflective lookup goes through the render thread's context ClassLoader for the same reason
-     * emitInlineHook does — a failed resolution then lands in the catch instead of propagating out of a
-     * render method.
-     */
-    private static void emitSkipHook(MethodVisitor mv, Object[] entryLocals, boolean needsFrames) {
-        Label after = new Label();
-        // `"true".equals(System.getProperty("doppel.skipViewBobbing"))` — note the receiver order: the
-        // constant is the receiver so a null property cannot NPE.
-        //
-        // This is deliberately NOT the reflective RenderBridge call that emitInlineHook uses. That
-        // pattern is right for the Display hook, where the alternative would be a cross-ClassLoader
-        // symbolic reference from LWJGL; but in a game class it resolved to nothing on a real client and
-        // the failure was swallowed by its own catch, so the hook installed cleanly and did nothing —
-        // exactly what the user saw. System.getProperty is a plain JDK call any class can make, with no
-        // ClassLoader on the resolution path and no exception to hide behind.
-        mv.visitLdcInsn("true");
-        mv.visitLdcInsn("doppel.skipViewBobbing");
-        mv.visitMethodInsn(Opcodes.INVOKESTATIC, "java/lang/System", "getProperty", "(Ljava/lang/String;)Ljava/lang/String;", false);
-        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/String", "equals", "(Ljava/lang/Object;)Z", false);
-        mv.visitJumpInsn(Opcodes.IFEQ, after);
-        mv.visitInsn(Opcodes.RETURN);
-        mv.visitLabel(after);
-        if (needsFrames) {
-            mv.visitFrame(Opcodes.F_NEW, entryLocals.length, entryLocals, 0, new Object[0]);
-        }
-    }
-
-    /** Locate EntityRenderer through the game ClassLoader, deobfuscated name first. */
-    private static Class<?> findEntityRendererClass() {
-        ClassLoader cl = null;
-        try {
-            Class<?> display = findDisplayClass();
-            if (display != null) cl = display.getClassLoader();
-        } catch (Throwable ignored) {}
-        if (cl == null) return null;
-        try {
-            return Class.forName("net.minecraft.client.renderer.EntityRenderer", false, cl);
-        } catch (Throwable t) {
-            try {
-                return Class.forName("bfk", false, cl);
-            } catch (Throwable t2) {
-                return null;
-            }
         }
     }
 

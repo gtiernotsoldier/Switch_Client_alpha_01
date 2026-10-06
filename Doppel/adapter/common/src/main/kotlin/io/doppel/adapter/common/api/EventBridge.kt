@@ -149,7 +149,6 @@ object EventBridge {
         resetHurtCamHandler = null
         // Render/GUI hook contract — a stale "on" flag here would outlive the module that set it.
         suppressHurtCam = false
-        suppressCameraBob = false
         blockCounter = null
         keepMovementInGui = false
         guiMovementKeepSprint = false
@@ -1246,16 +1245,6 @@ object EventBridge {
      */
     @Volatile var suppressHurtCam: Boolean = false
 
-    /**
-     * NoCameraBob — true while a module wants the vanilla **camera** sway suppressed.
-     *
-     * Only the camera: 1.8.9's `ItemRenderer` reads no GameSettings field at all, so the held-item
-     * sway is untouched by this and survives (which is the whole point — see the module).
-     *
-     * The platform remembers the player's own setting and restores it when this goes false, so a
-     * disabled module can never leave the game with bobbing forcibly on.
-     */
-    @Volatile var suppressCameraBob: Boolean = false
 
     // NoFOV was deleted at the user's request, and with it the `lockFovModifier` flag it published.
     // The approach it needed was real (a 20 Hz write could never win against

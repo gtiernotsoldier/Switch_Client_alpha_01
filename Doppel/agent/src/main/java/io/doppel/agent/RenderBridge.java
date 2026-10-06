@@ -43,18 +43,6 @@ public class RenderBridge {
     }
 
     /**
-     * Whether the vanilla camera view-bob should be skipped on this frame.
-     *
-     * Read by the code injected into EntityRenderer.setupViewBobbing. Transport is a system property
-     * on purpose: that call site lives in a game class while this class may sit on a different
-     * ClassLoader, and a property is visible from both with no resolution risk. Read once per frame,
-     * so toggling the module takes effect on the next frame without any wiring.
-     */
-    public static boolean skipViewBobbing() {
-        return "true".equals(System.getProperty("doppel.skipViewBobbing"));
-    }
-
-    /**
      * Initialize the bridge to ForgeBootstrap.render().
      *
      * ClassLoader resolution strategy (in order of priority):

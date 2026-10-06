@@ -65,7 +65,6 @@ object AgentBridge {
         "WebUI" to "render",
         // World
         "FastPlace" to "world",
-        "NoCameraBob" to "world",
     )
 
     private val basePackage = "io.doppel.adapter.common.module"

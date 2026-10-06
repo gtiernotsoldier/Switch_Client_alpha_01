@@ -1249,9 +1249,6 @@ object ForgeEventBridge : IEventBridge {
     /** The only value vanilla ever assigns to `maxHurtTime` (`hurtTime = maxHurtTime = 10`). */
     private const val VANILLA_MAX_HURT_TIME = 10
 
-    /** System property the injected EntityRenderer hook reads — keep in step with RenderBridge. */
-    private const val PROP_SKIP_VIEW_BOB = "doppel.skipViewBobbing"
-
     /** Whether the previous frame re-applied the movement keys (InvMove) — see [applyGuiMovement]. */
     private var guiMovementApplied = false
 
@@ -1301,58 +1298,6 @@ object ForgeEventBridge : IEventBridge {
         } catch (_: Exception) {}
     }
 
-    // ── NoCameraBob: vanilla's "View Bobbing" ──
-    //
-    // A plain field write, third time around. The first two attempts reached the option through the
-    // `GameSettings.Options` enum, resolved "by shape", and neither engaged in game: that enum
-    // declares four float-taking methods (value min/max/step and getValue), so "the one that takes a
-    // float" is not a unique handle on anything, and the write went somewhere harmless. The repo's own
-    // MCP table — `mappings/verify/fields.csv`, columns `searge,name,side,desc` — answers it outright:
-    // `viewBobbing` is `field_74336_f`. So it is read and written as the field it actually is.
-
-    /** One "what did I resolve" line per enable edge — see applyCameraBobOverride. */
-    @Volatile private var cameraBobLogged: Boolean = false
-
-
-    /**
-     * NoCameraBob — hold vanilla's View Bobbing off while the module is on, then hand the player's own
-     * value back when it goes off.
-     *
-     * Only the camera is affected, by design: 1.8.9's `ItemRenderer` reads no GameSettings field at all
-     * (verified by disassembling the official jar), so the held-item sway keeps working — which is the
-     * whole point of the module rather than simply turning bobbing off by hand.
-     */
-    private fun applyCameraBobOverride() {
-        try {
-            // The camera bob is now skipped by the bytecode hook inside EntityRenderer.setupViewBobbing.
-            // The switch is a system property because the injected call site lives in a game class while
-            // RenderBridge may sit on another ClassLoader — a property is visible from both, with no
-            // resolution risk. GameSettings.viewBobbing is deliberately left ALONE: that is what keeps
-            // the held-item sway, and setting it off is what killed the arm bob on the user's client.
-            val wanted = EventBridge.suppressCameraBob
-            val current = System.getProperty(PROP_SKIP_VIEW_BOB)
-            when {
-                wanted && current != "true" -> {
-                    System.setProperty(PROP_SKIP_VIEW_BOB, "true")
-                    logCameraBobOnce()
-                }
-                !wanted && current == "true" -> {
-                    System.setProperty(PROP_SKIP_VIEW_BOB, "false")
-                    logCameraBobOnce()
-                }
-            }
-        } catch (_: Exception) {}
-    }
-
-    private fun logCameraBobOnce() {
-        if (!EventBridge.suppressCameraBob) cameraBobLogged = false
-        if (cameraBobLogged) return
-        cameraBobLogged = true
-        io.doppel.core.logging.CoreLogger.info(
-            "[NoCameraBob] camera-bob skip -> ${EventBridge.suppressCameraBob} via the EntityRenderer hook " +
-                "(viewBobbing left untouched, so the hand keeps swaying)"
-        )
-    }
 
     /**
      * Called once per rendered frame from ForgeBootstrap.render() (MC main thread).
@@ -1360,7 +1305,6 @@ object ForgeEventBridge : IEventBridge {
      */
     fun applyFrameOverrides() {
         applyHurtCamOverride()
-        applyCameraBobOverride()
     }
 
     // ═══════════════════════════════════════════

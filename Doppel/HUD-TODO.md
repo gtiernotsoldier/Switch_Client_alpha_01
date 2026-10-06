@@ -9,16 +9,72 @@ without re-deriving anything.
 
 | Item | State |
 | --- | --- |
-| Local `main` | round 1: `2f9451e`, `9f03f5a`, `c489f73`, `19f267c`, `6429935`. Round 2: `a29fb8e`, `75b1c6a`, `0d946be`, `e7ad03b`. Round 3: `3f720f5`, `c2fbcfc`, `c660949`, `ea8e9e1`. Round 4: `1171427`, `4f677e8`, `810c674`, `e33a25a`, `7764bae`. Round 5: `efcf6db`, `c70866c`, `d12f35b`, `25d8175`, `f0f0822`. Round 6: `ac922ed`, `de155c2`, `e283ec8`, `c79ede6`. Round 7 (this pass) adds the commits listed under "Round 7". **Not pushed to GitLab yet** |
-| Testable binary | `C:\Users\Administrator\Desktop\swl\doppel-injector-fixed.exe`, rebuilt 19:39:16 with the current agent jar and overlay; both embedded RCDATA blobs hash-match their sources |
-| Kotlin build | `:core:test` (94 tests), `:adapter:common:compileKotlin`, `:adapter:common:test` (109 tests, 21 classes), `:adapter:forge:v1_8_9:compileKotlin`, `:agent:jar` all green |
-| Rust builds | `hud`: 87 tests green. `injector`: 10 tests green, only the 3 pre-existing warnings (`flow.rs` platform, `inject.rs` WAIT_TIMEOUT, `process.rs` GetLastError) |
+| Local `main` | round 1-3: `2f9451e`…`ea8e9e1`. Round 4: `1171427`, `4f677e8`, `810c674`, `e33a25a`, `7764bae`. Round 5: `efcf6db`, `c70866c`, `d12f35b`, `25d8175`, `f0f0822`. Round 6: `ac922ed`, `de155c2`, `e283ec8`, `c79ede6`. Round 7: `3a7b0ad`, `b918a62`, `6266e5d`, `0480cef`. Round 8 (this pass) adds the commits listed under "Round 8". **Not pushed to GitLab yet** |
+| Testable binary | `C:\Users\Administrator\Desktop\swl\doppel-injector-fixed.exe`, rebuilt 20:35:56 with the current agent jar and overlay; embedded blobs hash-match their sources |
+| Kotlin build | `:core:test` (94 tests), `:adapter:common:test` (169 tests, 23 classes), `:adapter:forge:v1_8_9:compileKotlin`, `:agent:jar` all green |
+| Rust builds | `hud`: 87 tests green. `injector`: 10 tests green |
+| Reference sources | `E:\swl` holds LiquidBounce, Raven-bPLUS-main, raven-bS, FDPClient, OpenCommunity and a 1.8.9 MCP tree — use them instead of guessing |
 | State contract | **v3**, writer and reader, verified against each other across the two languages; v1 and v2 are still read so a stale file cannot break the overlay |
 | Overlay | always-on-top click-through layered window anchored to the game window's **client area** (below the title bar) and following it (`--follow-pid`); **five** modes (Default/Rise/VapeV4/Tesseract/**Modern**); row entrance **and exit** animation; decaying red **work flash**; user-set scale, line spacing, background opacity and row order |
 | In-game Keystrokes | reads *effective* key states, so WTap/STap/ADTap/JumpReset light the boxes; Rainbow no longer touches AWT |
 | WebUI | keyboard-only numeric fields (slider + an underlined typed value), colour pickers, a HUD list panel (search, pill show/hide, up/down), keybind chips beside the module name reading `[NONE]`/`[N]` |
 | Launcher | restyled to the OpenCommunity dark palette with a short intro fade |
 | Option sanity | Min/Max option pairs are kept ordered on every write, so `Random.nextInt(min, max + 1)` can no longer be handed an inverted range |
+
+## Round 8 — the real Eagle bug, reference-faithful modules, and the category names
+
+### `isOnBlockEdge()` was inverted — that is why Eagle "did not work"
+The platform helper returned `b !== blocksAir`, i.e. "the block under the player is **not** air".
+Raven's rule is the opposite (`isAirBlock(pos)`): standing on an edge means the block carrying you is
+air. So Eagle pressed sneak on solid ground and released it at the drop — exactly backwards — and
+`BridgeAssist` (which uses the same helper) only assisted away from the edge. Fixed, along with the
+Y offset: the reference uses `posY - ((posY % 1.0 == 0.0) ? 1 : 0)`, because with the feet at a
+fractional height (slab, stair, snow layer, farmland) the carrying block is the one at `posY`, not
+`posY - 1`.
+
+### Modules rewritten against the real reference implementations
+`E:\swl` turned out to hold the sources the user kept referring to — LiquidBounce, Raven-bPLUS-main,
+raven-bS, FDPClient, OpenCommunity, a 1.8.9 MCP tree — so these are ports of working code, not guesses.
+
+- **Eagle**: a pure, tested `EagleLogic.tick` holding a real sneak state machine (press once on a
+  fresh edge, keep holding while the edge holds, count down the randomised hold after leaving, then
+  release). The old one pressed and released off the same boolean — its own documented hold never
+  happened — and then wrote sneak=false every tick, actively cancelling a manual sneak.
+- **FastPlace**: `Speed` had 0 meaning "off", so the most useful setting (instant placement) did
+  nothing; `OnlyBlocks` was gated on eating/bow-drawing and happily fired with an empty hand. Now it
+  is Raven's: right-click-active window, an activation delay, and a tick delay where 0 = instant and
+  4 = never touched.
+- **KeepSprint**: it used to restore speed to a running-max cap with jitter (default = a full undo of
+  the 0.6 damp, i.e. a boost). Now it undoes vanilla's damp and applies Raven's `(100-slow)/100`,
+  optional `stopSprint` X-only halving, and re-asserts the sprint flag; clamped to the observed sprint
+  speed so it can never become a boost. **Interaction to know: don't run it alongside
+  SprintReset/WTap/STap — one side exists to force a reset, the other to prevent it.**
+
+### NoHurtCam and NoFOV
+Both were per-tick writes that could not work (and NoHurtCam's was harmful). NoHurtCam zeroed
+`hurtTime`, which is the "just got hit" signal HitSelect and Velocity read and the driver of the red
+damage tint; it now raises `maxHurtTime` on the render frame instead — 1.8.9's `hurtCameraEffect`
+divides the roll by that number and its two yaw rotations cancel, so the tilt is cancelled without
+touching `hurtTime`. NoFOV's 20 Hz write could never stick because `updateFovModifierHand()` runs
+inside `Minecraft.runTick()`; it now holds the modifier on the render frame **and** neutralises what
+the per-tick recompute reads (`walkSpeed = 0`, vanilla's own 1.0 escape hatch), restoring everything
+on disable.
+
+### InvMove (背包行走)
+New `Movement` module: while a screen is open, the platform re-applies W/A/S/D/space/shift from the
+*effective* key accessors, so taps and JumpReset keep working inside the inventory and Keystrokes stays
+truthful. It writes key **state** only, never a key event, so typing "w" in chat still types "w".
+Options: KeepSprint (true), OnlyInventory (false).
+
+### Work-flash coverage, per the user's list
+`markWorked()` was added to Reach, SuperKnockback, SprintReset, KnockbackDisplace, JumpReset,
+ClickAssist, BridgeAssist, AutoTool, Eagle and KeepSprint — at the transition where the module
+actually does something, never on a steady hold. DelayRemover was explicitly excluded. Note
+`HUDEntry.isRed` (which excludes COMBAT) is dead: the writer publishes `flash` from
+`flashStrength()` alone, so COMBAT rows do flash.
+
+### RENDER and WORLD are now VISUAL and UTILITY
+The category enum, every module, the theme and the WebUI tabs read `Visual` and `Utility`.
 
 ## Round 7 — the route bug that made half the panel dead
 

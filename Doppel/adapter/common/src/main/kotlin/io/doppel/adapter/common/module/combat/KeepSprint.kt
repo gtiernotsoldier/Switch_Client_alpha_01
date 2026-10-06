@@ -4,163 +4,239 @@ import io.doppel.adapter.common.module.Module
 import io.doppel.adapter.common.module.Category
 import io.doppel.adapter.common.option.*
 import io.doppel.adapter.common.api.EventBridge
-import io.doppel.core.strategy.keepsprint.KeepSprintConfig
-import io.doppel.core.strategy.keepsprint.KeepSprintStrategy
 import io.doppel.agent.MappingContext
+import kotlin.math.sqrt
 
 /**
- * KeepSprint — keep sprinting through an attack (no speed drop).
+ * KeepSprint — port of Raven's `module/impl/movement/KeepSprint.java`.
  *
- * Essence: the vanilla attack drops speed for two reasons — MC internally switches sprinting→walking
- * (setSprinting(false)) AND multiplies horizontal motion by 0.6, both inside the attack method
- * (`func_71061_d_` / attackTargetEntityWithCurrentItem). This module counters that on the MC main
- * thread every render frame while attacking + moving:
- *   1. re-assert sprint (setSprinting(true)) to undo the state flip, and
- *   2. restore motion back up to the sprint cap (core restoreMotion) to undo the motion *= 0.6.
+ * Vanilla 1.8.9 ends a successful attack with (EntityPlayer.attackTargetEntityWithCurrentItem):
  *
- * Config semantics (Normal mode): `HorizontalKeep` is the fraction of the sprint speed to PRESERVE —
- * 1.0 = keep full sprint (no drop), 0.6 = vanilla. It is a THRESHOLD: at/above KEEP_THRESHOLD (0.9)
- * we keep sprint at all; below we leave vanilla alone.
+ *     this.motionX *= 0.6D;
+ *     this.motionZ *= 0.6D;
+ *     this.setSprinting(false);
  *
- * ═══════════════════════════════════════════════════════════════════════════════
- *  KNOWN LIMITATION — READ BEFORE toggling this module (verdict: DEPRECATED).
- *  This per-frame "re-assert after the fact" approach is NOT stable. Vanilla cancels
- *  sprint + cuts motion EVERY swing inside the attack method, i.e. at click-CPS rate.
- *  A render-frame reassert (≈60Hz) races the tick/CPS-level destruction (10–20Hz), so
- *  the outcome depends entirely on CPS and frame timing — at high CPS the cancellation
- *  outruns the recovery and KeepSprint visibly fails / is hit-or-miss. Cannot be fixed
- *  from this layer without ALSO making it detectable on servers.
+ * Raven's mixin (MixinEntityPlayer) replaces that block when KeepSprint is enabled with
+ * `KeepSprint.keepSprint(target)`:
  *
- *  The ONLY CPS-independent, stable solution is to intercept the attack method AT THE
- *  SOURCE — replace the motion*=0.6 constant and swallow setSprinting(false) inside
- *  func_71061_d_ (LiquidBounce's `@ModifyConstant(0.6)` + `@Redirect(setSprinting)`).
- *  That requires bytecode injection (agent), which the team deliberately avoids here
- *  because this behavior is easy for anticheats to flag.
+ *     mult = (100 - slow) / 100;              // slow = "Slow %", 0..40, default 40 → 0.6
+ *     motionX *= mult; motionZ *= mult;       // the damp the user still wants (40 == vanilla)
+ *     if (stopSprint) motionX *= 0.5;         // Raven's extra "stop sprint" damp, X only
+ *     // setSprinting(false) is NOT called: the sprint state survives the hit.
  *
- *  Recommended disposition: leave the per-frame reassert OFF by default; if this module
- *  is ever needed for real, implement the injection-based source interception in
- *  agent/Transformer + a KeepSprintBridge (see git history for the earlier approach).
- *  The pure-reflection restore (motion + jitter) is retained below mainly as a fallback
- *  for low-CPS casual play and as a reference implementation.
- * ═══════════════════════════════════════════════════════════════════════════════
+ * The point of the module is that last line: the sprint FLAG survives the reset, so the next hit is
+ * still a sprint hit (extra knockback) and the client does not fall back to walking, while the
+ * motion damp the player configures (default: exactly vanilla's 0.6) keeps it looking normal — that
+ * is the "不损失速度 while staying legit" balance: `Slow % = 0` keeps the speed, `Slow % = 40`
+ * (default) keeps only the sprint state and looks exactly like vanilla.
+ *
+ * This module layer cannot intercept the attack method (the platform deliberately has no injection
+ * for it), so it runs on the render frame that follows the tick which processed the click — i.e.
+ * after vanilla has already applied `motion *= 0.6` and `setSprinting(false)`. It therefore undoes
+ * the vanilla damp and applies Raven's factor (net scale = mult / 0.6) and re-asserts the sprint
+ * flag vanilla cleared. The correction is idempotent-safe: the result is clamped so it can never
+ * exceed the fastest speed the player was observed sprinting at, so a stray frame can never turn
+ * this into a speed boost.
+ *
+ * ⚠ Interactions with the other sprint-state modules (same package):
+ *  - `WTap` / `STap` release W / press S to reset the sprint by *input*, and `SprintReset` sends the
+ *    C0B stop/start pair so the SERVER sees a sprint reset. KeepSprint deliberately re-asserts
+ *    sprinting on every swing it preserves, which is the opposite intent: running them together
+ *    means both write the same game state in the same tick and the winner depends on tick order.
+ *    Pick one side of the reset (Raven has the same conflict — its `Reduce` module is documented as
+ *    "Overrides KeepSprint", and its mixin calls only one of the two).
+ *  - `Sprint` (movement) already re-asserts sprint every tick while moving forward, which makes
+ *    KeepSprint's sprint re-assert redundant (the motion correction is unaffected).
+ *  - `ADTap` only touches A/D; no interaction.
  */
 object KeepSprint : Module("KeepSprint", Category.COMBAT) {
 
-    /** Keep fraction at/above which we keep sprint at all (below = leave vanilla alone). */
-    private const val KEEP_THRESHOLD = 0.9f
+    // ========== Config (Raven's option set) ==========
+    /**
+     * Raven: `SliderSetting("Slow %", 40.0D, 0.0D, 40.0D, 1.0D)`.
+     * Percentage of horizontal motion removed after a hit; 40 == vanilla's 0.6, 0 == keep it all.
+     */
+    private val slow by float("Slow", 40f, 0f..40f, "%", step = 1.0)
 
-    // ========== Mode ==========
-    private val mode by choices("Mode", arrayOf("Normal", "Legit"))
+    /** Raven: `ButtonSetting("Stop Sprint", true)` — extra `motionX *= 0.5`. */
+    private val stopSprint by boolean("StopSprint", true)
 
-    // ========== Normal: fixed speed keep ==========
-    private val horizontalKeep by float("HorizontalKeep", 1.0f, 0.6f..1.0f)
+    /** Raven: `ButtonSetting("Disable while jumping", false)` — vanilla behaviour in the air. */
+    private val disableWhileJump by boolean("DisableWhileJump", false)
 
-    // ========== Legit: distance-simulated keep (no target needed) ==========
-    private val minReach by float("MinReach", 1.0f, 0f..1.5f, "blocks")
-    private val maxReach by float("MaxReach", 3.0f, 2.5f..3.0f, "blocks")
-    private val minKeep by float("MinKeep", 0.65f, 0.6f..0.7f)
-    private val maxKeep by float("MaxKeep", 0.85f, 0.7f..0.95f)
+    /** Raven: `ButtonSetting("Only reduce reach hits", false)` — close hits stay vanilla. */
+    private val onlyReduceReachHits by boolean("OnlyReduceReachHits", false)
 
-    // ========== Probability (per attack action) ==========
-    private val chance by probability("Chance", 100, 0..100)
-
-    // ========== Per-swing / runtime state ==========
-    /** Previous frame's attacking state — to detect the attack rising edge. */
+    // ========== Runtime state ==========
+    /** Previous frame's attack input state — to detect the rising edge of an attack. */
     @Volatile private var prevAttacking: Boolean = false
 
-    /** Whether the current attack action passed the chance roll (i.e. we keep this swing). */
-    @Volatile private var keepThisSwing: Boolean = false
+    /**
+     * Fastest horizontal speed seen while sprinting and moving (blocks/tick). Used only as a ceiling:
+     * the correction may restore speed up to the speed the player has already reached themselves,
+     * never beyond. 0.0 = nothing observed yet, which disables the ceiling rather than guessing.
+     */
+    @Volatile private var sprintCap: Double = 0.0
 
-    /** Current keep fraction for this swing. */
-    @Volatile private var keepFraction: Float = 1.0f
+    fun reset() {
+        prevAttacking = false
+        sprintCap = 0.0
+    }
 
-    /** Natural sprint speed cap (m/tick), tracked as a running max while sprinting + moving. */
-    @Volatile private var sprintCap: Double = 0.28
+    /**
+     * The resolved option values (Raven's exact option set), for tests of the option wiring —
+     * reading them also forces the delegates to register, so their metadata can be asserted too.
+     */
+    internal fun tunables(): KeepSprintTunables =
+        KeepSprintTunables(slow, stopSprint, disableWhileJump, onlyReduceReachHits)
 
-    /** Current keep factor, exposed for diagnostics. */
-    @Volatile
-    var activeKeepFactor: Float = 1.0f
-        private set
-
-    // ========== Lifecycle ==========
     override fun onDisable() {
         reset()
     }
 
-    private fun reset() {
-        activeKeepFactor = 1.0f
-        keepThisSwing = false
-        prevAttacking = false
-        keepFraction = 1.0f
-        sprintCap = 0.28
-    }
-
-    private fun buildConfig(): KeepSprintConfig {
-        return KeepSprintConfig(
-            mode = mode,
-            horizontalKeep = horizontalKeep,
-            minReach = minReach, maxReach = maxReach,
-            minKeep = minKeep, maxKeep = maxKeep,
-            chance = chance.current, hurtTimeMax = 10, delayTicks = 0, cooldownTicks = 0
-        )
-    }
-
     /**
-     * Called from the platform render loop (MC main thread) every frame.
+     * Called from the platform render loop (MC main thread) every frame
+     * (ForgeBootstrap: `KeepSprint.onRenderFrame(mc)`).
      */
     fun onRenderFrame(mc: Any) {
         try {
-            if (!enabled) { reset(); return }
+            if (!enabled) {
+                reset()
+                return
+            }
 
             val player = MappingContext.getFieldValue(mc, "forge:mc_thePlayer") ?: return
 
             val motionX = MappingContext.getFieldValue(player, "forge:entity_motionX") as? Double ?: 0.0
             val motionZ = MappingContext.getFieldValue(player, "forge:entity_motionZ") as? Double ?: 0.0
-            val motionY = MappingContext.getFieldValue(player, "forge:entity_motionY") as? Double ?: 0.0
-            val currentSpeed = kotlin.math.sqrt(motionX * motionX + motionZ * motionZ)
-            val moving = currentSpeed > 0.001
+            val speed = sqrt(motionX * motionX + motionZ * motionZ)
 
-            // "Attacking now" — physical left mouse OR AutoClicker synthetic attack.
-            val attacking = EventBridge.isLeftMousePhysicallyDown || EventBridge.syntheticAttack
-
-            // Track the natural sprint cap as a running max while sprinting + moving (also during an
-            // attack — the max absorbs the pre-slowdown speed). Stable, never a stale 0.28-only value.
+            // Track the natural sprint speed while the player is actually sprinting (the vanilla
+            // sprint cap), before the hit clears the flag. Running max only — a slowdown never lowers
+            // the ceiling.
             val sprinting = MappingContext.invokeMethod(player, "forge:player_isSprinting") as? Boolean ?: false
-            if (sprinting && moving && currentSpeed > sprintCap) {
-                sprintCap = currentSpeed
-            }
+            if (sprinting && speed > sprintCap) sprintCap = speed
 
-            // Rising edge of an attack action → roll chance and decide this swing's keep fraction.
+            // "Attacking now" — physical left mouse OR an AutoClicker synthetic attack (the platform
+            // samples the mouse at the end of the frame, so this is up to one frame behind the click).
+            val attacking = EventBridge.isLeftMousePhysicallyDown || EventBridge.syntheticAttack
             val attackEdge = attacking && !prevAttacking
             prevAttacking = attacking
-            if (attackEdge) {
-                val config = buildConfig()
-                keepThisSwing = KeepSprintStrategy.shouldActivate(config)
-                if (keepThisSwing) {
-                    val simDist = if (config.maxReach > config.minReach) {
-                        minReach + kotlin.random.Random.nextFloat() * (maxReach - minReach)
-                    } else maxReach
-                    keepFraction = KeepSprintStrategy.keepPercentage(config, mode, simDist)
-                }
-            }
+            if (!attackEdge) return
 
-            if (!attacking || !moving) return
-            if (!keepThisSwing) return
-            if (keepFraction < KEEP_THRESHOLD) return // below threshold → leave vanilla alone
+            // Raven's branch runs only for a hit that actually landed. Best available proxy here: a
+            // live entity under the crosshair at the moment of the swing. Without it a swing at air
+            // would damp motion although vanilla never did (and, with the ceiling unset, could push
+            // the player faster than vanilla would).
+            val target = EventBridge.crosshairTarget ?: return
+            if (target.health <= 0f) return
 
-            // 1) Undo the sprinting→walking flip: re-assert sprint on the main thread.
+            val onGround = MappingContext.getFieldValue(player, "forge:entity_onGround") as? Boolean ?: false
+            // Raven's `vanilla` branch: leave vanilla's damp + sprint stop completely alone.
+            // (Raven also requires `!capabilities.isCreativeMode` here — no hook for that yet.)
+            if (KeepSprintLogic.useVanilla(disableWhileJump, onGround, onlyReduceReachHits, target.distance)) return
+
+            val corrected = KeepSprintLogic.correct(motionX, motionZ, slow, stopSprint, sprintCap) ?: return
+            MappingContext.getField("forge:entity_motionX")?.setDouble(player, corrected.motionX)
+            MappingContext.getField("forge:entity_motionZ")?.setDouble(player, corrected.motionZ)
+
+            // Raven never calls setSprinting(false) on this path; vanilla already did (that is the
+            // "sprint reset" the module exists to survive), so re-assert the flag here.
             EventBridge.setSprinting(true)
-
-            // 2) Undo the motion *= 0.6: restore horizontal speed toward the cap, with a small random
-            //    jitter (0.97..1.0) so kept speed isn't a frozen constant. Clamped — never overshoots.
-            val jitter = 0.97 + kotlin.random.Random.nextFloat() * 0.03
-            val restored = KeepSprintStrategy.restoreMotion(
-                motionX, motionY, motionZ, sprintCap * keepFraction, jitter
-            ) ?: return
-            MappingContext.getField("forge:entity_motionX")?.setDouble(player, restored.x)
-            MappingContext.getField("forge:entity_motionZ")?.setDouble(player, restored.z)
+            markWorked() // HUD work flash — this swing's speed/sprint was preserved
         } catch (_: Exception) {
             // Never crash the render loop.
         }
+    }
+}
+
+/**
+ * KeepSprint's resolved option values — Raven's option set, nothing else.
+ */
+internal data class KeepSprintTunables(
+    val slow: Float,
+    val stopSprint: Boolean,
+    val disableWhileJump: Boolean,
+    val onlyReduceReachHits: Boolean
+)
+
+/**
+ * KeepSprint's decision math, split out of the module so it is pure and unit-testable.
+ */
+object KeepSprintLogic {
+
+    /** Vanilla 1.8.9 attack damp: `motionX *= 0.6D; motionZ *= 0.6D;`. */
+    const val VANILLA_DAMP: Double = 0.6
+
+    /** Raven's `Slow %` slider bounds. */
+    const val SLOW_MIN: Float = 0f
+    const val SLOW_MAX: Float = 40f
+
+    /** Raven: `if (distance != -1.0 && distance <= 3.0) vanilla = true;`. */
+    const val REACH_HIT_DISTANCE: Float = 3.0f
+
+    /**
+     * The factor Raven applies *instead of* vanilla's 0.6: `(100 - slow) / 100`.
+     * 40 % → 0.6 (identical to vanilla), 0 % → 1.0 (no damp at all).
+     */
+    fun keepFactor(slowPercent: Float): Double =
+        (100.0 - slowPercent.coerceIn(SLOW_MIN, SLOW_MAX).toDouble()) / 100.0
+
+    /**
+     * Raven's `vanilla` short-circuit: when true the module must not touch motion or sprint.
+     *
+     * @param hitDistance distance to the entity that was hit, in blocks (the crosshair target).
+     */
+    fun useVanilla(
+        disableWhileJump: Boolean,
+        onGround: Boolean,
+        onlyReduceReachHits: Boolean,
+        hitDistance: Float
+    ): Boolean {
+        if (disableWhileJump && !onGround) return true
+        if (onlyReduceReachHits && hitDistance <= REACH_HIT_DISTANCE) return true
+        return false
+    }
+
+    data class Correction(val motionX: Double, val motionZ: Double)
+
+    /**
+     * Undo vanilla's damp and apply Raven's factor to the current horizontal motion.
+     *
+     * @param sprintCap ceiling for the result (0.0 = no ceiling observed yet).
+     * @return the motion to write, or null when there is nothing meaningful to do.
+     */
+    fun correct(
+        motionX: Double,
+        motionZ: Double,
+        slowPercent: Float,
+        stopSprint: Boolean,
+        sprintCap: Double
+    ): Correction? {
+        val speed = sqrt(motionX * motionX + motionZ * motionZ)
+        if (speed < 1e-4) return null // standing still — nothing to preserve, and 0 would divide
+
+        // Vanilla already multiplied by 0.6, so divide it back out and apply Raven's factor:
+        // post-hit speed becomes pre-hit speed * keepFactor.
+        val scale = keepFactor(slowPercent) / VANILLA_DAMP
+        var x = motionX * scale
+        var z = motionZ * scale
+
+        // Raven: `if (stopSprint.isToggled()) mc.thePlayer.motionX *= 0.5;` — X only, exactly as the
+        // reference does it (it is the "the player stopped sprinting" damp the server expects to see).
+        if (stopSprint) x *= 0.5
+
+        // Never accelerate past a speed the player already reached while sprinting: the divide above
+        // assumes vanilla's damp ran, and on the frames where it did not (a hit that vanilla skipped,
+        // a click the tick has not processed yet) it would otherwise be a speed boost.
+        if (sprintCap > 0.0) {
+            val resultSpeed = sqrt(x * x + z * z)
+            if (resultSpeed > sprintCap) {
+                val clamp = sprintCap / resultSpeed
+                x *= clamp
+                z *= clamp
+            }
+        }
+        return Correction(x, z)
     }
 }

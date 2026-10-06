@@ -156,29 +156,69 @@ pub fn get_embedded_hud_path() -> String {
 /// a detached thread, so the injection flow itself is never delayed by it.
 pub fn launch_hud_when_ready() {
     std::thread::spawn(|| {
+        let dir = temp_dir();
+        let mut notes = String::new();
+
         let exe = get_embedded_hud_path();
+        notes.push_str(&format!(
+            "overlay exe: {}\n",
+            if exe.is_empty() { "(not embedded)".to_string() } else { exe.clone() }
+        ));
         if exe.is_empty() {
+            write_launch_log(&dir, &notes, "no embedded overlay");
             return;
         }
-        let state = format!("{}doppel-hud.state", temp_dir());
+
+        let state = format!("{}doppel-hud.state", dir);
         let state_path = std::path::Path::new(&state);
+        let started = std::time::Instant::now();
+        let mut found = false;
         // Up to ~30 s: Forge + OptiFine + world load, and the JVM only publishes once rendering runs.
         for _ in 0..300 {
             if state_path.exists() {
+                found = true;
                 break;
             }
             std::thread::sleep(std::time::Duration::from_millis(100));
         }
-        if !state_path.exists() {
+        notes.push_str(&format!(
+            "state file: {} (exists after {} ms: {})\n",
+            state,
+            started.elapsed().as_millis(),
+            found
+        ));
+        if !found {
+            write_launch_log(&dir, &notes, "timed out waiting for the first state write");
             return;
         }
+
         // Best-effort single instance: the name is fixed for now (de-characterisation is a later
         // pass); ERROR_ALREADY_EXISTS simply means an overlay is already running for this session.
         if !claim_overlay_slot() {
+            write_launch_log(&dir, &notes, "another overlay is already running");
             return;
         }
-        let _ = std::process::Command::new(&exe).spawn();
+
+        match std::process::Command::new(&exe).spawn() {
+            Ok(child) => {
+                notes.push_str(&format!("spawned pid {}\n", child.id()));
+                write_launch_log(&dir, &notes, "ok");
+            }
+            Err(e) => {
+                notes.push_str(&format!("spawn failed: {e}\n"));
+                write_launch_log(&dir, &notes, "spawn error");
+            }
+        }
     });
+}
+
+/// Diagnostic for the overlay hand-off. The overlay keeps its own log (%TEMP%\doppel-hud.log);
+/// this one records what the injector saw, which is the half that used to be invisible.
+fn write_launch_log(dir: &str, notes: &str, outcome: &str) {
+    let _ = std::fs::write(
+        format!("{}doppel-hud-launch.log", dir),
+        format!("{notes}outcome: {outcome}\n"),
+    );
 }
 
 /// Named-mutex claim, so a second injection does not stack a second overlay.

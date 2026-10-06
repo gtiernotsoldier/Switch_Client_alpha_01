@@ -50,6 +50,9 @@ object WebUIServer {
 
     private var server: HttpServer? = null
 
+    /** The panel is opened in the browser at most once per JVM (agent re-attach must not stack tabs). */
+    private var browserOpened = false
+
     val isRunning: Boolean get() = server != null
 
     /** Advertised access URLs (dynamic LAN IPs of the current network). */
@@ -75,6 +78,32 @@ object WebUIServer {
                 CoreLogger.info("[WebUI] Panel running on $HOST:$PORT (LAN). Token: $token")
                 for (url in accessUrls) {
                     CoreLogger.info("[WebUI]  URL:   $url")
+                }
+
+                // Open the panel in the default browser, once per JVM. The user expects the panel to
+                // come up when the agent is injected; before this the address was only printed, so
+                // "the WebUI did not open" was the normal outcome rather than a failure. Best effort:
+                // AWT Desktop first (present in the game's JVM), then the Windows shell. The address
+                // is still mirrored to the payload log for the injector's console.
+                if (!browserOpened) {
+                    browserOpened = true
+                    val panelUrl = "http://127.0.0.1:$PORT"
+                    try {
+                        val desktop = java.awt.Desktop.getDesktop()
+                        if (java.awt.Desktop.isDesktopSupported() &&
+                            desktop.isSupported(java.awt.Desktop.Action.BROWSE)
+                        ) {
+                            desktop.browse(java.net.URI(panelUrl))
+                        } else {
+                            ProcessBuilder("rundll32", "url.dll,FileProtocolHandler", panelUrl).start()
+                        }
+                    } catch (_: Throwable) {
+                        try {
+                            ProcessBuilder("rundll32", "url.dll,FileProtocolHandler", panelUrl).start()
+                        } catch (_: Throwable) {
+                            CoreLogger.warn("[WebUI] could not open a browser — open $panelUrl manually")
+                        }
+                    }
                 }
                 // Mirror the address + token to the payload log so the Rust
                 // injector can surface it in the user's cmd window. OVERWRITE (not append)

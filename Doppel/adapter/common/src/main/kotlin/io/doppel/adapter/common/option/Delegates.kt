@@ -250,6 +250,46 @@ fun choices(
     }
 }
 
+// ========== String ==========
+
+/**
+ * Free-form string option, persisted like every other declared value.
+ *
+ * The WebUI renders it as a text field and [OptionMeta.validate] only asks that the
+ * value is a String, so this is the right home for small pieces of state that are not
+ * a number or a fixed choice — the HUD's manual module order ("A,B,C") is one.
+ */
+fun string(
+    name: String,
+    default: String = ""
+): ReadWriteProperty<Any?, String> {
+    return object : ReadWriteProperty<Any?, String> {
+        private var key: String? = null
+
+        override fun getValue(thisRef: Any?, property: KProperty<*>): String {
+            val k = resolveKey(thisRef, name, property)
+            return ConfigManager.get<String>(k)
+        }
+
+        override fun setValue(thisRef: Any?, property: KProperty<*>, value: String) {
+            val k = resolveKey(thisRef, name, property)
+            ConfigManager.set(k, value)
+        }
+
+        private fun resolveKey(thisRef: Any?, optName: String, property: KProperty<*>): String {
+            key?.let { return it }
+            val modulePrefix = resolveModulePrefix(thisRef)
+            val k = "$modulePrefix.$optName"
+            ConfigManager.register(k, default, OptionMeta(
+                type = OptionType.STRING,
+                default = default
+            ))
+            key = k
+            return k
+        }
+    }
+}
+
 // ========== TriggerOptions ==========
 
 fun triggerOptions(

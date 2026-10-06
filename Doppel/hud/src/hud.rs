@@ -9,25 +9,32 @@
 // rather than composed here. Every constant below carries the source line it came
 // from so the two can be diffed by eye.
 //
+// **Modern** is the one exception. It is this port's own fifth mode, added by the
+// user's request alongside contract v3's three-bit mode field, and has no source
+// line at all: its numbers are marked `MODERN_*` and explained where they are
+// declared, so nothing here can be mistaken for something HUD.cpp does.
+//
 // ── what is drawn ────────────────────────────────────────────────────────────
 //
 //   1. **the watermark** — one inline run on a single baseline: the product name
 //      in the mode's accent, then ` | ` and each middle segment the state's header
 //      carries — the nickname and `"<n> FPS"` — in the mode's secondary colour
 //      (HUD.cpp:508-563). That is the source's own `name | nickname | "<n> FPS"`
-//      run: contract v2 puts both of the source's segments in the header's
-//      `nickname[24]` and `fps`, and a segment with nothing to say is dropped
-//      rather than drawn empty (`watermark_segments`). A v1 block, whose 16-byte
-//      header has neither field, draws the bare title. In the Rise/VapeV4 modes the run sits
-//      in the source's panel: a `rgba(0,0,0,88)` fill with the accent as a 2 px bar
-//      down its right edge (VapeV4 rounds that panel's left corners by 6 px).
+//      run: the header carries both of the source's segments, and a segment with
+//      nothing to say is dropped rather than drawn empty (`watermark_segments`). A
+//      v1 block, whose 16-byte header has neither field, draws the bare title. In
+//      the Rise/VapeV4 modes the run sits in the source's panel: a `rgba(0,0,0,88)`
+//      fill with the accent as a 2 px bar down its right edge (VapeV4 rounds that
+//      panel's left corners by 6 px); in Modern it sits in that mode's own rounded
+//      card.
 //   2. **the module list** — one row per enabled module, `NAME  TAG` on one
 //      baseline, the block right-aligned so the rows form the width-descending
-//      wedge (HUD.cpp:565-645). The accent bar is at the row's **right** edge (2 px
-//      in Rise/VapeV4, 3 px in Tesseract), the name is painted in the row's
-//      animated accent and the tag in the mode's muted grey — red `(255,85,85)` in
-//      VapeV4 while the module is in use, which is what the state's `flash` byte
-//      reports (HUD.cpp:640).
+//      wedge (HUD.cpp:565-645) — unless the header asks for published order. The
+//      accent bar is at the row's **right** edge (2 px in Rise/VapeV4, 3 px in
+//      Tesseract and Modern), the name is painted in the row's animated accent and
+//      the tag in the mode's muted grey — red `(255,85,85)` in VapeV4 while the
+//      module is in use, the live accent in Modern, and a red work-pulse wash over
+//      the whole row for any mode while `flash` is non-zero (HUD.cpp:640).
 //
 // ── animations, exactly as the source ────────────────────────────────────────
 //
@@ -35,16 +42,23 @@
 //     `progress += dt * 6`, eased with `1 - (1-p)^3` (easeOutCubic), with the frame
 //     delta clamped to 0.1 s (HUD.cpp:502-506, 590-612). There is no opacity ramp;
 //     a row is opaque from the first frame it exists.
-//   * **exit**: instant — the row is dropped and the rows below it snap up. The
-//     source does that by erasing the `m_SlideProgress` entries of modules that
-//     are no longer enabled (HUD.cpp:647-653).
+//   * **exit**: contract v3 adds one where the source is instant — a row that
+//     disappears is kept for ~220 ms, fading and sliding back towards the edge it
+//     entered from, so enabling a module in the WebUI is a transition rather than a
+//     jump. The source's own answer is to erase the `m_SlideProgress` entries of
+//     modules that are no longer enabled (HUD.cpp:647-653), which is still what
+//     happens to the slide state itself.
+//   * **work pulse**: contract v3's entry `flash` is a 0..255 strength, and a row
+//     is washed towards red by `flash/255`. It decays to nothing at 0 and the
+//     overlay never decays it itself: the writer recomputes it every publish.
 //   * **accent**: per-row phase offsets, one function per mode (HUD.cpp:249-309).
 //     Default blends the two configurable colours on a cosine over
 //     `2500 / max(speed, 0.01)` ms with `+400 ms` per row; Rise maps
 //     `0.5 + 0.5*sin(t*1.35 + i*0.5)` onto an HSV hue sweep; VapeV4 lerps purple
 //     to pink on `sin(t*1.55 + i*0.45)`; Tesseract walks the hue by the golden
-//     ratio, `hue = fmod(t_ms/2000 + i*0.618034, 1)`. HSV→RGB is implemented here
-//     because the source gets it from ImGui.
+//     ratio, `hue = fmod(t_ms/2000 + i*0.618034, 1)`; Modern sweeps two colours on
+//     a 4.2 s cosine. HSV→RGB is implemented here because the source gets it from
+//     ImGui.
 //   * a row's **shadow** is the source's only text effect: a 1 px down-right copy
 //     of the glyph run in `rgba(0,0,0,120)` (HUD.cpp:79-82). No outline, no glow,
 //     no letter spacing.
@@ -83,15 +97,20 @@ use crate::draw::{argb, Canvas};
 use crate::state::Entry;
 use crate::text::{FontId, TextEngine, FONT_PX, MAX_SCALE, MIN_SCALE};
 
-// ── the four modes (HUD.cpp:463-468, ArrayList.h:14) ────────────────────────
+// ── the five modes (HUD.cpp:463-468, ArrayList.h:14) ────────────────────────
 
-/// `ArrayListMode` — the combo in `ArrayList.h:14`, in the source's own order.
+/// `ArrayListMode` — the combo in `ArrayList.h:14`, in the source's own order,
+/// plus `Modern`, which the source has never had: contract v3 widened the
+/// header's mode field to three bits so the WebUI can offer a fifth mode, and
+/// this is it. Everything below marks the Modern numbers apart from the four
+/// ported ones, because there is no HUD.cpp line to cite for them.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Mode {
     Default,
     Rise,
     Vape,
     Tesseract,
+    Modern,
 }
 
 impl Mode {
@@ -103,8 +122,11 @@ impl Mode {
             "rise" => Ok(Mode::Rise),
             "vape" | "vapev4" | "vape_v4" => Ok(Mode::Vape),
             "tesseract" => Ok(Mode::Tesseract),
+            "modern" => Ok(Mode::Modern),
             other => {
-                Err(format!("--mode: expected default, rise, vape or tesseract, got {other}"))
+                Err(format!(
+                    "--mode: expected default, rise, vape, tesseract or modern, got {other}"
+                ))
             }
         }
     }
@@ -115,10 +137,14 @@ impl Mode {
             Mode::Rise => "rise",
             Mode::Vape => "vape",
             Mode::Tesseract => "tesseract",
+            Mode::Modern => "modern",
         }
     }
 
     /// `riseLikeMode` (HUD.cpp:466): Rise and VapeV4 share the panel/spacing rules.
+    /// Modern is deliberately *not* rise-like: it has its own card, its own
+    /// spacing and its own rounded corners, and folding it in here is how a
+    /// "fifth mode" ends up looking like the second one with different colours.
     pub fn is_rise_like(self) -> bool {
         matches!(self, Mode::Rise | Mode::Vape)
     }
@@ -152,6 +178,55 @@ pub const RISE_WATERMARK_TEXT: u32 = argb(232, 232, 232, 255);
 pub const VAPE_TAG_ACTIVE: u32 = argb(255, 85, 85, 255);
 /// `tesseractBackgroundColor` (HUD.cpp:485).
 pub const TESSERACT_BACKGROUND: u32 = argb(25, 25, 30, 240);
+
+// ── the work pulse (contract v3's entry `flash`) ────────────────────────────
+//
+// `flash` stopped being a bool in v3 and became a 0..255 strength the writer
+// recomputes every publish. The overlay reads it as a level and never decays it:
+// it washes the row towards red by `flash / 255`, which is 0 at 0 (nothing at
+// all) and strongest at 255.
+
+/// The colour a working row is washed towards. Red rather than the source's
+/// VapeV4 tag red `(255,85,85)`: the wash covers the whole card, so a lighter
+/// red keeps the name and tag legible through it.
+pub const FLASH_WASH: u32 = argb(200, 48, 48, 210);
+
+/// `flash` 0..255 → 0..1. The one place the wire value becomes a strength, so
+/// "0 means no tint at all" cannot drift between the painter and a test.
+pub fn flash_strength(flash: u8) -> f32 {
+    flash as f32 / 255.0
+}
+
+// ── Modern (this port's own mode, contract v3) ──────────────────────────────
+//
+// There is no source line for any of these: the user asked for a fifth mode that
+// does not look like a recolour of the other four, so the numbers below are the
+// design. The card is a translucent near-black panel rounded on **all four**
+// corners — deliberately the opposite of Tesseract's left-only chips and VapeV4's
+// left-only panel — with the accent as a bar down the row's right edge and the
+// value tag in the accent colour.
+
+/// The row card's fill: darker and more opaque than Rise's `rgba(0,0,0,88)`, so
+/// it reads as a card of its own against a game frame.
+pub const MODERN_BACKGROUND: u32 = argb(14, 16, 22, 205);
+/// The card's corner radius, all four corners.
+pub const MODERN_CARD_RADIUS: f32 = 6.0;
+/// The accent bar at the row's right edge.
+pub const MODERN_RECT_WIDTH: f32 = 3.0;
+/// The card's inner padding: the name starts this far in, and the card is this
+/// much wider than its content on both sides.
+pub const MODERN_PAD_X: f32 = 6.0;
+pub const MODERN_PAD_Y: f32 = 2.0;
+/// `itemHeight`'s extra over the line height: Default's +2 plus the ~4 px the
+/// mode was asked for, so a Modern row is visibly taller than the four.
+pub const MODERN_ITEM_EXTRA: f32 = 6.0;
+/// The gap between two cards, where Default uses 2.
+pub const MODERN_MODULE_SPACING: f32 = 4.0;
+/// The right margin the list is flushed to, where Default uses 6.
+pub const MODERN_MARGIN_RIGHT: f32 = 6.0;
+/// One full sweep of the accent, ms. Slow on purpose: a fast accent is what the
+/// other four already are.
+pub const MODERN_SWEEP_MS: f32 = 4200.0;
 
 /// The Default mode's wave colours, as `ModuleConfig.h:65-66` (and
 /// `ArrayList.h:18-19`) spells them: `78,86,107` → `120,146,214`.
@@ -229,6 +304,11 @@ pub struct Metrics {
     pub top_y: f32,
     /// `moduleSpacing` (HUD.cpp:473): 0 for Rise-like, 2 otherwise.
     pub module_spacing: f32,
+    /// The user's line-spacing multiplier (contract v3's `line_spacing`, 0.1..2.0).
+    /// It scales the whole row pitch rather than just the gap, so it also loosens the
+    /// modes whose own `moduleSpacing` is 0 — otherwise the knob would do nothing in
+    /// half the modes. 1.0 = the source's own geometry.
+    pub line_spacing: f32,
     /// `itemHeight` (HUD.cpp:474).
     pub item_height: f32,
     pub rise_pad_x: f32,
@@ -239,6 +319,12 @@ pub struct Metrics {
     pub tesseract_gap: f32,
     pub tesseract_rect_w: f32,
     pub tesseract_chip_radius: f32,
+    /// Modern's own numbers: the card's radius, its accent bar, its inner
+    /// padding. Nothing in the source has these.
+    pub modern_card_radius: f32,
+    pub modern_rect_w: f32,
+    pub modern_pad_x: f32,
+    pub modern_pad_y: f32,
     /// The mode's right margin (HUD.cpp:610).
     pub right_margin: f32,
     /// The watermark run's inset from the edge it hangs off (HUD.cpp:537).
@@ -253,12 +339,23 @@ pub struct Metrics {
 }
 
 impl Metrics {
-    /// The source's numbers, multiplied by `scale`.
+    /// The source's numbers, multiplied by `scale`, with the reference's own row gap.
     pub fn new(mode: Mode, scale: f32) -> Metrics {
+        Metrics::with_line_spacing(mode, scale, 1.0)
+    }
+
+    /// The same, with the user's line-spacing multiplier (contract v3's
+    /// `line_spacing`). Clamped here so a writer cannot hand the painter a pitch of
+    /// zero (rows stacked on top of each other) or one that pushes the list off the
+    /// surface.
+    pub fn with_line_spacing(mode: Mode, scale: f32, line_spacing: f32) -> Metrics {
+        let line_spacing =
+            if line_spacing.is_finite() { line_spacing.clamp(0.1, 2.0) } else { 1.0 };
         let scale = if scale.is_finite() { scale.clamp(MIN_SCALE, MAX_SCALE) } else { 1.0 };
         let s = scale;
         let rise_like = mode.is_rise_like();
         let tesseract = mode == Mode::Tesseract;
+        let modern = mode == Mode::Modern;
 
         let font_px = FONT_PX * s;
         // `lineHeight = max(tagSize, nameSize)` (HUD.cpp:472). Both faces are
@@ -268,6 +365,8 @@ impl Metrics {
             line_height + RISE_ITEM_EXTRA * s
         } else if tesseract {
             font_px + TESSERACT_ITEM_EXTRA * s
+        } else if modern {
+            line_height + MODERN_ITEM_EXTRA * s
         } else {
             line_height + DEFAULT_ITEM_EXTRA * s
         };
@@ -278,7 +377,14 @@ impl Metrics {
             font_px,
             line_height,
             top_y: TOP_Y * s,
-            module_spacing: if rise_like { 0.0 } else { MODULE_SPACING * s },
+            module_spacing: if rise_like {
+                0.0
+            } else if modern {
+                MODERN_MODULE_SPACING * s
+            } else {
+                MODULE_SPACING * s
+            },
+            line_spacing,
             item_height,
             rise_pad_x: RISE_PAD_X * s,
             rise_pad_y: RISE_PAD_Y * s,
@@ -288,10 +394,16 @@ impl Metrics {
             tesseract_gap: TESSERACT_GAP_AFTER_TEXT * s,
             tesseract_rect_w: TESSERACT_RECT_WIDTH * s,
             tesseract_chip_radius: TESSERACT_CHIP_RADIUS * s,
+            modern_card_radius: MODERN_CARD_RADIUS * s,
+            modern_rect_w: MODERN_RECT_WIDTH * s,
+            modern_pad_x: MODERN_PAD_X * s,
+            modern_pad_y: MODERN_PAD_Y * s,
             right_margin: if rise_like {
                 RISE_MARGIN_RIGHT * s
             } else if tesseract {
                 TESSERACT_MARGIN_RIGHT * s
+            } else if modern {
+                MODERN_MARGIN_RIGHT * s
             } else {
                 DEFAULT_MARGIN_RIGHT * s
             },
@@ -300,6 +412,10 @@ impl Metrics {
                 TOP_Y * s + RISE_PAD_Y * s
             } else if tesseract {
                 TESSERACT_WATERMARK_Y * s
+            } else if modern {
+                // The run sits inside Modern's card the way Rise's sits inside
+                // its panel: the card starts at `topY`, the text one pad lower.
+                TOP_Y * s + MODERN_PAD_Y * s
             } else {
                 TOP_Y * s
             },
@@ -308,6 +424,8 @@ impl Metrics {
                 RISE_PAD_X * s
             } else if tesseract {
                 TESSERACT_PADDING * s
+            } else if modern {
+                MODERN_PAD_X * s
             } else {
                 0.0
             },
@@ -315,6 +433,8 @@ impl Metrics {
                 RISE_PAD_Y * s
             } else if tesseract {
                 TESSERACT_TEXT_INSET_Y * s
+            } else if modern {
+                MODERN_PAD_Y * s
             } else {
                 0.0
             },
@@ -322,18 +442,25 @@ impl Metrics {
     }
 }
 
-/// Row pitch: `itemHeight + moduleSpacing` (HUD.cpp:614).
+/// Row pitch: `itemHeight + moduleSpacing` (HUD.cpp:614), times the user's
+/// line-spacing multiplier.
+///
+/// The multiplier applies to the pitch and not to `moduleSpacing` alone: Rise and
+/// VapeV4 sit at `moduleSpacing = 0` (their chips touch), so a multiplier on the gap
+/// alone would leave the knob dead in half the modes.
 pub fn row_pitch(m: &Metrics) -> f32 {
-    m.item_height + m.module_spacing
+    (m.item_height + m.module_spacing) * m.line_spacing
 }
 
 /// The accent bar's width at a row's right edge: Rise/VapeV4 2 px, Tesseract 3 px,
-/// Default none (HUD.cpp:619-634).
+/// Modern 3 px, Default none (HUD.cpp:619-634).
 pub fn bar_width(m: &Metrics) -> f32 {
     if m.mode.is_rise_like() {
         m.rise_rect_w
     } else if m.mode == Mode::Tesseract {
         m.tesseract_rect_w
+    } else if m.mode == Mode::Modern {
+        m.modern_rect_w
     } else {
         0.0
     }
@@ -341,30 +468,42 @@ pub fn bar_width(m: &Metrics) -> f32 {
 
 /// The four corner radii of a row's chip, (top-left, top-right, bottom-right,
 /// bottom-left): only the left corners are rounded, because the accent bar sits
-/// square against the right edge (HUD.cpp:622-633).
+/// square against the right edge (HUD.cpp:622-633). Modern is the one mode that
+/// rounds all four — its card is a card, and its accent bar rounds its own right
+/// corners to match.
 pub fn chip_corners(m: &Metrics) -> [f32; 4] {
     match m.mode {
         Mode::Vape => [m.vape_left_rounding, 0.0, 0.0, m.vape_left_rounding],
         Mode::Tesseract => [m.tesseract_chip_radius, 0.0, 0.0, m.tesseract_chip_radius],
+        Mode::Modern => [m.modern_card_radius; 4],
         _ => [0.0; 4],
     }
 }
 
 /// The chip the row sits on: Rise/VapeV4 `rgba(0,0,0,88)` over the whole row,
-/// Tesseract `rgba(25,25,30,240)`, Default none (`Option::None`).
+/// Tesseract `rgba(25,25,30,240)`, Modern its own dark card, Default none
+/// (`Option::None`).
 pub fn chip_colour(m: &Metrics) -> Option<u32> {
     match m.mode {
         Mode::Rise | Mode::Vape => Some(RISE_BACKGROUND),
         Mode::Tesseract => Some(TESSERACT_BACKGROUND),
+        Mode::Modern => Some(MODERN_BACKGROUND),
         Mode::Default => None,
     }
 }
 
-/// The tag's colour: muted grey, and `(255,85,85)` in VapeV4 while the module is
-/// in use (HUD.cpp:640). The source applies the active colour in VapeV4 only; the
-/// other modes keep the grey whatever the flash byte says.
-pub fn tag_colour(m: &Metrics, flash: bool) -> u32 {
-    if m.mode == Mode::Vape && flash {
+/// The tag's colour: muted grey, `(255,85,85)` in VapeV4 while the module is in
+/// use (HUD.cpp:640), and Modern's live accent — the one mode whose tag is not a
+/// fixed grey. The source applies the active colour in VapeV4 only; every other
+/// ported mode keeps the grey whatever the flash byte says.
+///
+/// `flash` is the v3 strength, read here only as "working at all": the *degree*
+/// of the pulse is the red wash over the card (`paint_row`), which every mode
+/// gets, because a grey tag alone cannot show a 0..255 level.
+pub fn tag_colour(m: &Metrics, flash: bool, accent: u32) -> u32 {
+    if m.mode == Mode::Modern {
+        accent
+    } else if m.mode == Mode::Vape && flash {
         VAPE_TAG_ACTIVE
     } else if m.mode.is_rise_like() {
         RISE_SECONDARY_TEXT
@@ -390,9 +529,20 @@ pub fn box_width(m: &Metrics, layout_w: f32) -> f32 {
         layout_w + m.rise_pad_x * 2.0 + m.rise_rect_w + 1.0
     } else if m.mode == Mode::Tesseract {
         layout_w + m.tesseract_padding + m.tesseract_gap + m.tesseract_rect_w
+    } else if m.mode == Mode::Modern {
+        // The card's padding on both sides plus its bar; no `+1`, which is a
+        // source quirk of the Rise panel rather than a rule.
+        layout_w + m.modern_pad_x * 2.0 + m.modern_rect_w
     } else {
         layout_w
     }
+}
+
+/// Modern's watermark card: the run plus its own inner padding and the accent
+/// bar, the same shape as the Rise-like panel (`watermark_panel_width`) but with
+/// Modern's numbers.
+pub fn modern_panel_width(m: &Metrics, run_w: f32) -> f32 {
+    run_w + m.modern_pad_x * 2.0 + m.modern_rect_w
 }
 
 /// The Rise-like watermark panel's width (HUD.cpp:544). The source computes
@@ -408,7 +558,7 @@ pub fn watermark_panel_width(m: &Metrics, title_w: f32, middle_w: f32) -> f32 {
 /// The watermark's middle segments, in the source's order, with the empty ones
 /// dropped: the nickname (`ResolvePlayerNick`, HUD.cpp:526-529) and `"<n> FPS"`
 /// (`:531-532`, dropped when the header's `fps` is 0 — unknown, not zero). The
-/// enabled-module count this port used to draw here is gone: contract v2 carries
+/// enabled-module count this port used to draw here is gone: the header carries
 /// both of the source's own segments, so the run is the source's again.
 pub fn watermark_segments(nickname: &str, fps: u32) -> Vec<String> {
     let mut out = Vec::with_capacity(2);
@@ -678,6 +828,23 @@ pub fn tesseract_header_rgb(millis: f64, offset_ms: f32) -> [f32; 3] {
     hsv_to_rgb(hue, 0.7, 0.8)
 }
 
+/// Modern's accent: a slow cosine sweep between a cold cyan-blue and a warm
+/// violet over `MODERN_SWEEP_MS`, with a small per-row phase offset so the column
+/// reads as a gradient rather than as one flat block. Pure in `millis`, exactly
+/// like the four ported accents, which is what keeps a review dump reproducible.
+pub fn modern_rgb(millis: f64, index: f32) -> [f32; 3] {
+    let phase = 0.5
+        - 0.5 * ((millis / MODERN_SWEEP_MS as f64 + index as f64 * 0.09) * std::f64::consts::TAU).cos();
+    let t = phase as f32;
+    let cold = [0.30, 0.78, 1.00];
+    let warm = [0.70, 0.44, 1.00];
+    [
+        cold[0] + (warm[0] - cold[0]) * t,
+        cold[1] + (warm[1] - cold[1]) * t,
+        cold[2] + (warm[2] - cold[2]) * t,
+    ]
+}
+
 // ── per-frame inputs ────────────────────────────────────────────────────────
 
 /// Everything the HUD needs that is not the published state: which mode, how big,
@@ -702,12 +869,27 @@ pub struct Config {
     pub secondary: [f32; 3],
     /// `m_SpacedModules` (ModuleConfig.h:60): split `CamelCase` names.
     pub spaced: bool,
-    /// The state contract v2 header's `nickname` — the watermark's middle segment
+    /// The state header's `nickname` — the watermark's middle segment
     /// (`ResolvePlayerNick`, HUD.cpp:526-529). Empty drops the segment.
     pub nickname: String,
     /// The header's `fps`. 0 = unknown, and the FPS segment is dropped rather
     /// than drawn as `0 FPS` (the source only ever has a real frame counter).
     pub fps: u32,
+    /// How opaque the *background* fills are, 0..1 (contract v3's `opacity`,
+    /// `--opacity <percent>`). The text is deliberately not scaled by it: the
+    /// user asked for background opacity, and a HUD whose labels fade with its
+    /// cards is unreadable at the low end. 1.0 = as the source draws it.
+    pub opacity: f32,
+    /// Draw the rows in the order the writer published them instead of sorting
+    /// them by measured width — contract v3's `orderPublished`. The width sort is
+    /// the reference's wedge (HUD.cpp:340-342) and it destroys the user's own
+    /// module order, which is the whole reason the bit exists.
+    pub ordered: bool,
+    /// The row gap as a multiple of the mode's own (contract v3's `line_spacing`,
+    /// `--line-spacing <percent>`). 1.0 = as the source draws it. Kept apart from
+    /// `scale` because the scale also resizes the text, so it cannot loosen a list
+    /// that is merely too tight.
+    pub line_spacing: f32,
 }
 
 impl Default for Config {
@@ -725,6 +907,9 @@ impl Default for Config {
             spaced: false,
             nickname: String::new(),
             fps: 0,
+            opacity: 1.0,
+            ordered: false,
+            line_spacing: 1.0,
         }
     }
 }
@@ -735,6 +920,7 @@ pub fn accent(cfg: &Config, stamp: Stamp, index: usize) -> [f32; 3] {
         Mode::Rise => rise_rgb(stamp.seconds, index as f32),
         Mode::Vape => vape_rgb(stamp.seconds, index as f32),
         Mode::Tesseract => tesseract_rgb(stamp.millis, index as f32),
+        Mode::Modern => modern_rgb(stamp.millis, index as f32),
         Mode::Default => {
             if cfg.wave {
                 wave_rgb(
@@ -763,8 +949,8 @@ pub fn watermark_accent(cfg: &Config, stamp: Stamp) -> [f32; 3] {
 }
 
 /// Whether the accent keeps moving on its own. Default is time-driven only while
-/// the wave is on; the other three modes are functions of the clock by
-/// construction, so a frame with them on screen is never static. This is what the
+/// the wave is on; the other four modes — Modern included, whose sweep is a
+/// function of the clock like the rest — are never static. This is what the
 /// overlay's repaint decision hangs on (see `paint`).
 pub fn accent_is_animated(cfg: &Config) -> bool {
     cfg.mode != Mode::Default || cfg.wave
@@ -805,17 +991,61 @@ pub fn spaced_name(name: &str) -> String {
 
 // ── animation state ─────────────────────────────────────────────────────────
 
+/// How long a row that has left the published list stays on screen while it
+/// fades and slides back towards the edge it entered from. The source drops the
+/// row instantly (HUD.cpp:647-653); the transition is this port's, because
+/// enabling or disabling a module in the WebUI should not look like a jump. The
+/// figure is contract v3's "~220 ms".
+pub const EXIT_SECS: f32 = 0.22;
+
+/// One row's measured geometry, kept so a row can still be painted after it has
+/// left the published list. Every field is a plain value measured while the row
+/// was live, so an exit never touches the state file again: a writer that stops
+/// mid-transition cannot make the last frame jump.
+#[derive(Clone, Debug, PartialEq)]
+struct RowShape {
+    /// The name as drawn (`m_SpacedModules` applied) and the value tag.
+    name: String,
+    value: String,
+    name_w: f32,
+    tag_w: f32,
+    box_w: f32,
+    /// The position the row held in the list while it was live — the accent's
+    /// per-row phase, and the y an exit is painted on.
+    slot: usize,
+    /// The work-pulse strength at the moment the row left, so it keeps glowing
+    /// (or not) on its way out instead of snapping to a different red.
+    flash: u8,
+}
+
+/// A row on its way out.
+#[derive(Clone, Debug)]
+struct Exit {
+    shape: RowShape,
+    /// Seconds since it left, 0 .. `EXIT_SECS`.
+    elapsed: f32,
+    /// The entrance progress it had when it left, so the exit starts from where
+    /// the row actually was rather than snapping to its resting place.
+    entrance: f32,
+}
+
 /// What this side animates on top of the published state: how far each row has
-/// slid in, and the clock the accent functions read. The source keeps
-/// `m_SlideProgress` keyed by module name, an `m_LastFrameTime` for the delta and
-/// `m_Fps`; the FPS counter has no input on this side of the contract (see the
-/// header note), so it is not ported.
+/// slid in, which rows are sliding out, and the clock the accent functions read.
+/// The source keeps `m_SlideProgress` keyed by module name, an `m_LastFrameTime`
+/// for the delta and `m_Fps`; the FPS counter has no input on this side of the
+/// contract (see the header note), so it is not ported.
 pub struct Anim {
     /// When the accent clock was zeroed. Seeded so a review dump is deterministic.
     origin: Instant,
     last: Option<Instant>,
     dt: f32,
     slide: HashMap<String, f32>,
+    /// The last measured shape of every *listed* row, keyed the way `slide` is.
+    /// This is the material an exit is made of: a row cannot be measured after it
+    /// is gone, so it is measured while it is still there.
+    shapes: HashMap<String, RowShape>,
+    /// The rows that have left and are still being painted out.
+    exits: HashMap<String, Exit>,
 }
 
 /// How far into the accent clock `Anim::seed` puts a review frame: 2000 ms, which
@@ -830,7 +1060,14 @@ impl Default for Anim {
 
 impl Anim {
     pub fn new() -> Anim {
-        Anim { origin: Instant::now(), last: None, dt: 0.0, slide: HashMap::new() }
+        Anim {
+            origin: Instant::now(),
+            last: None,
+            dt: 0.0,
+            slide: HashMap::new(),
+            shapes: HashMap::new(),
+            exits: HashMap::new(),
+        }
     }
 
     /// Take the frame's timestamp: the delta is clamped to 0.1 s exactly like
@@ -848,11 +1085,77 @@ impl Anim {
         self.last = Some(now);
     }
 
-    /// Forget the slide state of modules that are no longer listed — the source's
-    /// instant exit, so a module that comes back starts its entrance from the edge
-    /// rather than from wherever it was dropped (HUD.cpp:647-653).
+    /// Record this frame's measured rows. Called before `retain`, so by the time
+    /// a row is known to be gone its geometry is already here to be handed to an
+    /// exit.
+    fn remember(&mut self, rows: &[Row], entries: &[Entry]) {
+        for (slot, row) in rows.iter().enumerate() {
+            let entry = &entries[row.entry];
+            self.shapes.insert(
+                row.key.clone(),
+                RowShape {
+                    name: row.name.clone(),
+                    value: entry.value.clone(),
+                    name_w: row.name_w,
+                    tag_w: row.tag_w,
+                    box_w: row.box_w,
+                    slot,
+                    flash: entry.flash,
+                },
+            );
+        }
+    }
+
+    /// The geometry remembered for a listed row. Always `Some` right after
+    /// `remember`, which is the only way the painter asks for it.
+    fn shape(&self, key: &str) -> Option<&RowShape> {
+        self.shapes.get(key)
+    }
+
+    /// Fold this frame's listed rows into the animation state: a row that was
+    /// remembered but is no longer listed starts its exit (and loses its slide
+    /// state, exactly as the source's instant drop did, so a module that comes
+    /// back starts its entrance from the edge); a row that came back while it was
+    /// still leaving is live again and its exit is dropped rather than painted
+    /// twice.
     pub fn retain(&mut self, live: &[String]) {
+        self.exits.retain(|name, _| !live.iter().any(|live| live == name));
+
+        let gone: Vec<String> = self
+            .shapes
+            .keys()
+            .filter(|name| !live.iter().any(|live| live == *name))
+            .cloned()
+            .collect();
+        for key in gone {
+            if let Some(shape) = self.shapes.remove(&key) {
+                let entrance = self.slide.get(&key).copied().unwrap_or(1.0);
+                self.exits.entry(key).or_insert(Exit { shape, elapsed: 0.0, entrance });
+            }
+        }
         self.slide.retain(|name, _| live.iter().any(|live| live == name));
+    }
+
+    /// Step every exit by one frame and forget the ones whose window is over.
+    ///
+    /// Called *before* the rows are painted, and `has_exits` is read before that:
+    /// the frame in which the last exit is dropped is still a frame that has to
+    /// be pushed, because it is the frame that erases the row from the surface.
+    fn step_exits(&mut self, dt: f32) {
+        for exit in self.exits.values_mut() {
+            exit.elapsed += dt;
+        }
+        self.exits.retain(|_, exit| exit.elapsed < EXIT_SECS);
+    }
+
+    /// Whether any row is still leaving — the repaint rule's second input.
+    fn has_exits(&self) -> bool {
+        !self.exits.is_empty()
+    }
+
+    /// How far through its exit a row is, 0..1.
+    fn exit_progress(exit: &Exit) -> f32 {
+        (exit.elapsed / EXIT_SECS).clamp(0.0, 1.0)
     }
 
     /// The wall clock the accent functions are evaluated at.
@@ -864,7 +1167,7 @@ impl Anim {
     /// One row's entrance progress: `progress += dt * 6`, clamped to 1
     /// (HUD.cpp:590-596). A row seen for the first time starts at 0 and takes this
     /// frame's step, exactly as the source's `m_SlideProgress[mod.name]` does, and
-    /// nothing here fades opacity.
+    /// nothing here fades opacity — the entrance is the source's slide, unchanged.
     pub fn progress(&mut self, name: &str, dt: f32) -> f32 {
         let progress = self.slide.entry(name.to_string()).or_insert(0.0);
         if *progress < 1.0 {
@@ -877,11 +1180,17 @@ impl Anim {
     /// before the seed) and the accent clock starts at exactly `SEED_MS`, so a
     /// review frame's colours are the accent functions evaluated at a known
     /// timestamp — what the README's sampled numbers are checked against.
+    ///
+    /// Exits are emptied too: a review dump has no previous frame to have lost a
+    /// row from, and letting one survive would make the dump depend on whatever
+    /// ran before it.
     pub fn seed(&mut self, entries: &[Entry], now: Instant) {
         self.origin = now.checked_sub(Duration::from_millis(SEED_MS)).unwrap_or(now);
         self.last = None;
         self.dt = 0.0;
         self.slide.clear();
+        self.shapes.clear();
+        self.exits.clear();
         for entry in entries {
             if !entry.name.is_empty() {
                 self.slide.insert(entry.name.clone(), 1.0);
@@ -963,7 +1272,12 @@ fn measure_rows(
         });
     }
 
-    rows.sort_by(|a, b| b.sort_w.partial_cmp(&a.sort_w).unwrap_or(std::cmp::Ordering::Equal));
+    // The reference's wedge, and the one thing contract v3's `orderPublished`
+    // turns off: the sort is what makes the list a wedge, and it also destroys the
+    // user's own module order from the WebUI, which is why the bit exists.
+    if !cfg.ordered {
+        rows.sort_by(|a, b| b.sort_w.partial_cmp(&a.sort_w).unwrap_or(std::cmp::Ordering::Equal));
+    }
     rows
 }
 
@@ -974,9 +1288,13 @@ struct Frame<'a> {
     cfg: &'a Config,
     m: &'a Metrics,
     stamp: Stamp,
-    /// The overlay's global fade (1.0 live).
+    /// The overlay's global fade (1.0 live), applied to everything.
     global: f32,
-    /// The frame delta for the rows' entrance.
+    /// The same fade times the configured background opacity: the multiplier for
+    /// the *fills* only. The text keeps `global`, which is what "background
+    /// opacity" means (see `Config::opacity`).
+    background: f32,
+    /// The frame delta for the rows' entrance and the exits.
     dt: f32,
 }
 
@@ -1003,12 +1321,12 @@ fn draw_shadowed(
 /// which the caller uses to decide whether the next frame needs to be pushed to
 /// the compositor.
 ///
-/// "Moving" is the entrance of any row (the source's slide) **or** a live accent:
-/// in Rise, VapeV4 and Tesseract the accent is a function of the clock, and with
-/// the Default mode's wave on it is too, so those frames genuinely differ from the
-/// last one. With the wave off in Default mode nothing is time-driven, so a
-/// settled HUD reports false and the caller repaints only when the state, the
-/// mode or the fade moved.
+/// "Moving" is the entrance of any row (the source's slide), a row leaving (the
+/// v3 exit), **or** a live accent: in Rise, VapeV4, Tesseract and Modern the
+/// accent is a function of the clock, and with the Default mode's wave on it is
+/// too, so those frames genuinely differ from the last one. With the wave off in
+/// Default mode nothing is time-driven, so a settled HUD reports false and the
+/// caller repaints only when the state, the mode or the fade moved.
 pub fn paint(
     canvas: &mut Canvas,
     text: &mut TextEngine,
@@ -1022,21 +1340,36 @@ pub fn paint(
         return false;
     }
 
-    let m = Metrics::new(cfg.mode, cfg.scale);
+    let m = Metrics::with_line_spacing(cfg.mode, cfg.scale, cfg.line_spacing);
     let rect = canvas_rect(canvas);
     let rows = measure_rows(text, entries, cfg, &m);
     let live: Vec<String> = rows.iter().map(|row| row.key.clone()).collect();
+    // Measure before forgetting: an exit is painted from the geometry the row had
+    // on its last live frame, because there is nothing left to measure it from.
+    anim.remember(&rows, entries);
     anim.retain(&live);
-    let frame = Frame { cfg, m: &m, stamp: anim.stamp(now), global, dt: anim.dt };
+    let dt = anim.dt;
+    let frame = Frame {
+        cfg,
+        m: &m,
+        stamp: anim.stamp(now),
+        global,
+        background: global * cfg.opacity.clamp(0.0, 1.0),
+        dt,
+    };
 
     if cfg.watermark {
         paint_watermark(canvas, text, &frame, rect);
     }
-    let rows_moving = paint_rows(canvas, text, entries, anim, &frame, rect, &rows);
+    // Read *before* stepping: the frame that drops the last exit is the frame
+    // that erases the row from the surface, so it has to be pushed as well.
+    let exits_moving = anim.has_exits();
+    anim.step_exits(dt);
+    let rows_moving = paint_rows(canvas, text, anim, &frame, rect, &rows);
 
-    // The repaint rule: an entrance in flight, or an accent that moves with the
-    // clock while something is actually on screen.
-    rows_moving || (accent_is_animated(cfg) && !(rows.is_empty() && !cfg.watermark))
+    // The repaint rule: an entrance or an exit in flight, or an accent that moves
+    // with the clock while something is actually on screen.
+    rows_moving || exits_moving || (accent_is_animated(cfg) && !(rows.is_empty() && !cfg.watermark))
 }
 
 /// The watermark: one inline run on one baseline — the product name in the mode's
@@ -1067,29 +1400,54 @@ fn paint_watermark(
     let panel_y = watermark_panel_y(rect, m) - rect.y;
     let text_y = watermark_y(rect, m) - rect.y;
     let rise_like = m.mode.is_rise_like();
+    let modern = m.mode == Mode::Modern;
 
-    if rise_like {
-        let panel_w = watermark_panel_width(m, title_w, middle_w);
+    // The panel behind the run: the source's rectangular one for Rise/VapeV4, or
+    // Modern's card, rounded on all four corners like its rows. Both are the same
+    // shape of thing — a fill plus the accent bar against the run's right edge —
+    // so they share the drawing and differ only in the numbers.
+    let panel_w = if modern {
+        Some(modern_panel_width(m, run_w))
+    } else if rise_like {
+        Some(watermark_panel_width(m, title_w, middle_w))
+    } else {
+        None
+    };
+    if let Some(panel_w) = panel_w {
+        let panel_colour = if modern { MODERN_BACKGROUND } else { RISE_BACKGROUND };
+        let item_h = m.item_height.round().max(1.0) as u32;
         canvas.fill_rounded_rect_corners(
             box_x,
             panel_y,
             panel_w.round().max(1.0) as u32,
-            m.item_height.round().max(1.0) as u32,
+            item_h,
             chip_corners(m),
-            with_alpha(RISE_BACKGROUND, frame.global),
+            with_alpha(panel_colour, frame.background),
         );
-        canvas.fill_rect(
-            (box_x as f32 + panel_w - m.rise_rect_w).round() as i32,
-            panel_y,
-            m.rise_rect_w.round().max(1.0) as u32,
-            m.item_height.round().max(1.0) as u32,
-            with_alpha(pack(accent, 1.0), frame.global),
-        );
+        let bar_w = if modern { m.modern_rect_w } else { m.rise_rect_w };
+        let bar_x = (box_x as f32 + panel_w - bar_w).round() as i32;
+        let bar_px = bar_w.round().max(1.0) as u32;
+        if modern {
+            // Modern's bar rounds its own right corners to sit inside the card;
+            // the ported panel's bar is square, as the source draws it.
+            canvas.fill_rounded_rect_corners(
+                bar_x,
+                panel_y,
+                bar_px,
+                item_h,
+                [0.0, m.modern_card_radius, m.modern_card_radius, 0.0],
+                with_alpha(pack(accent, 1.0), frame.global),
+            );
+        } else {
+            canvas.fill_rect(bar_x, panel_y, bar_px, item_h, with_alpha(pack(accent, 1.0), frame.global));
+        }
     }
 
-    let text_x = (box_x as f32 + if rise_like { m.rise_pad_x } else { 0.0 }).round() as i32;
+    let text_x =
+        (box_x as f32 + if rise_like || modern { m.text_inset_x } else { 0.0 }).round() as i32;
     // Rise paints its title in `riseWatermarkTextColor` and leaves the accent to
-    // the panel's bar (HUD.cpp:556); every other mode paints it in the accent.
+    // the panel's bar (HUD.cpp:556); every other mode — Modern included — paints
+    // it in the accent.
     let title_colour = if m.mode == Mode::Rise {
         RISE_WATERMARK_TEXT
     } else {
@@ -1118,21 +1476,19 @@ fn paint_watermark(
     }
 }
 
-/// The module list (HUD.cpp:565-645). Returns true while any row is still sliding.
+/// The module list (HUD.cpp:565-645). Returns true while any row is still sliding
+/// in; the rows on their way out are painted here too and are reported by
+/// `paint`'s own exit flag rather than by this one.
 fn paint_rows(
     canvas: &mut Canvas,
     text: &mut TextEngine,
-    entries: &[Entry],
     anim: &mut Anim,
     frame: &Frame,
     rect: Rect,
     rows: &[Row],
 ) -> bool {
     let m = frame.m;
-    let name_font = frame.cfg.mode.name_font();
-    let space_w = text.measure(FontId::Body, " ") as f32;
-    let bar_w = bar_width(m);
-    let mut moving = false;
+    let mut moving = paint_exits(canvas, text, anim, frame, rect);
 
     for (index, row) in rows.iter().enumerate() {
         // The source advances every listed row's progress every frame
@@ -1152,55 +1508,145 @@ fn paint_rows(
         // disagree by a pixel about where the row is.
         let box_x = current.round() as i32 - rect.x;
         let y = row_y(rect, m, index) - rect.y;
-        let item_h = m.item_height.round().max(1.0) as u32;
         let accent = pack(accent(frame.cfg, frame.stamp, index), 1.0);
 
-        // The chip: Rise/VapeV4 fill the whole row, Tesseract its own dark one,
-        // Default nothing at all — and only ever the left corners are rounded
-        // (HUD.cpp:619-634).
-        if let Some(colour) = chip_colour(m) {
-            canvas.fill_rounded_rect_corners(
-                box_x,
-                y,
-                row.box_w.round().max(1.0) as u32,
-                item_h,
-                chip_corners(m),
-                with_alpha(colour, frame.global),
-            );
-        }
-        // The accent bar, square, flush against the row's right edge.
-        if bar_w > 0.0 {
-            canvas.fill_rect(
-                (box_x as f32 + row.box_w - bar_w).round() as i32,
-                y,
-                bar_w.round().max(1.0) as u32,
-                item_h,
-                with_alpha(accent, frame.global),
-            );
-        }
-
-        let text_x = (box_x as f32 + m.text_inset_x).round() as i32;
-        let text_y = (y as f32 + m.text_inset_y).round() as i32;
-        let entry = &entries[row.entry];
-
-        draw_shadowed(text, canvas, name_font, &row.name, text_x, text_y, accent, frame.global);
-
-        if row.tag_w > 0.0 {
-            let tag_x = (text_x as f32 + row.name_w + tag_gap(m, space_w)).round() as i32;
-            draw_shadowed(
-                text,
-                canvas,
-                FontId::Body,
-                &entry.value,
-                tag_x,
-                text_y,
-                tag_colour(m, entry.flash),
-                frame.global,
-            );
+        // The geometry `remember` just stored for this row: the same struct an
+        // exit is painted from, so the two cannot drift apart.
+        if let Some(shape) = anim.shape(&row.key) {
+            paint_row(canvas, text, frame, shape, box_x, y, 1.0, accent);
         }
     }
 
     moving
+}
+
+/// Paint the rows that have left the published list. Each one fades and slides
+/// back towards the edge its mode enters from — the exact reverse of the
+/// entrance — and `Anim::step_exits` forgets it once the window is over.
+fn paint_exits(
+    canvas: &mut Canvas,
+    text: &mut TextEngine,
+    anim: &Anim,
+    frame: &Frame,
+    rect: Rect,
+) -> bool {
+    if anim.exits.is_empty() {
+        return false;
+    }
+    let m = frame.m;
+    // In the order the rows were listed, because a `HashMap`'s iteration order
+    // would let two leaving rows swap places frame to frame.
+    let mut leaving: Vec<&Exit> = anim.exits.values().collect();
+    leaving.sort_by_key(|exit| exit.shape.slot);
+
+    for exit in leaving {
+        let t = Anim::exit_progress(exit);
+        // `eased_in` is where the row was when it left — a row removed halfway
+        // through its entrance leaves from halfway in, not from its resting place.
+        let eased_in = 1.0 - (1.0 - exit.entrance).powi(3);
+        // Ease-in: the row hangs where it was for a moment and then goes, which
+        // reads as the reverse of the entrance's ease-out.
+        let eased_out = t * t;
+        let target = row_target_x(rect, frame.cfg.position, m, exit.shape.box_w);
+        let origin = row_slide_origin(rect, frame.cfg.position, exit.shape.box_w);
+        let current = origin + (target - origin) * eased_in * (1.0 - eased_out);
+        let box_x = current.round() as i32 - rect.x;
+        let y = row_y(rect, m, exit.shape.slot) - rect.y;
+        let accent = pack(accent(frame.cfg, frame.stamp, exit.shape.slot), 1.0);
+        paint_row(canvas, text, frame, &exit.shape, box_x, y, 1.0 - t, accent);
+    }
+    true
+}
+
+/// Paint one row: its card, the accent bar, the work-pulse wash and its two text
+/// runs. A listed row and a row on its way out both come through here, so an exit
+/// cannot look different from the frame that preceded it. `fade` is the row's own
+/// 0..1 multiplier on top of the overlay's — 1.0 for a listed row, the exit's
+/// ramp for one on its way out.
+fn paint_row(
+    canvas: &mut Canvas,
+    text: &mut TextEngine,
+    frame: &Frame,
+    shape: &RowShape,
+    box_x: i32,
+    y: i32,
+    fade: f32,
+    accent: u32,
+) {
+    let m = frame.m;
+    let name_font = frame.cfg.mode.name_font();
+    let item_h = m.item_height.round().max(1.0) as u32;
+    let box_w = shape.box_w.round().max(1.0) as u32;
+    let strength = flash_strength(shape.flash);
+    let text_alpha = frame.global * fade;
+
+    // The chip: Rise/VapeV4 fill the whole row, Tesseract its own dark one,
+    // Modern its rounded card, Default nothing at all (HUD.cpp:619-634).
+    if let Some(colour) = chip_colour(m) {
+        canvas.fill_rounded_rect_corners(
+            box_x,
+            y,
+            box_w,
+            item_h,
+            chip_corners(m),
+            with_alpha(colour, frame.background * fade),
+        );
+    }
+    // The work pulse: a wash over the whole row, strongest at `flash` 255 and
+    // exactly absent at 0. It is applied above the card and below the text, and
+    // it is the part of the pulse every mode can show — Default has no card to
+    // tint, and a tag colour alone cannot carry a 0..255 level.
+    if strength > 0.0 {
+        canvas.fill_rounded_rect_corners(
+            box_x,
+            y,
+            box_w,
+            item_h,
+            chip_corners(m),
+            with_alpha(FLASH_WASH, frame.background * fade * strength),
+        );
+    }
+    // The accent bar, flush against the row's right edge. Modern rounds its right
+    // corners to match the card; the ported modes keep the square bar.
+    let bar_w = bar_width(m);
+    if bar_w > 0.0 {
+        let bar_x = (box_x as f32 + shape.box_w - bar_w).round() as i32;
+        let bar_px = bar_w.round().max(1.0) as u32;
+        if m.mode == Mode::Modern {
+            // Modern's bar rounds its own right corners to sit inside the card.
+            canvas.fill_rounded_rect_corners(
+                bar_x,
+                y,
+                bar_px,
+                item_h,
+                [0.0, m.modern_card_radius, m.modern_card_radius, 0.0],
+                with_alpha(accent, text_alpha),
+            );
+        } else {
+            // The ported modes' bar is the source's square one.
+            canvas.fill_rect(bar_x, y, bar_px, item_h, with_alpha(accent, text_alpha));
+        }
+    }
+
+    let text_x = (box_x as f32 + m.text_inset_x).round() as i32;
+    let text_y = (y as f32 + m.text_inset_y).round() as i32;
+
+    draw_shadowed(text, canvas, name_font, &shape.name, text_x, text_y, accent, text_alpha);
+
+    if shape.tag_w > 0.0 {
+        let space_w = text.measure(FontId::Body, " ") as f32;
+        let tag_x = (text_x as f32 + shape.name_w + tag_gap(m, space_w)).round() as i32;
+        draw_shadowed(
+            text,
+            canvas,
+            FontId::Body,
+            &shape.value,
+            tag_x,
+            text_y,
+            tag_colour(m, shape.flash != 0, accent),
+            text_alpha,
+        );
+    }
 }
 
 // ── the numbers behind the picture ──────────────────────────────────────────
@@ -1230,7 +1676,7 @@ fn rgb_text(rgb: [f32; 3]) -> String {
 /// dump and the printed numbers cannot drift apart. The numbers are canvas-local
 /// (the review canvas starts at the origin).
 pub fn describe(text: &TextEngine, entries: &[Entry], cfg: &Config, canvas_w: u32, canvas_h: u32) -> String {
-    let m = Metrics::new(cfg.mode, cfg.scale);
+    let m = Metrics::with_line_spacing(cfg.mode, cfg.scale, cfg.line_spacing);
     let rect = Rect::new(0, 0, canvas_w as i32, canvas_h as i32);
     let rows = measure_rows(text, entries, cfg, &m);
     let mut out = String::new();
@@ -1265,6 +1711,13 @@ pub fn describe(text: &TextEngine, entries: &[Entry], cfg: &Config, canvas_w: u3
         m.rise_pad_y,
         hex(SHADOW),
         if m.mode.is_rise_like() { hex(RISE_SECONDARY_TEXT) } else { hex(SECONDARY_TEXT) },
+    ));
+    out.push_str(&format!(
+        "  background opacity {:.0}% of the fills only (text at 100%) | rows {} | work pulse {} \
+         washed red by flash/255\n",
+        cfg.opacity * 100.0,
+        if cfg.ordered { "in published order (orderPublished)" } else { "sorted by width (the wedge)" },
+        hex(FLASH_WASH),
     ));
     out.push_str(&format!(
         "  review rect {}x{} at ({}, {})..({}, {}) | list edge x={} | --position {:?} | {} rows, \
@@ -1309,6 +1762,20 @@ pub fn describe(text: &TextEngine, entries: &[Entry], cfg: &Config, canvas_w: u3
                 m.rise_rect_w,
                 if m.mode == Mode::Vape { "left-rounded 6px" } else { "square" },
             ));
+        } else if m.mode == Mode::Modern {
+            out.push_str(&format!(
+                ", card {:.0}x{:.0} at ({}, {}) {} radius {:.0} on all four corners, pad {}x{}, \
+                 bar {:.0}px rounded right",
+                modern_panel_width(&m, run_w),
+                m.item_height,
+                box_x,
+                (rect.y as f32 + m.top_y).round() as i32,
+                hex(MODERN_BACKGROUND),
+                m.modern_card_radius,
+                m.modern_pad_x,
+                m.modern_pad_y,
+                m.modern_rect_w,
+            ));
         }
         out.push('\n');
         out.push_str(&format!(
@@ -1342,12 +1809,16 @@ pub fn describe(text: &TextEngine, entries: &[Entry], cfg: &Config, canvas_w: u3
             (row_target_x(rect, cfg.position, &m, row.box_w) + row.box_w - bar_width(&m)).round() as i32,
         ));
         if row.tag_w > 0.0 {
+            let accent_now = pack(accent(cfg, Stamp { seconds: SEED_MS as f32 / 1000.0, millis: SEED_MS as f64 }, slot), 1.0);
             out.push_str(&format!(
                 " (gap {:.0}), tag {:.0}px {}",
                 tag_gap(&m, text.measure(FontId::Body, " ") as f32),
                 row.tag_w,
-                hex(tag_colour(&m, entry.flash)),
+                hex(tag_colour(&m, entry.flash != 0, accent_now)),
             ));
+            if entry.flash != 0 {
+                out.push_str(&format!(", WORK PULSE {}/255", entry.flash));
+            }
         }
         out.push('\n');
     }
@@ -1357,8 +1828,8 @@ pub fn describe(text: &TextEngine, entries: &[Entry], cfg: &Config, canvas_w: u3
 
     out.push_str(&format!(
         "motion: entrance slide from the screen edge, progress += dt*{SLIDE_RATE} (dt clamped to \
-         {MAX_DELTA_S}s), easeOutCubic; exit instant | accent {} | defaults wave cycle \
-         {WAVE_CYCLE_MS}ms/{WAVE_ROW_OFFSET_MS}ms per row\n",
+         {MAX_DELTA_S}s), easeOutCubic; exit slide back to that edge with a {EXIT_SECS}s fade | \
+         accent {} | defaults wave cycle {WAVE_CYCLE_MS}ms/{WAVE_ROW_OFFSET_MS}ms per row\n",
         if accent_is_animated(cfg) { "time-driven (repaints)" } else { "static" },
     ));
     out
@@ -1376,11 +1847,14 @@ mod tests {
         near(got[0], want[0]) && near(got[1], want[1]) && near(got[2], want[2])
     }
 
+    /// `flash` stays a bool at the call sites because every test that predates
+    /// contract v3 means "working / not working"; the wire value v3 carries is
+    /// 255 for the working case, which is the strength that tints the row most.
     fn entry(id: u32, name: &str, value: &str, flash: bool) -> Entry {
         Entry {
             id,
             enabled: true,
-            flash,
+            flash: if flash { 255 } else { 0 },
             highlight: false,
             name: name.to_string(),
             value: value.to_string(),
@@ -1428,6 +1902,36 @@ mod tests {
         assert_eq!(Metrics::new(Mode::Tesseract, 1.0).watermark_y, 6.0);
         assert_eq!(Metrics::new(Mode::Tesseract, 1.0).base_y, 2.0, "Tesseract rows");
         assert_eq!(Metrics::new(Mode::Default, 1.0).watermark_x, 10.0, "cursorX = 10");
+    }
+
+    /// The user's line-spacing knob scales the row pitch — the whole pitch, not just
+    /// the gap, so it works in the modes whose own `moduleSpacing` is 0 (Rise/VapeV4
+    /// chips touch, and a multiplier on the gap alone would leave the knob dead).
+    #[test]
+    fn line_spacing_scales_the_row_pitch_in_every_mode() {
+        for mode in [Mode::Default, Mode::Rise, Mode::Vape, Mode::Tesseract, Mode::Modern] {
+            let one = Metrics::with_line_spacing(mode, 1.0, 1.0);
+            let one_and_a_half = Metrics::with_line_spacing(mode, 1.0, 1.5);
+            let tight = Metrics::with_line_spacing(mode, 1.0, 0.5);
+
+            assert_eq!(row_pitch(&one), one.item_height + one.module_spacing, "{mode:?}");
+            assert_eq!(row_pitch(&one_and_a_half), row_pitch(&one) * 1.5, "{mode:?}");
+            assert_eq!(row_pitch(&tight), row_pitch(&one) * 0.5, "{mode:?}");
+            // The chip itself is untouched: only the distance between rows moves.
+            assert_eq!(one_and_a_half.item_height, one.item_height, "{mode:?}");
+            assert_eq!(one_and_a_half.font_px, one.font_px, "{mode:?}");
+        }
+    }
+
+    /// A pitch of zero would stack every row on top of the previous one, and a
+    /// writer that asks for 100x must not push the list off the surface.
+    #[test]
+    fn line_spacing_is_clamped() {
+        assert_eq!(Metrics::with_line_spacing(Mode::Default, 1.0, 0.0).line_spacing, 0.1);
+        assert_eq!(Metrics::with_line_spacing(Mode::Default, 1.0, 99.0).line_spacing, 2.0);
+        assert_eq!(Metrics::with_line_spacing(Mode::Default, 1.0, f32::NAN).line_spacing, 1.0);
+        // `new` is `with_line_spacing(.., 1.0)`, so the reference geometry is unchanged.
+        assert_eq!(Metrics::new(Mode::Default, 1.0).line_spacing, 1.0);
     }
 
     /// `--scale` multiplies every metric and the font size; 1.0 is the source.
@@ -1631,7 +2135,7 @@ mod tests {
         assert!(accent_is_animated(&cfg), "Default + wave");
         cfg.wave = false;
         assert!(!accent_is_animated(&cfg), "Default without the wave");
-        for mode in [Mode::Rise, Mode::Vape, Mode::Tesseract] {
+        for mode in [Mode::Rise, Mode::Vape, Mode::Tesseract, Mode::Modern] {
             let cfg = Config { mode, wave: false, ..Config::default() };
             assert!(accent_is_animated(&cfg), "{mode:?} is always animated");
         }
@@ -1809,14 +2313,23 @@ mod tests {
         }
 
         // The tag colour rule the source encodes at HUD.cpp:640: the active red is
-        // VapeV4's alone; every other mode stays grey whatever the flash says.
+        // VapeV4's alone; every other ported mode stays grey whatever the flash
+        // says. Modern is the exception — its tag *is* the row's accent.
+        let accent = argb(1, 2, 3, 255);
         for mode in [Mode::Default, Mode::Rise, Mode::Tesseract] {
             let m = Metrics::new(mode, 1.0);
-            assert_eq!(tag_colour(&m, true), tag_colour(&m, false), "{mode:?} keeps its grey");
+            assert_eq!(
+                tag_colour(&m, true, accent),
+                tag_colour(&m, false, accent),
+                "{mode:?} keeps its grey"
+            );
         }
         let vape = Metrics::new(Mode::Vape, 1.0);
-        assert_eq!(tag_colour(&vape, true), VAPE_TAG_ACTIVE);
-        assert_eq!(tag_colour(&vape, false), RISE_SECONDARY_TEXT);
+        assert_eq!(tag_colour(&vape, true, accent), VAPE_TAG_ACTIVE);
+        assert_eq!(tag_colour(&vape, false, accent), RISE_SECONDARY_TEXT);
+        let modern = Metrics::new(Mode::Modern, 1.0);
+        assert_eq!(tag_colour(&modern, false, accent), accent, "Modern's tag is the accent");
+        assert_eq!(tag_colour(&modern, true, accent), accent, "and the wash carries the pulse");
     }
 
     /// `FormatModuleName` (HUD.cpp:125-150) for `--spaced`: interior capitals are
@@ -1832,8 +2345,8 @@ mod tests {
     }
 
     /// The watermark run is the source's `name | nickname | "<n> FPS"` again, now
-    /// that contract v2 publishes both segments — with any segment the state had
-    /// nothing to say about dropped, separators included.
+    /// that the state header publishes both segments — with any segment the state
+    /// had nothing to say about dropped, separators included.
     #[test]
     fn the_watermark_run_drops_the_segments_it_has_nothing_for() {
         assert_eq!(watermark_text("gtier", 144), "DOPPEL | gtier | 144 FPS");
@@ -2000,5 +2513,329 @@ mod tests {
                 Some(want) => assert_eq!(&pixels, want, "origin ({x}, {y}) moved the HUD"),
             }
         }
+    }
+
+    // ── Modern, this port's own mode ────────────────────────────────────────
+
+    /// Modern's numbers, none of which come from the source: a taller row than
+    /// Default, 4 px of spacing, a card rounded on all four corners, a 3 px bar
+    /// and a watermark that is a card too. The point of the mode is that none of
+    /// this is a recolour of the other four, so the geometry is pinned here.
+    #[test]
+    fn modern_is_its_own_geometry_not_a_recolour_of_the_four() {
+        let m = Metrics::new(Mode::Modern, 1.0);
+        assert_eq!(m.font_px, 16.0);
+        assert_eq!(m.item_height, 22.0, "Default's +2 plus the ~4 the mode asks for");
+        assert_eq!(m.module_spacing, 4.0, "~4 px between cards");
+        assert_eq!(row_pitch(&m), 26.0);
+        assert_eq!(m.right_margin, 6.0, "~6 px of right margin");
+        assert_eq!(m.base_y, 4.0);
+        assert_eq!(bar_width(&m), 3.0);
+        assert_eq!(chip_corners(&m), [6.0; 4], "rounded on all four corners");
+        assert_eq!(chip_colour(&m), Some(MODERN_BACKGROUND));
+        assert!(MODERN_BACKGROUND >> 24 < 255, "the card is translucent");
+        assert!(!m.mode.is_rise_like(), "Modern shares nothing with Rise/VapeV4");
+        assert_eq!(m.mode.name_font() as u8, FontId::Body as u8);
+        assert_eq!(box_width(&m, 100.0), 100.0 + 12.0 + 3.0);
+        assert_eq!(tag_gap(&m, 4.0), 4.0, "a space glyph, not Tesseract's gap");
+
+        // The card's own numbers scale like every other mode's.
+        let two = Metrics::new(Mode::Modern, 2.0);
+        assert_eq!(chip_corners(&two), [12.0; 4]);
+        assert_eq!(bar_width(&two), 6.0);
+        assert_eq!(row_pitch(&two), 52.0);
+        assert_eq!(two.scale, 2.0);
+
+        // The watermark is a card as tall as a row, with the run inset inside it
+        // the way Rise's panel does it.
+        assert_eq!(m.watermark_y, 6.0, "topY + the card's pad");
+        assert_eq!(m.text_inset_x, 6.0);
+        assert_eq!(m.text_inset_y, 2.0);
+        assert_eq!(modern_panel_width(&m, 100.0), 100.0 + 12.0 + 3.0);
+
+        // The mode is reachable from the command line and from the header's
+        // three-bit field, and it is animated by construction.
+        assert_eq!(Mode::parse("modern").unwrap(), Mode::Modern);
+        assert_eq!(Mode::parse("MODERN").unwrap(), Mode::Modern);
+        assert_eq!(Mode::Modern.label(), "modern");
+        assert!(Mode::parse("bogus").is_err());
+        assert!(accent_is_animated(&Config { mode: Mode::Modern, wave: false, ..Config::default() }));
+    }
+
+    /// Modern's accent: a slow, pure function of the clock between two colours,
+    /// with a per-row offset — never a copy of one of the four ported ones.
+    #[test]
+    fn modern_sweeps_slowly_between_two_colours() {
+        let cold = [0.30, 0.78, 1.00];
+        let warm = [0.70, 0.44, 1.00];
+        assert!(rgb_near(modern_rgb(0.0, 0.0), cold));
+        assert!(rgb_near(modern_rgb((MODERN_SWEEP_MS / 2.0) as f64, 0.0), warm));
+        // One full sweep is back where it started, and the phase is the clock's
+        // alone: the same millisecond gives the same colour, always.
+        assert!(rgb_near(modern_rgb(MODERN_SWEEP_MS as f64, 0.0), cold));
+        assert_eq!(modern_rgb(1234.0, 2.0), modern_rgb(1234.0, 2.0));
+
+        // Rows are offset from each other, so the column is a gradient.
+        assert!(!rgb_near(modern_rgb(0.0, 0.0), modern_rgb(0.0, 1.0)));
+        // Every colour stays inside the unit cube, whatever the clock says.
+        for step in 0..40 {
+            for index in 0..4 {
+                let c = modern_rgb(step as f64 * 137.0, index as f32);
+                assert!(c.iter().all(|v| (0.0..=1.0).contains(v)), "{c:?}");
+            }
+        }
+
+        // The overlay's own row function is that function, and it is genuinely
+        // slower than the four ported accents: a fifth of a second in, the colour
+        // has barely moved.
+        let cfg = Config { mode: Mode::Modern, ..Config::default() };
+        let stamp = Stamp { seconds: 1.0, millis: 2000.0 };
+        assert_eq!(accent(&cfg, stamp, 0), modern_rgb(2000.0, 0.0));
+        let drift = modern_rgb(200.0, 0.0);
+        let moved = (0..3).map(|i| (drift[i] - cold[i]).abs()).fold(0.0f32, f32::max);
+        assert!(moved < 0.1, "a 200 ms step must not jump the sweep: {drift:?}");
+    }
+
+    // ── the exit animation (contract v3) ────────────────────────────────────
+
+    /// The timeline of a row leaving: it is remembered while it is listed, it
+    /// starts an exit the frame it disappears, it is painted for ~220 ms and then
+    /// it is forgotten — and its slide state goes with it, so a module that comes
+    /// back slides in from the edge again.
+    #[test]
+    fn a_row_that_leaves_is_painted_for_the_exit_window_and_then_forgotten() {
+        let text = TextEngine::new(1.0).expect("GDI text engine");
+        let entries = vec![entry(1, "Velocity", "82%", false)];
+        let cfg = Config::default();
+        let m = Metrics::new(cfg.mode, 1.0);
+        let rows = measure_rows(&text, &entries, &cfg, &m);
+
+        let mut anim = Anim::new();
+        anim.remember(&rows, &entries);
+        anim.retain(&["Velocity".to_string()]);
+        assert!(!anim.has_exits(), "a row that is still listed has not left");
+
+        // It was halfway through its entrance when it disappeared, which is the
+        // position its exit has to start from.
+        assert!(near(anim.progress("Velocity", 0.1), 0.6));
+        anim.retain(&[]);
+        assert!(anim.has_exits(), "the frame it disappears it starts leaving");
+        let (elapsed, entrance) = {
+            let exit = anim.exits.values().next().expect("one exit");
+            (exit.elapsed, exit.entrance)
+        };
+        assert_eq!(elapsed, 0.0);
+        assert!(near(entrance, 0.6), "the exit starts where the row was");
+
+        // 220 ms at 60 Hz. The frame that finds the window over is still a frame
+        // that has to be pushed — it is the one that erases the row.
+        let dt = 1.0 / 60.0;
+        let mut frames = 0;
+        while anim.has_exits() {
+            anim.step_exits(dt);
+            frames += 1;
+            assert!(frames <= 20, "an exit must end");
+        }
+        assert_eq!(frames, (EXIT_SECS / dt).ceil() as usize, "220 ms at 60 Hz");
+        assert_eq!(frames, 14);
+        assert!(!anim.has_exits(), "and then it is forgotten");
+
+        // The slide state left with it: a module that comes back starts from the
+        // edge rather than from wherever it was dropped.
+        assert!(near(anim.progress("Velocity", 0.01), 0.06));
+        let _ = anim.shape("Velocity");
+
+        // A row that comes back while it is still leaving is live again, not two
+        // rows: the exit is dropped the moment the name is listed.
+        let mut anim = Anim::new();
+        anim.remember(&rows, &entries);
+        anim.retain(&[]);
+        assert!(anim.has_exits());
+        anim.remember(&rows, &entries);
+        anim.retain(&["Velocity".to_string()]);
+        assert!(!anim.has_exits(), "the returning row cancels its own exit");
+    }
+
+    /// `paint` has to keep the frames coming for the whole exit window: a mode
+    /// that is otherwise completely static (Default without the wave) would
+    /// otherwise leave the row's last pixels on screen for good.
+    #[test]
+    fn paint_keeps_pushing_frames_while_a_row_is_leaving() {
+        let mut text = TextEngine::new(1.0).expect("GDI text engine");
+        let mut canvas = Canvas::new(520, 400);
+        let t0 = Instant::now();
+        let both = vec![entry(1, "Velocity", "82%", false), entry(2, "Reach", "3.1-3.3", false)];
+        let one = vec![entry(1, "Velocity", "82%", false)];
+        let cfg = Config { mode: Mode::Default, wave: false, ..Config::default() };
+
+        let mut anim = Anim::new();
+        anim.seed(&both, t0);
+        canvas.clear();
+        assert!(!paint(&mut canvas, &mut text, &both, &mut anim, t0, &cfg), "a settled static HUD");
+        assert!(anim.exits.is_empty());
+
+        // One module is disabled. Every frame from here is one the compositor has
+        // to be given, right up to the frame that erases the row.
+        let mut frames = 0;
+        loop {
+            frames += 1;
+            assert!(frames <= 30, "the exit must end");
+            let at = t0 + Duration::from_millis(16 * frames);
+            anim.tick(at);
+            canvas.clear();
+            if !paint(&mut canvas, &mut text, &one, &mut anim, at, &cfg) {
+                break;
+            }
+        }
+        assert!(!anim.has_exits(), "and the row is forgotten by then");
+        assert!(frames >= 14, "the exit held the frames for its whole window: {frames}");
+
+        // A review dump never has an exit in flight: `seed` empties them, so a
+        // dump cannot depend on the frame that ran before it.
+        let mut anim = Anim::new();
+        anim.remember(&measure_rows(&text, &both, &cfg, &Metrics::new(cfg.mode, 1.0)), &both);
+        anim.retain(&[]);
+        assert!(anim.has_exits());
+        anim.seed(&both, t0);
+        assert!(!anim.has_exits() && anim.shapes.is_empty());
+    }
+
+    // ── the work pulse (contract v3's entry `flash`) ────────────────────────
+
+    /// The pulse is a strength, not a flag: 255 washes the row further towards
+    /// red than 0 (which does nothing at all), and a decaying value lands between
+    /// the two. Measured on the pixels, because "clearly visible" is the
+    /// requirement and `flash_strength` alone cannot prove it.
+    #[test]
+    fn a_full_flash_washes_the_row_redder_than_none() {
+        let mut text = TextEngine::new(1.0).expect("GDI text engine");
+        let now = Instant::now();
+        let cfg = Config { mode: Mode::Modern, ..Config::default() };
+
+        let mut redness = |flash: u8| {
+            let entries = vec![Entry {
+                id: 1,
+                enabled: true,
+                flash,
+                highlight: false,
+                name: "Velocity".to_string(),
+                value: "82%".to_string(),
+            }];
+            let mut anim = Anim::new();
+            anim.seed(&entries, now);
+            let mut canvas = Canvas::placed(0, 0, 520, 400);
+            canvas.clear();
+            paint(&mut canvas, &mut text, &entries, &mut anim, now, &cfg);
+
+            // Modern's card is dark and cold, so red-minus-blue summed over the
+            // first row's band is the wash and nothing else.
+            let m = Metrics::new(Mode::Modern, 1.0);
+            let y = row_y(Rect::new(0, 0, 520, 400), &m, 0);
+            let mut sum = 0i64;
+            for py in y..y + m.item_height.round() as i32 {
+                for px in 0..520u32 {
+                    let p = canvas.pixel(px, py as u32);
+                    sum += ((p >> 16) & 0xFF) as i64 - (p & 0xFF) as i64;
+                }
+            }
+            sum
+        };
+
+        assert_eq!(flash_strength(0), 0.0);
+        assert_eq!(flash_strength(255), 1.0);
+        assert!(near(flash_strength(128), 128.0 / 255.0));
+
+        let cold = redness(0);
+        let hot = redness(255);
+        let mid = redness(128);
+        assert!(hot > cold, "flash 255 must tint more than 0: {hot} vs {cold}");
+        assert!(mid > cold && mid < hot, "a decaying pulse lands between: {cold} < {mid} < {hot}");
+        assert_eq!(redness(0), cold, "0 is deterministic — no wash at all");
+    }
+
+    // ── the two v3 config knobs ─────────────────────────────────────────────
+
+    /// `orderPublished`: the published order survives instead of being sorted by
+    /// width. The sort is the reference's wedge (HUD.cpp:340-342), so it stays
+    /// the default and only the flag turns it off.
+    #[test]
+    fn the_published_order_survives_when_the_header_asks_for_it() {
+        let text = TextEngine::new(1.0).expect("GDI text engine");
+        let entries = vec![
+            entry(1, "Reach", "3.1-3.3", false),
+            entry(2, "AutoClicker", "12.3 cps", false),
+            entry(3, "Velocity", "82%", false),
+        ];
+        let names = |cfg: &Config| -> Vec<String> {
+            measure_rows(&text, &entries, cfg, &Metrics::new(cfg.mode, 1.0))
+                .into_iter()
+                .map(|row| row.name)
+                .collect()
+        };
+
+        let wedge = Config::default();
+        let sorted = names(&wedge);
+        assert_eq!(sorted[0], "AutoClicker", "the widest row leads the wedge");
+        assert_ne!(sorted, vec!["Reach", "AutoClicker", "Velocity"], "…so it is not the file's order");
+
+        let kept = names(&Config { ordered: true, ..Config::default() });
+        assert_eq!(kept, vec!["Reach", "AutoClicker", "Velocity"], "the published order, untouched");
+    }
+
+    /// The opacity knob scales the *background* fills only. Default has no fills
+    /// at all, so it is the control: the same frame whatever the opacity is. A
+    /// carded mode dims its card — and the row's text is not dimmed with it.
+    #[test]
+    fn background_opacity_dims_the_fills_and_leaves_the_text_alone() {
+        let mut text = TextEngine::new(1.0).expect("GDI text engine");
+        let now = Instant::now();
+        let entries = vec![entry(1, "Velocity", "82%", false)];
+
+        let mut frame = |mode: Mode, opacity: f32| {
+            let cfg = Config { mode, opacity, ..Config::default() };
+            let mut anim = Anim::new();
+            anim.seed(&entries, now);
+            let mut canvas = Canvas::placed(0, 0, 520, 400);
+            canvas.clear();
+            paint(&mut canvas, &mut text, &entries, &mut anim, now, &cfg);
+            canvas
+        };
+
+        // No background fill in Default mode: the knob changes nothing, so the
+        // labels are demonstrably not scaled by it.
+        assert_eq!(
+            frame(Mode::Default, 1.0).pixels(),
+            frame(Mode::Default, 0.25).pixels(),
+            "the text must not dim with the background"
+        );
+
+        // Tesseract's chip is opaque (alpha 240), so dimming it is visible in the
+        // alpha channel of every pixel the card covers.
+        let alpha_sum = |canvas: &Canvas| -> u64 {
+            let m = Metrics::new(Mode::Tesseract, 1.0);
+            let y = row_y(Rect::new(0, 0, 520, 400), &m, 0);
+            let mut sum = 0u64;
+            for py in y..y + m.item_height.round() as i32 {
+                for px in 0..520u32 {
+                    sum += (canvas.pixel(px, py as u32) >> 24) as u64;
+                }
+            }
+            sum
+        };
+        let full = frame(Mode::Tesseract, 1.0);
+        let dim = frame(Mode::Tesseract, 0.25);
+        assert!(alpha_sum(&dim) < alpha_sum(&full), "the card's fill dims");
+        // The glyphs are still drawn at full strength — the brightest pixel of the
+        // frame is the same 255 in both. (Their edges do differ, because a glyph
+        // edge composited over a dimmer card is a dimmer pixel: that is the card
+        // showing through, not the text fading.)
+        let brightest = |canvas: &Canvas| canvas.pixels().iter().map(|p| p >> 24).max();
+        assert_eq!(brightest(&dim), Some(255));
+        assert_eq!(brightest(&dim), brightest(&full), "the text is not scaled by the knob");
+
+        // 0 % leaves the fills invisible; the text and the accent bar stand.
+        let none = frame(Mode::Tesseract, 0.0);
+        assert!(alpha_sum(&none) < alpha_sum(&dim));
+        assert!(none.pixels().iter().any(|pixel| *pixel != 0), "text only");
     }
 }

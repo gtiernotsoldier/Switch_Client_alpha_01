@@ -9,6 +9,9 @@ import io.doppel.adapter.common.module.ModuleRegistry
 import io.doppel.adapter.common.option.boolean
 import io.doppel.adapter.common.option.choices
 import io.doppel.adapter.common.option.color
+import io.doppel.adapter.common.option.float
+import io.doppel.adapter.common.option.int
+import io.doppel.adapter.common.option.string
 import io.doppel.adapter.common.option.ConfigManager
 import io.doppel.core.model.PlayerState
 import io.doppel.core.model.TargetState
@@ -65,8 +68,8 @@ object HUD : Module("HUD", Category.RENDER) {
     // CLI flag still wins. That is what lets a user switch list effect without relaunching the
     // injector (B1).
 
-    /** Which of the ported HUD's four modes the overlay draws. */
-    var overlayMode by choices("OverlayMode", arrayOf("Default", "Rise", "VapeV4", "Tesseract"))
+    /** Which of the ported HUD's modes the overlay draws (plus this port's Modern mode). */
+    var overlayMode by choices("OverlayMode", arrayOf("Default", "Rise", "VapeV4", "Tesseract", "Modern"))
 
     /** The Default mode's accent animation. */
     var overlayWave by boolean("OverlayWave", true)
@@ -82,20 +85,166 @@ object HUD : Module("HUD", Category.RENDER) {
     var overlaySecondary by color("OverlaySecondaryColor", HudStateWriter.DEFAULT_SECONDARY)
 
     /**
-     * The contract-v2 header for the external overlay, built from the options above plus the
-     * platform's player name and frame counter ([EventBridge.localPlayerName] /
-     * [EventBridge.clientFps] — the common module cannot reach Minecraft itself).
+     * The overlay's own scale, 1.0 = the reference's physical-pixel layout.
+     *
+     * 1.0 is written to the header as "unset", so an overlay launched with an explicit `--scale`
+     * keeps it until the user actually moves this; every other value wins over the command line.
      */
-    fun overlayHeader(): HudStateWriter.Header = HudStateWriter.Header(
+    var overlayScale by float("OverlayScale", 1.0f, 0.5f..2.0f)
+
+    /** Background opacity percent of the overlay's rows and watermark panel. 100 = the header says "unset". */
+    var overlayOpacity by int("OverlayOpacity", 100, 10..100, "%")
+
+    /**
+     * The gap between overlay rows, as a percent of the mode's own.
+     *
+     * Separate from [overlayScale] on purpose: the scale also changes the font, so it cannot be used
+     * to loosen a list that is merely too tight. 100 = the header says "unset".
+     */
+    var overlayLineSpacing by int("OverlayLineSpacing", 100, 50..200, "%")
+
+    /**
+     * Row order in the overlay: "Width" is the reference's wedge (widest first), "Published" draws
+     * the list in the order the user arranged it (see [moveInHud]).
+     */
+    var overlayOrder by choices("OverlayOrder", arrayOf("Width", "Published"))
+
+    /**
+     * The user's manual HUD order, as a comma-separated list of module names.
+     *
+     * Stored as a plain string because it is a list, not a value: names not in it keep their
+     * alphabetical/category order after the listed ones, so adding a module never invalidates it.
+     */
+    var hudOrderRaw by string("HudOrder", "")
+
+    // ═══════════════════════════════════════════
+    //  Overlay style (cached; rebuilt on config change)
+    // ═══════════════════════════════════════════
+
+    /** Everything in the header that comes from an option rather than from the running game. */
+    private data class OverlayStyle(
+        val wave: Boolean,
+        val spaced: Boolean,
+        val watermark: Boolean,
+        val mode: Int,
+        val primary: Int,
+        val secondary: Int,
+        val scale: Float,
+        val opacity: Int,
+        val lineSpacing: Int,
+        val ordered: Boolean
+    )
+
+    // Rebuilt only when an option under this module changes. The render loop asks for the header
+    // every frame, and reading eight declared options through ConfigManager each time was pure
+    // per-frame overhead for values that change maybe once a session.
+    @Volatile
+    private var styleCache: OverlayStyle? = null
+
+    private fun style(): OverlayStyle = styleCache ?: buildStyle().also { styleCache = it }
+
+    private fun buildStyle(): OverlayStyle = OverlayStyle(
         wave = overlayWave,
         spaced = overlaySpaced,
         watermark = overlayWatermark,
         mode = HudStateWriter.modeCode(overlayMode),
         primary = overlayPrimary,
         secondary = overlaySecondary,
-        fps = EventBridge.clientFps,
-        nickname = EventBridge.localPlayerName
+        // "Unset" is the overlay's own default, so an explicit command line still wins.
+        scale = if (overlayScale == 1.0f) 0f else overlayScale,
+        opacity = if (overlayOpacity >= 100) 0 else overlayOpacity,
+        lineSpacing = if (overlayLineSpacing == 100) 0 else overlayLineSpacing,
+        ordered = overlayOrder == "Published"
     )
+
+    /**
+     * The contract-v3 header for the external overlay. The option-derived part is cached; the
+     * nickname and frame counter are read live, because those change while the game runs.
+     */
+    fun overlayHeader(): HudStateWriter.Header {
+        val s = style()
+        return HudStateWriter.Header(
+            wave = s.wave,
+            spaced = s.spaced,
+            watermark = s.watermark,
+            mode = s.mode,
+            primary = s.primary,
+            secondary = s.secondary,
+            fps = EventBridge.clientFps,
+            nickname = EventBridge.localPlayerName,
+            scale = s.scale,
+            opacity = s.opacity,
+            lineSpacing = s.lineSpacing,
+            orderPublished = s.ordered
+        )
+    }
+
+    /**
+     * The work-pulse strength of a module, 0..255, sampled at publish time.
+     *
+     * `Module.markWorked()` / `flashStrength()` have existed since the module layer was written but
+     * nothing ever read them: the HUD published the module's *enabled* flag in the flash byte
+     * instead, which is why an active module drew a steady red bar rather than a pulse when it
+     * actually did something. Unknown names (the title row) are simply idle.
+     */
+    fun flashByte(name: String): Int {
+        val module = ModuleRegistry.get(name) ?: return 0
+        return (module.flashStrength() * 255f).toInt().coerceIn(0, 255)
+    }
+
+    // ═══════════════════════════════════════════
+    //  Manual HUD order
+    // ═══════════════════════════════════════════
+
+    private fun hudOrderList(): List<String> =
+        hudOrderRaw.split(',').map { it.trim() }.filter { it.isNotEmpty() }
+
+    /**
+     * Every module that can appear on the HUD, in the user's order.
+     *
+     * Deliberately the whole HUD-capable set rather than the currently enabled rows: the WebUI's
+     * up/down buttons must be able to place a module *before* it is switched on, and a disabled
+     * module keeps its slot instead of being re-appended when it comes back.
+     */
+    fun hudOrderedNames(): List<String> {
+        val rank = hudOrderList().withIndex().associate { (index, name) -> name to index }
+        return ModuleRegistry.getAll()
+            .filter { !it.hudHidden }
+            .map { it.name }
+            .sortedBy { rank[it] ?: Int.MAX_VALUE } // stable: unlisted names keep their own order
+    }
+
+    /** Where [name] sits in the HUD order, or -1. The WebUI's row order. */
+    fun hudIndexOf(name: String): Int = hudOrderedNames().indexOf(name)
+
+    /**
+     * Move one module a slot up or down in the HUD order, persist it and re-collect the rows.
+     * Returns false when the name is unknown or already at that end.
+     */
+    fun moveInHud(name: String, direction: String): Boolean {
+        // Validated here rather than only at the HTTP edge: anything that is not "up" used to fall
+        // through to the down branch, so a typo moved the row the wrong way instead of being
+        // ignored.
+        if (direction != "up" && direction != "down") return false
+        val order = hudOrderedNames().toMutableList()
+        val index = order.indexOf(name)
+        if (index < 0) return false
+        val target = if (direction == "up") index - 1 else index + 1
+        if (target < 0 || target >= order.size) return false
+        val moved = order[index]
+        order[index] = order[target]
+        order[target] = moved
+        hudOrderRaw = order.joinToString(",")
+        refreshLines()
+        return true
+    }
+
+    /** Apply the manual order to a module list, leaving unlisted modules where they were. */
+    private fun applyHudOrder(modules: List<Module>): List<Module> {
+        val rank = hudOrderList().withIndex().associate { (index, name) -> name to index }
+        if (rank.isEmpty()) return modules
+        return modules.sortedBy { rank[it.name] ?: Int.MAX_VALUE }
+    }
 
     // ═══════════════════════════════════════════
     //  Collection (event-driven)
@@ -111,9 +260,11 @@ object HUD : Module("HUD", Category.RENDER) {
             // Title row ("Doppel") at the top — matches the reference layout.
             add(HUDEntry(name = "Doppel", value = "", highlight = false, isRed = false))
             addAll(
-                ModuleRegistry.getEnabled()
-                    .filter { !it.hudHidden }
-                    .sortedWith(comparator())
+                applyHudOrder(
+                    ModuleRegistry.getEnabled()
+                        .filter { !it.hudHidden }
+                        .sortedWith(comparator())
+                )
                     .map { module ->
                         val provider = module as? HudLineProvider
                         // Custom value if the module overrides; else auto-derive the
@@ -182,7 +333,12 @@ object HUD : Module("HUD", Category.RENDER) {
     // ═══════════════════════════════════════════
 
     /** Fires when any option under a module changes → rebuild lines once. */
-    private val configListener: () -> Unit = { refreshLines() }
+    private val configListener: () -> Unit = {
+        // The overlay's header is derived from this module's own options, so a change here has to
+        // drop the cached style as well as rebuild the rows.
+        styleCache = null
+        refreshLines()
+    }
 
     /** Modules we already subscribed a dirty-listener for (avoid duplicates). */
     private val subscribedModules = mutableSetOf<String>()

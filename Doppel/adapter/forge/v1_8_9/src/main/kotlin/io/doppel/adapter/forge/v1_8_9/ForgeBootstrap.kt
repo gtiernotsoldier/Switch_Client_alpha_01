@@ -80,6 +80,12 @@ object ForgeBootstrap {
 
     private fun pollModuleKeybinds() {
         try {
+            // Never while a screen is open. MC's chat, inventory and pause menu all take the
+            // keyboard, and a module keybind that fires while the user is typing "e" in chat is
+            // exactly the "our keys and the game's keys get mixed up" report. One frame after the
+            // screen closes the poll resumes on its own; the edge state is left alone so a key
+            // still held across the transition does not fire a phantom toggle.
+            if (EventBridge.isGuiOpen) return
             for (module in ModuleRegistry.getAll()) {
                 if (module.keybind <= 0) continue
                 val lwjgl = KeyTranslator.toLwjgl2(module.keybind)
@@ -396,10 +402,11 @@ object ForgeBootstrap {
             )
 
             // Publish the module table and the overlay's own options for the external HUD process
-            // (plan §5.3, contract v2). Cosmetic channel: HudStateWriter swallows every error, so a
+            // (plan §5.3, contract v3). Cosmetic channel: HudStateWriter swallows every error, so a
             // missing or locked file cannot affect rendering, and the HUD opens it read-only (no
-            // back channel).
-            HudStateWriter.publish(HUD.hudEntries, HUD.overlayHeader())
+            // back channel). The work-pulse strength is sampled here, per frame, because it decays
+            // with the wall clock and cannot be cached in the row list.
+            HudStateWriter.publish(HUD.hudEntries, HUD.overlayHeader(), HUD::flashByte)
 
             OverlayRenderer.render(ctx)
 

@@ -434,32 +434,26 @@
         .kb-chip.unbound { color: rgba(255,255,255,0.34); background: rgba(255,255,255,0.03); border-color: rgba(255,255,255,0.09); }
         .kb-chip.unbound:hover { color: rgba(255,255,255,0.62); background: rgba(255,255,255,0.07); border-color: rgba(255,255,255,0.2); }
         .kb-chip.capturing { background: rgba(167,139,250,0.18); border-color: rgba(167,139,250,0.45); color:#fff; animation: pulse-glow 1s infinite; }
-        /* Per-card HUD controls, right of the keybind chip and ordered after it: the eye lists /
-           unlists this module's line on the overlay, the red dot switches that line's red
-           work-flash. Both are real buttons and .setting-label is pointer-events:none, so each one
+        /* Per-card HUD control, right of the keybind chip: the eye lists / unlists this module's
+           line on the overlay. It is a real button and .setting-label is pointer-events:none, so it
            carries its own pointer-events:auto exactly the way the keybind chip does. */
-        .hud-eye, .red-chip {
+        .hud-eye {
             width: 24px; height: 24px; flex: 0 0 auto; padding: 0; line-height: 1;
             display: flex; align-items: center; justify-content: center;
             background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.09);
             border-radius: 8px; cursor: pointer; transition: 0.2s; pointer-events: auto;
         }
         .hud-eye svg { width: 14px; height: 14px; }
-        /* Eye: lit = the line is listed on the HUD, dim grey + struck-through glyph = hidden. */
-        .hud-eye.on { color: rgba(52,211,153,0.92); background: rgba(52,211,153,0.08); border-color: rgba(52,211,153,0.22); }
-        .hud-eye.on:hover { background: rgba(52,211,153,0.18); border-color: rgba(52,211,153,0.42); box-shadow: 0 0 14px rgba(52,211,153,0.16); }
-        .hud-eye.off { color: rgba(255,255,255,0.3); }
-        .hud-eye.off:hover { color: rgba(255,255,255,0.6); background: rgba(255,255,255,0.08); border-color: rgba(255,255,255,0.2); }
-        /* Red dot: the button is the shell, the dot inside is the state. Lit + soft glow = the HUD
-           row flashes red while the module works; dim grey = it does not. */
-        .rd-dot { width: 9px; height: 9px; border-radius: 50%; background: currentColor; transition: box-shadow 0.25s ease, background 0.25s ease; }
-        .red-chip.on { color: #F87171; background: rgba(248,113,113,0.10); border-color: rgba(248,113,113,0.28); }
-        .red-chip.on .rd-dot { box-shadow: 0 0 9px rgba(248,113,113,0.55); }
-        .red-chip.on:hover { background: rgba(248,113,113,0.18); border-color: rgba(248,113,113,0.5); }
-        .red-chip.off { color: rgba(255,255,255,0.22); }
-        .red-chip.off .rd-dot { box-shadow: none; }
-        .red-chip.off:hover { color: rgba(255,255,255,0.45); background: rgba(255,255,255,0.08); border-color: rgba(255,255,255,0.2); }
-        .hud-eye:focus-visible, .red-chip:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(34,211,238,0.2); }
+        /* Eye: two states that cannot be confused at a glance.
+           listed = the panel's own accent (cyan) with a soft glow on hover;
+           hidden = flat grey at reduced opacity with NO glow in any state, and the glyph keeps
+                    its slash so "off" is not signalled by colour alone. Hovering the hidden eye
+                    keeps it flat grey — it must never start to read as listed. */
+        .hud-eye.on { color: #67E8F9; background: rgba(34,211,238,0.10); border-color: rgba(34,211,238,0.28); }
+        .hud-eye.on:hover { color: #A5F3FC; background: rgba(34,211,238,0.17); border-color: rgba(34,211,238,0.48); box-shadow: 0 0 15px rgba(34,211,238,0.22); }
+        .hud-eye.off { color: rgba(255,255,255,0.3); background: rgba(255,255,255,0.03); border-color: rgba(255,255,255,0.08); opacity: 0.55; }
+        .hud-eye.off:hover { color: rgba(255,255,255,0.3); background: rgba(255,255,255,0.05); border-color: rgba(255,255,255,0.12); opacity: 0.75; box-shadow: none; }
+        .hud-eye:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(34,211,238,0.2); }
 
         /* ===== Toast ===== */
         #toast {
@@ -587,9 +581,8 @@
             /* --- touch targets: real switches grow, extras get invisible hit areas --- */
             .tab { min-height: 40px; display: flex; align-items: center; }
             .icon-btn, .eye-chip { width: 40px; height: 40px; }
-            .hud-eye, .red-chip { width: 40px; height: 40px; border-radius: 11px; }
+            .hud-eye { width: 40px; height: 40px; border-radius: 11px; }
             .hud-eye svg { width: 17px; height: 17px; }
-            .rd-dot { width: 11px; height: 11px; }
             .panic-bar { padding: 12px 14px; }
             .m-btn { min-height: 40px; display: inline-flex; align-items: center; padding: 8px 14px; }
             .kb-chip { min-height: 40px; display: inline-flex; align-items: center; padding: 0 12px; font-size: 11px; }
@@ -629,7 +622,7 @@
             .modal-mask { background: rgba(3, 5, 9, 0.88); }
             #toast { background: rgba(13, 18, 28, 0.98); box-shadow: 0 6px 18px rgba(0,0,0,0.45); }
             .subtitle-overlay { background: rgba(0, 0, 0, 0.72); }
-            .rail-mark, .header-status, .toggle-switch.on, .red-chip.on, .red-chip.on .rd-dot, .slider-fill { box-shadow: none; }
+            .rail-mark, .header-status, .toggle-switch.on, .hud-eye.on:hover, .slider-fill { box-shadow: none; }
         }
     </style>
 </head>
@@ -808,6 +801,25 @@
             clearTimeout(toastTimer);
             toastTimer = setTimeout(()=>el.classList.remove('show'), 2000);
         }
+        // Failure feedback for every request the panel makes. The server answers a refused call
+        // with {"error":"…"} (404 for an unknown module or route), and api() turns that text into
+        // the Error message, so the toast says what actually went wrong instead of going quiet.
+        // Identical bursts (a slider drag against a dead server) collapse into one toast.
+        let lastFail = '', lastFailAt = 0;
+        function fail(prefix, err){
+            const msg = prefix + ' · ' + ((err && err.message) ? err.message : 'request failed');
+            const now = Date.now();
+            if(msg === lastFail && now - lastFailAt < 1500){ lastFailAt = now; return; }
+            lastFail = msg; lastFailAt = now;
+            toast(msg);
+        }
+        // The option's own label, so a failed write names the field instead of saying "request
+        // failed" at nobody in particular.
+        function optNameOf(el){
+            const row = el && el.closest ? el.closest('.sub-row, .slider-row') : null;
+            const nm = row && row.querySelector('.opt-name');
+            return nm && nm.textContent ? nm.textContent : 'Option';
+        }
 
         let modules = [];
         let token = localStorage.getItem('doppel_token') || '';
@@ -835,11 +847,35 @@
             return token ? { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' }
                          : { 'Content-Type': 'application/json' };
         }
+        // The server's own refusal text: {"error":"…"} for an unknown module / route (404), or
+        // anything readable it sent, falling back to the bare status. Never swallow it — the
+        // panel used to throw a number and every caller toasted a generic line.
+        function serverErrorText(status, body){
+            const raw = String(body == null ? '' : body).trim();
+            try {
+                const j = JSON.parse(raw);
+                const msg = j && (j.error || j.message);
+                if(msg) return String(msg);
+            } catch(e){ /* not JSON */ }
+            return raw ? raw.slice(0, 200) : ('HTTP ' + status);
+        }
         async function api(url, opts){
-            const r = await fetch(url, Object.assign({headers:authHeaders()}, opts));
-            if(r.status === 401){ ensureToken(); throw new Error('unauthorized'); }
-            if(!r.ok) throw new Error(r.status);
-            return r.json();
+            let r;
+            try {
+                r = await fetch(url, Object.assign({headers:authHeaders()}, opts));
+            } catch(e){
+                // fetch itself rejected: the game/server is gone. Callers toast this; the link
+                // chip goes to Disconnected right away instead of the click dying silently.
+                setStatus(false);
+                throw new Error('no response from the game (connection lost)');
+            }
+            if(r.status === 401){ ensureToken(); throw new Error('Unauthorized · access token rejected'); }
+            let body = '';
+            try { body = await r.text(); } catch(e){ body = ''; }
+            if(!r.ok) throw new Error(serverErrorText(r.status, body));
+            // A 2xx is a success even when the body is empty; callers only read fields they know.
+            if(!body) return {};
+            try { return JSON.parse(body); } catch(e){ return {}; }
         }
         async function ensureToken(){
             if(token) return;
@@ -892,23 +928,18 @@
             if(eye && hud) eye.classList.toggle('off', !hud.enabled);
         }
 
-        // ----- Per-card HUD controls (eye + red dot) -----
-        // Every module card carries its two HUD switches in the header, right of the keybind chip:
-        // the eye lists / unlists the module's line on the overlay, the red dot switches that line's
-        // red work-flash. Both POST the same endpoint the old HUD list panel used to call.
+        // ----- Per-card HUD control (the eye) -----
+        // Every module card carries its HUD switch in the header, right of the keybind chip: the
+        // eye lists / unlists the module's line on the overlay, POSTing the endpoint the old HUD
+        // list panel used to call.
         function hudListed(m){ return typeof m.hudShown === 'boolean' ? m.hudShown : !m.hudHidden; }
-        // The red work-flash is its own per-module flag (`redIndicator`, default true server-side —
-        // the stealth modules ship it off). Never guessed here: the payload is authoritative.
-        function redFlashOn(m){ return typeof m.redIndicator === 'boolean' ? m.redIndicator : true; }
-        // One place that names each control, so markup and the patch cannot disagree.
+        // One place that names the control, so markup and the patch cannot disagree.
         function hudEyeTitle(listed){
             return (listed ? 'Listed on the HUD' : 'Not listed on the HUD')
                  + " · click to " + (listed ? 'hide' : 'show') + " this module's line";
         }
-        function redTitle(red){
-            return red ? 'Red work-flash on · click to turn it off' : 'Red work-flash off · click to turn it on';
-        }
-        // Eye glyphs: open eye = the line is listed, struck-through eye = hidden.
+        // Eye glyphs: open eye = the line is listed, struck-through eye = hidden. The slash is what
+        // keeps "hidden" from being a colour-only signal, so it stays in every off rendering.
         const EYE_OPEN = '<path d="M2.5 12c2.5-4.2 5.9-6.3 9.5-6.3s7 2.1 9.5 6.3c-2.5 4.2-5.9 6.3-9.5 6.3S5 16.2 2.5 12z"/><circle cx="12" cy="12" r="2.7"/>';
         const EYE_SHUT = EYE_OPEN + '<path d="M4.2 4.2l15.6 15.6"/>';
         function applyHudEye(el, listed){
@@ -923,19 +954,33 @@
             const listed = hudListed(m);
             return `<button type="button" class="hud-eye ${listed?'on':'off'}" data-hud-eye="${m.name}" data-state="${listed?'on':'off'}" aria-pressed="${listed?'true':'false'}" title="${hudEyeTitle(listed)}">${SVGO}${listed?EYE_OPEN:EYE_SHUT}</svg></button>`;
         }
-        function applyRedDot(el, red){
-            el.classList.toggle('on', red);
-            el.classList.toggle('off', !red);
-            el.setAttribute('aria-pressed', red ? 'true' : 'false');
-            el.title = redTitle(red);
+        // Names whose own POST (HUD line, master toggle, keybind) is still in flight: the 3s poll
+        // must not repaint that module's controls under the user's cursor while the click is being
+        // confirmed, and it must not turn an optimistic flip back into a flicker.
+        const busyModules = new Set();
+
+        // A keybind POST answer is authoritative and is painted into the chip immediately. A
+        // /api/modules GET that was already in flight when that POST landed can still carry the
+        // module's OLD keyName, so a fresh bind is fenced for a moment: the chip is only overwritten
+        // once the poll agrees with the server, or the fence expires — never by a stale payload.
+        const kbFence = new Map();
+        const kbFenceTimers = {};
+        function fenceKeybind(name, keyName){
+            const want = String(keyName == null ? 'NONE' : keyName);
+            kbFence.set(name, want);
+            clearTimeout(kbFenceTimers[name]);
+            kbFenceTimers[name] = setTimeout(()=>{ if(kbFence.get(name) === want) kbFence.delete(name); }, 8000);
         }
-        function redChipHtml(m){
-            const red = redFlashOn(m);
-            return `<button type="button" class="red-chip ${red?'on':'off'}" data-red-dot="${m.name}" aria-pressed="${red?'true':'false'}" title="${redTitle(red)}"><span class="rd-dot"></span></button>`;
+        // True while the poll payload still disagrees with a bind we just got back from the server.
+        function kbFenceBlocks(name, keyName){
+            if(!kbFence.has(name)) return false;
+            const got = String(keyName == null ? 'NONE' : keyName);
+            if(got === kbFence.get(name)){ kbFence.delete(name); return false; }   // poll caught up
+            return true;
         }
-        // Names whose HUD toggle POST is still in flight: the 3s poll must not repaint those two
-        // controls under the user's cursor while the click is being confirmed.
-        const hudBusy = new Set();
+        // The key the panel should be showing for this module: a just-confirmed bind outranks a
+        // payload that has not caught up yet, on every painting path (fresh render included).
+        function kbEffective(m){ return kbFence.has(m.name) ? kbFence.get(m.name) : m.keyName; }
 
         function setStatus(ok, n){
             $('#conn').textContent = ok ? '● Online · ' + (n!=null?n:modules.length) + ' modules' : '● Disconnected';
@@ -1150,7 +1195,8 @@
             el.classList.toggle('unbound', !keyLabel(keyName));
         }
         function kbChipHtml(m){
-            return `<span class="kb-chip ${keyLabel(m.keyName)?'':'unbound'}" data-kb="${m.name}" title="${kbTitle(m.keyName)}">${kbLabel(m.keyName)}</span>`;
+            const kn = kbEffective(m);
+            return `<span class="kb-chip ${keyLabel(kn)?'':'unbound'}" data-kb="${m.name}" title="${kbTitle(kn)}">${kbLabel(kn)}</span>`;
         }
         function moduleCard(m){
             const rule = MODE_RULES[m.name];
@@ -1165,7 +1211,6 @@
                         <span class="m-name">${m.name}</span>
                         ${kbChipHtml(m)}
                         ${hudEyeHtml(m)}
-                        ${redChipHtml(m)}
                         ${chip?`<span class="mode-chip">${chip}</span>`:''}
                         ${m.hudValue?`<span class="hud-tag">${m.hudValue}</span>`:''}
                     </div>
@@ -1201,11 +1246,11 @@
                 </div>`;
         }
 
-        // The chips after the name are re-inserted by the poll. The red dot is the anchor — it is
-        // the last fixed chip in the header — so a patched card always ends up in the same order as
-        // a fresh render: icon · name · [key] · eye · red dot · mode · HUD value.
+        // The chips after the name are re-inserted by the poll. The eye is the anchor — it is the
+        // last fixed chip in the header — so a patched card always ends up in the same order as a
+        // fresh render: icon · name · [key] · eye · mode · HUD value.
         function chipAnchor(card){
-            return card.querySelector('.setting-label .red-chip[data-red-dot]')
+            return card.querySelector('.setting-label .hud-eye[data-hud-eye]')
                 || card.querySelector('.setting-label .kb-chip[data-kb]')
                 || card.querySelector('.setting-label .m-name');
         }
@@ -1216,10 +1261,13 @@
             $$('#tabContent .setting-item[data-mod]').forEach(card => {
                 const m = modules.find(x => x.name === card.dataset.mod);
                 if(!m) return;
-                // master toggle + enabled state
-                card.dataset.enabled = m.enabled ? '1' : '0';
-                const sw = card.querySelector('.toggle-switch[data-mod]');
-                if(sw) sw.classList.toggle('on', !!m.enabled);
+                const busy = busyModules.has(m.name);
+                // master toggle + enabled state — frozen while this module's own POST is in flight
+                if(!busy){
+                    card.dataset.enabled = m.enabled ? '1' : '0';
+                    const sw = card.querySelector('.toggle-switch[data-mod]');
+                    if(sw) sw.classList.toggle('on', !!m.enabled);
+                }
                 // mode chip
                 const chip = modeChipOf(m);
                 const chipEl = card.querySelector('.mode-chip');
@@ -1238,10 +1286,11 @@
                     const lbl2 = chipAnchor(card);
                     if(lbl2) lbl2.insertAdjacentHTML('afterend', `<span class="hud-tag">${hudTag}</span>`);
                 } else if(!hudTag && hudTagEl) hudTagEl.remove();
-                // keybind chip (header) — never touched while a capture is live, or the "press a
-                // key…" prompt would be overwritten by the 3s poll
+                // keybind chip (header) — never touched while a capture is live (the "press a
+                // key…" prompt), while the bind POST is in flight, or while a just-confirmed bind
+                // is still waiting for the poll to echo it back
                 const kb = card.querySelector('.setting-label .kb-chip[data-kb]');
-                if(kb && !kb.classList.contains('capturing') && !capturingKey) applyKbChip(kb, m.keyName);
+                if(kb && !kb.classList.contains('capturing') && !capturingKey && !busy && !kbFenceBlocks(m.name, m.keyName)) applyKbChip(kb, m.keyName);
                 // options: rebuild only when the VISIBLE option set changed (mode swap etc.)
                 const grid = card.querySelector('.sub-grid[data-options]');
                 if(!grid) return;
@@ -1290,30 +1339,38 @@
                     }
                 });
             });
-            // Per-card HUD controls: keep the header eye and red dot honest from the same poll
-            // payload — but never while that module's own toggle POST is in flight, so the poll
-            // cannot fight a click.
+            // Per-card HUD control: keep the header eye honest from the same poll payload — but
+            // never while that module's own POST is in flight, so the poll cannot fight a click.
             $$('#tabContent .setting-item[data-mod]').forEach(card => {
                 const m = modules.find(x => x.name === card.dataset.mod);
-                if(!m || hudBusy.has(m.name)) return;
+                if(!m || busyModules.has(m.name)) return;
                 const eyeBtn = card.querySelector('.hud-eye[data-hud-eye]');
                 if(eyeBtn) applyHudEye(eyeBtn, hudListed(m));
-                const redBtn = card.querySelector('.red-chip[data-red-dot]');
-                if(redBtn) applyRedDot(redBtn, redFlashOn(m));
             });
             updateEye();
         }
 
         // ----- Refresh (poll) -----
+        // Link state across polls: the 3s poll must not throw on a dead server, but it must not
+        // swallow the event either — it announces the link going down / coming back exactly once
+        // per transition, so a quiet disconnect is still visible without a toast every 3 seconds.
+        let linkUp = null;
+        function noteLink(ok, err){
+            if(!ok && linkUp === true) fail('Game link lost', err);
+            else if(ok && linkUp === false) toast('Game link restored');
+            linkUp = ok;
+        }
         async function refresh(){
-            await ensureToken();
             try {
+                await ensureToken();
                 const raw = await api('/api/modules');
                 setStatus(true, raw.length);
+                noteLink(true);
                 if(interacting){ pendingRaw = raw; return; }   // hands off the UI mid-interaction
                 applyData(raw);
             } catch(e) {
                 setStatus(false);
+                noteLink(false, e);
             }
         }
         function applyData(raw){
@@ -1348,13 +1405,17 @@
         // ----- Clicks -----
         let capturingKey = null;
         // Disarm a capture without binding anything: drop the highlight and put every chip back to
-        // its own keyName (English, straight from the server).
+        // its own keyName (English, straight from the server). A bind confirmed a moment ago wins
+        // over a module list that has not been refreshed since, so the fence is honoured here too.
         function cancelCapture(){
             capturingKey = null;
             $$('.kb-chip[data-kb]').forEach(c => {
-                const m = modules.find(x => x.name === c.dataset.kb);
+                const name = c.dataset.kb;
+                const m = modules.find(x => x.name === name);
                 c.classList.remove('capturing');
-                if(m) applyKbChip(c, m.keyName);
+                if(!m) return;
+                if(kbFenceBlocks(name, m.keyName)) return;
+                applyKbChip(c, m.keyName);
             });
         }
         // Typing into a field must not turn into a keybind.
@@ -1365,43 +1426,28 @@
             // Card header: eye — list / unlist this module's line on the in-game HUD
             const eyeBtn = e.target.closest('.hud-eye[data-hud-eye]');
             if(eyeBtn){
-                const m = modules.find(x => x.name === eyeBtn.dataset.hudEye);
+                const name = eyeBtn.dataset.hudEye;
+                const m = modules.find(x => x.name === name);
                 if(!m) return;
-                const listed = hudListed(m);       // optimistic flip; the POST answer is authoritative
+                if(busyModules.has(name)) return;   // its own POST is still in flight
+                const listed = hudListed(m);        // optimistic flip; the POST answer is authoritative
                 m.hudShown = !listed; m.hudHidden = listed;
                 applyHudEye(eyeBtn, !listed);
-                hudBusy.add(m.name);
+                busyModules.add(name);
                 try {
-                    const r = await api('/api/modules/'+encodeURIComponent(m.name)+'/hud', {method:'POST', body:JSON.stringify({hidden:listed})});
+                    const r = await api('/api/modules/'+encodeURIComponent(name)+'/hud', {method:'POST', body:JSON.stringify({hidden:listed})});
+                    // Trust the server's own answer, whichever of the two fields it sent.
                     if(r && typeof r.hudHidden === 'boolean'){ m.hudHidden = r.hudHidden; m.hudShown = !r.hudHidden; }
+                    else if(r && typeof r.hudShown === 'boolean'){ m.hudShown = r.hudShown; m.hudHidden = !r.hudShown; }
                     applyHudEye(eyeBtn, hudListed(m));
-                    toast(m.name + ' · HUD line ' + (hudListed(m) ? 'shown' : 'hidden'));
+                    toast(name + ' · HUD line ' + (hudListed(m) ? 'shown' : 'hidden'));
                 } catch(err){
-                    m.hudShown = listed; m.hudHidden = !listed;   // revert to what the server still holds
+                    // Refused (404 unknown module / route) or the link died: put the eye back where
+                    // the server still has it and say what the server said.
+                    m.hudShown = listed; m.hudHidden = !listed;
                     applyHudEye(eyeBtn, listed);
-                    toast(m.name + ' · HUD toggle failed');
-                } finally { hudBusy.delete(m.name); }
-                refresh(); return;
-            }
-            // Card header: red dot — this module's HUD line flashes red while it works
-            const redBtn = e.target.closest('.red-chip[data-red-dot]');
-            if(redBtn){
-                const m = modules.find(x => x.name === redBtn.dataset.redDot);
-                if(!m) return;
-                const on = redFlashOn(m);          // optimistic flip; the POST answer is authoritative
-                m.redIndicator = !on;
-                applyRedDot(redBtn, !on);
-                hudBusy.add(m.name);
-                try {
-                    const r = await api('/api/modules/'+encodeURIComponent(m.name)+'/hud', {method:'POST', body:JSON.stringify({red:!on})});
-                    if(r && typeof r.redIndicator === 'boolean') m.redIndicator = r.redIndicator;
-                    applyRedDot(redBtn, redFlashOn(m));
-                    toast(m.name + ' · red work-flash ' + (redFlashOn(m) ? 'on' : 'off'));
-                } catch(err){
-                    m.redIndicator = on;
-                    applyRedDot(redBtn, on);
-                    toast(m.name + ' · red-flash toggle failed');
-                } finally { hudBusy.delete(m.name); }
+                    fail(name + ' · HUD toggle failed', err);
+                } finally { busyModules.delete(name); }
                 refresh(); return;
             }
             // Keybind chip (card header) — click starts capture
@@ -1430,7 +1476,19 @@
             if(e.target.closest('#eyeChip')){
                 const hud = modules.find(m=>m.name==='HUD');
                 if(!hud){ toast('HUD module not found'); return; }
-                await api('/api/modules/HUD/toggle', {method:'POST'});
+                if(busyModules.has('HUD')) return;
+                const was = !!hud.enabled;
+                hud.enabled = !was;                 // optimistic: the chip answers the click at once
+                updateEye();
+                busyModules.add('HUD');
+                try {
+                    const r = await api('/api/modules/HUD/toggle', {method:'POST'});
+                    if(r && typeof r.enabled === 'boolean') hud.enabled = r.enabled;
+                } catch(err){
+                    hud.enabled = was;              // revert: the server still holds the old state
+                    fail('HUD', err);
+                } finally { busyModules.delete('HUD'); }
+                updateEye();
                 refresh(); return;
             }
             // Config manager / market buttons
@@ -1454,21 +1512,41 @@
                     toast('Config imported · hot-reload done');
                     $('#cfgModal').classList.remove('show');
                     refresh();
-                } catch(err){ toast('Import failed · invalid JSON?'); }
+                } catch(err){ fail('Import failed', err); }
                 return;
             }
             // Sub-option toggle
             const subSw = e.target.closest('.sub-grid .toggle-switch[data-key]');
             if(subSw){
-                subSw.classList.toggle('on');
-                await api('/api/options', {method:'POST', body:JSON.stringify({key:subSw.dataset.key, value:subSw.classList.contains('on')})});
+                const on = !subSw.classList.contains('on');
+                subSw.classList.toggle('on', on);
+                try {
+                    await api('/api/options', {method:'POST', body:JSON.stringify({key:subSw.dataset.key, value:on})});
+                } catch(err){
+                    subSw.classList.toggle('on', !on);   // revert the optimistic flip
+                    fail(optNameOf(subSw), err);
+                }
                 refresh(); return;
             }
             // Module master toggle
             const modSw = e.target.closest('.setting-header .toggle-switch[data-mod]');
             if(modSw){
-                modSw.classList.toggle('on');
-                await api('/api/modules/'+encodeURIComponent(modSw.dataset.mod)+'/toggle', {method:'POST'});
+                const name = modSw.dataset.mod;
+                if(busyModules.has(name)){ e.stopPropagation(); return; }
+                const m = modules.find(x => x.name === name);
+                const was = modSw.classList.contains('on');
+                modSw.classList.toggle('on', !was);      // optimistic: the switch answers the click
+                if(m) m.enabled = !was;
+                busyModules.add(name);
+                try {
+                    const r = await api('/api/modules/'+encodeURIComponent(name)+'/toggle', {method:'POST'});
+                    if(m && r && typeof r.enabled === 'boolean') m.enabled = r.enabled;
+                    modSw.classList.toggle('on', m ? !!m.enabled : !was);
+                } catch(err){
+                    modSw.classList.toggle('on', was);   // revert: the server still holds the old state
+                    if(m) m.enabled = was;
+                    fail(name + ' · toggle failed', err);
+                } finally { busyModules.delete(name); }
                 refresh();
                 e.stopPropagation(); return;
             }
@@ -1506,7 +1584,8 @@
         document.addEventListener('change', async e => {
             const sel = e.target.closest('.sub-select[data-key]');
             if(sel){
-                await api('/api/options', {method:'POST', body:JSON.stringify({key:sel.dataset.key, value:sel.value})});
+                try { await api('/api/options', {method:'POST', body:JSON.stringify({key:sel.dataset.key, value:sel.value})}); }
+                catch(err){ fail(optNameOf(sel), err); }
                 refresh(); return;
             }
             const csw = e.target.closest('.color-swatch[data-key]');
@@ -1517,7 +1596,8 @@
             if(num){ await commitNumber(num); refresh(); return; }
             const txt = e.target.closest('.text-input[data-key]');
             if(txt){
-                await api('/api/options', {method:'POST', body:JSON.stringify({key:txt.dataset.key, value:txt.value})});
+                try { await api('/api/options', {method:'POST', body:JSON.stringify({key:txt.dataset.key, value:txt.value})}); }
+                catch(err){ fail(optNameOf(txt), err); }
             }
         });
 
@@ -1560,7 +1640,8 @@
             const v = parseNumField(num);
             if(v === null) return; // nothing sensible to send yet
             const snapped = snapToStep(v, +num.dataset.step, +num.dataset.dec);
-            await api('/api/options', {method:'POST', body:JSON.stringify({key:num.dataset.key, value:snapped})});
+            try { await api('/api/options', {method:'POST', body:JSON.stringify({key:num.dataset.key, value:snapped})}); }
+            catch(err){ fail(optNameOf(num), err); }
         }
         /** Clamp into range, snap to the step, rewrite the field, and return the value to save. */
         async function commitNumber(num){
@@ -1570,7 +1651,8 @@
             if(v === null) v = min;
             v = Math.min(max, Math.max(min, snapToStep(v, step, dec)));
             num.value = fmtNum(v, dec);
-            await api('/api/options', {method:'POST', body:JSON.stringify({key:num.dataset.key, value:v})});
+            try { await api('/api/options', {method:'POST', body:JSON.stringify({key:num.dataset.key, value:v})}); }
+            catch(err){ fail(optNameOf(num), err); }
             return v;
         }
 
@@ -1583,7 +1665,8 @@
             const row = sw.closest('.sub-row');
             const hexInp = row && row.querySelector('.color-hex');
             if(hexInp && hexInp !== document.activeElement) hexInp.value = colorToHex(v);
-            await api('/api/options', {method:'POST', body:JSON.stringify({key:sw.dataset.key, value:v})});
+            try { await api('/api/options', {method:'POST', body:JSON.stringify({key:sw.dataset.key, value:v})}); }
+            catch(err){ fail(optNameOf(sw), err); }
         }
         /** Normalise a typed hex value, rewrite both fields, and save the integer. */
         async function commitColorHex(inp){
@@ -1595,7 +1678,8 @@
             const hex = colorToHex(v);
             inp.value = hex;
             if(sw) sw.value = hex;
-            await api('/api/options', {method:'POST', body:JSON.stringify({key:inp.dataset.key, value:v})});
+            try { await api('/api/options', {method:'POST', body:JSON.stringify({key:inp.dataset.key, value:v})}); }
+            catch(err){ fail(optNameOf(inp), err); }
             return v;
         }
 
@@ -1612,7 +1696,10 @@
             if(fill) fill.style.width=(x*100)+'%';
             const inp = srow.parentElement.querySelector('.num-input');
             if(inp && inp !== document.activeElement) inp.value = fmtNum(v, dec);
-            api('/api/options', {method:'POST', body:JSON.stringify({key:srow.dataset.key, value:v})});
+            // Drag posts are fire-and-forget by design; a dead link still has to say something,
+            // and `fail` collapses the drag's burst of identical failures into one toast.
+            api('/api/options', {method:'POST', body:JSON.stringify({key:srow.dataset.key, value:v})})
+                .catch(err => fail(optNameOf(srow), err));
             return v;
         }
         document.addEventListener('mousedown', e => {
@@ -1651,9 +1738,15 @@
             panicking = true;
             const on = modules.filter(m => m.enabled);
             toast('PANIC · disabled ' + on.length + ' modules');
+            let failed = 0;
             for(const m of on){
-                try { await api('/api/modules/'+encodeURIComponent(m.name)+'/toggle', {method:'POST'}); } catch(err){}
+                busyModules.add(m.name);
+                try { await api('/api/modules/'+encodeURIComponent(m.name)+'/toggle', {method:'POST'}); }
+                catch(err){ failed++; }
+                finally { busyModules.delete(m.name); }
             }
+            // Panic is the one action that must never look like it worked if it did not.
+            if(failed) fail('PANIC', new Error(failed + ' of ' + on.length + ' module(s) did not answer'));
             panicking = false;
             refresh();
         }
@@ -1677,24 +1770,34 @@
             else return;
             capturingKey = null;
             (async () => {
+                busyModules.add(name);
                 try {
                     const r = await api('/api/modules/'+encodeURIComponent(name)+'/keybind', {method:'POST', body:JSON.stringify({key:code})});
+                    // The POST answer is the authority: keyName is exactly what the server stored.
                     const kn = (r && r.keyName) ? r.keyName : (code <= 0 ? 'NONE' : 'Key ' + code);
                     // Paint the chip straight from the POST response — the toast and the chip must
-                    // not wait up to 3s for the next poll before admitting the bind worked.
+                    // not wait up to 3s for the next poll before admitting the bind worked. The fence
+                    // then stops a /api/modules answer that was already in flight (still carrying the
+                    // old key) from writing "NONE" back over the bind we just confirmed.
                     const chip = document.querySelector(`.kb-chip[data-kb="${name}"]`);
                     if(chip){ chip.classList.remove('capturing'); applyKbChip(chip, kn); }
+                    fenceKeybind(name, kn);
                     // Say out loud what happened — and, for a key the game already uses, what it
                     // will do in game, so a module bind never clashes with a vanilla key silently.
                     const knLabel = keyLabel(kn) || 'NONE';
                     const vanilla = esc ? '' : keyUse(knLabel);
                     toast(esc ? (name + ' · bind cancelled (Esc)')
                               : (name + ' · bound to ' + knLabel + (vanilla ? ' · vanilla: ' + vanilla : '')));
-                    refresh();
                 } catch(err){
-                    toast('Keybind failed · ' + name);
-                    cancelCapture();
-                }
+                    // Refused or the link died: put the chip back to the key the server still holds
+                    // (and to the state the module's own payload declares) instead of leaving it on
+                    // "[press a key…]".
+                    const chip = document.querySelector(`.kb-chip[data-kb="${name}"]`);
+                    const m = modules.find(x => x.name === name);
+                    if(chip){ chip.classList.remove('capturing'); applyKbChip(chip, m ? m.keyName : 'NONE'); }
+                    fail(name + ' · keybind failed', err);
+                } finally { busyModules.delete(name); }
+                refresh();
             })();
         });
 
@@ -1725,7 +1828,7 @@
                     $('#urls').innerHTML = info.urls.map(u=>`<span class="bd">${u}</span>`).join('');
                 }
                 if(info.defaultPassword){ token=info.defaultPassword; localStorage.setItem('doppel_token', token); }
-            });
+            }).catch(()=>{});   // server not up yet: the poll owns the connection state, not this call
         } catch(e){}
 </script>
 </body>

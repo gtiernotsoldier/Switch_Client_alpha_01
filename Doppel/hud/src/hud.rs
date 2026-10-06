@@ -12,12 +12,13 @@
 // ── what is drawn ────────────────────────────────────────────────────────────
 //
 //   1. **the watermark** — one inline run on a single baseline: the product name
-//      in the mode's accent, then ` | `, then the module count (HUD.cpp:508-563).
-//      The source's run is `name | nickname | "<n> FPS"`; this side of the state
-//      contract carries no nickname and no frame counter (it publishes a module
-//      table, see `state.rs`), so the middle segment is the enabled-module count
-//      and the FPS segment is omitted. The README carries the TODO for the
-//      contract v2 that would complete it. In the Rise/VapeV4 modes the run sits
+//      in the mode's accent, then ` | ` and each middle segment the state's header
+//      carries — the nickname and `"<n> FPS"` — in the mode's secondary colour
+//      (HUD.cpp:508-563). That is the source's own `name | nickname | "<n> FPS"`
+//      run: contract v2 puts both of the source's segments in the header's
+//      `nickname[24]` and `fps`, and a segment with nothing to say is dropped
+//      rather than drawn empty (`watermark_segments`). A v1 block, whose 16-byte
+//      header has neither field, draws the bare title. In the Rise/VapeV4 modes the run sits
 //      in the source's panel: a `rgba(0,0,0,88)` fill with the accent as a 2 px bar
 //      down its right edge (VapeV4 rounds that panel's left corners by 6 px).
 //   2. **the module list** — one row per enabled module, `NAME  TAG` on one
@@ -394,11 +395,66 @@ pub fn box_width(m: &Metrics, layout_w: f32) -> f32 {
     }
 }
 
-/// The Rise-like watermark panel's width (HUD.cpp:544). The source adds the FPS
-/// run's width to it; this overlay has no frame counter, so that term is the zero
-/// the port's watermark run does not have (see the header note).
-pub fn watermark_panel_width(m: &Metrics, title_w: f32, segment_w: f32) -> f32 {
-    title_w + segment_w + m.rise_pad_x * 2.0 + m.rise_rect_w + 1.0
+/// The Rise-like watermark panel's width (HUD.cpp:544). The source computes
+/// `titleWidth + segmentWidth + fpsWidth + risePadX*2 + riseRectWidth + 1`; the
+/// middle width passed here is that `segmentWidth + fpsWidth` — every segment
+/// after the title, ` | ` included (see `measure_watermark`).
+pub fn watermark_panel_width(m: &Metrics, title_w: f32, middle_w: f32) -> f32 {
+    title_w + middle_w + m.rise_pad_x * 2.0 + m.rise_rect_w + 1.0
+}
+
+// ── the watermark run (HUD.cpp:526-562) ─────────────────────────────────────
+
+/// The watermark's middle segments, in the source's order, with the empty ones
+/// dropped: the nickname (`ResolvePlayerNick`, HUD.cpp:526-529) and `"<n> FPS"`
+/// (`:531-532`, dropped when the header's `fps` is 0 — unknown, not zero). The
+/// enabled-module count this port used to draw here is gone: contract v2 carries
+/// both of the source's own segments, so the run is the source's again.
+pub fn watermark_segments(nickname: &str, fps: u32) -> Vec<String> {
+    let mut out = Vec::with_capacity(2);
+    if !nickname.is_empty() {
+        out.push(nickname.to_string());
+    }
+    if fps != 0 {
+        out.push(format!("{fps} FPS"));
+    }
+    out
+}
+
+/// The same segments, each carrying the ` | ` that precedes it — the source's
+/// `segment` and `fpsText` runs (HUD.cpp:535, 562), which is what the painter
+/// draws and measures one after the other.
+pub fn watermark_middle(nickname: &str, fps: u32) -> Vec<String> {
+    watermark_segments(nickname, fps)
+        .into_iter()
+        .map(|segment| format!("{SEGMENT_SEP}{segment}"))
+        .collect()
+}
+
+/// The whole run as one string — `DOPPEL | <nickname> | <fps> FPS`, minus the
+/// segments the state had nothing to say about. For `--dump` and the log.
+pub fn watermark_text(nickname: &str, fps: u32) -> String {
+    let mut parts = vec![PRODUCT.to_string()];
+    parts.extend(watermark_segments(nickname, fps));
+    parts.join(SEGMENT_SEP)
+}
+
+/// Measure the run the painter draws: the title in the mode's name face, then
+/// every middle segment in the body face, ` | ` included. Returns
+/// `(title, middle, whole)` — the Rise-like panel needs the first two separately
+/// (HUD.cpp:539-544).
+pub fn measure_watermark(
+    text: &TextEngine,
+    name_font: FontId,
+    nickname: &str,
+    fps: u32,
+) -> (f32, f32, f32) {
+    let title = text.measure(name_font, PRODUCT) as f32;
+    let middle: f32 = watermark_middle(nickname, fps)
+        .iter()
+        .map(|segment| text.measure(FontId::Body, segment) as f32)
+        .sum();
+    (title, middle, title + middle)
 }
 
 // ── the screen rect the window covers ───────────────────────────────────────
@@ -466,6 +522,13 @@ pub fn watermark_y(rect: Rect, m: &Metrics) -> i32 {
     (rect.y as f32 + m.watermark_y).round() as i32
 }
 
+/// Screen y of the Rise-like watermark panel's top edge. The source builds that
+/// panel at `boxMin.y = topY` (HUD.cpp:545-546) — the same line the first module
+/// row starts on — while the run's *text* is `risePadY` further down inside it.
+pub fn watermark_panel_y(rect: Rect, m: &Metrics) -> i32 {
+    (rect.y as f32 + m.top_y).round() as i32
+}
+
 /// The screen edge the rows are flushed against — the source's `screenW` for the
 /// right-hand layout, the mirrored edge for `--position left`. It is the raw edge:
 /// the mode's margin is applied per row, in `row_target_x`.
@@ -481,6 +544,17 @@ pub fn row_target_x(rect: Rect, position: Position, m: &Metrics, box_w: f32) -> 
     match position {
         Position::Right => rect.right() as f32 - box_w - m.right_margin,
         Position::Left => rect.x as f32 + m.right_margin,
+    }
+}
+
+/// The screen x every row's box is flushed against, the mode's margin included.
+/// It is `row_target_x` plus the row's own box width, which is to say it does not
+/// depend on the row: that shared edge is what makes the rows a wedge with one
+/// straight side (HUD.cpp:611).
+pub fn list_flush_x(rect: Rect, position: Position, m: &Metrics) -> i32 {
+    match position {
+        Position::Right => (rect.right() as f32 - m.right_margin).round() as i32,
+        Position::Left => (rect.x as f32 + m.right_margin).round() as i32,
     }
 }
 
@@ -956,7 +1030,7 @@ pub fn paint(
     let frame = Frame { cfg, m: &m, stamp: anim.stamp(now), global, dt: anim.dt };
 
     if cfg.watermark {
-        paint_watermark(canvas, text, &frame, rect, rows.len());
+        paint_watermark(canvas, text, &frame, rect);
     }
     let rows_moving = paint_rows(canvas, text, entries, anim, &frame, rect, &rows);
 
@@ -966,7 +1040,8 @@ pub fn paint(
 }
 
 /// The watermark: one inline run on one baseline — the product name in the mode's
-/// accent, ` | ` and the enabled-module count in the muted grey — plus, in
+/// accent, then ` | ` and each non-empty segment the state's header carries (the
+/// nickname and `"<n> FPS"`) in the mode's secondary colour — plus, in
 /// Rise/VapeV4, the source's panel behind it with the accent bar down its right
 /// edge (HUD.cpp:508-563).
 fn paint_watermark(
@@ -974,14 +1049,11 @@ fn paint_watermark(
     text: &mut TextEngine,
     frame: &Frame,
     rect: Rect,
-    count: usize,
 ) {
     let m = frame.m;
     let name_font = frame.cfg.mode.name_font();
-    let title_w = text.measure(name_font, PRODUCT) as f32;
-    let segment = format!("{SEGMENT_SEP}{count}");
-    let segment_w = text.measure(FontId::Body, &segment) as f32;
-    let run_w = title_w + segment_w;
+    let (title_w, middle_w, run_w) =
+        measure_watermark(text, name_font, &frame.cfg.nickname, frame.cfg.fps);
 
     let accent = watermark_accent(frame.cfg, frame.stamp);
     // The canvas is surface-local while the anchoring helpers are in screen
@@ -992,12 +1064,12 @@ fn paint_watermark(
     // (and entirely off-surface for a rect with a negative origin, i.e. a monitor
     // left of the primary one).
     let box_x = watermark_x(rect, frame.cfg.position, m, run_w) - rect.x;
-    let panel_y = (rect.y as f32 + m.top_y).round() as i32 - rect.y;
-    let text_y = (rect.y as f32 + m.watermark_y).round() as i32 - rect.y;
+    let panel_y = watermark_panel_y(rect, m) - rect.y;
+    let text_y = watermark_y(rect, m) - rect.y;
     let rise_like = m.mode.is_rise_like();
 
     if rise_like {
-        let panel_w = watermark_panel_width(m, title_w, segment_w);
+        let panel_w = watermark_panel_width(m, title_w, middle_w);
         canvas.fill_rounded_rect_corners(
             box_x,
             panel_y,
@@ -1026,16 +1098,24 @@ fn paint_watermark(
     let secondary = if rise_like { RISE_SECONDARY_TEXT } else { SECONDARY_TEXT };
 
     draw_shadowed(text, canvas, name_font, PRODUCT, text_x, text_y, title_colour, frame.global);
-    draw_shadowed(
-        text,
-        canvas,
-        FontId::Body,
-        &segment,
-        (text_x as f32 + title_w).round() as i32,
-        text_y,
-        secondary,
-        frame.global,
-    );
+    // The rest of the run: the nickname and the FPS segment, in the source's own
+    // order and both in the secondary colour (HUD.cpp:559-562). An empty segment
+    // was never assembled, so a HUD with no nickname and no frame counter draws
+    // the bare title rather than a run of dangling separators.
+    let mut cursor_x = text_x as f32 + title_w;
+    for segment in watermark_middle(&frame.cfg.nickname, frame.cfg.fps) {
+        draw_shadowed(
+            text,
+            canvas,
+            FontId::Body,
+            &segment,
+            cursor_x.round() as i32,
+            text_y,
+            secondary,
+            frame.global,
+        );
+        cursor_x += text.measure(FontId::Body, &segment) as f32;
+    }
 }
 
 /// The module list (HUD.cpp:565-645). Returns true while any row is still sliding.
@@ -1203,18 +1283,21 @@ pub fn describe(text: &TextEngine, entries: &[Entry], cfg: &Config, canvas_w: u3
 
     if cfg.watermark {
         let name_font = cfg.mode.name_font();
-        let title_w = text.measure(name_font, PRODUCT) as f32;
-        let segment = format!("{SEGMENT_SEP}{}", rows.len());
-        let segment_w = text.measure(FontId::Body, &segment) as f32;
-        let run_w = title_w + segment_w;
+        let (title_w, middle_w, run_w) =
+            measure_watermark(text, name_font, &cfg.nickname, cfg.fps);
         let box_x = watermark_x(rect, cfg.position, &m, run_w);
         out.push_str(&format!(
-            "  watermark \"{PRODUCT}\" {:.0}px + \"{segment}\" {:.0}px = {:.0}px at ({}, {}){}",
-            title_w, segment_w, run_w, box_x, watermark_y(rect, &m),
+            "  watermark \"{}\" — {PRODUCT} {:.0}px + segments {:.0}px = {:.0}px at ({}, {}){}",
+            watermark_text(&cfg.nickname, cfg.fps),
+            title_w,
+            middle_w,
+            run_w,
+            box_x,
+            watermark_y(rect, &m),
             if m.mode == Mode::Rise { " title #E8E8E8 (riseWatermarkTextColor)" } else { " title in the accent" },
         ));
         if m.mode.is_rise_like() {
-            let panel_w = watermark_panel_width(&m, title_w, segment_w);
+            let panel_w = watermark_panel_width(&m, title_w, middle_w);
             out.push_str(&format!(
                 ", panel {:.0}x{:.0} at ({}, {}) {} corners {:?}, bar {:.0}px {}",
                 panel_w,
@@ -1746,5 +1829,176 @@ mod tests {
         assert_eq!(spaced_name("Velocity"), "Velocity");
         assert_eq!(spaced_name(""), "");
         assert_eq!(spaced_name("HitSelect"), "Hit Select");
+    }
+
+    /// The watermark run is the source's `name | nickname | "<n> FPS"` again, now
+    /// that contract v2 publishes both segments — with any segment the state had
+    /// nothing to say about dropped, separators included.
+    #[test]
+    fn the_watermark_run_drops_the_segments_it_has_nothing_for() {
+        assert_eq!(watermark_text("gtier", 144), "DOPPEL | gtier | 144 FPS");
+        assert_eq!(watermark_segments("gtier", 144), vec!["gtier".to_string(), "144 FPS".to_string()]);
+        assert_eq!(
+            watermark_middle("gtier", 144),
+            vec![" | gtier".to_string(), " | 144 FPS".to_string()],
+            "each segment carries its own separator, as the source's `segment` and `fpsText` do"
+        );
+
+        // A missing segment takes its separator with it: never a dangling " | ".
+        assert_eq!(watermark_text("", 144), "DOPPEL | 144 FPS");
+        assert_eq!(watermark_text("gtier", 0), "DOPPEL | gtier");
+        assert_eq!(watermark_text("", 0), "DOPPEL", "a v1 block draws the bare title");
+        assert!(watermark_segments("", 0).is_empty());
+        assert!(watermark_middle("", 0).is_empty());
+        // fps 0 is "unknown", not a frame counter of zero.
+        assert!(!watermark_text("nick", 0).contains("FPS"));
+
+        // The measured run is the title plus every segment, and the Rise-like
+        // panel is that run plus the method's padding and bar — the source's
+        // `titleWidth + segmentWidth + fpsWidth + padX*2 + rectW + 1`
+        // (HUD.cpp:539-544). The FPS term is really measured, not assumed: a run
+        // with one segment fewer is narrower.
+        let text = TextEngine::new(1.0).expect("GDI text engine");
+        let m = Metrics::new(Mode::Rise, 1.0);
+        let (title_w, middle_w, run_w) = measure_watermark(&text, m.mode.name_font(), "gtier", 144);
+        assert_eq!(run_w, title_w + middle_w);
+        assert_eq!(title_w, text.measure(m.mode.name_font(), PRODUCT) as f32);
+        assert_eq!(
+            watermark_panel_width(&m, title_w, middle_w),
+            run_w + m.rise_pad_x * 2.0 + m.rise_rect_w + 1.0
+        );
+        let (_, no_fps_middle, no_fps_run) = measure_watermark(&text, m.mode.name_font(), "gtier", 0);
+        let (_, bare_middle, bare_run) = measure_watermark(&text, m.mode.name_font(), "", 0);
+        assert!(no_fps_middle < middle_w && no_fps_run < run_w);
+        assert_eq!(bare_run, title_w, "nothing but the title");
+        assert_eq!(bare_middle, 0.0);
+        // And the run's width is what `watermark_x` mirrors with.
+        let rect = Rect::new(0, 0, 1920, 1080);
+        assert_eq!(
+            watermark_x(rect, Position::Left, &m, run_w),
+            1920 - 10 - run_w.round() as i32
+        );
+    }
+
+    /// The reference's two-corner layout, mode by mode: the watermark left-anchored
+    /// at `cursorX = 10` and the module list right-anchored, both on the rect's own
+    /// top line (HUD.cpp:536-537, 610-614).
+    #[test]
+    fn the_two_blocks_hang_off_opposite_top_corners_in_every_mode() {
+        let rect = Rect::new(0, 0, 1920, 1080);
+        let run_w = 120.0f32;
+
+        // mode, the watermark's own y inset, the first row's y inset
+        let cases = [
+            (Mode::Default, 4, 4),
+            (Mode::Rise, 6, 4),
+            (Mode::Vape, 6, 4),
+            (Mode::Tesseract, 6, 2),
+        ];
+
+        for (mode, watermark_inset, row_inset) in cases {
+            let m = Metrics::new(mode, 1.0);
+
+            // Watermark: top-LEFT. Its left edge is `cursorX = 10` in from the
+            // rect's left edge, its y is `topY` plus the mode's own pad.
+            assert_eq!(watermark_x(rect, Position::Right, &m, run_w), 10, "{mode:?}");
+            assert_eq!(watermark_y(rect, &m), watermark_inset, "{mode:?}");
+
+            // List: top-RIGHT. Every row's box ends at the rect's right edge minus
+            // the mode's margin — `list_flush_x` is `targetX + boxWidth` for any
+            // row width, which is what makes the list a wedge with one straight
+            // side rather than a ragged edge.
+            assert_eq!(
+                list_flush_x(rect, Position::Right, &m),
+                1920 - m.right_margin.round() as i32,
+                "{mode:?}"
+            );
+            for box_w in [40.0f32, 137.0, 260.0] {
+                assert_eq!(
+                    row_target_x(rect, Position::Right, &m, box_w) + box_w,
+                    list_flush_x(rect, Position::Right, &m) as f32,
+                    "{mode:?} box {box_w}"
+                );
+            }
+            assert_eq!(row_y(rect, &m, 0), row_inset, "{mode:?}");
+
+            // Both blocks are on the rect's top line: the first row starts at
+            // `topY` (or Tesseract's 2), and in the Rise-like modes the watermark's
+            // panel starts on exactly the row's line. Nothing is stacked below
+            // anything else.
+            assert_eq!(m.top_y, 4.0, "{mode:?}");
+            assert!(row_y(rect, &m, 0) <= 4 + 2, "{mode:?}: the list starts at the top");
+            assert!(watermark_y(rect, &m) <= 4 + 2, "{mode:?}: so does the watermark");
+            if m.mode.is_rise_like() {
+                assert_eq!(
+                    watermark_panel_y(rect, &m),
+                    row_y(rect, &m, 0),
+                    "{mode:?}: panel and first row share the line"
+                );
+            }
+
+            // The rows march *down* from that line and the watermark does not
+            // move with them: the second row is already below the first.
+            assert!(row_y(rect, &m, 1) > row_y(rect, &m, 0), "{mode:?}");
+        }
+
+        // `--position left` is the mirror of that: watermark top-right, list
+        // top-left, same insets, and the y of each block unchanged.
+        for (mode, watermark_inset, row_inset) in cases {
+            let m = Metrics::new(mode, 1.0);
+            assert_eq!(
+                watermark_x(rect, Position::Left, &m, run_w),
+                1920 - 10 - run_w.round() as i32,
+                "{mode:?}"
+            );
+            assert_eq!(list_flush_x(rect, Position::Left, &m), m.right_margin.round() as i32, "{mode:?}");
+            assert_eq!(watermark_y(rect, &m), watermark_inset, "{mode:?}: only x mirrors");
+            assert_eq!(row_y(rect, &m, 0), row_inset, "{mode:?}");
+        }
+
+        // A rect that is not at the origin moves both blocks with it, and keeps
+        // them in opposite corners of *that* rect — this is the game-window case,
+        // where the rect comes from `--rect`.
+        let window = Rect::new(-1920, 240, 1600, 900);
+        for (mode, watermark_inset, row_inset) in cases {
+            let m = Metrics::new(mode, 1.0);
+            assert_eq!(watermark_x(window, Position::Right, &m, run_w), -1920 + 10, "{mode:?}");
+            assert_eq!(watermark_y(window, &m), 240 + watermark_inset, "{mode:?}");
+            assert_eq!(
+                list_flush_x(window, Position::Right, &m),
+                -1920 + 1600 - m.right_margin.round() as i32,
+                "{mode:?}"
+            );
+            assert_eq!(row_y(window, &m, 0), 240 + row_inset, "{mode:?}");
+        }
+    }
+
+    /// The overlay's canvas carries the window's screen origin while the anchoring
+    /// helpers work in screen coordinates. One frame of the same config must land
+    /// on the same surface pixels whatever origin the canvas was placed at — the
+    /// regression that put the watermark at `rect.x + 10` *canvas-local*, which is
+    /// a different place on every window position and no place at all (off the
+    /// surface) for a rect with a negative origin.
+    #[test]
+    fn the_frame_lands_on_the_same_pixels_whatever_origin_the_canvas_has() {
+        let entries = vec![entry(1, "Velocity", "82%", false), entry(2, "Reach", "3.1-3.3", false)];
+        let cfg = Config { nickname: "gtier".to_string(), fps: 144, ..Config::default() };
+        let mut text = TextEngine::new(1.0).expect("GDI text engine");
+        let now = Instant::now();
+        let mut reference: Option<Vec<u32>> = None;
+
+        for (x, y) in [(0, 0), (320, 180), (1920, 0), (-1920, 240)] {
+            let mut canvas = Canvas::placed(x, y, 520, 400);
+            let mut anim = Anim::new();
+            anim.seed(&entries, now);
+            canvas.clear();
+            paint(&mut canvas, &mut text, &entries, &mut anim, now, &cfg);
+            let pixels = canvas.pixels().to_vec();
+            assert!(pixels.iter().any(|pixel| *pixel != 0), "({x}, {y}) drew nothing");
+            match &reference {
+                None => reference = Some(pixels),
+                Some(want) => assert_eq!(&pixels, want, "origin ({x}, {y}) moved the HUD"),
+            }
+        }
     }
 }

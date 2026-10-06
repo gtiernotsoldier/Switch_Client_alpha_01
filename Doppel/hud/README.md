@@ -138,41 +138,50 @@ The palette is the source's: shadow `rgba(0,0,0,120)`, secondary text
 * **Anchoring.** The source hangs the watermark 10 px inside the *left* edge
   (`cursorX = 10`) and flushes the rows against the *right* one
   (`targetX = screenW - boxWidth - rightMargin`). That is what `--position right`
-  (the default) draws. `--position left` swaps the two elements to the other pair
-  of edges; the elements' own internal layout is untouched.
+  (the default) draws: two blocks, one in each of the rect's top corners, sharing
+  the rect's top line (`topY = 4`; the watermark's text sits 2 px lower inside the
+  Rise/VapeV4 panel, and Tesseract's rows start at its own 2 px). `--position left`
+  swaps the two elements to the other pair of edges; the elements' own internal
+  layout is untouched. Both blocks are anchored to the rect the overlay covers,
+  **origin included**: a game window that is not at the screen's origin — or on a
+  monitor left of the primary one, with a negative `x` — gets the same two corners,
+  because the anchoring is measured in screen coordinates and then converted into
+  the layered window's own surface at that rect's `(0, 0)`.
 * **The wedge.** Rows are sorted by measured width, descending, and each row is
   right-flushed to the mode's margin, so the list forms the source's staircase.
 * **Chips.** Rise/VapeV4 fill the whole row, Tesseract its own dark chip, Default
   nothing at all. Tesseract's chip is rounded 5 px and VapeV4's 6 px on their
   **left corners only** — the right corners stay square, where the accent bar sits.
 
-## The watermark, and the contract-v2 TODO
+## The watermark
 
 The source draws one inline run — the product name in the mode's accent, ` | `,
-the player's nickname, ` | `, `"<n> FPS"` — on one baseline. The 3600-byte state
-contract this overlay reads carries a **module table only**: no nickname and no
-frame counter. So the port draws what the contract can support:
+the player's nickname, ` | `, `"<n> FPS"` — on one baseline. **Contract v2 carries
+both of those segments in its header** (`nickname[24]` and `fps`), so the port now
+draws the source's own run:
 
 ```
-DOPPEL | <enabled module count>
+DOPPEL | <nickname> | <n> FPS
 ```
 
-and omits the FPS segment entirely.
+A segment with nothing to say is dropped, its separator included: an empty
+nickname (or a v1 block, whose 16-byte header has no nickname field) removes the
+middle segment, and `fps = 0` — the contract's "unknown" — removes the FPS one. A
+block with neither draws the bare `DOPPEL`, which is exactly what this port drew
+before contract v2 existed, so the v1 reader and the old look stay in step.
 
-> **TODO (contract v2).** The watermark is one segment short of the source. A
-> `nickname[..]` field and a `uint32 fps` in the state header would complete it
-> verbatim: the writer already knows both, and the painter is already the source's
-> run — `hud::paint_watermark` draws the title and one segment, so completing it is
-> one more `draw_shadowed` for `"<n> FPS"` plus the FPS width term the source adds
-> to the panel (`watermark_panel_width`, HUD.cpp:544), which this port simply does
-> not have. Until then the middle segment is the module count, which is the one
-> "player-ish" number the contract does carry.
+The enabled-module count that used to stand in for the missing nickname is gone:
+the header supplies the source's own two segments, and the count was never one of
+them.
 
 In Rise and VapeV4 the run sits in the source's panel: a `rgba(0,0,0,88)` fill with
 a 2 px accent bar down its right edge, and VapeV4 rounds the panel's left corners
 by 6 px. **In Rise the title is `riseWatermarkTextColor`, not the accent** — that
 is what HUD.cpp:556 does, and the README says so because the prompt's summary
-("the product name in the accent") is the general case, not Rise's.
+("the product name in the accent") is the general case, not Rise's. The panel's
+width is the source's `titleWidth + segmentWidth + fpsWidth + risePadX*2 +
+riseRectWidth + 1` (HUD.cpp:544), with the middle terms now really measured from
+the nickname and FPS segments instead of an assumed zero.
 
 ## Animations
 
@@ -279,8 +288,6 @@ building the same sources with empty placeholder `.ttf` files: 536,408 bytes).
 
 ## Not reproduced
 
-* **The FPS segment and the nickname** in the watermark — the state contract has
-  neither (see the TODO above).
 * **Minecraft `§` colour codes in a tag.** The source has a formatted-tag painter
   (`DrawFormattedTag` / `CalcFormattedTagWidth`, HUD.cpp:311-434) for tags that
   carry `§a`-style codes. This side of the contract publishes plain UTF-8 values
@@ -315,6 +322,19 @@ embedded face was really selected**, the embedded TTFs' own sanity checks (sfnt
 magic, the `Play` name, the size budget), and **the argument and rect rules**
 (`--no-topmost`'s default, and that a `--rect` is never clamped to a monitor).
 
+Contract v2 and the two-corner layout added their own: **the flags word bit by
+bit** (including that bits 5..31 change nothing), the `nickname`/`fps` fields and
+their NUL padding, both header sizes against a hostile file (short, foreign, an
+unknown version — and that a full 4096-byte block's trailer is ignored), **the
+header-versus-flag precedence field by field**, that a header change reaches the
+frame signature, the watermark run's segment assembly and the panel width that
+follows from it, **the two-corner anchors in all four modes** (watermark origin,
+the x every row's box is flushed to, and the top line both blocks share), and one
+frame drawn on canvases placed at four different origins — the regression that
+would otherwise put the watermark at `rect.x + 10` *surface-local*, which is a
+different place on every window position and no place at all off a negative-origin
+surface.
+
 Regenerating the assets (only needed if the reference fonts change):
 
 ```sh
@@ -333,16 +353,16 @@ target/release/doppel-hud.exe [options]
 | `--rect <x> <y> <w> <h>` | the screen rect the overlay covers: the layered window is created at `(x, y)` with that size and the HUD is laid out inside it at the mode's own margins | the whole primary monitor |
 | `--x` / `--y` / `--w` / `--h` | per-field adjustments to the chosen rect | the rect's own values |
 | `--position right\|left` | `right` = the source's own placement (watermark left, rows right); `left` = the two elements on the opposite edges | `right` |
-| `--mode default\|rise\|vape\|tesseract` | which of the four modes is drawn (`vapev4` is accepted) | `default` |
+| `--mode default\|rise\|vape\|tesseract` | which of the four modes is drawn (`vapev4` is accepted); an explicit flag overrides the state header | the header's mode, else `default` |
 | `--scale <f>` | multiply every metric and the font size (0.5 .. 4.0) | `1.0` |
-| `--primary <r,g,b>` | the Default wave's first colour | `78,86,107` |
-| `--secondary <r,g,b>` | the colour the wave blends towards | `120,146,214` |
+| `--primary <r,g,b>` | the Default wave's first colour | the header's `primary`, else `78,86,107` |
+| `--secondary <r,g,b>` | the colour the wave blends towards | the header's `secondary`, else `120,146,214` |
 | `--wave-speed <f>` | the Default wave's speed (`cycle = 2500/speed` ms) | `1` |
-| `--no-wave` | flat primary accent in Default mode | wave on |
-| `--no-watermark` | no watermark run (and no Rise/VapeV4 panel) | watermark on |
-| `--spaced` | split `CamelCase` module names (`AutoClicker` → `Auto Clicker`) | off |
+| `--no-wave` | flat primary accent in Default mode | wave on, or the header's `flags` bit 0 |
+| `--no-watermark` | no watermark run (and no Rise/VapeV4 panel) | watermark on, or the header's `flags` bit 2 |
+| `--spaced` | split `CamelCase` module names (`AutoClicker` → `Auto Clicker`) | off, or the header's `flags` bit 1 |
 | `--no-topmost` | do **not** put the overlay in the always-on-top band; the game then covers the HUD whenever it has focus (see [Floating above the game](#floating-above-the-game-ws_ex_topmost)) | topmost on |
-| `--dump <path.bmp>` | render one representative frame to a 32-bit BMP on the fixed 520x400 review canvas, print the measured geometry, an ASCII preview and the runtime rect, create no window, exit 0 | — |
+| `--dump <path.bmp>` | render one representative frame to a 32-bit BMP on the fixed 520x400 review canvas, print the measured geometry, an ASCII preview and the runtime rect, create no window, exit 0; draws the state file's rows and v2 header when one is readable, the built-in demo table otherwise | — |
 | `--hide` | print one line, create no window, exit 0 | — |
 | `--help` | print usage, exit 0 | — |
 
@@ -458,16 +478,60 @@ as `mod->IsInUse()`.
 
 ### The state contract (D2)
 
-`%TEMP%\doppel-hud.state`, written by `HudStateWriter` as one 3600-byte block:
-`magic 0x444F5050`, `version 1`, `count`, then up to 64 entries of 56 bytes
-(`id:u32`, `enabled:u8`, `flash:u8`, `highlight:u8`, `pad:u8`, `name[24]`,
-`value[24]`, UTF-8 and NUL padded). The reader opens the file read-only — there is
-no back channel — and renders nothing at all on a missing, short, foreign or
-wrong-version file.
+`%TEMP%\doppel-hud.state`, written by `HudStateWriter` as one **4096-byte** block,
+`#pragma pack(push,1)`, little-endian:
 
-The port reads three of those fields: `name` (the row's name), `value` (its tag)
-and `flash` (the VapeV4 tag colour). `enabled` is honoured and `ArrayList` is never
-listed, exactly as `HUD::GetActiveModules` does. `highlight` is unused by this HUD.
+| offset | size | field |
+| ------ | ---- | ----- |
+| 0 | 4 | `uint32 magic` — `0x444F5050` ("DOPP") |
+| 4 | 4 | `uint32 version` — **2** |
+| 8 | 4 | `uint32 count` — entries written, ≤ 64 |
+| 12 | 4 | `uint32 flags` — bit0 wave, bit1 spaced names, bit2 watermark, bits 3..4 mode (0 default, 1 rise, 2 vape, 3 tesseract), bits 5..31 reserved |
+| 16 | 4 | `uint32 primary` — `0x00RRGGBB` |
+| 20 | 4 | `uint32 secondary` — `0x00RRGGBB` |
+| 24 | 4 | `uint32 fps` — 0 = unknown, the segment is omitted |
+| 28 | 4 | reserved |
+| 32 | 24 | `char nickname[24]` — UTF-8, NUL padded |
+| 56 | 4 | reserved |
+| 60 | 4 | reserved |
+| 64 | 64 × 56 | `entries[]`, exactly as v1 |
+| 3648 | 448 | reserved trailer, so the block is exactly 4096 bytes |
+
+An entry is 56 bytes: `uint32 id`, `uint8 enabled`, `uint8 flash`, `uint8
+highlight`, `uint8 pad`, `char name[24]`, `char value[24]` — UTF-8 and NUL padded,
+unchanged from v1. The header and the entries occupy the first 3648 bytes; the
+reader never looks past them.
+
+**Version 1 is still read.** The shipped writer
+(`HudStateWriter.VERSION = 1`) publishes the original 3600 bytes — a 16-byte
+header (`magic`, `version`, `count`, `pad`) and the same 64 entries. That block is
+decoded exactly as before, and because it carries none of the v2 header fields,
+every one of them keeps the overlay's own default: the mode from `--mode`, the
+switches from the flags, the colours from `--primary`/`--secondary`, no nickname
+and no FPS. Reading v1 is therefore not a shim bolted on beside the real path; it
+is the ordinary case until the writer is updated.
+
+**Precedence.** The v2 header is the *default* for the mode, `m_Wave`,
+`m_SpacedModules`, `m_Watermark` and the two wave colours; `--mode`, `--no-wave`,
+`--spaced`, `--no-watermark`, `--primary` and `--secondary` are explicit overrides,
+so a caller that names a flag always gets it. The nickname and the frame counter
+have no flag — they are the header's alone. The header is re-read every frame, so a
+game that changes its mode combo repaints without restarting the overlay, and the
+frame signature covers the header fields, so such a change is not skipped as
+"nothing moved".
+
+The reader opens the file read-only — there is no back channel — and renders
+nothing at all on a missing, short, foreign or unknown-version file. The startup
+line in `%TEMP%\doppel-hud.log` says *which* of those it was ("no readable file",
+"short (64 bytes, need 3600 for v1 or 4096 for v2)", "foreign magic 0x…",
+"unknown version 3 (this reader knows 1 and 2)"), together with the entry count and,
+for a v2 block, the mode/flags/nickname/FPS it decoded — so "the overlay never read
+my header" is a log line rather than a guess.
+
+The port reads three fields of each entry: `name` (the row's name), `value` (its
+tag) and `flash` (the VapeV4 tag colour). `enabled` is honoured and `ArrayList` is
+never listed, exactly as `HUD::GetActiveModules` does. `highlight` is unused by
+this HUD.
 
 ### Lifetime
 
@@ -481,12 +545,14 @@ a window-lost exit (`taskkill` without `/F`, or the game closing it) is logged a
 such. A failed `UpdateLayeredWindow` is the one path that is *not* clean: it logs
 the Win32 error and exits 1 rather than looping with an empty window.
 
-Frames are pushed when the state, the fade, the mode or an animation changed. The
-entrance and the accents are the animations now: a mode whose accent is a function
-of the clock (always in Rise/VapeV4/Tesseract, and in Default while the wave is on)
-pushes every frame, and a settled waveless Default HUD pushes none until something
-changes. The global 350 ms fade on the way out is the overlay's own (the source has
-no overlay fade) and is quantised into the frame signature, so the ramp repaints.
+Frames are pushed when the state, the v2 header, the fade, the mode or an
+animation changed. The entrance and the accents are the animations now: a mode
+whose accent is a function of the clock (always in Rise/VapeV4/Tesseract, and in
+Default while the wave is on) pushes every frame, and a settled waveless Default
+HUD pushes none until something changes. The header is part of the signature, so a
+game that changes its mode combo, its nickname or its frame counter repaints. The
+global 350 ms fade on the way out is the overlay's own (the source has no overlay
+fade) and is quantised into the frame signature, so the ramp repaints.
 
 ### Naming (plan §7, anti-signature)
 
@@ -551,6 +617,7 @@ this executable.
 | **D7** | Re-skin to the designer's mockup | **superseded** |
 | **D8** | **Port the OpenCommunity HUD: all four modes, accents, `--scale`** | **done** |
 | **D9** | **Visible over the game: `WS_EX_TOPMOST` + re-assert, the game window's own rect as `--rect`, and the reference's own Play faces embedded** | **done** |
+| **D10** | **Split layout verified in all four modes (watermark top-left, list top-right, anchored to the rect's own origin), state contract v2 (mode/flags/colours/nickname/FPS header, CLI flags as overrides, v1 still read)** | **done** |
 
 Until D5 lands, nothing publishes the state file, so the overlay renders an empty
 HUD (with the watermark's count at 0) and exits once its 30-second first-write

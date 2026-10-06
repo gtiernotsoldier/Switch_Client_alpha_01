@@ -143,18 +143,24 @@ usage: doppel-hud [options]
   --mode <name>        default | rise | vape | tesseract. The four modes of the
                        ported HUD (ArrayList.h:14); each one brings its own
                        geometry, colours and accent animation. `vapev4` is
-                       accepted for `vape`. Default: default.
+                       accepted for `vape`. Default: the state header's mode,
+                       or `default` with no header (see below).
   --scale <f>          multiply every metric and the font size, for a readable HUD
                        on a high-DPI screen (0.5 .. 4.0). Default: 1.0, which is
                        the source's own physical-pixel layout.
   --primary <r,g,b>    the Default mode's wave colour pair (0..255 each).
-                       Default: 78,86,107 (ModuleConfig.h:65).
-  --secondary <r,g,b>  the colour the wave blends towards. Default: 120,146,214.
+                       Default: the state header's primary, else 78,86,107
+                       (ModuleConfig.h:65).
+  --secondary <r,g,b>  the colour the wave blends towards. Default: the state
+                       header's secondary, else 120,146,214.
   --wave-speed <f>     cycles per 2500 ms of the Default mode's wave
                        (ModuleConfig.h:64). Default: 1.
-  --no-wave            draw the Default mode's accent as a flat primary colour.
-  --no-watermark       do not draw the watermark run (m_Watermark, default on).
-  --spaced             split CamelCase module names (Spaced Modules, default off).
+  --no-wave            draw the Default mode's accent as a flat primary colour,
+                       whatever the header's wave flag says.
+  --no-watermark       do not draw the watermark run, whatever the header's
+                       watermark flag says (m_Watermark, default on).
+  --spaced             split CamelCase module names. The header's spaced flag is
+                       the default; this flag turns it on regardless.
   --no-topmost         do NOT put the overlay in the always-on-top band. Without
                        WS_EX_TOPMOST the game covers the HUD the moment it has
                        focus, which is what the overlay exists to avoid; this is
@@ -164,13 +170,21 @@ usage: doppel-hud [options]
   --dump <path.bmp>    render one representative frame to a 32-bit BMP on the
                        fixed 520x400 review canvas, print the measured geometry,
                        an ASCII preview and the runtime rect the live window
-                       would cover, create no window, exit 0
+                       would cover, create no window, exit 0. It draws the state
+                       file's own rows and v2 header (nickname and FPS included)
+                       when one is readable, and the built-in demo table when
+                       there is none, so it works with no game running.
   --hide               print one line, create no window, exit 0 (automation check)
   --help               print this text and exit 0
 
-The overlay reads %TEMP%\\doppel-hud.state, published by the game 3600 bytes at a
-time (magic 0x444F5050, version 1). It opens the file read-only: there is no back
-channel and nothing this process does can reach the game.
+The overlay reads %TEMP%\\doppel-hud.state, published by the game 4096 bytes at a
+time (magic 0x444F5050, version 2: a 64-byte header carrying the mode, the wave /
+spaced / watermark switches, the two wave colours, the player nickname and the
+frame counter, then 64 entries of 56 bytes). The original 3600-byte version 1
+block is still read; it has none of those header fields, so every one of them
+falls back to the flag defaults above. An explicit flag always wins over the
+header. The file is opened read-only: there is no back channel and nothing this
+process does can reach the game.
 
 It keeps its own breadcrumbs in %TEMP%\\doppel-hud.log: one line on start (local
 time, pid, the rect it covers, the mode, the resolved state file and whether it was
@@ -205,21 +219,35 @@ struct Args {
     w: Option<u32>,
     h: Option<u32>,
     position: Position,
-    /// `--mode`: which of the ported HUD's four modes is drawn.
+    /// `--mode`: which of the ported HUD's four modes is drawn. The v2 state
+    /// header carries the game's own combo, so this is the fallback until
+    /// `--mode` is actually named (see `mode_set`).
     mode: Mode,
-    /// `--scale`: the multiplier on every metric and on the font size.
+    /// `--scale`: the multiplier on every metric and on the font size. Not in the
+    /// state contract: the overlay's own DPI story, not the game's config.
     scale: f32,
     /// `m_Watermark`.
     watermark: bool,
     /// `m_Wave`.
     wave: bool,
-    /// `m_WaveSpeed`.
+    /// `m_WaveSpeed`. Not in the state contract either.
     wave_speed: f32,
     /// `m_PrimaryColor` / `m_SecondaryColor`.
     primary: [f32; 3],
     secondary: [f32; 3],
     /// `m_SpacedModules`.
     spaced: bool,
+    // Which of the fields above the caller actually named. Contract v2 puts the
+    // same switches and colours in the state header, and the rule between the two
+    // sources is "the header is the default, an explicit flag overrides it" — so
+    // whether a flag was given has to be remembered rather than inferred from its
+    // value (`--spaced` off and "no --spaced" are different states).
+    mode_set: bool,
+    watermark_set: bool,
+    wave_set: bool,
+    primary_set: bool,
+    secondary_set: bool,
+    spaced_set: bool,
     /// `--no-topmost`: leave the overlay in the desktop's normal Z-order band.
     topmost: bool,
     /// Headless render to a BMP, no window.
@@ -246,6 +274,12 @@ impl Default for Args {
             primary: hud::DEFAULT_PRIMARY,
             secondary: hud::DEFAULT_SECONDARY,
             spaced: false,
+            mode_set: false,
+            watermark_set: false,
+            wave_set: false,
+            primary_set: false,
+            secondary_set: false,
+            spaced_set: false,
             topmost: true,
             dump: None,
             hide: false,
@@ -272,6 +306,7 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
             "--mode" => {
                 let raw = next_value(argv, &mut i, flag)?;
                 args.mode = Mode::parse(&raw)?;
+                args.mode_set = true;
             }
             "--scale" => {
                 let raw = next_value(argv, &mut i, flag)?;
@@ -285,21 +320,30 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
                 }
                 args.scale = value;
             }
-            "--primary" => args.primary = parse_rgb(&next_value(argv, &mut i, flag)?)?,
-            "--secondary" => args.secondary = parse_rgb(&next_value(argv, &mut i, flag)?)?,
+            "--primary" => {
+                args.primary = parse_rgb(&next_value(argv, &mut i, flag)?)?;
+                args.primary_set = true;
+            }
+            "--secondary" => {
+                args.secondary = parse_rgb(&next_value(argv, &mut i, flag)?)?;
+                args.secondary_set = true;
+            }
             "--wave-speed" => {
                 args.wave_speed = parse_num(flag, &next_value(argv, &mut i, flag)?)?;
             }
             "--no-wave" => {
                 args.wave = false;
+                args.wave_set = true;
                 i += 1;
             }
             "--no-watermark" => {
                 args.watermark = false;
+                args.watermark_set = true;
                 i += 1;
             }
             "--spaced" => {
                 args.spaced = true;
+                args.spaced_set = true;
                 i += 1;
             }
             "--no-topmost" => {
@@ -324,20 +368,73 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
 }
 
 /// The `HUD{}` block of the args (ModuleConfig.h:57-68, ArrayList.h:15-19), with
-/// the live fade on top. Both the frame loop and `--dump` build their config here,
-/// so a dump is exactly what the window would draw.
-fn config_from(args: &Args, alpha: f32) -> Config {
+/// the v2 state header and the live fade layered on top. Both the frame loop and
+/// `--dump` build their config here, so a dump is exactly what the window would
+/// draw.
+///
+/// Precedence, field by field: an explicit command-line flag wins over the state
+/// header, which wins over the overlay's own default. The header is the game's
+/// own config — the mode combo, `m_Wave` / `m_SpacedModules` / `m_Watermark` and
+/// the two wave colours — and contract v2 also carries the watermark's nickname
+/// and frame counter, which no flag supplies. A v1 block (or no file at all) has
+/// no header, so every one of those keeps the value the caller asked for; that is
+/// what keeps the overlay runnable and reviewable with no game attached.
+fn config_from(args: &Args, alpha: f32, header: Option<&state::Header>) -> Config {
     Config {
         position: args.position,
         alpha,
-        mode: args.mode,
+        mode: if args.mode_set { args.mode } else { header.map_or(args.mode, |h| mode_of(h.mode)) },
         scale: args.scale,
-        watermark: args.watermark,
-        wave: args.wave,
+        watermark: if args.watermark_set {
+            args.watermark
+        } else {
+            header.map_or(args.watermark, |h| h.watermark)
+        },
+        wave: if args.wave_set { args.wave } else { header.map_or(args.wave, |h| h.wave) },
         wave_speed: args.wave_speed,
-        primary: args.primary,
-        secondary: args.secondary,
-        spaced: args.spaced,
+        primary: if args.primary_set { args.primary } else { header.map_or(args.primary, |h| h.primary) },
+        secondary: if args.secondary_set {
+            args.secondary
+        } else {
+            header.map_or(args.secondary, |h| h.secondary)
+        },
+        spaced: if args.spaced_set { args.spaced } else { header.map_or(args.spaced, |h| h.spaced) },
+        nickname: header.map(|h| h.nickname.clone()).unwrap_or_default(),
+        fps: header.map_or(0, |h| h.fps),
+    }
+}
+
+/// The header's `flags` bits 3..4 → the mode the painter knows. The two
+/// vocabularies exist because `state` describes the published file and `hud`
+/// describes the ported HUD; this is the one place that has to know both.
+fn mode_of(bits: state::StateMode) -> Mode {
+    match bits {
+        state::StateMode::Default => Mode::Default,
+        state::StateMode::Rise => Mode::Rise,
+        state::StateMode::Vape => Mode::Vape,
+        state::StateMode::Tesseract => Mode::Tesseract,
+    }
+}
+
+/// What the startup line says about the first read: the block's version, its
+/// entry count and — for a v2 block — the config the header asked for. "The
+/// overlay is drawing the wrong mode" and "the overlay never read my header" are
+/// otherwise indistinguishable from a screenshot.
+fn describe_state(snapshot: &state::Snapshot) -> String {
+    match &snapshot.header {
+        Some(h) => format!(
+            "v{} block, {} entries; header mode {} wave {} spaced {} watermark {}, \
+             nick {:?}, {} fps",
+            h.version,
+            snapshot.entries.len(),
+            h.mode.label(),
+            h.wave,
+            h.spaced,
+            h.watermark,
+            h.nickname,
+            h.fps
+        ),
+        None => format!("v{} block, {} entries (no v2 header)", state::V1_VERSION, snapshot.entries.len()),
     }
 }
 
@@ -546,8 +643,10 @@ fn demo_entries() -> Vec<Entry> {
 
 /// Cheap change detector: everything the HUD depends on except time. When it
 /// matches the previous frame and nothing is animating, the compositor already
-/// holds the right pixels and the frame is skipped.
-fn signature(entries: &[Entry], fade: f32) -> u64 {
+/// holds the right pixels and the frame is skipped. The v2 header is part of it:
+/// a nickname, frame counter, mode or colour that changes in the state file has
+/// to repaint even though every entry is identical.
+fn signature(entries: &[Entry], fade: f32, header: Option<&state::Header>) -> u64 {
     fn mix(hash: &mut u64, byte: u8) {
         *hash ^= byte as u64;
         *hash = hash.wrapping_mul(0x0000_0100_0000_01B3);
@@ -569,6 +668,28 @@ fn signature(entries: &[Entry], fade: f32) -> u64 {
             mix(&mut hash, *b);
         }
         mix(&mut hash, 0xFF);
+    }
+    match header {
+        Some(h) => {
+            mix(&mut hash, 1);
+            mix(&mut hash, h.wave as u8 | (h.spaced as u8) << 1 | (h.watermark as u8) << 2);
+            mix(&mut hash, h.mode as u8);
+            for b in h.fps.to_le_bytes() {
+                mix(&mut hash, b);
+            }
+            for colour in [h.primary, h.secondary] {
+                for channel in colour {
+                    mix(&mut hash, (channel.clamp(0.0, 1.0) * 255.0) as u8);
+                }
+            }
+            for b in h.nickname.as_bytes() {
+                mix(&mut hash, *b);
+            }
+            mix(&mut hash, 0xFF);
+        }
+        // "There is no header" is itself a state worth repainting on: the moment
+        // a v2 block replaces a v1 one the watermark gains its segments.
+        None => mix(&mut hash, 0),
     }
     // The fade is quantised into the signature so the ramp repaints, without
     // floating-point noise making every frame look different.
@@ -598,8 +719,14 @@ fn run(args: &Args) -> Result<(), String> {
 
     // Read once before the loop starts: the answer is part of the startup line,
     // and it is the difference between "the game has not published yet" and "the
-    // file is there but not ours".
-    let first_read = state::read(&state_path);
+    // file is there but not ours" — the checked form, because the refusal itself
+    // (short, foreign, or which version) is the useful part of that line.
+    let first_read = state::read_checked(&state_path);
+    // The config as the first frame will actually draw it: `--mode` and the other
+    // flags are the request, the header may fill in everything they did not name.
+    // Logging the request alone would say "mode default" for a run that is about
+    // to draw Tesseract because the game's combo says so.
+    let effective = config_from(args, 1.0, first_read.as_ref().ok().and_then(|snap| snap.header.as_ref()));
     log.line(&format!(
         "start: rect {}x{} at ({}, {}) [{}], position {:?}, mode {} (scale {:.2}), \
          watermark {}, wave {}, state {} readable: {}",
@@ -609,14 +736,14 @@ fn run(args: &Args) -> Result<(), String> {
         rect.y,
         source.label(),
         args.position,
-        args.mode.label(),
+        effective.mode.label(),
         args.scale,
-        args.watermark,
-        args.wave,
+        effective.watermark,
+        effective.wave,
         state_path.display(),
         match &first_read {
-            Some(snapshot) => format!("yes ({} entries)", snapshot.entries.len()),
-            None => "no (missing, short, foreign or wrong version)".to_string(),
+            Ok(snapshot) => describe_state(snapshot),
+            Err(refusal) => format!("no ({})", refusal.describe()),
         }
     ));
 
@@ -641,7 +768,6 @@ fn run(args: &Args) -> Result<(), String> {
         ));
     }
 
-    let mut config = config_from(args, 1.0);
     // How many frames reached the compositor. Zero on a run that ended by itself
     // is itself a diagnosis: the state file never showed up in time.
     let mut frames: u64 = 0;
@@ -806,6 +932,11 @@ fn run(args: &Args) -> Result<(), String> {
         let mut canvas = Canvas::placed(rect.x, rect.y, rect.w as u32, rect.h as u32);
         let mut anim = Anim::new();
         let mut entries: Vec<Entry> = Vec::new();
+        // The v2 header behind those entries: the mode, the switches, the two wave
+        // colours and the watermark's nickname/FPS. Kept beside `entries` because
+        // it is re-applied to the config every frame, not just at start.
+        let mut header: Option<state::Header> =
+            first_read.as_ref().ok().and_then(|snap| snap.header.clone());
         // Last write time of the state file — the game's own liveness signal.
         let mut last_write: Option<std::time::SystemTime> = None;
         let mut fade = 1.0f32;
@@ -887,6 +1018,7 @@ fn run(args: &Args) -> Result<(), String> {
             // leaves the last good frame on screen — never garbage.
             if let Some(snapshot) = state::read(&state_path) {
                 entries = snapshot.entries;
+                header = snapshot.header;
                 if let Some(modified) = snapshot.modified {
                     last_write = Some(modified);
                 }
@@ -922,9 +1054,13 @@ fn run(args: &Args) -> Result<(), String> {
             // stretch cannot turn into a catch-up jump), and `hud::paint` reports
             // whether the frame it composed is still moving.
             anim.tick(now);
-            let current = signature(&entries, fade);
+            let current = signature(&entries, fade, header.as_ref());
             if current != last_signature || animating {
-                config.alpha = fade;
+                // Rebuilt every frame the HUD is drawn: the header's switches are
+                // the defaults and the command line overrides them, so a game that
+                // changes its mode combo repaints without a restart. The fade is
+                // the overlay's own and is applied on top either way.
+                let config = config_from(args, fade, header.as_ref());
                 // The HUD is redrawn from scratch: last frame's pixels must not
                 // survive underneath the new ones.
                 canvas.clear();
@@ -1017,7 +1153,22 @@ fn run_dump(path: &str, args: &Args, runtime: Rect, source: RectSource) -> Resul
     let (w, h) = (DEF_W, DEF_H);
     let mut canvas = Canvas::new(w, h);
 
-    let entries = demo_entries();
+    // A published block wins over the demo table: `--dump` is how a state file is
+    // reviewed, so a v2 block's nickname, FPS and header config have to reach the
+    // render. With no file — or one this reader refuses — the demo mix stands in,
+    // so a review dump still works on a machine with no game running.
+    let state_path = state::default_path();
+    let (entries, header, source_note) = match state::read_checked(&state_path) {
+        Ok(snapshot) => {
+            let note = format!("{} read from {}", describe_state(&snapshot), state_path.display());
+            (snapshot.entries, snapshot.header, note)
+        }
+        Err(refusal) => (
+            demo_entries(),
+            None,
+            format!("the built-in demo table ({} at {})", refusal.describe(), state_path.display()),
+        ),
+    };
     let mut anim = Anim::new();
     let now = Instant::now();
     // Every row settled and the accent clock at a known 2000 ms, so the frame's
@@ -1025,27 +1176,26 @@ fn run_dump(path: &str, args: &Args, runtime: Rect, source: RectSource) -> Resul
     // the wall clock happened to say.
     anim.seed(&entries, now);
 
-    let config = config_from(args, 1.0);
+    let config = config_from(args, 1.0, header.as_ref());
     canvas.clear();
     hud::paint(&mut canvas, &mut text, &entries, &mut anim, now, &config);
 
     preview::write_bmp(Path::new(path), &canvas, BACKDROP)
         .map_err(|e| format!("cannot write {path}: {e}"))?;
-    let metrics = hud::Metrics::new(args.mode, args.scale);
+    let metrics = hud::Metrics::new(config.mode, config.scale);
     println!(
-        "wrote {path} ({w}x{h}, 32-bit BMP, mode {}, {:?} layout, composited over #{:06X})",
-        args.mode.label(),
+        "wrote {path} ({w}x{h}, 32-bit BMP, mode {}, {:?} layout, composited over #{:06X}; {})",
+        config.mode.label(),
         args.position,
-        BACKDROP & 0x00FF_FFFF
+        BACKDROP & 0x00FF_FFFF,
+        source_note
     );
     // The rect the live window covers, which is *not* the review canvas: this is
     // the number that decides whether the HUD lands against the screen's edges.
     // Both elements' own origins are given in screen coordinates, so the anchoring
     // can be checked without running the windowed path.
-    let name_font = args.mode.name_font();
-    let title_w = text.measure(name_font, hud::PRODUCT) as f32;
-    let segment = format!("{}{}", hud::SEGMENT_SEP, entries.len());
-    let run_w = title_w + text.measure(text::FontId::Body, &segment) as f32;
+    let name_font = config.mode.name_font();
+    let (_, _, run_w) = hud::measure_watermark(&text, name_font, &config.nickname, config.fps);
     println!(
         "runtime window: {}x{} at ({}, {}) [{}] — the live layered window covers that rect, so the \
          watermark run ({}px) starts at ({}, {}) and the first row is flushed to the {} edge, \
@@ -1065,6 +1215,32 @@ fn run_dump(path: &str, args: &Args, runtime: Rect, source: RectSource) -> Resul
         },
         metrics.right_margin,
         if args.topmost { "on" } else { "off (--no-topmost)" },
+    );
+    // The measured anchoring, in the same screen coordinates the live window
+    // would draw in: the watermark's origin, the x every row's box is flushed to
+    // (`list_flush_x` — the same edge for every row, whatever its width, which is
+    // what makes the wedge), and the y each block's first line sits on. Both
+    // blocks hang off the rect's own top line, one per corner.
+    println!(
+        "runtime anchors: watermark \"{}\" at ({}, {}); module list flushed to the {} edge, so \
+         every row's box ends at x = {} and the first row's top is y = {}; both blocks hang off \
+         the rect's top line y = {} (watermark + {}, first row + {}); {} listed rows",
+        hud::watermark_text(&config.nickname, config.fps),
+        hud::watermark_x(runtime, args.position, &metrics, run_w),
+        hud::watermark_y(runtime, &metrics),
+        match args.position {
+            Position::Right => "right",
+            Position::Left => "left",
+        },
+        hud::list_flush_x(runtime, args.position, &metrics),
+        hud::row_y(runtime, &metrics, 0),
+        runtime.y,
+        metrics.watermark_y,
+        metrics.base_y,
+        entries
+            .iter()
+            .filter(|e| e.enabled && !e.name.is_empty() && e.name != hud::SELF_MODULE)
+            .count(),
     );
     // The numbers behind the picture: a dump that looks wrong is much easier to
     // fix when the face metrics are on screen next to it. The face names are the
@@ -1231,5 +1407,145 @@ mod tests {
         assert!(parse("--rect 0 0 0 720").is_err());
         assert!(parse("--rect 0 0 1280 0").is_err());
         assert!(resolve_rect(&parse("--rect 0 0 1280 720 --w 0").unwrap()).is_err());
+    }
+
+    /// A v2 header that says something different in every field the contract
+    /// carries, so the merge below has something to override.
+    fn header() -> state::Header {
+        state::Header {
+            version: state::VERSION,
+            wave: false,
+            spaced: true,
+            watermark: false,
+            mode: state::StateMode::Tesseract,
+            primary: [0.25, 0.5, 0.75],
+            secondary: [0.1, 0.2, 0.3],
+            fps: 144,
+            nickname: "gtier".to_string(),
+        }
+    }
+
+    /// The header's `flags` bits 3..4 reach the painter's own four modes.
+    #[test]
+    fn the_headers_mode_bits_map_onto_the_four_ported_modes() {
+        for (bits, want) in [
+            (state::StateMode::Default, Mode::Default),
+            (state::StateMode::Rise, Mode::Rise),
+            (state::StateMode::Vape, Mode::Vape),
+            (state::StateMode::Tesseract, Mode::Tesseract),
+        ] {
+            assert_eq!(mode_of(bits), want);
+            assert_eq!(mode_of(bits).label(), bits.label());
+        }
+    }
+
+    /// Contract v2's precedence rule, field by field: the header is the default,
+    /// an explicit flag overrides it, and a field the header does not carry keeps
+    /// the overlay's own default.
+    #[test]
+    fn the_state_header_is_the_default_and_a_flag_overrides_it() {
+        let header = header();
+
+        // Nothing on the command line: the header decides everything it carries.
+        let bare = parse("").unwrap();
+        assert!(!bare.mode_set && !bare.wave_set && !bare.watermark_set);
+        assert!(!bare.spaced_set && !bare.primary_set && !bare.secondary_set);
+        let cfg = config_from(&bare, 1.0, Some(&header));
+        assert_eq!(cfg.mode, Mode::Tesseract);
+        assert!(!cfg.wave, "the header's m_Wave");
+        assert!(cfg.spaced, "the header's m_SpacedModules");
+        assert!(!cfg.watermark, "the header's m_Watermark");
+        assert_eq!(cfg.primary, header.primary);
+        assert_eq!(cfg.secondary, header.secondary);
+        assert_eq!(cfg.nickname, "gtier");
+        assert_eq!(cfg.fps, 144);
+        // The fields no header carries keep the caller's own values.
+        assert_eq!(cfg.scale, 1.0);
+        assert_eq!(cfg.wave_speed, hud::DEFAULT_WAVE_SPEED);
+        assert_eq!(cfg.position, Position::Right);
+        assert_eq!(cfg.alpha, 1.0);
+
+        // A header that says the opposite of the CLI's own defaults, with no
+        // flags at all: the header still wins.
+        let flipped = state::Header {
+            wave: true,
+            spaced: false,
+            watermark: true,
+            mode: state::StateMode::Vape,
+            ..header.clone()
+        };
+        let cfg = config_from(&bare, 1.0, Some(&flipped));
+        assert_eq!(cfg.mode, Mode::Vape);
+        assert!(cfg.wave && cfg.watermark);
+        assert!(!cfg.spaced);
+
+        // Every flag named: every flag wins.
+        let explicit = parse(
+            "--mode rise --no-wave --no-watermark --spaced --primary 1,2,3 --secondary 4,5,6",
+        )
+        .unwrap();
+        assert!(explicit.mode_set && explicit.wave_set && explicit.watermark_set);
+        assert!(explicit.spaced_set && explicit.primary_set && explicit.secondary_set);
+        let cfg = config_from(&explicit, 0.5, Some(&flipped));
+        assert_eq!(cfg.mode, Mode::Rise);
+        assert!(!cfg.wave, "--no-wave beats a header with the wave on");
+        assert!(!cfg.watermark, "--no-watermark beats a header with it on");
+        assert!(cfg.spaced, "--spaced beats a header with it off");
+        assert_eq!(cfg.primary, [1.0 / 255.0, 2.0 / 255.0, 3.0 / 255.0]);
+        assert_eq!(cfg.secondary, [4.0 / 255.0, 5.0 / 255.0, 6.0 / 255.0]);
+        assert_eq!(cfg.alpha, 0.5);
+        // Nickname and FPS have no flag of their own: the header's run is drawn.
+        assert_eq!(cfg.nickname, "gtier");
+        assert_eq!(cfg.fps, 144);
+
+        // No header at all — a v1 block, or no file — leaves every one of those at
+        // the caller's value, and the watermark with no segments to draw.
+        let cfg = config_from(&bare, 1.0, None);
+        assert_eq!(cfg.mode, Mode::Default);
+        assert!(cfg.wave && cfg.watermark && !cfg.spaced);
+        assert_eq!(cfg.primary, hud::DEFAULT_PRIMARY);
+        assert_eq!(cfg.secondary, hud::DEFAULT_SECONDARY);
+        assert_eq!(cfg.nickname, "");
+        assert_eq!(cfg.fps, 0);
+        // ...and an explicit flag still wins over that.
+        let cfg = config_from(&parse("--mode tesseract --no-wave").unwrap(), 1.0, None);
+        assert_eq!(cfg.mode, Mode::Tesseract);
+        assert!(!cfg.wave);
+    }
+
+    /// The repaint rule has to see the header: a state file that gains a nickname,
+    /// an FPS, a mode or a colour is a different frame even when every module row
+    /// is byte-for-byte the same.
+    #[test]
+    fn a_header_change_reaches_the_frame_signature() {
+        let entries = demo_entries();
+        let v2 = header();
+        assert_ne!(
+            signature(&entries, 1.0, None),
+            signature(&entries, 1.0, Some(&v2)),
+            "a v1 block becoming a v2 one repaints"
+        );
+        assert_eq!(
+            signature(&entries, 1.0, Some(&v2)),
+            signature(&entries, 1.0, Some(&header())),
+            "the same header hashes the same"
+        );
+
+        for changed in [
+            state::Header { nickname: "someone-else".to_string(), ..v2.clone() },
+            state::Header { fps: 60, ..v2.clone() },
+            state::Header { mode: state::StateMode::Rise, ..v2.clone() },
+            state::Header { wave: true, ..v2.clone() },
+            state::Header { spaced: false, ..v2.clone() },
+            state::Header { watermark: true, ..v2.clone() },
+            state::Header { primary: [1.0, 1.0, 1.0], ..v2.clone() },
+            state::Header { secondary: [0.0, 0.0, 0.0], ..v2.clone() },
+        ] {
+            assert_ne!(
+                signature(&entries, 1.0, Some(&v2)),
+                signature(&entries, 1.0, Some(&changed)),
+                "a header change must repaint: {changed:?}"
+            );
+        }
     }
 }

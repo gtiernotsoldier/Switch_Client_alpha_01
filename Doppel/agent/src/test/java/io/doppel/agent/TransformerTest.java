@@ -86,7 +86,7 @@ public class TransformerTest {
     }
 
     @Test
-    public void otherClassesAreIgnored() {
+    public void otherClassesAreIgnored() throws Exception {
         resetHookedFlag();
         byte[] untouched = new Transformer().transform(null, "org/lwjgl/opengl/Other", null, null, fixture(Opcodes.V1_8));
         assertNull(untouched, "the transformer must only ever touch the class it targets");

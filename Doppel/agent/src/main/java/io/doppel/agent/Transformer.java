@@ -40,6 +40,28 @@ public class Transformer implements ClassFileTransformer {
     private static volatile boolean installed = false;
 
     /**
+     * ASM api level to declare — deliberately NOT Opcodes.ASM9, and this is load-bearing.
+     *
+     * The agent jar is appended to the system ClassLoader search path by the Attach
+     * mechanism, so any ASM already on the game's classpath wins the lookup. Forge 1.8.9
+     * ships asm-all-5.0.3 AHEAD of agent.jar, so inside the game org.objectweb.asm.*
+     * resolves to ASM 5.0.3 even though agent.jar bundles 9.7 — the bundled copy is dead
+     * weight there, and the same thing will happen with any other host that ships its own
+     * ASM.
+     *
+     * ASM validates the api argument in its visitor constructors and throws a bare
+     * IllegalArgumentException() (null message) for an api level it does not recognise.
+     * Opcodes.ASM9 is a compile-time constant, so it is inlined into this class as 589824;
+     * ASM 5.0.3 rejects that, and retransformClasses therefore reported only
+     * "IllegalArgumentException: null" and left update() untouched (field-verified).
+     *
+     * ASM4 is accepted by every ASM from 4 to 9 and is all this class needs: the visitor
+     * calls below are ASM4-era (visitMethodInsn's 5-arg form exists since ASM 5.0, which is
+     * the oldest runtime we can actually meet here).
+     */
+    private static final int COMPAT_API = Opcodes.ASM4;
+
+    /**
      * Cached game ClassLoader — found once, reused for all Class.forName() calls.
      * When agentmain() is called by the JPLIS agent, it loads this Agent class
      * using the system CL (via appendToSystemClassLoaderSearch). The system CL
@@ -215,7 +237,7 @@ public class Transformer implements ClassFileTransformer {
             final boolean needsFrames = (reader.readShort(6) & 0xffff) >= 50;
             final boolean[] injected = new boolean[] { false };
             ClassWriter writer = new ClassWriter(reader, ClassWriter.COMPUTE_MAXS);
-            ClassVisitor injector = new ClassVisitor(Opcodes.ASM9, writer) {
+            ClassVisitor injector = new ClassVisitor(COMPAT_API, writer) {
                 @Override
                 public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
                     MethodVisitor mv = super.visitMethod(access, name, descriptor, signature, exceptions);
@@ -225,7 +247,7 @@ public class Transformer implements ClassFileTransformer {
                         final Object[] entryLocals = (access & Opcodes.ACC_STATIC) != 0
                                 ? new Object[0]
                                 : new Object[] { reader.getClassName() };
-                        return new MethodVisitor(Opcodes.ASM9, mv) {
+                        return new MethodVisitor(COMPAT_API, mv) {
                             @Override
                             public void visitCode() {
                                 super.visitCode();
@@ -253,12 +275,23 @@ public class Transformer implements ClassFileTransformer {
             // catch(Throwable) is deliberate. A failure here (malformed class file, an
             // unexpected method shape, an Error from the verifier) must never be swallowed:
             // a silent null return with no diagnostics is exactly the failure mode that
-            // cost days of guessing. Print the type, the message and the cause chain.
-            Agent.log("[Transformer] Failed: " + e.getClass().getSimpleName() + ": " + e.getMessage());
-            Throwable cause = e;
+            // cost days of guessing.
+            //
+            // The full stack is logged, not just the cause chain. ASM throws bare
+            // IllegalArgumentException() with a null message from several places, and in
+            // that case the cause chain prints nothing useful at all (observed in the
+            // field: "Failed: IllegalArgumentException: null" with no way to locate it).
+            Agent.log("[Transformer] Failed: " + e.getClass().getName() + ": " + e.getMessage());
+            for (StackTraceElement el : e.getStackTrace()) {
+                Agent.log("[Transformer]   at " + el);
+            }
+            Throwable cause = e.getCause();
             int depth = 0;
             while (cause != null && depth < 5) {
                 Agent.log("[Transformer]   Caused by: " + cause.getClass().getName() + ": " + cause.getMessage());
+                for (StackTraceElement el : cause.getStackTrace()) {
+                    Agent.log("[Transformer]       at " + el);
+                }
                 cause = cause.getCause();
                 depth++;
             }

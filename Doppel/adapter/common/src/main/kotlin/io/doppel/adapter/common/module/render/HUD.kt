@@ -108,18 +108,14 @@ object HUD : Module("HUD", Category.RENDER) {
     var overlayLineSpacing by int("OverlayLineSpacing", 100, 50..200, "%")
 
     /**
-     * Row order in the overlay: "Width" is the reference's wedge (widest first), "Published" draws
-     * the list in the order the user arranged it (see [moveInHud]).
-     */
-    var overlayOrder by choices("OverlayOrder", arrayOf("Width", "Published"))
-
-    /**
      * The user's manual HUD order, as a comma-separated list of module names.
      *
      * Stored as a plain string because it is a list, not a value: names not in it keep their
      * alphabetical/category order after the listed ones, so adding a module never invalidates it.
+     * Hidden from the option list — the WebUI's ▲▼ buttons own this value, and a raw
+     * "WTap,STap,…" text field is noise nobody can act on.
      */
-    var hudOrderRaw by string("HudOrder", "")
+    var hudOrderRaw by string("HudOrder", "", hidden = true)
 
     // ═══════════════════════════════════════════
     //  Overlay style (cached; rebuilt on config change)
@@ -158,7 +154,10 @@ object HUD : Module("HUD", Category.RENDER) {
         scale = if (overlayScale == 1.0f) 0f else overlayScale,
         opacity = if (overlayOpacity >= 100) 0 else overlayOpacity,
         lineSpacing = if (overlayLineSpacing == 100) 0 else overlayLineSpacing,
-        ordered = overlayOrder == "Published"
+        // The overlay follows the user's order as soon as they have arranged one. A separate
+        // "Width / Published" switch only asked them to make the same choice twice, so it is gone:
+        // an untouched list stays the reference's width wedge, an arranged one is drawn as arranged.
+        ordered = hudOrderList().isNotEmpty()
     )
 
     /**
@@ -239,6 +238,9 @@ object HUD : Module("HUD", Category.RENDER) {
         order[index] = order[target]
         order[target] = moved
         hudOrderRaw = order.joinToString(",")
+        // The header's `orderPublished` flag is derived from this list, so the cached style has to go
+        // with it — otherwise the first move would only take effect after some unrelated change.
+        styleCache = null
         refreshLines()
         return true
     }

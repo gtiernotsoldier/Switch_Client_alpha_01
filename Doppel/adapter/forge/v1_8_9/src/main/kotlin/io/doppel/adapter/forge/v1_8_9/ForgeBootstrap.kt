@@ -133,6 +133,11 @@ object ForgeBootstrap {
             FastPlace
         )
         ModuleRegistry.initSafetyIntegration()
+        // Restore the saved configuration before anything reads it. Module keybinds and the
+        // red-flash flags live in that file, and they used to be loaded only as a side effect of the
+        // *WebUI module* starting — so with the WebUI switched off, every keybind the user had bound
+        // was silently back to unbound after a restart.
+        try { io.doppel.adapter.common.webui.ConfigStore.load() } catch (_: Exception) {}
         try { ModuleRegistry.enable("HUD") } catch (_: Exception) {}
         try { ModuleRegistry.enable("WebUI") } catch (_: Exception) {}
 

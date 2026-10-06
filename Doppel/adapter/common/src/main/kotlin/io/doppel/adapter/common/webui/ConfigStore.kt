@@ -1,5 +1,6 @@
 package io.doppel.adapter.common.webui
 
+import io.doppel.adapter.common.module.ModuleRegistry
 import io.doppel.adapter.common.option.ConfigManager
 import io.doppel.core.logging.CoreLogger
 import java.io.File
@@ -47,10 +48,29 @@ object ConfigStore {
         if (existing != null) existing else generateAndPersist()
     }
 
-    /** Load persisted config (no-op if absent). Called once on WebUI start. */
+    /** Whether the file has already been applied — the load is a one-shot. */
+    @Volatile
+    private var loaded = false
+
+    /**
+     * Load persisted config (no-op if absent). Called once on WebUI start — and once at bootstrap,
+     * which is the one that matters for anything the game reads before the panel exists.
+     */
     fun load() {
+        if (loaded) return
+        loaded = true
         ConfigManager.load(configFile)
-        CoreLogger.info("[ConfigStore] Config file: ${configFile.absolutePath}")
+        // A keybind lives in this file now, and it is the thing users notice going missing, so the
+        // startup line says how many came back: "the game never told me" and "the panel never saved
+        // it" look identical from the outside otherwise.
+        val bound = try {
+            ModuleRegistry.getAll().count { it.keybind > 0 }
+        } catch (_: Exception) {
+            0
+        }
+        CoreLogger.info(
+            "[ConfigStore] Config file: ${configFile.absolutePath} ($bound module keybind(s) restored)"
+        )
     }
 
     /** Persist the current configuration to disk. */

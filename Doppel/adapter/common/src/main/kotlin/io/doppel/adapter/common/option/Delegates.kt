@@ -261,7 +261,9 @@ fun choices(
  */
 fun string(
     name: String,
-    default: String = ""
+    default: String = "",
+    /** Registered but kept out of the option list — see [OptionMeta.hidden]. */
+    hidden: Boolean = false
 ): ReadWriteProperty<Any?, String> {
     return object : ReadWriteProperty<Any?, String> {
         private var key: String? = null
@@ -282,7 +284,8 @@ fun string(
             val k = "$modulePrefix.$optName"
             ConfigManager.register(k, default, OptionMeta(
                 type = OptionType.STRING,
-                default = default
+                default = default,
+                hidden = hidden
             ))
             key = k
             return k

@@ -20,17 +20,21 @@
 //
 // What the frame loop does now: read the published state block (D2), advance the
 // entrance/flash animations (D3/D4), rasterise the HUD into the canvas, push it
-// through UpdateLayeredWindow. Frames are pushed when something actually changed
-// — and, since D7, always while the status pill is on screen, because its ring
-// pulses for as long as the HUD is up (see `hud::paint`).
+// through UpdateLayeredWindow. Frames are pushed when something actually changed:
+// the signature covers the state and the fade, and `hud::paint` reports whether an
+// entrance or a flash is still moving. The status pill's ring pulses forever, and
+// that used to be the only reason a visible HUD was never static; the pill is off
+// by default now (`SHOW_STATUS_PILL` in hud.rs), so a static HUD really is static
+// and those frames are skipped.
 //
 // Zero third-party dependencies, same rule as the injector: kernel32/user32/gdi32
 // through raw extern "system" FFI, declared in win.rs. The pixel work lives in
 // draw.rs (pure), the text in text.rs (GDI), the HUD in hud.rs (pure geometry).
 //
 // The HUD itself is the designer's mockup (`E:\swl\doppel.html`): the client
-// watermark, the module list and the status pill. hud.rs documents every number
-// it took from that stylesheet.
+// watermark and the module list. The mockup's third element, the status pill, is
+// off by default — `SHOW_STATUS_PILL` in hud.rs is the switch — and hud.rs
+// documents every number it took from that stylesheet.
 
 mod draw;
 mod hud;
@@ -61,7 +65,11 @@ const CLASS_NAME: &str = "WndClsA1";
 // but the DIB it needs.
 
 /// Wide enough for the widest module row the contract allows, tall enough for the
-/// watermark block, eight rows and the status pill in the bottom corner.
+/// watermark block, eight rows and (when it is on) the status pill in the bottom
+/// corner. The size is deliberately unchanged while the pill is off: the stage is
+/// fully transparent outside the HUD, so the spare bottom corner costs nothing but
+/// the DIB, and 520x400 is the review canvas every `--dump` render is compared
+/// against.
 const DEF_W: u32 = 520;
 const DEF_H: u32 = 400;
 const DEF_X: i32 = 0;
@@ -95,8 +103,9 @@ usage: doppel-hud [options]
   --w <u32>            stage width in physical pixels (default 520)
   --h <u32>            stage height in physical pixels (default 400)
   --position <where>   right (default) = the mockup's own layout: the watermark
-                       and the module list in the top-right corner, the status
-                       pill in the bottom-right; left = the same HUD mirrored
+                       and the module list in the top-right corner, plus the
+                       status pill in the bottom-right when SHOW_STATUS_PILL is
+                       on (it is off by default); left = the same HUD mirrored
                        into the left-hand corners. `stacked` is accepted as a
                        synonym of `right`, which is what it has always drawn.
   --dump <path.bmp>    render one representative frame to a 32-bit BMP, print an

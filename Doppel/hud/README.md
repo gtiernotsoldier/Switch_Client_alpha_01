@@ -1,18 +1,21 @@
 # doppel-hud — out-of-process HUD overlay
 
 A standalone Win32 process that puts the client HUD on top of the Minecraft
-client: the **client watermark** (top corner), the **module list** under it and
-the **status pill** in the bottom corner. It is **not** part of the JVM: nothing
-is injected, no game class is touched, and the overlay cannot crash the game by
-drawing.
+client: the **client watermark** (top corner) and the **module list** under it.
+The mockup's third element, the **status pill** in the bottom corner, is **off by
+default** — after reviewing the render the user asked for it not to be on screen;
+`SHOW_STATUS_PILL` in `src/hud.rs` is the one switch that brings it back (see
+*The elements* below). It is **not** part of the JVM: nothing is injected, no game
+class is touched, and the overlay cannot crash the game by drawing.
 
 The design is the designer's mockup, `E:\swl\doppel.html` (its `<style>` block is
 also on disk as `.dsh-tmp/doppel-design.css`), followed literally: the same
 palette (`#22D3EE` / `#A78BFA` / `#EDF2FA` / `#8B96AB`, the 55 % glass and the
 16 % hairline), the same twelve font sizes and three letter-spacings, the same
 paddings, radii and gaps, and the same motion — `cubic-bezier(.22,1,.36,1)`, the
-150 ms / 800 ms watermark rise, the staggered 550 ms row slide, the delayed
-status pill and the 2.4 s pulsing ring.
+150 ms / 800 ms watermark rise, the staggered 550 ms row slide, and the delayed
+status pill with its 2.4 s pulsing ring (the pill is drawn only when
+`SHOW_STATUS_PILL` is on, but its metrics and motion are still the spec).
 
 ## Status
 
@@ -26,6 +29,14 @@ status pill and the 2.4 s pulsing ring.
 | **D5** | JVM-side hook that stops drawing in-game and calls `HudStateWriter.publish` | not started |
 | **D6** | De-characterised naming across the whole pipeline | partially — see below |
 | **D7** | Re-skin to the mockup: watermark + module list + status pill | **done** |
+
+The status pill is the mockup's third element and is **not drawn by default**:
+the mockup has it, the user reviewed the render and asked for it off.
+`SHOW_STATUS_PILL` in `src/hud.rs` (next to `ROW_CHIP_ALPHA`) is the single
+switch — set it to `true` and the element comes back exactly as reviewed. While it
+is `false` the pill's metrics helpers, its painter `paint_pill` and their tests
+all stay in the tree as the geometry spec, and nothing else depends on the pill:
+no inset, no reserved gap, and no endless repaint (see *Lifetime*).
 
 Until D5 lands, nothing publishes the state file, so the overlay renders an empty
 HUD and exits three seconds after it starts.
@@ -65,7 +76,7 @@ target/release/doppel-hud.exe [options]
 | ------ | ------- | ------- |
 | `--x <i32>` / `--y <i32>` | screen position of the stage's top-left corner | `0`, `0` |
 | `--w <u32>` / `--h <u32>` | stage size in physical pixels | `520x400` |
-| `--position <where>` | `right` (the mockup's own layout: watermark + list top-right, status pill bottom-right) or `left` (the same HUD mirrored into the left-hand corners) | `right` |
+| `--position <where>` | `right` (the mockup's own layout: watermark + list top-right, and the status pill bottom-right only when `SHOW_STATUS_PILL` is on — it is off by default) or `left` (the same HUD mirrored into the left-hand corners) | `right` |
 | `--dump <path.bmp>` | render one representative frame to a 32-bit BMP, print the measured geometry and an ASCII preview, create no window, exit 0 | — |
 | `--hide` | print one line, create no window, exit 0 | — |
 | `--help` | print usage, exit 0 | — |
@@ -82,10 +93,12 @@ CI smoke check needs from a release binary.
 only asks for a memory DC), writes a BMP composited over a mid-tone backdrop so
 the glass, the hairline and the glows are all visible, prints the measured
 geometry of the frame it just drew — the watermark block, the mark and wordmark
-metrics, the rule and the slogan, every row's chip/bar/name/value geometry, and
-the status pill's rect and inner positions, all taken from the same layout the
-painter used — and prints the same frame as ASCII characters (4x8 canvas pixels
-per character) so the shape can be judged from a terminal.
+metrics, the rule and the slogan, every row's chip/bar/name/value geometry, and,
+for the status pill, either its rect and inner positions (when `SHOW_STATUS_PILL`
+is on) or the one line saying it is not drawn and what it would measure, all taken
+from the same layout the painter used — and prints the same frame as ASCII
+characters (4x8 canvas pixels per character) so the shape can be judged from a
+terminal.
 
 The console window is intentional — it is where `--hide` and argument errors
 print. Stop the overlay from that console with Ctrl+C, from Task Manager, or with
@@ -99,7 +112,10 @@ which the window procedure turns into a clean `PostQuitMessage` and exit 0).
 * The window is a **stage**: the HUD is drawn 16 px inside the corner it occupies
   (`MARGIN`) and every other pixel stays fully transparent. Default stage origin
   is `(0, 0)`, so with `--position right` the watermark block lands at screen
-  `(520-16-112, 16)` and the status pill at `(520-16-129, 400-16-29)`.
+  `(520-16-112, 16)` and, when the pill is on, it would land at
+  `(520-16-129, 400-16-29)` — that rect is left fully transparent while
+  `SHOW_STATUS_PILL` is `false` (it is a hole in the transparent stage, not a
+  reserved gap: no other element is inset by it).
 * Content comes from `UpdateLayeredWindow` fed by a top-down 32bpp DIB of
   premultiplied BGRA pixels (`CreateDIBSection` + a memory DC) — the classic
   Win32 path for per-pixel alpha, and the reason GDI's own `RoundRect` is not
@@ -116,14 +132,16 @@ which the window procedure turns into a clean `PostQuitMessage` and exit 0).
   `HTTRANSPARENT`: every click goes to the game, none are swallowed.
 * Not in the taskbar and not in Alt-Tab (`WS_EX_TOOLWINDOW`).
 
-### The three elements
+### The elements
 
-All three are measured in `hud.rs` from the stylesheet, and the numbers are
-printed by `--dump` so the picture and the geometry cannot drift apart. Every
-position is an inset from the corner the block occupies, so `--position left`
-mirrors the whole HUD (the list's spine moves to the left edge, the module values
-end up on the other side of their names, and the watermark and pill hang off the
-left corner).
+The mockup has three; all three are measured in `hud.rs` from the stylesheet and
+the numbers are printed by `--dump` so the picture and the geometry cannot drift
+apart. **Two are drawn by default** — the watermark and the module list — and the
+third, the status pill, is off until `SHOW_STATUS_PILL` in `src/hud.rs` is set to
+`true` (see the note under the status table). Every position is an inset from the
+corner the block occupies, so `--position left` mirrors the whole HUD (the list's
+spine moves to the left edge, the module values end up on the other side of their
+names, and the watermark and pill hang off the left corner).
 
 * **Watermark** — no panel, exactly like the mockup: legibility comes from the
   HUD-wide `text-shadow`. The `.mark` box is 21x15: a 62 % `#EDF2FA` "D" at the
@@ -159,6 +177,14 @@ left corner).
   the enabled-module count in 11 px semibold Consolas in the accent, with a
   300 ms pop to 1.45x when the count changes. Entrance: 10 px rise + fade over
   800 ms with the design curve, starting at 500 ms.
+  **Not drawn by default.** The mockup has this element and the user, after
+  reviewing the render, asked for it off screen — `SHOW_STATUS_PILL` is `false`.
+  Set that one constant to `true` and it comes back unchanged: measuring
+  (`pill_size_from` / `pill_size`), painting (`paint_pill`) and the geometry
+  tests (`the_pill_measures_its_pieces`, `the_translucent_tokens_are_the_mockups_alphas`)
+  were all kept in the tree for exactly that. While it is off there is no gap for
+  it anywhere and, because its endless ring was the only thing that forced a
+  repaint every frame, the HUD now repaints only when the content changes.
 
 ### The work flash
 
@@ -198,11 +224,14 @@ waits 30 seconds instead, because Forge + OptiFine + a world load routinely take
 longer than three seconds.
 
 Frames are pushed to the compositor when the state, the fade or an animation
-changed — and, deliberately, **always** while the status pill is on screen: its
-ring pulses for as long as the HUD is up, so a visible HUD is never static. The
-cost of a still frame is the same as an animating one, which is why the text
-rasteriser only clears the columns a run can touch rather than a whole scratch
-row.
+changed. While the status pill is on screen that is deliberately **every** frame:
+its ring pulses for as long as the HUD is up, so a visible HUD is never static.
+With the pill off by default (`SHOW_STATUS_PILL`) nothing is endless any more —
+`hud::paint` reports "still moving" only while an entrance or a flash is decaying,
+so once the HUD settles it repaints only on a change of content (the fade-out is
+quantised into the frame signature, so the exit ramp still repaints). The cost of
+the frames that do get pushed is unchanged, which is why the text rasteriser only
+clears the columns a run can touch rather than a whole scratch row.
 
 ### Naming (plan §7, anti-signature)
 
@@ -228,6 +257,7 @@ appears, and renaming the binary in D6 is a `Cargo.toml` change.
 * `src/hud.rs` — the HUD itself: the palette, the design curve and the pulse/pop
   easing, the entrance and flash animation state, the pure row/watermark/pill
   geometry, and the painting. The geometry helpers are unit-tested.
+  `SHOW_STATUS_PILL` (and `ROW_CHIP_ALPHA`, the other display switch) live here.
 * `src/state.rs` — the reader half of the shared-state contract, plus the FNV-1a
   the writer keys module ids with.
 * `src/preview.rs` — the `--dump` output: a 32-bit BMP writer and the ASCII

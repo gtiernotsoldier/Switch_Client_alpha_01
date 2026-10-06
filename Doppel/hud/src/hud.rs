@@ -2,7 +2,9 @@
 //
 // The mockup is `E:\swl\doppel.html` (its `<style>` block is also on disk as
 // `.dsh-tmp/doppel-design.css`). It draws exactly three client elements over the
-// game frame, and this file draws the same three:
+// game frame, and this file draws the same three — except that the third, the
+// status pill, is **off by default** at the user's request (see
+// `SHOW_STATUS_PILL`, which is the one switch that brings it back):
 //
 //   1. **the client watermark** — the two-D mark, `DOPPEL` with the two P's in
 //      the accent, the accent→accent2 hairline and the mono slogan, with no
@@ -10,7 +12,8 @@
 //   2. **the module list** — one chip per module: a 3x11 spine bar, the name and
 //      that module's own value, flushed against the screen edge.
 //   3. **the status pill** — the pulsing accent dot, the `ENABLED` label, a
-//      hairline separator and the enabled-module count.
+//      hairline separator and the enabled-module count. Not drawn by default;
+//      its metrics, its painter and their tests are kept as the spec for it.
 //
 // Every number here is transcribed from that stylesheet. Three of its features
 // cannot be expressed on a canvas that is composited straight onto the game, and
@@ -66,6 +69,16 @@ const TEXT_SHADOW: u32 = argb(0x00, 0x00, 0x00, 0xB3);
 /// **Set this to `0.0` for a byte-for-byte faithful copy of the mockup**, which
 /// gives the rows no background at all.
 const ROW_CHIP_ALPHA: f32 = 0.4;
+
+/// Element 3 of the mockup, the bottom-corner status pill. The designer's mockup
+/// includes it; after reviewing the render **the user asked for it not to be on
+/// screen**, so it is off by default. **Flipping this to `true` restores the
+/// element unchanged** — the layout metrics (`pill_size_from`, `pill_size`), the
+/// painter (`paint_pill`) and their tests are all still in the tree. It gates two
+/// things and nothing else: whether `paint` draws the pill, and whether a visible
+/// HUD counts as permanently animating (the ring). The geometry is measured and
+/// printed either way, so the pill's numbers never rot.
+const SHOW_STATUS_PILL: bool = false;
 
 // ── strings ─────────────────────────────────────────────────────────────────
 
@@ -721,8 +734,11 @@ fn measure_layout(
 
 /// Compose one frame of the HUD. Returns true while something is still moving,
 /// which the caller uses to decide whether the next frame needs to be pushed to
-/// the compositor. The pulsing ring loops forever, so a frame with the pill on
-/// screen always reports true.
+/// the compositor. With the status pill on screen its ring pulses forever and a
+/// frame therefore always reports true; with the pill hidden (`SHOW_STATUS_PILL`,
+/// the default) nothing is endless, so this reports true only while an entrance
+/// or a flash is still moving and the caller repaints on a content-signature
+/// change alone.
 pub fn paint(
     canvas: &mut Canvas,
     text: &mut TextEngine,
@@ -741,10 +757,22 @@ pub fn paint(
 
     let rows_moving = paint_rows(canvas, text, entries, anim, now, &layout, count, global);
     let mark_moving = paint_watermark(canvas, text, anim, now, &layout, global);
-    let pill_moving = paint_pill(canvas, text, anim, now, &layout, count, global);
-    // The status pill's ring pulses for as long as the pill is on screen, so a
-    // visible HUD is never static and every frame is worth compositing.
-    rows_moving || mark_moving || pill_moving || global > 0.0
+    // The pill is the mockup's third element and the user asked for it off, so it
+    // is only painted when the switch is on. The call stays here either way, which
+    // is what keeps `paint_pill`, its metrics and their tests live code.
+    let pill_moving = if SHOW_STATUS_PILL {
+        paint_pill(canvas, text, anim, now, &layout, count, global)
+    } else {
+        false
+    };
+    // Repaint policy. `global > 0.0` is the "always repaint a visible HUD" term,
+    // and the only thing that ever needed it was the pill's ring: it pulses for as
+    // long as the pill is on screen, so a visible HUD is never static. With the
+    // pill hidden (the default) that term is gone: this reports true only while a
+    // row/watermark entrance or a flash is still moving, and the caller then
+    // pushes a frame only when the state changed — the fade-out is quantised into
+    // the caller's signature, so the ramp still repaints.
+    rows_moving || mark_moving || pill_moving || (SHOW_STATUS_PILL && global > 0.0)
 }
 
 /// The module list: one chip, one bar and one name (plus its value) per row.
@@ -1265,30 +1293,45 @@ pub fn describe(
         out.push_str("  (no named rows: nothing to draw)\n");
     }
 
+    // The pill is off by default — the mockup's third element, hidden at the
+    // user's request after the review — so this describes the geometry that is
+    // drawn. The pill's own numbers are still measured (the helpers and
+    // `paint_pill` are kept for whenever it is switched back on) and its rect is
+    // still reported, but the line says plainly that nothing is painted there and
+    // that no other element is inset by it.
     let pill = &layout.pill;
-    out.push_str(&format!(
-        "pill: {}x{} at ({}, {}), r{PILL_RADIUS:.0}, body #0D121C @{:.0}%, border #94A3B8 @{:.0}%, \
-         pad {PILL_PAD_Y}/{PILL_PAD_X}, gap {PILL_GAP}\n",
-        pill.w,
-        pill.h,
-        pill.x,
-        pill.y,
-        (GLASS >> 24) as f32 / 255.0 * 100.0,
-        (LINE >> 24) as f32 / 255.0 * 100.0,
-    ));
-    out.push_str(&format!(
-        "  dot {DOT_D}px at ({}, {}) #22D3EE, glow {DOT_GLOW}, ring {PULSE_MIN}->{PULSE_MAX} over {:.0}ms\n",
-        pill.dot_x, pill.dot_y, PULSE_MS,
-    ));
-    out.push_str(&format!(
-        "  label \"{LABEL}\" {}px at ({}, {}) #8B96AB, track {LABEL_TRACK_EM}em = {:.2}px per char\n",
-        pill.label_w, pill.label_x, pill.label_y, pill.label_track,
-    ));
-    out.push_str(&format!(
-        "  sep {SEP_W}x{SEP_H} at ({}, {}) rgba(255,255,255,.14) | count {}px at ({}, {}) #22D3EE \
-         600, pop x{POP_SCALE} over {POP_MS:.0}ms\n",
-        pill.sep_x, pill.sep_y, pill.count_w, pill.count_x, pill.count_y,
-    ));
+    if SHOW_STATUS_PILL {
+        out.push_str(&format!(
+            "pill: {}x{} at ({}, {}), r{PILL_RADIUS:.0}, body #0D121C @{:.0}%, border #94A3B8 @{:.0}%, \
+             pad {PILL_PAD_Y}/{PILL_PAD_X}, gap {PILL_GAP}\n",
+            pill.w,
+            pill.h,
+            pill.x,
+            pill.y,
+            (GLASS >> 24) as f32 / 255.0 * 100.0,
+            (LINE >> 24) as f32 / 255.0 * 100.0,
+        ));
+        out.push_str(&format!(
+            "  dot {DOT_D}px at ({}, {}) #22D3EE, glow {DOT_GLOW}, ring {PULSE_MIN}->{PULSE_MAX} over {:.0}ms\n",
+            pill.dot_x, pill.dot_y, PULSE_MS,
+        ));
+        out.push_str(&format!(
+            "  label \"{LABEL}\" {}px at ({}, {}) #8B96AB, track {LABEL_TRACK_EM}em = {:.2}px per char\n",
+            pill.label_w, pill.label_x, pill.label_y, pill.label_track,
+        ));
+        out.push_str(&format!(
+            "  sep {SEP_W}x{SEP_H} at ({}, {}) rgba(255,255,255,.14) | count {}px at ({}, {}) #22D3EE \
+             600, pop x{POP_SCALE} over {POP_MS:.0}ms\n",
+            pill.sep_x, pill.sep_y, pill.count_w, pill.count_x, pill.count_y,
+        ));
+    } else {
+        out.push_str(&format!(
+            "pill: NOT DRAWN (SHOW_STATUS_PILL = false) — the mockup's third element, off at the \
+             user's request; it would be {}x{} at ({}, {}), nothing is painted there and no other \
+             element is inset by it\n",
+            pill.w, pill.h, pill.x, pill.y,
+        ));
+    }
     out.push_str(&format!(
         "motion: curve cubic-bezier({:.2},{:.0},{:.2},{:.0}) | watermark {:.0}ms +{WM_DELAY_MS:.0}ms \
          rise {WM_RISE:.0} | rows {ROW_MS:.0}ms +{ROW_DELAY_MS:.0}ms +{ROW_STAGGER_MS:.0}ms/row slide \
@@ -1427,5 +1470,44 @@ mod tests {
         assert_eq!(chip >> 24, ((GLASS >> 24) as f32 * 0.4).round() as u32);
         assert!(chip >> 24 < GLASS >> 24, "the chip must be lighter than the pill");
         assert_eq!(with_alpha(GLASS, 0.0) >> 24, 0, "0 is a faithful copy of the mockup");
+    }
+
+    /// The pill's endless ring used to be the only reason `paint` never went
+    /// static: it reported "still moving" on every frame so the compositor always
+    /// got a push. With the pill off (the default) a settled frame reports
+    /// `false`, so the caller's content signature is what drives the repaint — and
+    /// with the pill on it reports `true` forever, exactly as it did before.
+    ///
+    /// Gated on the constant on purpose, so flipping the pill back on leaves this
+    /// test green; the expected value *is* the flag's two meanings.
+    #[test]
+    fn a_settled_frame_is_static_unless_the_pill_pulses() {
+        let mut entries = Vec::new();
+        for (id, name, value) in [(1u32, "Reach", "3.1-3.3"), (2, "Velocity", "82%")] {
+            entries.push(Entry {
+                id,
+                enabled: true,
+                flash: false,
+                highlight: false,
+                name: name.to_string(),
+                value: value.to_string(),
+            });
+        }
+
+        let mut text = TextEngine::new().expect("GDI text engine (--dump needs it too)");
+        let mut canvas = Canvas::new(520, 400);
+        let config = Config { position: Position::Right, margin: MARGIN, alpha: 1.0 };
+        let now = Instant::now();
+        let mut anim = Anim::new();
+        // Every entrance has long finished and no flash is decaying: nothing is
+        // moving except the pill's ring.
+        anim.seed(&entries, now, &[]);
+        canvas.clear();
+
+        assert_eq!(
+            paint(&mut canvas, &mut text, &entries, &mut anim, now, &config),
+            SHOW_STATUS_PILL,
+            "the status pill's ring is the only endless animation",
+        );
     }
 }

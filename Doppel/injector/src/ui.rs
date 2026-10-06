@@ -1,14 +1,17 @@
-// ui.rs — Doppel injector fluid terminal UI (v4 design language)
+// ui.rs — Doppel injector fluid terminal UI
 //
-// Visual identity (matches the approved v4 demo):
-//   bg          #05070B   (terminal default; we never paint background)
-//   primary     #22D3EE   cyan  — spinner, bar head, values
-//   accent      #A78BFA   violet— brand, tagline, bar tail
-//   success     #34D399   green — ✓ step completion, summary dot
-//   failure     #F87171   red   — ✗ step failure, errors
-//   warning     #FBBF24   amber — hints, non-fatal warnings
-//   skeleton    #5A6B7F   dim   — bar skeleton, detail lines, frames
-//   text        #D5DEEA   soft white — labels, body
+// Visual identity: the same OpenCommunity dark palette as the native launcher
+// window (theme.rs), so the console timeline and the window cannot drift apart.
+// The terminal never paints a background — it inherits the console's — so the
+// entries below are foreground colours only:
+//   link      #8ABCFF   spinner, bar, values, brand
+//   strong    #F5F7FB   the bar's bright end
+//   body      #E6EBF3   labels, body
+//   secondary #9FACBC   tagline
+//   success   #79D39A   ✓ step completion, summary dot
+//   warning   #F0B863   hints, non-fatal warnings
+//   danger    #EF8888   ✗ step failure, errors
+//   muted     #737F90   bar skeleton, detail lines, frames, disabled
 //
 // Zero third-party deps: VT100 is enabled through raw kernel32 FFI
 // (ENABLE_VIRTUAL_TERMINAL_PROCESSING) with graceful plain-text fallback,
@@ -27,14 +30,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
-// ── palette (Doppel v4) ──
-pub const CYAN: [u8; 3] = [34, 211, 238];
-pub const VIOLET: [u8; 3] = [167, 139, 250];
-pub const GREEN: [u8; 3] = [52, 211, 153];
-pub const RED: [u8; 3] = [248, 113, 113];
-pub const AMBER: [u8; 3] = [251, 191, 36];
-pub const DIM: [u8; 3] = [90, 107, 127];
-pub const TEXT: [u8; 3] = [213, 222, 234];
+use crate::theme;
 
 const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 const BAR_CELLS: usize = 28;
@@ -42,14 +38,6 @@ const TICK_MS: u64 = 80;
 
 fn fg(c: [u8; 3]) -> String {
     format!("\x1b[38;2;{};{};{}m", c[0], c[1], c[2])
-}
-
-fn lerp(a: [u8; 3], b: [u8; 3], t: f32) -> [u8; 3] {
-    [
-        (a[0] as f32 + (b[0] as f32 - a[0] as f32) * t) as u8,
-        (a[1] as f32 + (b[1] as f32 - a[1] as f32) * t) as u8,
-        (a[2] as f32 + (b[2] as f32 - a[2] as f32) * t) as u8,
-    ]
 }
 
 // ── global state ──
@@ -151,18 +139,18 @@ pub fn banner(version: &str) {
                     s.push(' ');
                 } else {
                     let t = x as f32 / 48.0;
-                    s.push_str(&fg(lerp(CYAN, VIOLET, t)));
+                    s.push_str(&fg(theme::blend(theme::LINK, theme::STRONG_TEXT, t)));
                     s.push(ch);
                 }
             }
             s.push_str("\x1b[0m");
             let _ = writeln!(w, "{}", s);
         }
-        let _ = writeln!(w, "\n  \x1b[3m{}statistically you.\x1b[0m", fg(VIOLET));
+        let _ = writeln!(w, "\n  \x1b[3m{}statistically you.\x1b[0m", fg(theme::SECONDARY_TEXT));
         let _ = writeln!(
             w,
             "  {}v{} · ghost client injector · --verbose for details\x1b[0m\n",
-            fg(DIM),
+            fg(theme::MUTED_TEXT),
             version
         );
     } else {
@@ -232,12 +220,12 @@ fn draw_live(label: &str, note: &str, spinner: &str, phase: usize) {
             '░'
         };
         let t = i as f32 / (BAR_CELLS - 1) as f32;
-        bar.push_str(&fg(lerp(CYAN, VIOLET, t)));
+        bar.push_str(&fg(theme::blend(theme::LINK, theme::STRONG_TEXT, t)));
         bar.push(ch);
     }
-    let _ = write!(w, "\r\x1b[2K  {}{}{}\x1b[0m  {}{}{}\x1b[0m", fg(CYAN), spinner, fg(TEXT), fg(TEXT), label, fg(DIM));
+    let _ = write!(w, "\r\x1b[2K  {}{}{}\x1b[0m  {}{}{}\x1b[0m", fg(theme::LINK), spinner, fg(theme::MODULE_TEXT), fg(theme::MODULE_TEXT), label, fg(theme::MUTED_TEXT));
     if !note.is_empty() {
-        let _ = write!(w, " {}· {}{}", fg(DIM), note, "\x1b[0m");
+        let _ = write!(w, " {}· {}{}", fg(theme::MUTED_TEXT), note, "\x1b[0m");
     }
     let _ = write!(w, "  {}{}{}\x1b[0m", "", bar, "");
     let _ = w.flush();
@@ -292,12 +280,12 @@ pub fn step_ok(idx: usize, label: &str, started: Instant) {
         let _ = writeln!(
             w,
             "  {}✓{}\x1b[0m {}{}{}\x1b[0m {}· {:.1}s{}\x1b[0m",
-            fg(GREEN),
+            fg(theme::SUCCESS),
             "",
-            fg(TEXT),
+            fg(theme::MODULE_TEXT),
             label,
             "",
-            fg(DIM),
+            fg(theme::MUTED_TEXT),
             elapsed.as_secs_f32().max(0.05),
             ""
         );
@@ -318,8 +306,8 @@ pub fn step_fail(idx: usize, label: &str, reason: &str) {
     let mut w = out.lock();
     if ansi() {
         clear_live_line();
-        let _ = writeln!(w, "  {}✗{}\x1b[0m {}{}{}\x1b[0m {}· failed{}", fg(RED), "", fg(TEXT), label, "", fg(DIM), "\x1b[0m");
-        let _ = writeln!(w, "    {}{}{}\x1b[0m", fg(RED), reason, "");
+        let _ = writeln!(w, "  {}✗{}\x1b[0m {}{}{}\x1b[0m {}· failed{}", fg(theme::DANGER), "", fg(theme::MODULE_TEXT), label, "", fg(theme::MUTED_TEXT), "\x1b[0m");
+        let _ = writeln!(w, "    {}{}{}\x1b[0m", fg(theme::DANGER), reason, "");
     } else {
         let _ = writeln!(w, "[x] {} failed: {}", label, reason);
     }
@@ -346,25 +334,25 @@ fn print_line(msg: &str, color: [u8; 3], verbose_only: bool) {
     let _ = w.flush();
 }
 
-/// Verbose-only detail line (dim). Silent unless --verbose.
+/// Verbose-only detail line (muted). Silent unless --verbose.
 pub fn detail(msg: &str) {
-    print_line(msg, DIM, true);
+    print_line(msg, theme::MUTED_TEXT, true);
 }
 
 /// Always-visible warning (amber).
 pub fn warn(msg: &str) {
-    print_line(msg, AMBER, false);
+    print_line(msg, theme::WARNING, false);
 }
 
 /// Always-visible error (red).
 pub fn error(msg: &str) {
-    print_line(msg, RED, false);
+    print_line(msg, theme::DANGER, false);
 }
 
 /// Always-visible plain line (soft white) — used for the panel address, which
 /// has to be readable without --verbose.
 pub fn note(msg: &str) {
-    print_line(msg, TEXT, false);
+    print_line(msg, theme::MODULE_TEXT, false);
 }
 
 /// Always-visible actionable hint (amber, indented).
@@ -373,7 +361,7 @@ pub fn hint(msg: &str) {
     let out = std::io::stdout();
     let mut w = out.lock();
     if ansi() {
-        let _ = writeln!(w, "    {}→ {}{}\x1b[0m", fg(AMBER), msg, "");
+        let _ = writeln!(w, "    {}→ {}{}\x1b[0m", fg(theme::WARNING), msg, "");
     } else {
         let _ = writeln!(w, "[!] → {}", msg);
     }
@@ -392,10 +380,10 @@ pub fn summary(panel: Option<&str>, token: &str) {
 
     // (key, key-color, value, value-color)
     let rows: Vec<(&str, [u8; 3], &str, [u8; 3])> = vec![
-        ("STATUS", GREEN, "agent injected — handoff complete", TEXT),
-        ("WEBUI", DIM, url.as_str(), CYAN),
-        ("TOKEN", DIM, token.as_str(), AMBER),
-        ("HUD", DIM, "toggle modules from the panel, in game", TEXT),
+        ("STATUS", theme::SUCCESS, "agent injected — handoff complete", theme::MODULE_TEXT),
+        ("WEBUI", theme::MUTED_TEXT, url.as_str(), theme::LINK),
+        ("TOKEN", theme::MUTED_TEXT, token.as_str(), theme::WARNING),
+        ("HUD", theme::MUTED_TEXT, "toggle modules from the panel, in game", theme::MODULE_TEXT),
     ];
     let tag = "statistically you.";
     let plain: Vec<usize> = rows.iter().map(|(k, _, v, _)| k.len() + 4 + v.len()).collect();
@@ -406,16 +394,16 @@ pub fn summary(panel: Option<&str>, token: &str) {
     let mut w = out.lock();
     if ansi() {
         let _ = writeln!(w);
-        let _ = writeln!(w, "  {}╭{}╮\x1b[0m", fg(DIM), "─".repeat(inner));
+        let _ = writeln!(w, "  {}╭{}╮\x1b[0m", fg(theme::MUTED_TEXT), "─".repeat(inner));
         for ((k, kc, v, vc), w_i) in rows.iter().zip(plain.iter()) {
             let pad = inner - w_i;
             let _ = writeln!(
                 w,
                 "  {}│\x1b[0m  {}{}{}  {}{}{}{}│\x1b[0m",
-                fg(DIM),
+                fg(theme::MUTED_TEXT),
                 fg(*kc),
                 k,
-                fg(DIM),
+                fg(theme::MUTED_TEXT),
                 fg(*vc),
                 v,
                 "\x1b[0m",
@@ -426,15 +414,15 @@ pub fn summary(panel: Option<&str>, token: &str) {
         let _ = writeln!(
             w,
             "  {}│\x1b[0m{}\x1b[3m{}{}{}\x1b[0m{}{}│\x1b[0m",
-            fg(DIM),
+            fg(theme::MUTED_TEXT),
             " ".repeat(pad / 2),
-            fg(VIOLET),
+            fg(theme::SECONDARY_TEXT),
             tag,
             "\x1b[0m",
             " ".repeat(pad - pad / 2),
             ""
         );
-        let _ = writeln!(w, "  {}╰{}╯\x1b[0m\n", fg(DIM), "─".repeat(inner));
+        let _ = writeln!(w, "  {}╰{}╯\x1b[0m\n", fg(theme::MUTED_TEXT), "─".repeat(inner));
     } else {
         let _ = writeln!(w, "\n+{}+", "-".repeat(inner));
         for ((k, _, v, _), w_i) in rows.iter().zip(plain.iter()) {

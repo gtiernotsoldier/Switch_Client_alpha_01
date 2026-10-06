@@ -26,6 +26,7 @@ mod inject;
 mod log;
 mod process;
 mod resource;
+mod theme;
 mod ui;
 mod version;
 mod window;

@@ -48,12 +48,33 @@ object Eagle : Module("Eagle", Category.PLAYER) {
     private val onlyWhenLookingDown by boolean("OnlyWhenLookingDown", false)
     private val lookDownThreshold by int("LookDownThreshold", 45, 0..90, "°")
 
+    // ========== AutoPlace — bridging placement ==========
+    /**
+     * Simulate a right-click to place a block, the way bridging clients do.
+     *
+     * Two gates, and both must hold: the player is standing on an edge **and** is sneaking (a manual
+     * sneak counts, as does one this module pressed). Without them this is just an auto-clicker aimed
+     * at the ground, which is also what makes it detectable — the reference clients gate the
+     * placement exactly the same way, on the "should bridge" state.
+     */
+    private val autoPlace by boolean("AutoPlace", false)
+
+    /** The downward angle the placement flick uses. Bridging aims at the block by the feet. */
+    private val placePitch by int("PlacePitch", 78, 40..90, "°")
+
+    /** Ticks between placements. A Min/Max pair: the jitter is the point, and the HUD renders a range. */
+    private val placeTicksMin by int("PlaceTicksMin", 1, 1..3, "ticks")
+    private val placeTicksMax by int("PlaceTicksMax", 3, 1..3, "ticks")
+
     // ========== Runtime state (owned by the module, mutated only from the tick listener) ==========
     /** Whether the sneak we are currently holding was pressed by this module (not by the player). */
     private var autoSneakActive: Boolean = false
 
     /** Ticks left to keep sneaking after the player left the edge. */
     private var unsneakDelayTicks: Int = 0
+
+    /** Ticks left before the next AutoPlace right-click. */
+    private var placeCooldownTicks: Int = 0
 
     private val tickListener: (PlayerState, TargetState?) -> Unit = { p, _ ->
         if (enabled) onTick(p)
@@ -72,9 +93,13 @@ object Eagle : Module("Eagle", Category.PLAYER) {
         // ⚠ Needs `EventBridge.isKeySneakDown` for the exact Raven guard — see the report.
         val sneakKeyHeld = player.isSneaking && !autoSneakActive
 
+        // Read once: the sneak state machine and AutoPlace must agree on whether the player is on an
+        // edge this tick.
+        val onEdge = EventBridge.isOnBlockEdge()
+
         val decision = EagleLogic.tick(
             EagleLogic.Input(
-                onEdge = EventBridge.isOnBlockEdge(),
+                onEdge = onEdge,
                 settingsMet = settingsMet,
                 sneakKeyHeld = sneakKeyHeld,
                 autoSneakActive = autoSneakActive,
@@ -91,11 +116,44 @@ object Eagle : Module("Eagle", Category.PLAYER) {
 
         autoSneakActive = decision.autoSneakActive
         unsneakDelayTicks = decision.unsneakDelayTicks
+
+        autoPlaceTick(player, onEdge)
     }
+
+    /**
+     * Bridging placement: while on an edge **and** sneaking, click the block in front of the feet.
+     *
+     * The look is flicked down to [placePitch] only for the tick the click happens — that is what makes
+     * the ray hit the block below the crosshair rather than the horizon — and the player's own mouse
+     * input takes the view back on the next tick, so this cannot pin the camera.
+     */
+    private fun autoPlaceTick(player: PlayerState, onEdge: Boolean) {
+        val sneaking = player.isSneaking || autoSneakActive
+        if (!shouldAutoPlace(enabled, autoPlace, onEdge, sneaking)) {
+            placeCooldownTicks = 0
+            return
+        }
+        if (placeCooldownTicks > 0) {
+            placeCooldownTicks--
+            return
+        }
+        EventBridge.setPlayerRotation(player.rotation.yaw, placePitch.toFloat())
+        EventBridge.syntheticUse = true
+        markWorked() // the HUD row flashes on the placement, like every other acting module
+        placeCooldownTicks = Random.nextInt(placeTicksMin, placeTicksMax + 1)
+    }
+
+    /**
+     * The AutoPlace gate, pure so the rule is testable: the module is on, the option is on, the player
+     * is on an edge, and the player is sneaking (manually or because this module pressed it).
+     */
+    internal fun shouldAutoPlace(enabled: Boolean, autoPlace: Boolean, onEdge: Boolean, sneaking: Boolean): Boolean =
+        enabled && autoPlace && onEdge && sneaking
 
     override fun onEnable() {
         autoSneakActive = false
         unsneakDelayTicks = 0
+        placeCooldownTicks = 0
         EventBridge.registerTickListener(tickListener)
     }
 
@@ -108,6 +166,7 @@ object Eagle : Module("Eagle", Category.PLAYER) {
         if (autoSneakActive) EventBridge.releaseSneak()
         autoSneakActive = false
         unsneakDelayTicks = 0
+        placeCooldownTicks = 0
     }
 }
 

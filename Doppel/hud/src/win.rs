@@ -184,7 +184,6 @@ extern "system" {
     pub fn TranslateMessage(msg: *const Msg) -> i32;
     pub fn DispatchMessageW(msg: *const Msg) -> Lresult;
     pub fn PostQuitMessage(code: i32);
-    pub fn GetSystemMetrics(index: i32) -> i32;
     pub fn UpdateLayeredWindow(
         hwnd: Hwnd,
         dst_dc: Hdc,
@@ -275,8 +274,6 @@ pub const AC_SRC_OVER: u8 = 0x00;
 pub const AC_SRC_ALPHA: u8 = 0x01;
 pub const ULW_ALPHA: u32 = 0x02;
 
-pub const SM_CXSCREEN: i32 = 0;
-
 // GDI text: ANTIALIASED_QUALITY (grayscale) is the only quality usable here —
 // ClearType is subpixel, so it tints edge pixels, and those cannot be
 // premultiplied into a layered window without colour fringing.
@@ -286,6 +283,8 @@ pub const OUT_TT_PRECIS: u32 = 4;
 pub const CLIP_DEFAULT_PRECIS: u32 = 0;
 pub const FW_NORMAL: i32 = 400;
 pub const FW_SEMIBOLD: i32 = 600;
+pub const FW_BOLD: i32 = 700;
+pub const FW_EXTRABOLD: i32 = 800;
 pub const TRANSPARENT: i32 = 1;
 /// DEFAULT_GUI_FONT — the fallback when a named face cannot be created.
 pub const DEFAULT_GUI_FONT: i32 = 17;

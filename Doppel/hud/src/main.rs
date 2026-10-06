@@ -1,11 +1,11 @@
-// main.rs — the out-of-process overlay window (plan phase D0, now D1/D2/D3/D4).
+// main.rs — the out-of-process overlay window (plan phase D0, now D1..D7).
 //
 // Why a second process at all: drawing the HUD from inside the JVM means
 // touching the game's render thread and its GL state, which is exactly the
-// coupling the plan moves away from. A plain Win32 process can put a card on top
+// coupling the plan moves away from. A plain Win32 process can put the HUD on top
 // of the game without ever being part of it.
 //
-// Why a layered window: the card has to look like it belongs to the game, which
+// Why a layered window: the HUD has to look like it belongs to the game, which
 // means per-pixel alpha and a soft rim. An ordinary window is composited as an
 // opaque rectangle, so this uses WS_EX_LAYERED together with
 // UpdateLayeredWindow, the one Win32 path that takes a premultiplied ARGB bitmap
@@ -19,13 +19,18 @@
 // SW_SHOWNOACTIVATE, and never asks for focus or for foreground rights.
 //
 // What the frame loop does now: read the published state block (D2), advance the
-// entrance/flash animations (D3/D4), rasterise the card into the canvas, push it
-// through UpdateLayeredWindow. Frames are only pushed when something actually
-// changed — a still card is not re-composited 60 times a second.
+// entrance/flash animations (D3/D4), rasterise the HUD into the canvas, push it
+// through UpdateLayeredWindow. Frames are pushed when something actually changed
+// — and, since D7, always while the status pill is on screen, because its ring
+// pulses for as long as the HUD is up (see `hud::paint`).
 //
 // Zero third-party dependencies, same rule as the injector: kernel32/user32/gdi32
 // through raw extern "system" FFI, declared in win.rs. The pixel work lives in
-// draw.rs (pure), the text in text.rs (GDI), the card in hud.rs (pure geometry).
+// draw.rs (pure), the text in text.rs (GDI), the HUD in hud.rs (pure geometry).
+//
+// The HUD itself is the designer's mockup (`E:\swl\doppel.html`): the client
+// watermark, the module list and the status pill. hud.rs documents every number
+// it took from that stylesheet.
 
 mod draw;
 mod hud;
@@ -50,25 +55,22 @@ const CLASS_NAME: &str = "WndClsA1";
 
 // ── window geometry ─────────────────────────────────────────────────────────
 //
-// The window is the *stage*: the card is drawn inside it at MARGIN from the top
-// corner it occupies and everything else stays fully transparent. It is
-// click-through and never visible as a surface, so a stage larger than the card
-// costs nothing but the DIB it needs.
+// The window is the *stage*: the HUD is drawn inside it at MARGIN from the corner
+// it occupies and everything else stays fully transparent. It is click-through
+// and never visible as a surface, so a stage larger than the HUD costs nothing
+// but the DIB it needs.
 
-/// Stacked layout: pill on top, list under it. Wide enough for the longest name
-/// and value field the contract allows, tall enough for the pill plus eight rows.
+/// Wide enough for the widest module row the contract allows, tall enough for the
+/// watermark block, eight rows and the status pill in the bottom corner.
 const DEF_W: u32 = 520;
 const DEF_H: u32 = 400;
-/// Split layouts put the two halves in opposite top corners of the screen, so the
-/// stage has to span it.
-const MIN_SPLIT_W: u32 = 640;
 const DEF_X: i32 = 0;
 const DEF_Y: i32 = 0;
 
-/// Backdrop the `--dump` BMP is composited over: the card is translucent, so a
+/// Backdrop the `--dump` BMP is composited over: the HUD is translucent, so a
 /// dump has to sit on something. A mid-tone desk (rather than the near-black a
-/// game usually is) keeps the panel body, its rim and its drop shadow all
-/// distinguishable from the background, which is what makes the dump reviewable.
+/// game usually is) keeps the glass, its hairline, the row chips and the glows
+/// all distinguishable from the background, which is what makes it reviewable.
 const BACKDROP: u32 = argb(0x4A, 0x50, 0x61, 0xFF);
 
 // ── process behaviour ───────────────────────────────────────────────────────
@@ -82,7 +84,7 @@ const STALE_SECS: f32 = 3.0;
 /// game is still loading, and Forge + OptiFine + world load routinely take longer than three
 /// seconds — with the short rule the window would die before the JVM ever published anything.
 const FIRST_WRITE_GRACE_SECS: f32 = 30.0;
-/// How long the card takes to fade out once that happens.
+/// How long the HUD takes to fade out once that happens.
 const FADE_SECS: f32 = 0.35;
 
 const USAGE: &str = "\
@@ -90,18 +92,19 @@ usage: doppel-hud [options]
 
   --x <i32>            screen x of the stage's top-left corner (default 0)
   --y <i32>            screen y of the stage's top-left corner (default 0)
-  --w <u32>            stage width in physical pixels (default 520 stacked,
-                       the screen width when --position is left/right)
+  --w <u32>            stage width in physical pixels (default 520)
   --h <u32>            stage height in physical pixels (default 400)
-  --position <where>   stacked (default) = pill on top, list under it;
-                       left = list in the left corner, pill in the right;
-                       right = list in the right corner, pill in the left
+  --position <where>   right (default) = the mockup's own layout: the watermark
+                       and the module list in the top-right corner, the status
+                       pill in the bottom-right; left = the same HUD mirrored
+                       into the left-hand corners. `stacked` is accepted as a
+                       synonym of `right`, which is what it has always drawn.
   --dump <path.bmp>    render one representative frame to a 32-bit BMP, print an
                        ASCII preview, create no window, exit 0
   --hide               print one line, create no window, exit 0 (automation check)
   --help               print this text and exit 0
 
-The card reads %TEMP%\\doppel-hud.state, published by the game 3600 bytes at a
+The overlay reads %TEMP%\\doppel-hud.state, published by the game 3600 bytes at a
 time (magic 0x444F5050, version 1). It opens the file read-only: there is no back
 channel and nothing this process does can reach the game.
 
@@ -123,7 +126,8 @@ in this console.";
 struct Args {
     x: i32,
     y: i32,
-    /// None = "pick by layout" (see DEF_W and the split case in run()).
+    /// None = DEF_W (the stage now holds all three elements on one side, so it no
+    /// longer has to span the screen for a mirrored layout).
     w: Option<u32>,
     h: Option<u32>,
     position: Position,
@@ -141,7 +145,7 @@ impl Default for Args {
             y: DEF_Y,
             w: None,
             h: None,
-            position: Position::Stacked,
+            position: Position::Right,
             dump: None,
             hide: false,
             help: false,
@@ -180,19 +184,20 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
     Ok(args)
 }
 
-/// "Left" means the list is on the left, matching the old card's `HUD.position`.
+/// `right` is the mockup's own layout and the default. `left` mirrors it into the
+/// other pair of corners; `stacked` is kept as a synonym of `right`, because that
+/// is the corner pair the old stacked card put its brand pill in.
 fn parse_position(raw: &str) -> Result<Position, String> {
     match raw.to_ascii_lowercase().as_str() {
-        "stacked" | "stack" | "default" => Ok(Position::Stacked),
-        "left" => Ok(Position::ListLeft),
-        "right" => Ok(Position::ListRight),
-        other => Err(format!("--position: expected stacked, left or right, got {other}")),
+        "right" | "stacked" | "stack" | "default" => Ok(Position::Right),
+        "left" => Ok(Position::Left),
+        other => Err(format!("--position: expected right (default) or left, got {other}")),
     }
 }
 
 /// Consume the value that follows a flag and step the cursor past both. A
 /// missing value is an error rather than a silent default: `--w --hide` should
-/// not quietly produce a 0-wide card.
+/// not quietly produce a 0-wide stage.
 fn next_value(argv: &[String], i: &mut usize, flag: &str) -> Result<String, String> {
     let value = argv.get(*i + 1).ok_or_else(|| format!("{flag} needs a value"))?;
     *i += 2;
@@ -265,7 +270,7 @@ fn demo_flashes() -> Vec<(u32, u8)> {
     vec![(state::fnv1a("Velocity"), 150)]
 }
 
-/// Cheap change detector: everything the card depends on except time. When it
+/// Cheap change detector: everything the HUD depends on except time. When it
 /// matches the previous frame and nothing is animating, the compositor already
 /// holds the right pixels and the frame is skipped.
 fn signature(entries: &[Entry], fade: f32) -> u64 {
@@ -306,15 +311,9 @@ fn run(args: &Args) -> Result<(), String> {
     let mut text = TextEngine::new()?;
 
     let height = args.h.unwrap_or(DEF_H);
-    let width = args.w.unwrap_or_else(|| match args.position {
-        Position::Stacked => DEF_W,
-        // The split layouts put the list and the pill in opposite *screen*
-        // corners, so the stage has to span the screen.
-        Position::ListLeft | Position::ListRight => {
-            let screen = unsafe { GetSystemMetrics(SM_CXSCREEN) };
-            (screen.max(MIN_SPLIT_W as i32)) as u32
-        }
-    });
+    // All three elements live on one side of the stage now, so a mirrored layout
+    // no longer has to span the screen: the stage is the same size either way.
+    let width = args.w.unwrap_or(DEF_W);
     if width == 0 || height == 0 {
         return Err("--w and --h must both be non-zero".to_string());
     }
@@ -369,7 +368,7 @@ fn run(args: &Args) -> Result<(), String> {
         }
 
         // A never-showing, never-focusing window is also never painted, so the
-        // card is rendered into a DIB and pushed through UpdateLayeredWindow;
+        // HUD is rendered into a DIB and pushed through UpdateLayeredWindow;
         // that is the whole reason WS_EX_LAYERED is here.
         //
         // CreateCompatibleDC(NULL) gives a DC compatible with the screen, which
@@ -404,7 +403,7 @@ fn run(args: &Args) -> Result<(), String> {
             blend_op: AC_SRC_OVER,
             blend_flags: 0,
             // The alpha is already in the pixels; a constant alpha below 255
-            // would dim the whole card a second time.
+            // would dim the whole HUD a second time.
             source_constant_alpha: 255,
             alpha_format: AC_SRC_ALPHA,
         };
@@ -426,7 +425,7 @@ fn run(args: &Args) -> Result<(), String> {
         let mut msg: Msg = std::mem::zeroed();
 
         loop {
-            // Drain the queue. GetMessageW would block and the card has to keep
+            // Drain the queue. GetMessageW would block and the HUD has to keep
             // animating while the game is running, so this loop peeks and paces
             // itself instead.
             let mut quit = false;
@@ -456,7 +455,7 @@ fn run(args: &Args) -> Result<(), String> {
             }
 
             // The game is gone when nothing has written the file for three seconds; fading out and
-            // exiting beats leaving a ghost card on the desktop. Before the FIRST write the overlay
+            // exiting beats leaving a ghost HUD on the desktop. Before the FIRST write the overlay
             // is still waiting for a game that may be loading, so it gets a much longer grace
             // instead (see FIRST_WRITE_GRACE_SECS).
             let stale = match last_write {
@@ -474,7 +473,7 @@ fn run(args: &Args) -> Result<(), String> {
             let current = signature(&entries, fade);
             if current != last_signature || animating {
                 config.alpha = fade;
-                // The card is redrawn from scratch: last frame's pixels must not
+                // The HUD is redrawn from scratch: last frame's pixels must not
                 // survive underneath the new ones.
                 canvas.clear();
                 animating = hud::paint(&mut canvas, &mut text, &entries, &mut anim, now, &config);
@@ -505,8 +504,8 @@ fn run(args: &Args) -> Result<(), String> {
                     break;
                 }
 
-                // Shown only once a finished card is in the window, so the first
-                // thing the desktop sees is the card rather than an empty window,
+                // Shown only once a finished HUD is in the window, so the first
+                // thing the desktop sees is the HUD rather than an empty window,
                 // and shown without activation.
                 if !shown {
                     ShowWindow(hwnd, SW_SHOWNOACTIVATE);
@@ -535,9 +534,7 @@ fn run(args: &Args) -> Result<(), String> {
 /// `--position` is honoured so both layouts can be reviewed the same way.
 fn run_dump(path: &str, position: Position) -> Result<(), String> {
     let mut text = TextEngine::new()?;
-    // The split layouts put the two halves in opposite screen corners; the dump
-    // uses a deterministic screen width rather than whatever this session has.
-    let (w, h) = (if position == Position::Stacked { DEF_W } else { 900 }, DEF_H);
+    let (w, h) = (DEF_W, DEF_H);
     let mut canvas = Canvas::new(w, h);
 
     let entries = demo_entries();
@@ -558,36 +555,42 @@ fn run_dump(path: &str, position: Position) -> Result<(), String> {
     );
     // The numbers behind the picture: a dump that looks wrong is much easier to
     // fix when the face metrics are on screen next to it.
-    let (pill_w, pill_h) = hud::pill_size(&text);
+    let (pill_w, pill_h) = hud::pill_size(&text, entries.len());
     let row_h = hud::row_height(&text);
     println!(
-        "faces: ui {}px cell, bold {}px cell, mono {}px cell | pill {}x{} | \
-         {} rows of {}px (+2) from y={} | widest value {}px",
+        "faces: ui {}px cell, bold {}px cell, mark {}px cell, tiny {}px cell, \
+         mono {}px cell, mono-bold {}px cell, slogan {}px cell | pill {}x{} | \
+         {} rows of {}px (+3 gap) | widest value {}px",
         text.height(text::FontId::Ui),
         text.height(text::FontId::UiBold),
+        text.height(text::FontId::Mark),
+        text.height(text::FontId::UiTiny),
         text.height(text::FontId::Mono),
+        text.height(text::FontId::MonoBold),
+        text.height(text::FontId::Slogan),
         pill_w,
         pill_h,
         entries.len(),
         row_h,
-        hud::MARGIN + pill_h + 10,
         entries
             .iter()
             .map(|e| text.measure(text::FontId::Mono, &e.value))
             .max()
             .unwrap_or(0),
     );
-    // The measured card: pill and backing sheet, the row band and each row's
-    // name-end -> value distance. Printed from the same layout the painter used,
-    // so a dump that looks wrong can be checked against real numbers.
-    print!("{}", hud::describe(&text, &entries, position, w));
-    print!("{}", preview::ascii_preview(&canvas, BACKDROP, 106, 44));
+    // The measured HUD: the watermark block, the pill and each row's chip, bar and
+    // name -> value distance. Printed from the same layout the painter used, so a
+    // dump that looks wrong can be checked against real numbers.
+    print!("{}", hud::describe(&text, &entries, position, w, h));
+    // ~4x8 canvas pixels per character: the HUD's own pieces are 11..29 px tall,
+    // so anything coarser loses the bars.
+    print!("{}", preview::ascii_preview(&canvas, BACKDROP, (w / 4).min(160) as usize, (h / 8) as usize));
     Ok(())
 }
 
 fn main() {
     // Must happen before any window is created: on a scaled display this is what keeps one canvas
-    // pixel equal to one screen pixel instead of letting Windows stretch the card.
+    // pixel equal to one screen pixel instead of letting Windows stretch the HUD.
     win::enable_dpi_awareness();
 
     let argv: Vec<String> = std::env::args().skip(1).collect();

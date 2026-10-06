@@ -74,7 +74,7 @@ jobs:
           fi
           echo "agent.jar validation passed. All modules + render bridge present."
       - name: Run tests
-        run: cd Doppel && gradle :core:test :adapter:common:test --no-daemon
+        run: cd Doppel && gradle :core:test :adapter:common:test :agent:test --no-daemon
       - name: Compile summary
         if: always()
         run: |

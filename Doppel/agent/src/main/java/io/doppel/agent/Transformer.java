@@ -7,8 +7,6 @@ import java.lang.reflect.Method;
 import java.net.URL;
 import java.net.URLClassLoader;
 import java.security.ProtectionDomain;
-import java.util.HashSet;
-import java.util.Set;
 
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassVisitor;
@@ -199,25 +197,22 @@ public class Transformer implements ClassFileTransformer {
             //      class means resolving game types, which this ClassLoader cannot do.
             // The hook body carries its own frames (we know their exact shape), so the
             // original method's frames are left untouched.
-            final Set<String> existingMethods = new HashSet<String>();
-            reader.accept(new ClassVisitor(Opcodes.ASM9) {
-                @Override
-                public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
-                    existingMethods.add(name);
-                    return null;
-                }
-            }, ClassReader.SKIP_CODE | ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
-
-            // Short, non-branded name (a synthetic method is visible in a heap dump, and the
-            // plan's de-characterisation rule applies to bytecode too). Collisions are checked.
-            String hookName = "h";
-            while (existingMethods.contains(hookName)) hookName = hookName + "h";
-            final String hook = hookName;
-            final String owner = reader.getClassName();
-            // Frames are mandatory from class file version 50 (Java 6) onwards; LWJGL 2.x may
-            // be older, in which case writing a StackMapTable would itself be invalid.
+            // The hook must be inserted INSIDE update()'s own body, never as a new method.
+            // Instrumentation.retransformClasses is not allowed to add, remove or rename
+            // methods (JVMTI spec), and Display is already loaded — so emitting the hook as a
+            // helper method gets the whole transformation rejected AFTER transform() has
+            // already set its success flag. That silent failure was a real regression: the
+            // hook never ran, so ForgeBootstrap.render() never ran, so every module that
+            // depends on the render thread (key edges, synthetic clicks) went dead while
+            // tick-only modules kept working.
+            //
+            // Inserting a try/catch at method entry makes the original body a jump target, so
+            // its frames have to be known. They are: the entry locals are fixed by the
+            // method's own descriptor, the handler sees exactly one value (the Throwable) and
+            // the continuation sees an empty stack. So the frames are written out instead of
+            // computed — and computing them is not an option anyway, because that would
+            // require resolving game types this ClassLoader cannot see.
             final boolean needsFrames = (reader.readShort(6) & 0xffff) >= 50;
-
             final boolean[] injected = new boolean[] { false };
             ClassWriter writer = new ClassWriter(reader, ClassWriter.COMPUTE_MAXS);
             ClassVisitor injector = new ClassVisitor(Opcodes.ASM9, writer) {
@@ -227,25 +222,23 @@ public class Transformer implements ClassFileTransformer {
                     if (mv == null) return null;
                     if (!injected[0] && "update".equals(name) && "()V".equals(descriptor)) {
                         injected[0] = true;
+                        final Object[] entryLocals = (access & Opcodes.ACC_STATIC) != 0
+                                ? new Object[0]
+                                : new Object[] { reader.getClassName() };
                         return new MethodVisitor(Opcodes.ASM9, mv) {
                             @Override
                             public void visitCode() {
                                 super.visitCode();
-                                // Display.update() must run the hook before anything else.
-                                super.visitMethodInsn(Opcodes.INVOKESTATIC, owner, hook, "()V", false);
+                                emitInlineHook(this, entryLocals, needsFrames);
                             }
                         };
                     }
                     return mv;
                 }
-
-                @Override
-                public void visitEnd() {
-                    if (injected[0]) emitHookMethod(this, hook, needsFrames);
-                    super.visitEnd();
-                }
             };
-            reader.accept(injector, 0);
+            // EXPAND_FRAMES: frames arrive fully expanded, so the two we add cannot corrupt
+            // the delta chain of the frames that follow them.
+            reader.accept(injector, ClassReader.EXPAND_FRAMES);
 
             if (!injected[0]) {
                 Agent.log("[Transformer] Display.update() (()V) not present — nothing injected");
@@ -274,60 +267,56 @@ public class Transformer implements ClassFileTransformer {
     }
 
     /**
-     * Emit the hook body as a new private static synthetic method on the class being
-     * transformed: a best-effort reflective call to RenderBridge.onFrame() that swallows
-     * every failure.
+     * Emit, at the current position in the method being written: a best-effort reflective
+     * call to RenderBridge.onFrame(), wrapped so that no failure can escape into update().
      *
      * Reflection instead of a direct INVOKESTATIC is deliberate. Display is defined by the
      * game's LaunchClassLoader, while RenderBridge lives in agent.jar; letting the JVM
      * resolve that reference from Display would put a ClassLoader it cannot see on the
-     * resolution path, and a NoClassDefFoundError there would propagate straight into
-     * Display.update(). Going through the render thread's context CL keeps the failure
-     * inside the hook, where it is caught.
+     * resolution path, and a NoClassDefFoundError there would propagate straight into the
+     * frame loop. Going through the render thread's context CL keeps the failure inside the
+     * try block, where it is swallowed.
      *
-     * Frames are written by hand because the writer runs with COMPUTE_MAXS only: computing
-     * frames for a game class would require resolving game types (see transformDisplay).
+     * @param entryLocals locals visible at method entry. The handler and the continuation both
+     *                    have to restore exactly this shape, which is why the frames can be
+     *                    written out instead of computed (see transformDisplay).
      */
-    private static void emitHookMethod(ClassVisitor cv, String hookName, boolean needsFrames) {
-        MethodVisitor hm = cv.visitMethod(
-            Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC | Opcodes.ACC_SYNTHETIC,
-            hookName, "()V", null, null);
-        hm.visitCode();
+    private static void emitInlineHook(MethodVisitor mv, Object[] entryLocals, boolean needsFrames) {
         Label start = new Label();
         Label end = new Label();
         Label handler = new Label();
         Label after = new Label();
-        hm.visitTryCatchBlock(start, end, handler, "java/lang/Throwable");
-        hm.visitLabel(start);
-        hm.visitLdcInsn("io.doppel.agent.RenderBridge");
-        hm.visitInsn(Opcodes.ICONST_1);
-        hm.visitMethodInsn(Opcodes.INVOKESTATIC, "java/lang/Thread", "currentThread", "()Ljava/lang/Thread;", false);
-        hm.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/Thread", "getContextClassLoader", "()Ljava/lang/ClassLoader;", false);
-        hm.visitMethodInsn(Opcodes.INVOKESTATIC, "java/lang/Class", "forName", "(Ljava/lang/String;ZLjava/lang/ClassLoader;)Ljava/lang/Class;", false);
-        hm.visitLdcInsn("onFrame");
-        hm.visitInsn(Opcodes.ICONST_0);
-        hm.visitTypeInsn(Opcodes.ANEWARRAY, "java/lang/Class");
-        hm.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/Class", "getMethod", "(Ljava/lang/String;[Ljava/lang/Class;)Ljava/lang/reflect/Method;", false);
-        hm.visitInsn(Opcodes.ACONST_NULL);
-        hm.visitInsn(Opcodes.ICONST_0);
-        hm.visitTypeInsn(Opcodes.ANEWARRAY, "java/lang/Object");
-        hm.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/reflect/Method", "invoke", "(Ljava/lang/Object;[Ljava/lang/Object;)Ljava/lang/Object;", false);
-        hm.visitInsn(Opcodes.POP);
-        hm.visitLabel(end);
-        hm.visitJumpInsn(Opcodes.GOTO, after);
-        hm.visitLabel(handler);
-        // Handler entry state: no locals (static, no arguments), the thrown object on the stack.
+        mv.visitTryCatchBlock(start, end, handler, "java/lang/Throwable");
+        mv.visitLabel(start);
+        mv.visitLdcInsn("io.doppel.agent.RenderBridge");
+        mv.visitInsn(Opcodes.ICONST_1);
+        mv.visitMethodInsn(Opcodes.INVOKESTATIC, "java/lang/Thread", "currentThread", "()Ljava/lang/Thread;", false);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/Thread", "getContextClassLoader", "()Ljava/lang/ClassLoader;", false);
+        mv.visitMethodInsn(Opcodes.INVOKESTATIC, "java/lang/Class", "forName", "(Ljava/lang/String;ZLjava/lang/ClassLoader;)Ljava/lang/Class;", false);
+        mv.visitLdcInsn("onFrame");
+        mv.visitInsn(Opcodes.ICONST_0);
+        mv.visitTypeInsn(Opcodes.ANEWARRAY, "java/lang/Class");
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/Class", "getMethod", "(Ljava/lang/String;[Ljava/lang/Class;)Ljava/lang/reflect/Method;", false);
+        mv.visitInsn(Opcodes.ACONST_NULL);
+        mv.visitInsn(Opcodes.ICONST_0);
+        mv.visitTypeInsn(Opcodes.ANEWARRAY, "java/lang/Object");
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/reflect/Method", "invoke", "(Ljava/lang/Object;[Ljava/lang/Object;)Ljava/lang/Object;", false);
+        mv.visitInsn(Opcodes.POP);
+        mv.visitLabel(end);
+        mv.visitJumpInsn(Opcodes.GOTO, after);
+        mv.visitLabel(handler);
         if (needsFrames) {
-            hm.visitFrame(Opcodes.F_FULL, 0, new Object[0], 1, new Object[] { "java/lang/Throwable" });
+            // Constant pool growth is allowed by retransformClasses, new frames are not
+            // inherited — the handler is entered with the thrown object on the stack and the
+            // same locals the method started with.
+            mv.visitFrame(Opcodes.F_NEW, entryLocals.length, entryLocals, 1, new Object[] { "java/lang/Throwable" });
         }
-        hm.visitInsn(Opcodes.POP);
-        hm.visitLabel(after);
+        mv.visitInsn(Opcodes.POP);
+        mv.visitLabel(after);
         if (needsFrames) {
-            hm.visitFrame(Opcodes.F_FULL, 0, new Object[0], 0, new Object[0]);
+            // Where the original body resumes: entry locals, empty stack.
+            mv.visitFrame(Opcodes.F_NEW, entryLocals.length, entryLocals, 0, new Object[0]);
         }
-        hm.visitInsn(Opcodes.RETURN);
-        hm.visitMaxs(0, 0);
-        hm.visitEnd();
     }
 
     // ═══════════════════════════════════════════

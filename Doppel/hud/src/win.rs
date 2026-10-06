@@ -254,7 +254,20 @@ extern "system" {
     /// A minimised window's rect is the classic (-32000, -32000) icon position, so
     /// it is refused rather than used to place the overlay in a desktop corner.
     pub fn IsIconic(hwnd: Hwnd) -> i32;
-    pub fn GetWindowRect(hwnd: Hwnd, rect: *mut RectWin) -> i32;
+    /// The window's **client** rect: the drawable area, with (0, 0) at its own
+    /// top-left and `right`/`bottom` carrying its size. Unlike `GetWindowRect`
+    /// this excludes the title bar, the borders and any menu — which is what an
+    /// overlay has to cover, or the HUD sits over the game's own title bar.
+    ///
+    /// There is deliberately no `GetWindowRect` declaration next to it: the
+    /// overlay anchors to what the game *draws into*, and the one caller that ever
+    /// needed the whole window (`follow.rs`, before A2's fix) uses this instead.
+    /// A future caller that really wants the frame has to add the declaration and
+    /// say why.
+    pub fn GetClientRect(hwnd: Hwnd, rect: *mut RectWin) -> i32;
+    /// Client → screen coordinates. `GetClientRect` is client-local, so this is
+    /// the half of the conversion that says *where* the client area is.
+    pub fn ClientToScreen(hwnd: Hwnd, point: *mut Point) -> i32;
     pub fn UpdateLayeredWindow(
         hwnd: Hwnd,
         dst_dc: Hdc,

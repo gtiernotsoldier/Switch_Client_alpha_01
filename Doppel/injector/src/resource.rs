@@ -217,7 +217,8 @@ pub fn launch_hud_when_ready(pid: u32) {
                 let args = rect.rect_args();
                 command.args(&args);
                 notes.push_str(&format!(
-                    "rect: {} — from GetWindowRect of pid {}'s game window ({})\n",
+                    "rect: {} — from GetClientRect + ClientToScreen of pid {}'s game window \
+                     client area, i.e. below the title bar and inside the borders ({})\n",
                     rect.label(),
                     game.pid,
                     if game.physical {

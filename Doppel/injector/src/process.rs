@@ -139,7 +139,14 @@ extern "system" {
     fn GetWindowThreadProcessId(h_wnd: *mut c_void, lpdw_process_id: *mut u32) -> u32;
     fn IsWindowVisible(h_wnd: *mut c_void) -> i32;
     fn GetWindowTextW(h_wnd: *mut c_void, lp_string: *mut u16, n_max_count: i32) -> i32;
-    fn GetWindowRect(h_wnd: *mut c_void, rect: *mut Rect) -> i32;
+    /// The window's *client* area, with its origin at `(0, 0)` — the size only.
+    /// `GetWindowRect` is deliberately not imported: its rect includes the
+    /// non-client area (the title bar and the borders), which the overlay must
+    /// not cover.
+    fn GetClientRect(h_wnd: *mut c_void, rect: *mut Rect) -> i32;
+    /// Client coordinates -> screen coordinates. This is what turns the client
+    /// rect's `(0, 0)` origin into a position on the virtual desktop.
+    fn ClientToScreen(h_wnd: *mut c_void, point: *mut Point) -> i32;
     fn IsIconic(h_wnd: *mut c_void) -> i32;
 }
 
@@ -154,10 +161,22 @@ struct Rect {
     bottom: i32,
 }
 
+/// Win32 `POINT`: an x/y pair in device coordinates, used here for the client
+/// area's top-left corner *in screen coordinates*, as `ClientToScreen` reports
+/// it.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct Point {
+    x: i32,
+    y: i32,
+}
+
 // ── the game window's rect → the overlay's `--rect` ──────────────────────────
 
-/// The rectangle the game window occupies on the virtual desktop, in physical
-/// pixels: origin plus size, which is the form `doppel-hud --rect` takes.
+/// The rectangle the game window's *client area* occupies on the virtual
+/// desktop, in physical pixels: origin plus size, which is the form
+/// `doppel-hud --rect` takes. It is the client area, not the whole window, so
+/// the overlay starts below the title bar and inside the borders.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WindowRect {
     pub x: i32,
@@ -167,7 +186,8 @@ pub struct WindowRect {
 }
 
 impl WindowRect {
-    /// Build one from a Win32 `RECT`'s corners.
+    /// Build one from a Win32 `RECT`'s corners — in practice the client area's
+    /// screen corners, composed by `client_area_rect` below.
     ///
     /// Pure on purpose: this is the arithmetic that decides where the overlay
     /// lands, so it is tested without a window. `None` means "there is no usable
@@ -209,17 +229,21 @@ impl WindowRect {
 
 // ── Window rect lookup via EnumWindows ──
 
-/// Find the visible top-level window owned by `pid` and return its screen rect.
+/// Find the visible top-level window owned by `pid` and return its *client
+/// area*, in screen coordinates.
 ///
 /// This is the same window `find_minecraft_window` already picks out for the
 /// process list — the search below records the `HWND` alongside the title, which
 /// is the one thing the panel's version threw away. The overlay is then spawned
-/// onto the game's own rect so it follows the game on any monitor and at any
-/// window size, instead of covering the primary monitor.
+/// onto the game's own client rect so it follows the game on any monitor and at
+/// any window size, instead of covering the primary monitor. The client area is
+/// what `GetClientRect` + `ClientToScreen` report rather than `GetWindowRect`,
+/// so the HUD's top row starts *below* the title bar instead of being drawn over
+/// it (and stays inside the side and bottom borders too).
 ///
 /// `None` when the process has no visible top-level window, when the window is
-/// minimised, or when its rect is degenerate; the caller then starts the overlay
-/// with no `--rect` at all (the primary monitor).
+/// minimised, or when its client area is degenerate; the caller then starts the
+/// overlay with no `--rect` at all (the primary monitor).
 pub fn find_game_window_rect(pid: u32) -> Option<WindowRect> {
     find_game_window_rect_raw(pid)
 }
@@ -230,10 +254,11 @@ pub fn find_game_window_rect(pid: u32) -> Option<WindowRect> {
 /// The overlay calls `SetProcessDPIAware`, so the rect it is given must be in
 /// physical pixels. This process is a plain DPI-unaware GUI app — making it aware
 /// process-wide would re-scale the launcher window, which is not this change's
-/// business — so on a scaled display `GetWindowRect` answers in *virtualised*
-/// coordinates: a 150 % display reports a 1920x1080 game as 1280x720, and the
-/// overlay would land on the wrong part of the screen. `physical` reports whether
-/// the per-thread fix below worked; the launch log records it either way.
+/// business — so on a scaled display the client-area lookup answers in
+/// *virtualised* coordinates: a 150 % display reports a 1920x1080 game as
+/// 1280x720, and the overlay would land on the wrong part of the screen.
+/// `physical` reports whether the per-thread fix below worked; the launch log
+/// records it either way.
 pub struct GameWindow {
     pub pid: u32,
     pub rect: Option<WindowRect>,
@@ -283,6 +308,27 @@ fn use_physical_pixels_on_this_thread() -> bool {
     }
 }
 
+/// The client area in the form `--rect` needs: origin plus size.
+///
+/// `GetClientRect` reports the area with its origin at `(0, 0)` — where it sits
+/// on screen is not in that rect at all — so only its `right`/`bottom` are used,
+/// as the size, and the screen origin comes from `ClientToScreen`. (Win32
+/// guarantees `left`/`top` are 0 there.) [`WindowRect::from_corners`] stays the
+/// one corner→origin+size conversion.
+///
+/// `None` for a zero-sized client area — a window mid-minimise, or one that has
+/// not been sized yet — so the caller falls back to "no `--rect`" instead of
+/// placing a zero-sized overlay. The additions are checked because the result is
+/// a screen coordinate and a pathological pair must not wrap.
+fn client_area_rect(client: Rect, screen_origin: Point) -> Option<WindowRect> {
+    WindowRect::from_corners(
+        screen_origin.x,
+        screen_origin.y,
+        screen_origin.x.checked_add(client.right)?,
+        screen_origin.y.checked_add(client.bottom)?,
+    )
+}
+
 fn find_game_window_rect_raw(pid: u32) -> Option<WindowRect> {
     if pid == 0 {
         return None;
@@ -307,11 +353,21 @@ fn find_game_window_rect_raw(pid: u32) -> Option<WindowRect> {
         if IsIconic(hwnd) != 0 {
             return None;
         }
-        let mut rect = Rect::default();
-        if GetWindowRect(hwnd, &mut rect) == 0 {
+        // The *client* area, not the whole window: `GetWindowRect` includes the
+        // non-client area — the title bar and the borders — and the HUD's top
+        // row would then be drawn over the title bar. `GetClientRect` gives the
+        // size, `ClientToScreen` the position.
+        let mut client = Rect::default();
+        if GetClientRect(hwnd, &mut client) == 0 {
             return None;
         }
-        WindowRect::from_corners(rect.left, rect.top, rect.right, rect.bottom)
+        // ClientToScreen takes the point in *client* coordinates, and the client
+        // area's top-left corner is the client origin (0, 0).
+        let mut origin = Point::default();
+        if ClientToScreen(hwnd, &mut origin) == 0 {
+            return None;
+        }
+        client_area_rect(client, origin)
     }
 }
 
@@ -667,9 +723,10 @@ pub fn find_process_by_pid(pid: u32) -> ProcessInfo {
 mod tests {
     use super::*;
 
-    /// `GetWindowRect` answers with corners; `--rect` wants origin plus size. The
-    /// subtraction is the whole conversion, and getting it wrong (passing
-    /// `right`/`bottom` as the width/height) would make the overlay enormous.
+    /// The client area arrives as corners (`GetClientRect` + `ClientToScreen`);
+    /// `--rect` wants origin plus size. The subtraction is the whole conversion,
+    /// and getting it wrong (passing `right`/`bottom` as the width/height) would
+    /// make the overlay enormous.
     #[test]
     fn a_window_rect_becomes_an_origin_and_a_size() {
         let rect = WindowRect::from_corners(100, 50, 1380, 770).unwrap();
@@ -731,5 +788,27 @@ mod tests {
         let found = find_game_window(0);
         assert_eq!(found.pid, 0);
         assert!(found.rect.is_none());
+    }
+
+    /// What the overlay is given is the *client* area: its size from
+    /// `GetClientRect` (origin always `(0, 0)` there) and its screen position from
+    /// `ClientToScreen`. The window rect would include the title bar and the
+    /// borders, and the HUD's top row would be drawn over the title bar.
+    #[test]
+    fn the_client_area_starts_below_the_title_bar() {
+        // A window frame at (100, 50) with a 30 px title bar and 8 px borders:
+        // the client area is 1264x682 and starts 30 px lower, 8 px to the right.
+        let client = Rect { left: 0, top: 0, right: 1264, bottom: 682 };
+        let origin = Point { x: 108, y: 80 };
+        let rect = client_area_rect(client, origin).unwrap();
+        assert_eq!((rect.x, rect.y, rect.w, rect.h), (108, 80, 1264, 682));
+        assert!(rect.y > 50, "the HUD must start below the window's top edge");
+
+        // A zero-sized client area — a window mid-minimise — is not a rect, so the
+        // caller drops to "no `--rect`" rather than a 0x0 overlay.
+        let empty = Rect { left: 0, top: 0, right: 0, bottom: 0 };
+        assert_eq!(client_area_rect(empty, origin), None);
+        let flat = Rect { left: 0, top: 0, right: 1264, bottom: 0 };
+        assert_eq!(client_area_rect(flat, origin), None);
     }
 }

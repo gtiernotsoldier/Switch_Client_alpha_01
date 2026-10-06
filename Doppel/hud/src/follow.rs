@@ -6,9 +6,16 @@
 // corner of what used to be the screen.
 //
 // `--follow-pid <pid>` makes the overlay re-read the game window's rect itself
-// (`EnumWindows` + `GetWindowThreadProcessId` + `GetWindowRect`) on a slow poll and re-place its
-// window when the rect changes. `--rect` still supplies the initial placement, and remains the
-// whole story when no pid is given.
+// (`EnumWindows` + `GetWindowThreadProcessId` + `GetClientRect` + `ClientToScreen`) on a slow
+// poll and re-place its window when the rect changes. `--rect` still supplies the initial
+// placement, and remains the whole story when no pid is given.
+//
+// The poll reads the **client** area, not the window rect. `GetWindowRect` answers the whole
+// window — title bar, borders and all — and a HUD anchored to its top-right corner lands over
+// Minecraft's own title bar instead of inside the game's frame. `GetClientRect` is the
+// drawable rectangle and `ClientToScreen` puts its origin on the screen, so the overlay covers
+// exactly what the game draws into. (`--rect` is the injector's own one-shot reading and is
+// unchanged: it is a fallback, not the live path.)
 //
 // Note for the user, repeated in the usage text: under **exclusive** fullscreen no external
 // overlay can ever be visible — Windows hands the display to the game and a layered window is
@@ -37,7 +44,8 @@ pub struct Candidate {
     pub visible: bool,
     /// Minimised: its rect is the (-32000, -32000) icon position and must not be used.
     pub iconic: bool,
-    /// `GetWindowRect`'s answer, `None` when the call failed or the rect was degenerate.
+    /// The window's client area in screen coordinates, `None` when the two calls failed or
+    /// the area was degenerate.
     pub rect: Option<Rect>,
 }
 
@@ -53,6 +61,19 @@ pub fn rect_from_corners(left: i32, top: i32, right: i32, bottom: i32) -> Option
         return None;
     }
     Some(Rect::new(left, top, w, h))
+}
+
+/// The client area's screen rect from the two calls that produce it: `ClientToScreen`'s answer
+/// for the client's own (0, 0), and `GetClientRect`'s size.
+///
+/// Both halves are plain numbers here, so "the title bar is not part of the overlay's rect" is
+/// a property this file can test without a window. An origin that would overflow the addition,
+/// or an empty client area, is `None` — the caller keeps the last good rect rather than moving
+/// the HUD to a wrapped coordinate.
+pub fn client_rect(origin_x: i32, origin_y: i32, client_w: i32, client_h: i32) -> Option<Rect> {
+    let right = origin_x.checked_add(client_w)?;
+    let bottom = origin_y.checked_add(client_h)?;
+    rect_from_corners(origin_x, origin_y, right, bottom)
 }
 
 /// Pick the window the overlay should cover.
@@ -115,9 +136,14 @@ unsafe extern "system" fn collect_window(hwnd: Hwnd, param: Lparam) -> i32 {
         String::new()
     };
 
-    let mut raw: RectWin = std::mem::zeroed();
-    let rect = if GetWindowRect(hwnd, &mut raw) != 0 {
-        rect_from_corners(raw.left, raw.top, raw.right, raw.bottom)
+    // The client area, not the window rect: `GetWindowRect` includes the title bar and the
+    // borders, and a HUD anchored to it sits over the game's own title bar. The two Win32
+    // calls are kept apart — the size from `GetClientRect`, the position from
+    // `ClientToScreen` — so `client_rect` is the one place the pair becomes a screen rect.
+    let mut client: RectWin = std::mem::zeroed();
+    let mut origin = Point { x: 0, y: 0 };
+    let rect = if GetClientRect(hwnd, &mut client) != 0 && ClientToScreen(hwnd, &mut origin) != 0 {
+        client_rect(origin.x, origin.y, client.right, client.bottom)
     } else {
         None
     };
@@ -132,14 +158,15 @@ unsafe extern "system" fn collect_window(hwnd: Hwnd, param: Lparam) -> i32 {
     1
 }
 
-/// The rect of the game window owned by `pid`, or `None` when there is nothing usable.
+/// The **client** rect of the game window owned by `pid`, or `None` when there is nothing
+/// usable.
 ///
 /// `None` means "no information", never "move the overlay to (0, 0)": the caller keeps the last
 /// good rect, so a game that is briefly minimised (or between two windows during a fullscreen
 /// switch) does not teleport the HUD.
 ///
 /// The rect is in physical pixels because `win::enable_dpi_awareness` runs before any window is
-/// created, so `GetWindowRect` does not hand back virtualised coordinates on a scaled display.
+/// created, so neither call hands back virtualised coordinates on a scaled display.
 pub fn game_window_rect(pid: u32) -> Option<Rect> {
     if pid == 0 {
         return None;
@@ -193,7 +220,7 @@ mod tests {
         let candidates = vec![
             window(1, "Minecraft", false, false, Some(Rect::new(0, 0, 1920, 1080))), // hidden
             window(2, "Minecraft", true, true, Some(Rect::new(-32000, -32000, 160, 30))), // minimised
-            window(3, "", true, false, None), // GetWindowRect failed
+            window(3, "", true, false, None), // the client-area calls failed
             window(4, "", true, false, Some(Rect::new(0, 0, 0, 0))), // degenerate
         ];
         assert_eq!(choose_window(&candidates), None);
@@ -207,6 +234,44 @@ mod tests {
         assert_eq!(rect_from_corners(10, 10, 10, 500), None, "zero width");
         assert_eq!(rect_from_corners(10, 10, 500, 10), None, "zero height");
         assert_eq!(rect_from_corners(500, 500, 10, 10), None, "inverted");
+    }
+
+    /// The conversion the follow poll actually uses: the client area, which is *not* the window
+    /// rect. A HUD anchored to `GetWindowRect` sits over the game's title bar — the bug this
+    /// conversion exists to fix — so the difference between the two is pinned here.
+    #[test]
+    fn the_client_area_excludes_the_title_bar_and_borders() {
+        // A 1280x720 client area in a window at (100, 50) with a 30 px title bar and a 2 px
+        // border: `GetWindowRect` would answer (100, 50)..(1384, 802), 30 px too high and
+        // 4 px too wide.
+        let window = rect_from_corners(100, 50, 1384, 802).expect("a window rect");
+        let client = client_rect(102, 80, 1280, 720).expect("a client rect");
+        assert_eq!(client, Rect::new(102, 80, 1280, 720));
+        assert_eq!(client.y - window.y, 30, "the title bar sits above the client area");
+        assert!(client.h < window.h && client.w < window.w);
+        // The frame is at the top and the sides, not below: the bottom edges agree
+        // apart from the bottom border.
+        assert_eq!(client.bottom(), 800);
+        assert_eq!(window.bottom() - client.bottom(), 2, "the bottom border");
+
+        // A fullscreen borderless window has no frame at all: the two agree, which is why the
+        // bug only shows up in windowed mode.
+        assert_eq!(
+            client_rect(0, 0, 1920, 1080),
+            rect_from_corners(0, 0, 1920, 1080),
+            "a borderless window's client area is the whole window"
+        );
+
+        // Negative origins (a monitor left of the primary one) stay negative.
+        assert_eq!(client_rect(-1920, -100, 1920, 1080), Some(Rect::new(-1920, -100, 1920, 1080)));
+
+        // Degenerate and overflowing answers are refused, never wrapped: a zero-sized overlay
+        // is invisible and a wrapped origin would put the HUD on another screen.
+        assert_eq!(client_rect(10, 10, 0, 500), None, "zero width");
+        assert_eq!(client_rect(10, 10, 500, 0), None, "zero height");
+        assert_eq!(client_rect(10, 10, -500, 100), None, "inverted");
+        assert_eq!(client_rect(i32::MAX, 0, 10, 10), None, "overflow");
+        assert_eq!(client_rect(0, i32::MAX, 10, 10), None, "overflow");
     }
 
     #[test]

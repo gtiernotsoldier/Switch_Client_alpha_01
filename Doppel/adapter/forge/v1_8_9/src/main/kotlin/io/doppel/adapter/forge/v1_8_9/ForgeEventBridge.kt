@@ -531,6 +531,34 @@ object ForgeEventBridge : IEventBridge {
             } catch (_: Exception) { false }
         }
 
+        // BridgeAssist's bridging readout: how many placeable blocks are left. ItemStack.stackSize
+        // is SRG (`field_77994_a`), and the held stack is slot `inventory_currentItem`; "total" walks
+        // slots 0..35, which for InventoryPlayer is the hotbar plus the main inventory.
+        EventBridge.registerBlockCounter { mode ->
+            try {
+                val player = getPlayer() ?: return@registerBlockCounter 0
+                val inventory = MappingContext.getFieldValue(player, "forge:player_inventory")
+                    ?: return@registerBlockCounter 0
+                val itemBlockClass = try { Class.forName("net.minecraft.item.ItemBlock") } catch (_: Exception) { null }
+                    ?: return@registerBlockCounter 0
+                val slots: List<Int> = if (mode == 1) {
+                    listOf((MappingContext.getFieldValue(inventory, "forge:inventory_currentItem") as? Int) ?: 0)
+                } else {
+                    (0..35).toList()
+                }
+                var total = 0
+                for (slot in slots) {
+                    val stack = MappingContext.invokeMethod(inventory, "forge:inventory_getStackInSlot", slot) ?: continue
+                    val item = MappingContext.getFieldValue(stack, "forge:itemStack_item") ?: continue
+                    if (!itemBlockClass.isInstance(item)) continue
+                    total += (MappingContext.getFieldValue(stack, "forge:itemStack_stackSize") as? Int) ?: 0
+                }
+                total
+            } catch (_: Exception) {
+                0
+            }
+        }
+
         EventBridge.registerReachSetter { distance ->
             val player = getPlayer() ?: return@registerReachSetter
             val world = getWorld() ?: return@registerReachSetter

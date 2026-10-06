@@ -67,6 +67,7 @@ object OverlayRenderer {
             g.glDisable(GLConstants.GL_DEPTH_TEST)
 
             drawKeystrokes(ctx)
+        drawBridgeAssist(ctx)
             drawSpeedometer(ctx)
             drawVelocityDisplay(ctx)
             drawJumpStatus(ctx)
@@ -113,6 +114,14 @@ object OverlayRenderer {
 
     /** Consecutive glass copy failures → texture name likely dead, regenerate. */
     private var badgeCopyFails = 0
+
+    // ── BridgeAssist (the bridging block count, Raven-bPLUS's SafeWalk readout) ──
+
+    private fun drawBridgeAssist(ctx: RenderContext) {
+        try {
+            io.doppel.adapter.common.module.player.BridgeAssist.render(ctx)
+        } catch (_: Exception) {}
+    }
 
     private fun drawKeystrokes(ctx: RenderContext) {
         try {

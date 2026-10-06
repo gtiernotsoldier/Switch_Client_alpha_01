@@ -150,6 +150,7 @@ object EventBridge {
         // Render/GUI hook contract — a stale "on" flag here would outlive the module that set it.
         suppressHurtCam = false
         suppressCameraBob = false
+        blockCounter = null
         keepMovementInGui = false
         guiMovementKeepSprint = false
         guiMovementOnlyInventory = false
@@ -1259,6 +1260,26 @@ object EventBridge {
     // NoFOV was deleted at the user's request, and with it the `lockFovModifier` flag it published.
     // The approach it needed was real (a 20 Hz write could never win against
     // `updateFovModifierHand()` inside `Minecraft.runTick()`), but the module itself was not wanted.
+
+    // ========== Block count (BridgeAssist's bridging readout) ==========
+    private var blockCounter: ((Int) -> Int)? = null
+
+    fun registerBlockCounter(handler: (Int) -> Int) {
+        blockCounter = handler
+    }
+
+    /**
+     * Placeable blocks the player is carrying: [mode] 0 = the whole inventory, 1 = the held stack.
+     *
+     * Counted on the platform side (it is the only side that can see the inventory), and only when a
+     * module asks — the bridging readout is the one caller, and it wants this fresh every frame while
+     * it is on screen.
+     */
+    fun blockCount(mode: Int): Int = try {
+        blockCounter?.invoke(mode) ?: 0
+    } catch (_: Exception) {
+        0
+    }
 
     // ========== GUI Movement (InvMove — Movement) ==========
     /**

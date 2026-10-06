@@ -6,6 +6,7 @@ import io.doppel.adapter.common.api.EventBridge
 import io.doppel.adapter.common.module.Module
 import io.doppel.adapter.common.module.Category
 import io.doppel.adapter.common.option.*
+import io.doppel.adapter.common.render.RenderContext
 import kotlin.math.abs
 
 /**
@@ -42,6 +43,42 @@ object BridgeAssist : Module("BridgeAssist", Category.PLAYER) {
     private val setLook by boolean("SetLook", true)
     private val onlySneaking by boolean("OnlySneaking", true)
     private val workWithSafeWalk by boolean("WorkWithSafeWalk", false)
+
+    // ========== Bridging readout (Raven-bPLUS's SafeWalk) ==========
+
+    /** Show how many placeable blocks are left, centred under the crosshair while bridging. */
+    private val showBlockAmount by boolean("ShowBlockAmount", true)
+
+    /** "Total" = every block in the hotbar + main inventory, "CurrentStack" = only the held stack. */
+    private val blockShowMode by choices("BlockShowMode", arrayOf("Total", "CurrentStack"))
+
+    /**
+     * The block count, drawn the way the reference does it: plain text with a shadow, centred just
+     * below the crosshair, coloured by how much is left so an emptying inventory is visible without
+     * reading the number.
+     *
+     * Gated on the module being on — the module is what you enable when you bridge, which is the same
+     * condition the reference calls "shouldBridge" — and on there being something to say: a 0 would
+     * put "0 blocks" over the crosshair of everybody with an empty hand.
+     */
+    fun render(ctx: RenderContext) {
+        if (!enabled || !showBlockAmount || EventBridge.isGuiOpen) return
+        val total = EventBridge.blockCount(if (blockShowMode == "CurrentStack") 1 else 0)
+        if (total <= 0) return
+        val text = "$total blocks"
+        val font = ctx.fontRenderer
+        val x = ctx.scaledWidth / 2 - font.getStringWidth(text) / 2
+        val y = ctx.scaledHeight / 2 + 15
+        font.drawStringWithShadow(text, x, y, blockCountColor(total))
+    }
+
+    /** Raven-bPLUS's ladder: under 16 red, under 32 orange, under 128 yellow, otherwise green. */
+    internal fun blockCountColor(total: Int): Int = when {
+        total < 16 -> 0xFFFF5555.toInt()
+        total < 32 -> 0xFFFFAA00.toInt()
+        total < 128 -> 0xFFFFFF55.toInt()
+        else -> 0xFF55FF55.toInt()
+    }
 
     // ========== State ==========
     private var phase = Phase.IDLE

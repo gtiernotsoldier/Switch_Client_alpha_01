@@ -610,6 +610,14 @@
     ],
     "mcp": "hasTagCompound"
   },
+  "forge:itemStack_stackSize": {
+    "class": "net.minecraft.item.ItemStack",
+    "field": "field_77994_a",
+    "aliases": [
+      "itemStack_stackSize"
+    ],
+    "mcp": "stackSize"
+  },
   "forge:itemStack_item": {
     "class": "net.minecraft.item.ItemStack",
     "field": "field_151002_e",

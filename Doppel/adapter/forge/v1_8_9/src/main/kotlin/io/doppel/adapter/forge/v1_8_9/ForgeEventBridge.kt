@@ -1306,32 +1306,53 @@ object ForgeEventBridge : IEventBridge {
     // the server is told all stay where they were. A bare Entity reports an eye height of 0, so the
     // stand-in is placed at the player's eye position directly.
     /**
-     * `Minecraft.renderViewEntity`.
+     * `Minecraft.renderViewEntity`, found without trusting a name.
      *
-     * The mapping is tried first, but it is not trusted: the SRG name taken from the repo's MCP table
-     * did not resolve on a real client (the log said so), and a camera that cannot be redirected is
-     * exactly the "nothing happened" the user reported. The fallback identifies the field by what it
-     * *is* rather than by what it is called — the `Entity`-typed field of Minecraft that currently holds
-     * the player. `pointedEntity` is the other Entity field, and it is null unless the crosshair is on
-     * something, so this is unambiguous in practice.
+     * Two rounds were spent on names: the SRG name from the repo's MCP table does not resolve on the
+     * real client, and the first shape-based fallback used `Class.forName("net.minecraft.client.
+     * Minecraft")`, which our ClassLoader cannot load — so both lookups failed and the log said
+     * "not resolvable" while nothing moved.
+     *
+     * This one asks the INSTANCE for its class (always correct, whatever loaded it) and identifies the
+     * field by what it is: the `Entity`-typed field of Minecraft that currently holds the player.
+     * `pointedEntity` is the other one and is null unless the crosshair is on something, so the
+     * identity check is unambiguous. When the player cannot be read yet the result is NOT cached, so
+     * enabling the module in a menu cannot poison it for the whole session.
      */
-    private val mcRenderViewEntityField by lazy {
-        MappingContext.getField("forge:mc_renderViewEntity") ?: try {
-            val mc = getMc()
-            val player = getPlayer()
-            val mcClass = Class.forName("net.minecraft.client.Minecraft")
-            mcClass.declaredFields.firstOrNull { f ->
-                f.type.name == "net.minecraft.entity.Entity" &&
-                    try { f.get(mc) === player } catch (_: Exception) { false }
-            }?.also {
+    @Volatile private var cachedRenderViewEntityField: java.lang.reflect.Field? = null
+
+    private fun resolveRenderViewEntityField(): java.lang.reflect.Field? {
+        cachedRenderViewEntityField?.let { return it }
+        MappingContext.getField("forge:mc_renderViewEntity")?.let {
+            cachedRenderViewEntityField = it
+            io.doppel.core.logging.CoreLogger.info("[Freelook] renderViewEntity from the mapping: ${it.name}")
+            return it
+        }
+        return try {
+            val mc = getMc() ?: return null
+            val player = getPlayer() ?: return null
+            val candidates = generateSequence(mc.javaClass as Class<*>) { it.superclass }
+                .takeWhile { it != null }
+                .flatMap { cls -> cls.declaredFields.asSequence() }
+                .filter { it.type.name == "net.minecraft.entity.Entity" }
+                .toList()
+            val byIdentity = candidates.firstOrNull {
+                try { it.get(mc) === player } catch (_: Exception) { false }
+            }
+            val chosen = byIdentity ?: candidates.singleOrNull()
+            if (chosen != null) {
+                cachedRenderViewEntityField = chosen
                 io.doppel.core.logging.CoreLogger.info(
-                    "[Freelook] renderViewEntity resolved by shape: ${it.name}"
+                    "[Freelook] renderViewEntity resolved by shape: ${chosen.name} " +
+                        "(identity=${byIdentity != null}, candidates=${candidates.map { c -> c.name }})"
                 )
             }
+            chosen
         } catch (_: Exception) {
             null
         }
     }
+
     private val gsThirdPersonViewField by lazy { MappingContext.getField("forge:gs_thirdPersonView") }
 
     /** The player's own third-person choice, put back when Freelook lets go (Raven: previousPerspective). */
@@ -1386,7 +1407,7 @@ object ForgeEventBridge : IEventBridge {
         try {
             val mc = getMc() ?: return
             val player = getPlayer() ?: return
-            val field = mcRenderViewEntityField
+            val field = resolveRenderViewEntityField()
             if (!EventBridge.freeLookActive) {
                 if (freeLookSwapped) {
                     field?.set(mc, player)

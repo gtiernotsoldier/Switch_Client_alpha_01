@@ -255,6 +255,22 @@ pub fn launch_hud_when_ready(pid: u32) {
             return;
         }
 
+        // CREATE_NO_WINDOW, and this is a stealth requirement rather than a tidiness one.
+        //
+        // The overlay is a console-subsystem binary (it prints its `--dump`/`--help` output), and the
+        // injector is a GUI-subsystem one launched by javaw.exe, so it has no console to hand down.
+        // Windows therefore gave the overlay a brand-new console window: a black box titled with the
+        // exe path, floating over the game, listed in the taskbar — and, because a new console takes
+        // the foreground, the overlay's own "show only while the game is in front" gate saw OUR pid
+        // in front and hid the HUD until the user clicked the game again. CREATE_NO_WINDOW stops the
+        // console from ever existing, so neither symptom happens.
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            command.creation_flags(CREATE_NO_WINDOW);
+        }
+
         match command.spawn() {
             Ok(child) => {
                 notes.push_str(&format!("spawned pid {}\n", child.id()));

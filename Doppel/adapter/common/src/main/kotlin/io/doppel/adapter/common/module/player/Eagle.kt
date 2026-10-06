@@ -92,6 +92,14 @@ object Eagle : Module("Eagle", Category.PLAYER) {
     /** Ticks spent waiting for that aim to arrive. */
     private var placeAimTicks: Int = 0
 
+    /**
+     * Whether the right-click currently held is the one AutoPlace pressed.
+     *
+     * On the platform side `syntheticUse` is a **held** button — it is OR-ed into the right mouse
+     * button every frame — so it has to be released again, and only by whoever pressed it.
+     */
+    private var placeUseOwned: Boolean = false
+
     private val tickListener: (PlayerState, TargetState?) -> Unit = { p, _ ->
         if (enabled) onTick(p)
     }
@@ -150,6 +158,15 @@ object Eagle : Module("Eagle", Category.PLAYER) {
      * not, AutoPlace stands down rather than fighting it for the camera — the other half of the report.
      */
     private fun autoPlaceTick(player: PlayerState, onEdge: Boolean) {
+        // Release last tick's placement click FIRST. `EventBridge.syntheticUse` is not a one-shot: the
+        // platform OR-s it into the right mouse button every frame, so leaving it set keeps the player
+        // placing forever — which is exactly what "it still places with AutoPlace switched off" was.
+        // One placement = one tick of use. Only ever clear our own press, never AutoBlock's.
+        if (placeUseOwned) {
+            EventBridge.syntheticUse = false
+            placeUseOwned = false
+        }
+
         val sneaking = player.isSneaking || autoSneakActive
         if (!shouldAutoPlace(enabled, autoPlace, onEdge, sneaking)) {
             // Any gate closing cancels a pending aim: never click after the reason to click is gone.
@@ -183,6 +200,7 @@ object Eagle : Module("Eagle", Category.PLAYER) {
             }
             PlaceStep.CLICK -> {
                 EventBridge.syntheticUse = true
+                placeUseOwned = true
                 markWorked() // the HUD row flashes on the placement, like every other acting module
                 placeAiming = false
                 placeAimTicks = 0
@@ -246,9 +264,18 @@ object Eagle : Module("Eagle", Category.PLAYER) {
         // requirement here is that disabling the module never leaves the player stuck sneaking, so
         // this releases wherever the player happens to be.)
         if (autoSneakActive) EventBridge.releaseSneak()
+        // Give the right button back if we are the ones holding it. The tick listener is unregistered
+        // here, so nothing else would ever clear it — and a stuck synthetic use is a player who cannot
+        // stop placing.
+        if (placeUseOwned) {
+            EventBridge.syntheticUse = false
+            placeUseOwned = false
+        }
         autoSneakActive = false
         unsneakDelayTicks = 0
         placeCooldownTicks = 0
+        placeAiming = false
+        placeAimTicks = 0
     }
 }
 

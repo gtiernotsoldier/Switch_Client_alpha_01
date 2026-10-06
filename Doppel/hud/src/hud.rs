@@ -608,7 +608,7 @@ pub fn tesseract_header_rgb(millis: f64, offset_ms: f32) -> [f32; 3] {
 
 /// Everything the HUD needs that is not the published state: which mode, how big,
 /// and the source's `HUD{}` config block (ModuleConfig.h:57-68 / ArrayList.h:15-19).
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct Config {
     pub position: Position,
     /// Global fade multiplier, 1.0 normally and ramped to 0 when the game dies.
@@ -628,6 +628,12 @@ pub struct Config {
     pub secondary: [f32; 3],
     /// `m_SpacedModules` (ModuleConfig.h:60): split `CamelCase` names.
     pub spaced: bool,
+    /// The state contract v2 header's `nickname` — the watermark's middle segment
+    /// (`ResolvePlayerNick`, HUD.cpp:526-529). Empty drops the segment.
+    pub nickname: String,
+    /// The header's `fps`. 0 = unknown, and the FPS segment is dropped rather
+    /// than drawn as `0 FPS` (the source only ever has a real frame counter).
+    pub fps: u32,
 }
 
 impl Default for Config {
@@ -643,6 +649,8 @@ impl Default for Config {
             primary: DEFAULT_PRIMARY,
             secondary: DEFAULT_SECONDARY,
             spaced: false,
+            nickname: String::new(),
+            fps: 0,
         }
     }
 }
@@ -976,14 +984,23 @@ fn paint_watermark(
     let run_w = title_w + segment_w;
 
     let accent = watermark_accent(frame.cfg, frame.stamp);
-    let box_x = watermark_x(rect, frame.cfg.position, m, run_w);
+    // The canvas is surface-local while the anchoring helpers are in screen
+    // coordinates, so the rect's own origin is subtracted here — exactly what
+    // `paint_rows` does with its rows. Without this the run is displaced by
+    // (+rect.x, +rect.y), which is invisible on the dump's origin-anchored review
+    // canvas but wrong for every game window that is not at the screen's origin
+    // (and entirely off-surface for a rect with a negative origin, i.e. a monitor
+    // left of the primary one).
+    let box_x = watermark_x(rect, frame.cfg.position, m, run_w) - rect.x;
+    let panel_y = (rect.y as f32 + m.top_y).round() as i32 - rect.y;
+    let text_y = (rect.y as f32 + m.watermark_y).round() as i32 - rect.y;
     let rise_like = m.mode.is_rise_like();
 
     if rise_like {
         let panel_w = watermark_panel_width(m, title_w, segment_w);
         canvas.fill_rounded_rect_corners(
             box_x,
-            rect.y + m.top_y.round() as i32,
+            panel_y,
             panel_w.round().max(1.0) as u32,
             m.item_height.round().max(1.0) as u32,
             chip_corners(m),
@@ -991,7 +1008,7 @@ fn paint_watermark(
         );
         canvas.fill_rect(
             (box_x as f32 + panel_w - m.rise_rect_w).round() as i32,
-            rect.y + m.top_y.round() as i32,
+            panel_y,
             m.rise_rect_w.round().max(1.0) as u32,
             m.item_height.round().max(1.0) as u32,
             with_alpha(pack(accent, 1.0), frame.global),
@@ -999,7 +1016,6 @@ fn paint_watermark(
     }
 
     let text_x = (box_x as f32 + if rise_like { m.rise_pad_x } else { 0.0 }).round() as i32;
-    let text_y = (rect.y as f32 + m.watermark_y).round() as i32;
     // Rise paints its title in `riseWatermarkTextColor` and leaves the accent to
     // the panel's bar (HUD.cpp:556); every other mode paints it in the accent.
     let title_colour = if m.mode == Mode::Rise {

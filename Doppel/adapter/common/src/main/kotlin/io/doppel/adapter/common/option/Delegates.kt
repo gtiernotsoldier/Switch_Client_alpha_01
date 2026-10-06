@@ -23,7 +23,9 @@ fun float(
     name: String,
     default: Float,
     range: ClosedFloatingPointRange<Float>,
-    unit: String = ""
+    unit: String = "",
+    /** Granularity of the WebUI's +/- steps and slider snapping (0 = type default). */
+    step: Double = 0.0
 ): ReadWriteProperty<Any?, Float> {
     require(default in range) { "Default value $default must be in range $range" }
     return object : ReadWriteProperty<Any?, Float> {
@@ -48,7 +50,8 @@ fun float(
                 default = default,
                 unit = unit,
                 rangeMin = range.start,
-                rangeMax = range.endInclusive
+                rangeMax = range.endInclusive,
+                step = step
             ))
             key = k
             return k
@@ -62,7 +65,9 @@ fun int(
     name: String,
     default: Int,
     range: IntRange,
-    unit: String = ""
+    unit: String = "",
+    /** Granularity of the WebUI's +/- steps (0 = 1). */
+    step: Double = 0.0
 ): ReadWriteProperty<Any?, Int> {
     require(default in range) { "Default value $default must be in range $range" }
     return object : ReadWriteProperty<Any?, Int> {
@@ -87,7 +92,50 @@ fun int(
                 default = default,
                 unit = unit,
                 intRangeMin = range.first,
-                intRangeMax = range.last
+                intRangeMax = range.last,
+                step = step
+            ))
+            key = k
+            return k
+        }
+    }
+}
+
+// ========== Color (0x00RRGGBB) ==========
+
+/**
+ * Colour option stored as an 0x00RRGGBB int — the same encoding the external HUD's
+ * v2 state header uses. The WebUI renders a colour picker; the config file keeps
+ * the plain integer, so it round-trips through [ConfigManager] untouched.
+ */
+fun color(
+    name: String,
+    default: Int
+): ReadWriteProperty<Any?, Int> {
+    require(default in 0..COLOR_MAX) { "Default colour $default must be 0x00RRGGBB" }
+    return object : ReadWriteProperty<Any?, Int> {
+        private var key: String? = null
+
+        override fun getValue(thisRef: Any?, property: KProperty<*>): Int {
+            val k = resolveKey(thisRef, name, property)
+            return ConfigManager.get<Int>(k)
+        }
+
+        override fun setValue(thisRef: Any?, property: KProperty<*>, value: Int) {
+            val k = resolveKey(thisRef, name, property)
+            ConfigManager.set(k, value)
+        }
+
+        private fun resolveKey(thisRef: Any?, optName: String, property: KProperty<*>): String {
+            key?.let { return it }
+            val modulePrefix = resolveModulePrefix(thisRef)
+            val k = "$modulePrefix.$optName"
+            ConfigManager.register(k, default, OptionMeta(
+                type = OptionType.COLOR,
+                default = default,
+                intRangeMin = 0,
+                intRangeMax = COLOR_MAX,
+                step = 1.0
             ))
             key = k
             return k
@@ -152,9 +200,15 @@ fun <T : Enum<T>> enum(
             key?.let { return it }
             val modulePrefix = resolveModulePrefix(thisRef)
             val k = "$modulePrefix.$optName"
+            // Publish the constant names as choices so the WebUI can render a
+            // <select> for an ENUM without knowing the Java class.
+            val constants = default.javaClass.enumConstants
+                ?.map { (it as Enum<*>).name }
+                ?.toTypedArray()
             ConfigManager.register(k, default, OptionMeta(
                 type = OptionType.ENUM,
-                default = default
+                default = default,
+                choices = constants
             ))
             key = k
             return k
@@ -243,6 +297,17 @@ fun triggerOptions(
 
 // ========== Probability ==========
 
+/**
+ * Probability option (0..100 %), exposed to the property as a [ProbabilityOption]
+ * but **stored as the plain Int** it wraps.
+ *
+ * Storing the wrapper object used to break the WebUI: the config store then held a
+ * `ProbabilityOption`, whose JSON is `{"current":100}`, so the panel read it as
+ * "not a number" and showed 0 — and writing a number back put an Int where the
+ * delegate later read a `ProbabilityOption` (ClassCastException). Keeping the
+ * declared numeric value in the store fixes both directions and keeps the config
+ * file hand-editable.
+ */
 fun probability(
     name: String,
     default: Int,
@@ -254,23 +319,24 @@ fun probability(
 
         override fun getValue(thisRef: Any?, property: KProperty<*>): ProbabilityOption {
             val k = resolveKey(thisRef, name, property)
-            return ConfigManager.get<ProbabilityOption>(k)
+            return ProbabilityOption(ConfigManager.get<Int>(k))
         }
 
         override fun setValue(thisRef: Any?, property: KProperty<*>, value: ProbabilityOption) {
             val k = resolveKey(thisRef, name, property)
-            ConfigManager.set(k, value)
+            ConfigManager.set(k, value.current)
         }
 
         private fun resolveKey(thisRef: Any?, optName: String, property: KProperty<*>): String {
             key?.let { return it }
             val modulePrefix = resolveModulePrefix(thisRef)
             val k = "$modulePrefix.$optName"
-            ConfigManager.register(k, ProbabilityOption(default), OptionMeta(
+            ConfigManager.register(k, default, OptionMeta(
                 type = OptionType.PROBABILITY,
-                default = ProbabilityOption(default),
+                default = default,
                 intRangeMin = range.first,
-                intRangeMax = range.last
+                intRangeMax = range.last,
+                step = 1.0
             ))
             key = k
             return k

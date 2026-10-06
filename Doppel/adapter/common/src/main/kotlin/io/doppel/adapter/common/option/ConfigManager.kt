@@ -196,6 +196,12 @@ object ConfigManager {
 
     /**
      * Jackson deserializes numbers as Int/Double. Coerce to the registered type.
+     *
+     * Every storeable option type must be handled here or it silently fails to
+     * reload: an unhandled type fell through to `raw`, which the validator then
+     * rejected (that is how ENUM options were lost on every load). The store keeps
+     * the *declared* type — a FLOAT stays fractional, a colour stays an Int, an
+     * ENUM stays the constant.
      */
     private fun coerceType(key: String, raw: Any): Any? {
         val meta = registry[key] ?: return raw
@@ -205,11 +211,43 @@ object ConfigManager {
                 OptionType.INT -> (raw as? Number)?.toInt()
                 OptionType.BOOLEAN -> raw as? Boolean
                 OptionType.STRING -> raw as? String
-                else -> raw
+                OptionType.CHOICES -> raw as? String
+                OptionType.PROBABILITY -> (raw as? Number)?.toInt()
+                OptionType.COLOR -> coerceColor(raw)
+                OptionType.ENUM -> coerceEnum(meta, raw)
+                // TRIGGER_OPTIONS is derived from its builder; never loaded from disk.
+                OptionType.TRIGGER_OPTIONS -> null
             }
         } catch (e: Exception) {
             CoreLogger.warn("[ConfigManager] Type coercion failed for '$key': $raw")
             null
         }
+    }
+
+    /** Enum constant by name (what the WebUI and the config file both carry). */
+    private fun coerceEnum(meta: OptionMeta, raw: Any): Any? {
+        val name = when (raw) {
+            is String -> raw
+            is Enum<*> -> raw.name
+            else -> return null
+        }
+        val constants = (meta.default as? Enum<*>)?.javaClass?.enumConstants ?: return null
+        return constants.firstOrNull { (it as? Enum<*>)?.name == name }
+    }
+
+    /** Colour as 0x00RRGGBB — accepts an int or a "#RRGGBB" / "0xRRGGBB" string. */
+    private fun coerceColor(raw: Any): Int? {
+        val value = when (raw) {
+            is Number -> raw.toInt()
+            is String -> raw.trim().let {
+                when {
+                    it.startsWith("#") -> it.substring(1).toIntOrNull(16)
+                    it.startsWith("0x", true) -> it.substring(2).toIntOrNull(16)
+                    else -> it.toIntOrNull()
+                }
+            } ?: return null
+            else -> return null
+        }
+        return value and COLOR_MAX
     }
 }

@@ -1306,6 +1306,10 @@ object ForgeEventBridge : IEventBridge {
     // the server is told all stay where they were. A bare Entity reports an eye height of 0, so the
     // stand-in is placed at the player's eye position directly.
     private val mcRenderViewEntityField by lazy { MappingContext.getField("forge:mc_renderViewEntity") }
+    private val gsThirdPersonViewField by lazy { MappingContext.getField("forge:gs_thirdPersonView") }
+
+    /** The player's own third-person choice, put back when Freelook lets go (Raven: previousPerspective). */
+    private var freeLookSavedPerspective: Int? = null
     private var freeLookDummy: Any? = null
     private var freeLookSwapped = false
     private var freeLookLogged = false
@@ -1371,17 +1375,42 @@ object ForgeEventBridge : IEventBridge {
                     field.set(mc, player)
                     freeLookSwapped = false
                 }
+                // Hand the player's own perspective back, exactly like Raven's resetPerspective().
+                freeLookSavedPerspective?.let { saved ->
+                    try {
+                        val gs = MappingContext.getFieldValue(mc, "forge:mc_gameSettings")
+                        if (gs != null) gsThirdPersonViewField?.setInt(gs, saved)
+                    } catch (_: Exception) {}
+                    freeLookSavedPerspective = null
+                    freeLookStickLogged = false
+                }
                 freeLookLogged = false
                 freeLookStickLogged = false
                 return
             }
+            // Raven's trick, and the reason their camera feels natural: freelook puts the game into
+            // third person, so the vanilla orbit camera does the work and the player's own body keeps
+            // rendering with its own rotation. The camera then orbits the stand-in we lend
+            // renderViewEntity, which carries the freelook angles.
+            try {
+                val gs = MappingContext.getFieldValue(mc, "forge:mc_gameSettings")
+                val view = gsThirdPersonViewField
+                if (gs != null && view != null) {
+                    if (freeLookSavedPerspective == null) freeLookSavedPerspective = view.getInt(gs)
+                    if (view.getInt(gs) == 0) view.setInt(gs, 1)
+                }
+            } catch (_: Exception) {}
+
             val dummy = ensureFreeLookEntity() ?: return
             syncFreeLookEntity(dummy, player)
             field.set(mc, dummy)
             freeLookSwapped = true
             if (!freeLookLogged) {
                 freeLookLogged = true
-                io.doppel.core.logging.CoreLogger.info("[Freelook] camera redirected to the stand-in entity")
+                io.doppel.core.logging.CoreLogger.info(
+                    "[Freelook] camera redirected to the stand-in entity, third-person view = " +
+                        (freeLookSavedPerspective ?: -1) + " -> 1"
+                )
             }
             if (!freeLookStickLogged) {
                 freeLookStickLogged = true

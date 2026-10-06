@@ -440,6 +440,14 @@
     ],
     "mcp": "foodLevel"
   },
+  "forge:gs_thirdPersonView": {
+    "class": "net.minecraft.client.settings.GameSettings",
+    "field": "field_74320_O",
+    "aliases": [
+      "gs_thirdPersonView"
+    ],
+    "mcp": "thirdPersonView"
+  },
   "forge:gs_viewBobbing": {
     "class": "net.minecraft.client.settings.GameSettings",
     "field": "field_74336_f",

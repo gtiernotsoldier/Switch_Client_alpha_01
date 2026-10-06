@@ -276,6 +276,13 @@
             padding: 1.5px 8px; border-radius: 30px; border: 1px solid rgba(34, 211, 238, 0.13);
             font-family: 'SF Mono', monospace; pointer-events: none; flex-shrink: 0;
         }
+        /* The module's own HUD value, e.g. "Legit 50/50%" — the exact string the external
+           overlay draws, so the panel cannot show a different number. */
+        .hud-tag {
+            font-size: 9.5px; color: rgba(167, 139, 250, 0.85); background: rgba(167, 139, 250, 0.08);
+            padding: 1.5px 8px; border-radius: 30px; border: 1px solid rgba(167, 139, 250, 0.16);
+            font-family: 'SF Mono', monospace; white-space: nowrap; flex-shrink: 0;
+        }
         .setting-right { margin-left: auto; display: flex; align-items: center; gap: 10px; pointer-events: auto; flex-shrink: 0; }
 
         /* Bottom-center drawer handle (reference-style chevron) */
@@ -358,11 +365,6 @@
         .sub-select:hover { border-color: rgba(34,211,238,0.45); }
         .sub-select:focus { outline: none; border-color: rgba(34,211,238,0.55); box-shadow: 0 0 0 3px rgba(34,211,238,0.08); }
         .sub-select option { background: #12151d; color:#fff; }
-        .num-input {
-            width: 64px; flex: 0 0 auto; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.08);
-            border-radius: 6px; color: #fff; padding: 3px 6px; font-size: 12px; text-align: center; transition: 0.2s;
-        }
-        .num-input:focus { outline: none; border-color: rgba(34, 211, 238, 0.5); box-shadow: 0 0 0 3px rgba(34,211,238,0.07); }
         .text-input { flex: 1 1 90px; min-width: 90px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.08); border-radius: 6px; color: #fff; padding: 3px 8px; font-size: 12px; }
         /* Slider */
         .slider-row { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 4px; margin: 2px 0; }
@@ -375,10 +377,24 @@
             overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
         }
         .slider-label-row .ver-tag { flex: 0 0 auto; }
-        .slider-label-row .slider-value {
-            flex: 0 0 auto; margin-left: auto;
-            color: rgba(34, 211, 238, 0.85); font-weight: 500; white-space: nowrap;
+        /* Numeric field: typed exact value, with -/+ nudges that respect the declared step (B2) */
+        .num-group { flex: 0 0 auto; margin-left: auto; display: flex; align-items: center; gap: 4px; }
+        .num-btn {
+            width: 20px; height: 20px; line-height: 1; padding: 0; flex: 0 0 auto;
+            background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 6px; color: rgba(255,255,255,0.65); font-size: 13px; cursor: pointer;
+            transition: background 0.2s, color 0.2s, border-color 0.2s;
         }
+        .num-btn:hover { background: rgba(34,211,238,0.14); color:#22D3EE; border-color: rgba(34,211,238,0.3); }
+        .num-btn:active { background: rgba(34,211,238,0.24); }
+        .num-input {
+            width: 64px; flex: 0 0 auto; text-align: right; padding: 3px 8px; font-size: 12px;
+            font-family: 'SF Mono', monospace; color: rgba(34,211,238,0.9);
+            background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 6px; outline: none; transition: border-color 0.2s, background 0.2s;
+        }
+        .num-input:focus { border-color: rgba(34,211,238,0.45); background: rgba(34,211,238,0.07); }
+        .num-unit { flex: 0 0 auto; font-size: 11px; color: rgba(255,255,255,0.4); }
         .slider-track { width: 100%; height: 6px; background: rgba(255,255,255,0.08); border-radius: 6px; position: relative; cursor: pointer; }
         .slider-fill { height: 100%; border-radius: 6px; background: linear-gradient(90deg, #22D3EE, #A78BFA); transition: width 0.25s cubic-bezier(0.22, 1, 0.36, 1); box-shadow: 0 0 14px rgba(34, 211, 238, 0.3); }
         .empty { font-size: 12px; color: rgba(255,255,255,0.25); padding: 16px; text-align: center; animation: colIn 0.4s ease backwards; }
@@ -833,6 +849,29 @@
                 return true;
             });
         }
+        // ----- Numeric precision (B2) -----
+        // The server declares a step per option (OptionMeta.effectiveStep) and the number of
+        // decimal places that implies. Everything numeric goes through these four helpers, so the
+        // displayed value, the +/- nudge, the slider snap and the value that gets saved can never
+        // disagree about precision — the panel used to round every float to one decimal on its own
+        // while the module published the option's real value.
+        function isDecType(t){ return t === 'FLOAT'; }
+        function stepOf(o){
+            if(typeof o.step === 'number' && o.step > 0) return o.step;
+            return isDecType(o.type) ? 0.01 : 1;
+        }
+        function decimalsOf(o){
+            if(typeof o.decimals === 'number' && o.decimals >= 0) return Math.min(6, o.decimals);
+            return isDecType(o.type) ? 2 : 0;
+        }
+        function fmtNum(v, dec){ return Number(v).toFixed(dec); }
+        // Snap to the declared step and keep only the step's own precision, so 3*0.1 does not
+        // become 0.30000000000000004 on the way to the config file.
+        function snapToStep(v, step, dec){
+            if(!(step > 0)) return v;
+            return Number((Math.round(v / step) * step).toFixed(Math.min(6, dec + 2)));
+        }
+
         function modeChipOf(m){
             const sel = ['Mode','CooldownMode','ClickMode','CombatVersion'];
             for(const s of sel){
@@ -869,14 +908,22 @@
                 const v = Math.min(max, Math.max(min, typeof val==='number'?val:0));
                 const pct = max>min?Math.round((v-min)/(max-min)*100):0;
                 const unit = o.unit||'';
-                const isDec = t==='FLOAT';
-                const disp = isDec ? Number(v).toFixed(1) : v;
-                return `<div class="slider-row">
+                const step = stepOf(o), dec = decimalsOf(o);
+                const disp = fmtNum(v, dec);
+                const tag = versionTag(o) + (rule ? modeTag(o, rule) : '');
+                return `<div class="slider-row" data-step="${step}" data-dec="${dec}">
                     <div class="slider-label-row">
-                        <span class="opt-name">${o.name}</span>${versionTag(o)}${rule?modeTag(o,rule):''}
-                        <span class="slider-value">${disp}${unit}</span>
+                        <span class="opt-name">${o.name}</span>${tag}
+                        <span class="num-group">
+                            <button type="button" class="num-btn" data-key="${key}" data-nudge="-1" tabindex="-1" title="−${step}${unit}">−</button>
+                            <input class="num-input" data-key="${key}" data-min="${min}" data-max="${max}"
+                                   data-int="${isDecType(t)?0:1}" data-dec="${dec}" data-step="${step}" data-unit="${unit}"
+                                   inputmode="decimal" autocomplete="off" value="${disp}">
+                            <button type="button" class="num-btn" data-key="${key}" data-nudge="1" tabindex="-1" title="+${step}${unit}">+</button>
+                            ${unit?`<span class="num-unit">${unit}</span>`:''}
+                        </span>
                     </div>
-                    <div class="slider-track" data-key="${key}" data-min="${min}" data-max="${max}" data-int="${isDec?0:1}" data-unit="${unit}" data-dec="${isDec?1:0}">
+                    <div class="slider-track" data-key="${key}" data-min="${min}" data-max="${max}" data-int="${isDecType(t)?0:1}" data-unit="${unit}" data-dec="${dec}" data-step="${step}">
                         <div class="slider-fill" style="width:${pct}%;"></div>
                     </div>
                 </div>`;
@@ -905,6 +952,7 @@
                         <span class="mod-icon cat-${m.category||'MISC'}">${iconSvg(m.name, m.category)}</span>
                         <span class="m-name">${m.name}</span>
                         ${chip?`<span class="mode-chip">${chip}</span>`:''}
+                        ${m.hudValue?`<span class="hud-tag">${m.hudValue}</span>`:''}
                     </div>
                     <div class="setting-right">
                         <div class="toggle-switch ${enabled?'on':''}" data-mod="${m.name}"><span class="pulse-ring"></span></div>
@@ -957,6 +1005,16 @@
                     const lbl = card.querySelector('.setting-label .m-name');
                     if(lbl) lbl.insertAdjacentHTML('afterend', `<span class="mode-chip">${chip}</span>`);
                 } else if(!chip && chipEl) chipEl.remove();
+                // The module's own published HUD string (B2). Shown here so the panel and the
+                // external overlay read the SAME string instead of two different formattings of the
+                // same option — that mismatch is what made Velocity's value "disagree".
+                const hudTag = m.hudValue || '';
+                const hudTagEl = card.querySelector('.hud-tag');
+                if(hudTag && hudTagEl && hudTagEl.textContent !== hudTag) hudTagEl.textContent = hudTag;
+                else if(hudTag && !hudTagEl){
+                    const lbl2 = card.querySelector('.setting-label .m-name');
+                    if(lbl2) lbl2.insertAdjacentHTML('afterend', `<span class="hud-tag">${hudTag}</span>`);
+                } else if(!hudTag && hudTagEl) hudTagEl.remove();
                 // drawer controls (keybind / hud) — never touch a capturing chip
                 const kb = card.querySelector('.kb-chip[data-kb]');
                 if(kb && !kb.classList.contains('capturing') && !capturingKey)
@@ -994,12 +1052,14 @@
                         let min = typeof o.min==='number'?o.min:0, max = typeof o.max==='number'?o.max:100;
                         if(min>max){ const t=min; min=max; max=t; }
                         const v = Math.min(max, Math.max(min, typeof o.value==='number'?o.value:0));
-                        const isDec = w.dataset.dec==='1';
+                        const dec = +row.dataset.dec || 0;
                         const pct = max>min?Math.round((v-min)/(max-min)*100):0;
                         const fill = row.querySelector('.slider-fill');
                         if(fill) fill.style.width = pct+'%';
-                        const sv = row.querySelector('.slider-value');
-                        if(sv) sv.textContent = (isDec?Number(v).toFixed(1):v) + (o.unit||'');
+                        // `w` is the input itself (it carries data-key and comes first), so a field
+                        // the user is typing in was already skipped by the activeElement check above.
+                        const inp = row.querySelector('.num-input');
+                        if(inp && inp !== document.activeElement) inp.value = fmtNum(v, dec);
                     }
                 });
             });
@@ -1165,54 +1225,91 @@
                 refresh(); return;
             }
             const num = e.target.closest('.num-input[data-key]');
-            if(num){ postNumber(num); refresh(); return; }
+            if(num){ await commitNumber(num); refresh(); return; }
             const txt = e.target.closest('.text-input[data-key]');
             if(txt){
                 await api('/api/options', {method:'POST', body:JSON.stringify({key:txt.dataset.key, value:txt.value})});
             }
         });
 
-        // ----- Numeric inputs (debounced; no per-keystroke refresh) -----
+        // ----- Numeric inputs (B2) -----
+        // While typing, only the slider preview follows the keystrokes and the value is sent
+        // UNCLAMPED at the declared precision: clamping mid-edit fights the user (typing "1" on the
+        // way to "150" against a max of 100) and the server already rejects out-of-range values.
+        // Clamping and rewriting the field happen on commit — blur, Enter or the +/- buttons.
         let numTimers = {};
+        function parseNumField(inp){
+            const v = parseFloat(String(inp.value).replace(',', '.'));
+            return isFinite(v) ? v : null;
+        }
         document.addEventListener('input', e => {
             const num = e.target.closest('.num-input[data-key]');
             if(!num) return;
             const row = num.closest('.slider-row');
-            const v = clampNumber(num);
             if(row){
-                const min=+num.dataset.min, max=+num.dataset.max;
-                const pct = max>min?Math.round((v-min)/(max-min)*100):0;
-                const fill = row.querySelector('.slider-fill');
-                if(fill) fill.style.width = pct+'%';
-                const sv = row.querySelector('.slider-value');
-                if(sv) sv.textContent = v + (num.dataset.unit||'');
+                const v = parseNumField(num), min = +num.dataset.min, max = +num.dataset.max;
+                if(v !== null){
+                    const frac = max > min ? (v - min) / (max - min) : 0;
+                    const fill = row.querySelector('.slider-fill');
+                    if(fill) fill.style.width = (Math.min(1, Math.max(0, frac)) * 100) + '%';
+                }
             }
             clearTimeout(numTimers[num.dataset.key]);
             numTimers[num.dataset.key] = setTimeout(() => postNumber(num), 300);
         });
-        function clampNumber(num){
-            const min=+num.dataset.min, max=+num.dataset.max, isDec=num.dataset.dec==='1';
-            let v = isDec ? parseFloat(num.value) : parseInt(num.value,10);
-            if(isNaN(v)) v = min;
-            v = Math.min(max, Math.max(min, v));
-            if(isDec) v = Math.round(v*10)/10;
+        async function postNumber(num){
+            const v = parseNumField(num);
+            if(v === null) return; // nothing sensible to send yet
+            const snapped = snapToStep(v, +num.dataset.step, +num.dataset.dec);
+            await api('/api/options', {method:'POST', body:JSON.stringify({key:num.dataset.key, value:snapped})});
+        }
+        /** Clamp into range, snap to the step, rewrite the field, and return the value to save. */
+        async function commitNumber(num){
+            const min = +num.dataset.min, max = +num.dataset.max;
+            const dec = +num.dataset.dec, step = +num.dataset.step;
+            let v = parseNumField(num);
+            if(v === null) v = min;
+            v = Math.min(max, Math.max(min, snapToStep(v, step, dec)));
+            num.value = fmtNum(v, dec);
+            await api('/api/options', {method:'POST', body:JSON.stringify({key:num.dataset.key, value:v})});
             return v;
         }
-        async function postNumber(num){
-            const v = clampNumber(num);
-            await api('/api/options', {method:'POST', body:JSON.stringify({key:num.dataset.key, value:v})});
-        }
+
+        // ----- Step nudges (B2) -----
+        // One declared step per click, clamped, never below/above the option's own range.
+        document.addEventListener('click', async e => {
+            const btn = e.target.closest('.num-btn[data-key]');
+            if(!btn) return;
+            e.preventDefault();
+            const row = btn.closest('.slider-row');
+            const inp = row && row.querySelector('.num-input');
+            if(!inp) return;
+            const min = +inp.dataset.min, max = +inp.dataset.max;
+            const dec = +inp.dataset.dec, step = +inp.dataset.step;
+            let v = parseNumField(inp);
+            if(v === null) v = min;
+            const delta = btn.dataset.nudge === '1' ? step : -step;
+            v = Math.min(max, Math.max(min, snapToStep(v + delta, step, dec)));
+            inp.value = fmtNum(v, dec);
+            const fill = row.querySelector('.slider-fill');
+            if(fill && max > min) fill.style.width = (Math.min(1, Math.max(0, (v - min) / (max - min))) * 100) + '%';
+            await api('/api/options', {method:'POST', body:JSON.stringify({key:inp.dataset.key, value:v})});
+            refresh();
+        });
 
         // ----- Slider drag (live; throttled POST; refresh only on release) -----
         function commitSlider(srow, x){
-            let min=+srow.dataset.min, max=+srow.dataset.max, isDec=srow.dataset.dec==='1';
+            let min=+srow.dataset.min, max=+srow.dataset.max;
             if(min>max){ const tmp=min; min=max; max=tmp; }
+            const dec=+srow.dataset.dec||0, step=+srow.dataset.step;
             const raw = min + x*(max-min);
-            const v = isDec ? Math.round(raw*10)/10 : Math.round(raw);
+            // Snap to the option's own step instead of a hard-coded tenth: a declared 0.05 step
+            // could never be reached from the slider before (B2).
+            const v = snapToStep(raw, step, dec);
             const fill = srow.querySelector('.slider-fill');
             if(fill) fill.style.width=(x*100)+'%';
-            const val = srow.parentElement.querySelector('.slider-value');
-            if(val) val.textContent = v+(srow.dataset.unit||'');
+            const inp = srow.parentElement.querySelector('.num-input');
+            if(inp && inp !== document.activeElement) inp.value = fmtNum(v, dec);
             api('/api/options', {method:'POST', body:JSON.stringify({key:srow.dataset.key, value:v})});
             return v;
         }

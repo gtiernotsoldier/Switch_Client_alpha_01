@@ -374,6 +374,11 @@ object WebUIServer {
             "keyName" to keyName(module.keybind),
             "hudHidden" to module.hudHidden,
             "hudEnabled" to (module is io.doppel.adapter.common.module.HudLineProvider),
+            // The module's OWN published HUD string (B2). The external overlay draws exactly this
+            // text; publishing it to the panel is what stops the two from showing two different
+            // formattings of the same option (Velocity was the reported case).
+            "hudValue" to (module as? io.doppel.adapter.common.module.HudLineProvider)
+                ?.hudValue()?.takeIf { it.isNotEmpty() },
             "options" to options
         )
     }
@@ -418,6 +423,11 @@ object WebUIServer {
                 else -> null
             },
             "unit" to meta.unit,
+            // B2: the declared step, and the decimal places it implies. The panel formats, nudges,
+            // snaps and saves with these instead of a hard-coded tenth, so a fine-grained option
+            // (0.01) can actually be tuned and a coarse one (5) cannot be nudged off its grid.
+            "step" to meta.effectiveStep(),
+            "decimals" to meta.decimals(),
             "choices" to meta.displayChoices()
         )
     }

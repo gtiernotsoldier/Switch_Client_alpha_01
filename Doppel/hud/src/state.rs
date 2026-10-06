@@ -41,13 +41,13 @@
 //
 // ── contract v1, still accepted ─────────────────────────────────────────────
 //
-// The shipped writer (`HudStateWriter.VERSION = 1`) publishes the original 3600
-// bytes: the 16-byte header (`magic`, `version`, `count`, `pad`) followed by the
-// same 64 entries. Nothing about the entries changed, so that block is read
-// exactly as before and the v2-only fields — nickname, FPS, flags, colours —
-// simply keep the caller's own defaults (`Snapshot::header` is `None`). Reading a
-// v1 file is therefore not a compatibility shim but the ordinary case, and the
-// overlay keeps working against the writer that exists today.
+// `HudStateWriter` used to publish the original 3600 bytes: the 16-byte header
+// (`magic`, `version`, `count`, `pad`) followed by the same 64 entries. It writes
+// v2 now, but a *stale* file from a previous build can still be sitting at that
+// path, so v1 stays readable rather than becoming a hard error. Nothing about the
+// entries changed, so that block is read exactly as before and the v2-only fields —
+// nickname, FPS, flags, colours — simply keep the caller's own defaults
+// (`Snapshot::header` is `None`).
 //
 // A short file, a foreign magic or a version other than 1 or 2 all mean "not
 // ours": the caller renders nothing rather than half-decoding whatever happens to

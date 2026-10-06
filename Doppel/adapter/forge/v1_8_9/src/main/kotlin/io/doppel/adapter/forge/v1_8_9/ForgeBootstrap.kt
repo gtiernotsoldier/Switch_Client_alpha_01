@@ -206,6 +206,10 @@ object ForgeBootstrap {
 
                     // PreTick — START phase logic
                     val playerState = ForgeStateExtractor.extractPlayerState()
+                    // The external overlay's watermark name (contract v2). Only overwritten with a
+                    // real name, so a brief extraction failure (a world change) keeps the last one
+                    // rather than blanking the watermark.
+                    if (playerState.name.isNotEmpty()) EventBridge.localPlayerName = playerState.name
                     val targetId = ForgeStateExtractor.getCurrentTargetId()
                     val target = if (targetId != null) ForgeStateExtractor.extractTargetState(targetId) else null
                     EventBridge.onStartTick(playerState, target)
@@ -241,6 +245,19 @@ object ForgeBootstrap {
         try {
             val mc = MappingContext.invokeMethod(null, "forge:mc_getMinecraft")
             if (mc == null) return
+
+            // Frame rate for the external overlay's watermark (contract v2). MC 1.8.9 keeps its FPS
+            // in a private `debugFPS` field whose name moves between mappings, and this hook is
+            // already called exactly once per rendered frame — so measure it here instead of
+            // reaching for a mapping that may not resolve.
+            fpsFrames++
+            val fpsNow = System.nanoTime()
+            val fpsElapsed = fpsNow - fpsWindowStart
+            if (fpsElapsed >= 1_000_000_000L) {
+                EventBridge.clientFps = (fpsFrames * 1_000_000_000L / fpsElapsed).toInt()
+                fpsFrames = 0
+                fpsWindowStart = fpsNow
+            }
 
             if (!renderDiagLogged) {
                 renderDiagLogged = true
@@ -378,10 +395,11 @@ object ForgeBootstrap {
                 guiScale = scale
             )
 
-            // Publish the module table for the external HUD process (plan §5.3). Cosmetic channel:
-            // HudStateWriter swallows every error, so a missing or locked file cannot affect
-            // rendering, and the HUD opens it read-only (no back channel).
-            HudStateWriter.publish(HUD.hudEntries)
+            // Publish the module table and the overlay's own options for the external HUD process
+            // (plan §5.3, contract v2). Cosmetic channel: HudStateWriter swallows every error, so a
+            // missing or locked file cannot affect rendering, and the HUD opens it read-only (no
+            // back channel).
+            HudStateWriter.publish(HUD.hudEntries, HUD.overlayHeader())
 
             OverlayRenderer.render(ctx)
 
@@ -401,6 +419,10 @@ object ForgeBootstrap {
 
     private var lastRenderExcClass: Class<out Exception>? = null
     private var lastRenderExcMs: Long = 0
+
+    /** Frames drawn in the current one-second window, and when that window opened. */
+    private var fpsFrames = 0
+    private var fpsWindowStart = System.nanoTime()
 
     /**
      * MC 1.8.9 ScaledResolution scaling algorithm (mirrors vanilla logic).

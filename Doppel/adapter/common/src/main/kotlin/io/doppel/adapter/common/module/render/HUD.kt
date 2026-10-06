@@ -1,12 +1,14 @@
 package io.doppel.adapter.common.module.render
 
 import io.doppel.adapter.common.api.EventBridge
+import io.doppel.adapter.common.hud.HudStateWriter
 import io.doppel.adapter.common.module.Category
 import io.doppel.adapter.common.module.HudLineProvider
 import io.doppel.adapter.common.module.Module
 import io.doppel.adapter.common.module.ModuleRegistry
 import io.doppel.adapter.common.option.boolean
 import io.doppel.adapter.common.option.choices
+import io.doppel.adapter.common.option.color
 import io.doppel.adapter.common.option.ConfigManager
 import io.doppel.core.model.PlayerState
 import io.doppel.core.model.TargetState
@@ -57,6 +59,44 @@ object HUD : Module("HUD", Category.RENDER) {
     var sortMode by choices("Sort", arrayOf("None", "Alphabetical", "Length", "Category"))
     var reversed by boolean("Reversed", false)
 
+    // ── External overlay options (contract v2) ──
+    // The overlay's own look, picked from the game/WebUI instead of a command line flag: these go
+    // into the v2 state header, and the overlay treats the header as its default while an explicit
+    // CLI flag still wins. That is what lets a user switch list effect without relaunching the
+    // injector (B1).
+
+    /** Which of the ported HUD's four modes the overlay draws. */
+    var overlayMode by choices("OverlayMode", arrayOf("Default", "Rise", "VapeV4", "Tesseract"))
+
+    /** The Default mode's accent animation. */
+    var overlayWave by boolean("OverlayWave", true)
+
+    /** Split CamelCase module names in the overlay's list. */
+    var overlaySpaced by boolean("OverlaySpaced", false)
+
+    /** Draw the overlay's watermark run. */
+    var overlayWatermark by boolean("OverlayWatermark", true)
+
+    /** The wave's two colours, 0x00RRGGBB (reference defaults `0x4E566B` / `0x7892D6`). */
+    var overlayPrimary by color("OverlayPrimaryColor", HudStateWriter.DEFAULT_PRIMARY)
+    var overlaySecondary by color("OverlaySecondaryColor", HudStateWriter.DEFAULT_SECONDARY)
+
+    /**
+     * The contract-v2 header for the external overlay, built from the options above plus the
+     * platform's player name and frame counter ([EventBridge.localPlayerName] /
+     * [EventBridge.clientFps] — the common module cannot reach Minecraft itself).
+     */
+    fun overlayHeader(): HudStateWriter.Header = HudStateWriter.Header(
+        wave = overlayWave,
+        spaced = overlaySpaced,
+        watermark = overlayWatermark,
+        mode = HudStateWriter.modeCode(overlayMode),
+        primary = overlayPrimary,
+        secondary = overlaySecondary,
+        fps = EventBridge.clientFps,
+        nickname = EventBridge.localPlayerName
+    )
+
     // ═══════════════════════════════════════════
     //  Collection (event-driven)
     // ═══════════════════════════════════════════
@@ -102,6 +142,10 @@ object HUD : Module("HUD", Category.RENDER) {
      * Auto-derive a HUD value for a module: the first numeric option (FLOAT/INT)
      * registered under it, rendered as "value+unit". Returns ("",false) for
      * toggle-only modules (no numeric option) so they show name only.
+     *
+     * Formatted through the option's own declared precision (`OptionMeta.formatNumber`), which is
+     * the same rule the WebUI formats with (B2) — the panel and this published string are now the
+     * same text instead of two independent roundings of the same number.
      */
     private fun autoHudValue(module: Module): Pair<String, Boolean> {
         for (desc in ConfigManager.optionsOf(module.name)) {
@@ -109,9 +153,10 @@ object HUD : Module("HUD", Category.RENDER) {
                 desc.type == io.doppel.adapter.common.option.OptionType.INT
             ) {
                 val v = ConfigManager.currentValue(desc.key) ?: continue
-                val num = (v as? Number)?.toString() ?: continue
+                val num = v as? Number ?: continue
+                val text = desc.meta.formatNumber(num)
                 val unit = desc.meta.unit
-                return (if (unit.isNotEmpty()) "$num $unit" else num) to true
+                return (if (unit.isNotEmpty()) "$text $unit" else text) to true
             }
         }
         return "" to false

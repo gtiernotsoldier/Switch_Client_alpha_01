@@ -80,6 +80,38 @@ data class OptionMeta(
         else -> null
     }
 
+    /**
+     * Decimal places this option's declared step implies: 0.001 → 3, 0.01 → 2, 1.0 → 0.
+     * Null for the non-numeric types.
+     *
+     * This is the single precision rule behind B2: the WebUI formats, snaps its +/- nudge and
+     * saves with it ([step]/[decimals] are published in the option JSON) and
+     * `HUD.autoHudValue` formats the derived module value with [formatNumber]. Before this they
+     * were two independent formattings — the panel rounded every float to one decimal, the HUD
+     * published the raw `Float.toString()` — which is exactly how the two could disagree.
+     */
+    fun decimals(): Int? {
+        val effective = effectiveStep() ?: return null
+        if (effective <= 0.0) return 0
+        var scaled = effective
+        var digits = 0
+        while (digits < 6 && kotlin.math.abs(scaled - kotlin.math.round(scaled)) > 1e-9) {
+            scaled *= 10.0
+            digits++
+        }
+        return digits
+    }
+
+    /**
+     * [value] rendered at this option's declared precision, locale-independent (a comma decimal
+     * separator would break both the panel's parse and the config file's JSON).
+     */
+    fun formatNumber(value: Number): String {
+        val decimals = decimals() ?: return value.toString()
+        if (decimals <= 0) return value.toLong().toString()
+        return String.format(java.util.Locale.ROOT, "%.${decimals}f", value.toDouble())
+    }
+
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
         if (other !is OptionMeta) return false

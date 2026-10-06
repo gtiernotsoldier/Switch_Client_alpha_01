@@ -128,6 +128,7 @@ object Reach : Module("Reach", Category.COMBAT), HudLineProvider {
         if (!hitThroughBlocks && EventBridge.isLookingAtBlock) return 0.0
 
         lastExtendNano = now
+        markWorked() // the HUD row flashes on the attack whose reach was actually extended
         return if (reachMax > reachMin) {
             (reachMin + Random.nextFloat() * (reachMax - reachMin)).toDouble()
         } else {

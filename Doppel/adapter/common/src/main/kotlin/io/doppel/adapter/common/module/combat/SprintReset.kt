@@ -69,6 +69,7 @@ object SprintReset : Module("SprintReset", Category.COMBAT) {
         if (sending) {
             if (System.nanoTime() >= sendTimeNano) {
                 EventBridge.sendSprintReset(pendingMode)
+                markWorked() // the HUD row flashes on the reset that was actually sent
                 sending = false
             }
             return
@@ -115,6 +116,7 @@ object SprintReset : Module("SprintReset", Category.COMBAT) {
             sending = true
         } else {
             EventBridge.sendSprintReset(mode)
+            markWorked() // the HUD row flashes on the reset that was actually sent
         }
     }
 

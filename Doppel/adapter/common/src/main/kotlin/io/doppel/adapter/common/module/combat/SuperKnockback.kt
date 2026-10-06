@@ -170,6 +170,7 @@ object SuperKnockback : Module("SuperKnockback", Category.COMBAT) {
     }
 
     private fun startAction(player: PlayerState) {
+        markWorked() // the HUD row flashes on the hit that actually triggered it
         when (mode) {
             "SprintTap" -> {
                 // LB: only break sprint if the server actually believes we're sprinting.

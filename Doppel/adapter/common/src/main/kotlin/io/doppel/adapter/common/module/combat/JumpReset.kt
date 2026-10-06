@@ -182,6 +182,7 @@ object JumpReset : Module("JumpReset", Category.COMBAT) {
         }
 
         EventBridge.queueJump()
+        markWorked() // the HUD row flashes on the jump it actually asked for
 
         // Reset after execution — cooldownCounter must be reset here because
         // ticks continue incrementing it during the delay period.

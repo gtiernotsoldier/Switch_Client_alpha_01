@@ -55,6 +55,7 @@ object AutoTool : Module("AutoTool", Category.PLAYER) {
         // Save original slot before switching
         originalSlot = player.selectedSlot
         EventBridge.switchToSlot(bestSlot)
+        markWorked() // the HUD row flashes on the switch it actually made
         switched = true
     }
 

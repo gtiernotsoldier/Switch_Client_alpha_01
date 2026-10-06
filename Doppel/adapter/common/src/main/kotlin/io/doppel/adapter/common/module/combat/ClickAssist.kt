@@ -84,11 +84,15 @@ object ClickAssist : Module("ClickAssist", Category.COMBAT) {
         if (above5Cps && estimateCps(now) < 5f) return 0
         if (probability < 100 && Random.nextInt(100) >= probability) return 0
 
-        return when (mode) {
+        val extra = when (mode) {
             "Double" -> 2
             "Random" -> Random.nextInt(3)
             else -> 1
         }
+        // Only a decision that actually clicks counts as work; the early returns above are all
+        // "did nothing" and must not flash the row.
+        if (extra > 0) markWorked()
+        return extra
     }
 
     /** Manual CPS from the last 500ms of physical click edges. */

@@ -118,6 +118,8 @@ object BridgeAssist : Module("BridgeAssist", Category.PLAYER) {
             val yaw = fromYaw + (toYaw - fromYaw) * t
             val pitch = fromPitch + (toPitch - fromPitch) * t
             EventBridge.setPlayerRotation(yaw, pitch)
+            // The assist is only "working" while it is actually steering the look.
+            markWorked()
         }
     }
 

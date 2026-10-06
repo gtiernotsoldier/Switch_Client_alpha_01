@@ -65,6 +65,7 @@ object KnockbackDisplace : Module("KnockbackDisplace", Category.COMBAT) {
         flickYawOffset = dirSign * angle
         flickRemainingTicks = 1
         lastFlickNano = now
+        markWorked() // the HUD row flashes on the flick that was queued
     }
 
     private fun onTick(player: PlayerState) {

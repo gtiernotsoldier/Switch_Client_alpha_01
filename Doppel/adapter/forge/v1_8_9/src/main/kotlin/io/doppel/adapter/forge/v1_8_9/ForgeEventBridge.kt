@@ -1312,16 +1312,26 @@ object ForgeEventBridge : IEventBridge {
         try {
             val mc = getMc() ?: return
             val helper = MappingContext.getFieldValue(mc, "forge:mc_mouseHelper") ?: return
-            try {
-                MappingContext.invokeMethod(helper, "forge:mouseHelper_mouseXYChange")
-            } catch (_: Exception) {}
+            // Read the delta the game itself stored this tick — deliberately WITHOUT calling
+            // mouseXYChange(), which re-reads Mouse.getDX(): that is consumed once per frame, so calling
+            // it from here stored zeroes and the angles never moved. The stored deltaX/deltaY stay valid
+            // until the game's next refresh, which is exactly why the reference clients read them.
             val dx = (MappingContext.getFieldValue(helper, "forge:mouseHelper_deltaX") as? Int) ?: 0
             val dy = (MappingContext.getFieldValue(helper, "forge:mouseHelper_deltaY") as? Int) ?: 0
             if (dx != 0 || dy != 0) {
                 EventBridge.freelookDeltaX += dx
                 EventBridge.freelookDeltaY += dy
+                freelookDeltaSeen = true
+                // Zero them so the turn vanilla makes later in the tick moves nothing; the body then keeps
+                // its rotation without anyone having to put it back.
                 MappingContext.getField("forge:mouseHelper_deltaX")?.setInt(helper, 0)
                 MappingContext.getField("forge:mouseHelper_deltaY")?.setInt(helper, 0)
+            } else if (EventBridge.freeLookActive && !freelookDeltaSeen) {
+                // One line, once: if the angles stay at zero, this is the place that says so.
+                freelookDeltaSeen = true
+                io.doppel.core.logging.CoreLogger.error(
+                    "[Freelook] MouseHelper.deltaX/deltaY both zero — no look input is reaching the camera"
+                )
             }
             val gs = MappingContext.getFieldValue(mc, "forge:mc_gameSettings")
             if (gs != null && mouseSensitivityField == null) {
@@ -1344,6 +1354,7 @@ object ForgeEventBridge : IEventBridge {
     /** The player's own third-person choice, put back when Freelook lets go (Raven's previousPerspective). */
     private var freeLookSavedPerspective: Int? = null
     @Volatile private var mouseSensitivityField: java.lang.reflect.Field? = null
+    @Volatile private var freelookDeltaSeen = false
     private var freeLookLogged = false
 
     private fun applyFreeLook() {
@@ -1355,6 +1366,7 @@ object ForgeEventBridge : IEventBridge {
             if (!EventBridge.freeLookActive) {
                 System.clearProperty(PROP_FREELOOK_YAW)
                 System.clearProperty(PROP_FREELOOK_PITCH)
+                freelookDeltaSeen = false
                 if (freeLookSavedPerspective != null) {
                     try {
                         if (gs != null && view != null) view.setInt(gs, freeLookSavedPerspective!!)

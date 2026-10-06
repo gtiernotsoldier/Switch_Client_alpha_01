@@ -9,16 +9,61 @@ without re-deriving anything.
 
 | Item | State |
 | --- | --- |
-| Local `main` | round 1: `2f9451e`, `9f03f5a`, `c489f73`, `19f267c`, `6429935`. Round 2: `a29fb8e`, `75b1c6a`, `0d946be`, `e7ad03b`. Round 3: `3f720f5`, `c2fbcfc`, `c660949`, `ea8e9e1`. Round 4: `1171427`, `4f677e8`, `810c674`, `e33a25a`, `7764bae`. Round 5: `efcf6db`, `c70866c`, `d12f35b`, `25d8175`, `f0f0822`. Round 6 (this pass) adds the commits listed under "Round 6". **Not pushed to GitLab yet** |
-| Testable binary | `C:\Users\Administrator\Desktop\swl\doppel-injector-fixed.exe`, rebuilt 19:18:23 with the current agent jar and overlay; both embedded RCDATA blobs hash-match their sources |
-| Kotlin build | `:core:test` (94 tests), `:adapter:common:compileKotlin`, `:adapter:common:test` (111 tests, 21 classes), `:adapter:forge:v1_8_9:compileKotlin`, `:agent:jar` all green |
-| Rust builds | `hud`: 85 tests green. `injector`: 10 tests green, only the 3 pre-existing warnings (`flow.rs` platform, `inject.rs` WAIT_TIMEOUT, `process.rs` GetLastError) |
+| Local `main` | round 1: `2f9451e`, `9f03f5a`, `c489f73`, `19f267c`, `6429935`. Round 2: `a29fb8e`, `75b1c6a`, `0d946be`, `e7ad03b`. Round 3: `3f720f5`, `c2fbcfc`, `c660949`, `ea8e9e1`. Round 4: `1171427`, `4f677e8`, `810c674`, `e33a25a`, `7764bae`. Round 5: `efcf6db`, `c70866c`, `d12f35b`, `25d8175`, `f0f0822`. Round 6: `ac922ed`, `de155c2`, `e283ec8`, `c79ede6`. Round 7 (this pass) adds the commits listed under "Round 7". **Not pushed to GitLab yet** |
+| Testable binary | `C:\Users\Administrator\Desktop\swl\doppel-injector-fixed.exe`, rebuilt 19:39:16 with the current agent jar and overlay; both embedded RCDATA blobs hash-match their sources |
+| Kotlin build | `:core:test` (94 tests), `:adapter:common:compileKotlin`, `:adapter:common:test` (109 tests, 21 classes), `:adapter:forge:v1_8_9:compileKotlin`, `:agent:jar` all green |
+| Rust builds | `hud`: 87 tests green. `injector`: 10 tests green, only the 3 pre-existing warnings (`flow.rs` platform, `inject.rs` WAIT_TIMEOUT, `process.rs` GetLastError) |
 | State contract | **v3**, writer and reader, verified against each other across the two languages; v1 and v2 are still read so a stale file cannot break the overlay |
 | Overlay | always-on-top click-through layered window anchored to the game window's **client area** (below the title bar) and following it (`--follow-pid`); **five** modes (Default/Rise/VapeV4/Tesseract/**Modern**); row entrance **and exit** animation; decaying red **work flash**; user-set scale, line spacing, background opacity and row order |
 | In-game Keystrokes | reads *effective* key states, so WTap/STap/ADTap/JumpReset light the boxes; Rainbow no longer touches AWT |
 | WebUI | keyboard-only numeric fields (slider + an underlined typed value), colour pickers, a HUD list panel (search, pill show/hide, up/down), keybind chips beside the module name reading `[NONE]`/`[N]` |
 | Launcher | restyled to the OpenCommunity dark palette with a short intro fade |
 | Option sanity | Min/Max option pairs are kept ordered on every write, so `Random.nextInt(min, max + 1)` can no longer be handed an inverted range |
+
+## Round 7 — the route bug that made half the panel dead
+
+### Every per-module route except the on/off toggle was a silent no-op
+This is the one that mattered, and it explains four complaints at once. `handleModules` derived the
+module name like this:
+
+```kotlin
+val name = path.removePrefix("/api/modules/").removeSuffix("/toggle")
+```
+
+so `/api/modules/Velocity/hud` produced the name **`"Velocity/hud"`**, `ModuleRegistry.get()` returned
+null, and the handler did nothing — while still answering `200` with the module's *unchanged* values.
+The panel, which trusts the response, then put the old value back on screen. So:
+
+- **keybinds never saved** (the POST was a no-op) → "the keybind does not work";
+- **the HUD eye never hid anything** → "hiding a module does nothing";
+- **the red dot never toggled** anything;
+- **the panel never responded**, because it was handed a success it could not tell from a refusal.
+
+`moduleRoute()` now splits the path into *(name, action)* — pure, and pinned by `ModuleRouteTest` with
+the exact paths the page uses — and an unknown module or action answers **404 with an error** instead
+of a 200 lie. The keybind response reads the value back from the module rather than echoing the request.
+The panel's half: every POST now ends in a toast, a non-2xx surfaces the server's own error text, a
+fresh bind is fenced against an in-flight poll writing `NONE` back over it, and a dead link says so
+once instead of failing silently.
+
+### The overlay always draws the length staircase
+The user asked for the rows to be ordered by length. `Sort`, `Reversed` and the whole manual-order
+machinery (`HudOrder` option, `hudOrderedNames`/`hudIndexOf`/`moveInHud`, `POST /api/hud/order`, the
+`hudIndex` field) are deleted: the panel that drove them is gone, and the overlay now sorts by the
+rendered width of each row unconditionally.
+
+### Red is the font, not a red band
+The work pulse used to paint a translucent red fill across the whole row box. It is now a colour
+**lerp on the row's text** — name and value — starting from whatever colour that mode would otherwise
+draw, so all five modes keep their own look and only the glyphs go red. Measured on `--dump` output:
+at max flash the glyph cores land exactly on `#FF5555` while the background probe is bit-identical to
+a flash-free dump (the old build differed by ~1800-2300 pixels and flipped that same probe to
+`(168,43,45)`). Two integer lerps per row, no extra pass.
+
+### The red dot is gone and the eye reads at a glance
+The user did not want the red dot, so it is deleted. The eye is now unmistakable: listed = the panel's
+accent cyan with a soft hover glow, hidden = flat grey at 55% opacity with no glow in any state, and
+the strike-through stays so the state is not carried by colour alone.
 
 ## Round 6 — the HUD list goes away, and the HUD finally follows its own options
 

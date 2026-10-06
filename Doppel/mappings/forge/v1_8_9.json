@@ -440,6 +440,14 @@
     ],
     "mcp": "foodLevel"
   },
+  "forge:gs_viewBobbing": {
+    "class": "net.minecraft.client.settings.GameSettings",
+    "field": "field_74336_f",
+    "aliases": [
+      "gs_viewBobbing"
+    ],
+    "mcp": "viewBobbing"
+  },
   "forge:gs_gammaSetting": {
     "class": "net.minecraft.client.settings.GameSettings",
     "field": "field_74333_Y",

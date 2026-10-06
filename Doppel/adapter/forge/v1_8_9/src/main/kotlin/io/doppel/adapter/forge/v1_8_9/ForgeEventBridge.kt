@@ -1270,157 +1270,66 @@ object ForgeEventBridge : IEventBridge {
         } catch (_: Exception) {}
     }
 
-    // ── NoCameraBob: vanilla's "View Bobbing" option, found by shape, never by name ──
+    // ── NoCameraBob: vanilla's "View Bobbing" ──
     //
-    // At runtime FML deobfuscates **class** names to MCP but leaves **members** SRG, and the settings
-    // file carries no mapping for `viewBobbing`. A name lookup would therefore be a guess — exactly
-    // the failure mode that made `Blocks.AIR` resolve to nothing and left Eagle silently dead. So the
-    // option is found structurally instead: on `GameSettings.Options` the only declared no-argument
-    // method returning String is `getEnumString()`, the only declared void method taking one float is
-    // `setValue(float)`, and the only float-returning float-taking one is `getValue(float)`.
-    private val gameSettingsOptionsClass by lazy {
-        try { Class.forName("net.minecraft.client.settings.GameSettings\$Options") } catch (_: Exception) { null }
-    }
-    private val optionsEnumStringMethod by lazy {
-        gameSettingsOptionsClass?.declaredMethods?.firstOrNull {
-            it.parameterCount == 0 && it.returnType == String::class.java &&
-                it.declaringClass == gameSettingsOptionsClass
-        }
-    }
-    private val optionsSetValueMethod by lazy {
-        gameSettingsOptionsClass?.declaredMethods?.firstOrNull {
-            it.parameterCount == 1 && it.parameterTypes[0] == Float::class.javaPrimitiveType &&
-                it.returnType == Void.TYPE
-        }
-    }
-
-    /**
-     * `GameSettings.setOptionValue(Options, float)` / `getOptionValue(Options)`.
-     *
-     * These are the pair the game's own options screen drives, and they are the reason the first cut
-     * of this module did nothing: the `Options` enum turned out to declare **four** float-taking
-     * float-returning methods (value min/max/step and `getValue`), so "the one that takes a float"
-     * picked an arbitrary one and the original value read back was never the option's own. The pair
-     * on `GameSettings` is unambiguous: the only declared void method taking (Options, float), and
-     * the only declared float method taking (Options).
-     */
-    private val gameSettingsSetOptionMethod by lazy {
-        try {
-            Class.forName("net.minecraft.client.settings.GameSettings").declaredMethods.firstOrNull {
-                it.parameterCount == 2 && it.returnType == Void.TYPE &&
-                    it.parameterTypes[1] == Float::class.javaPrimitiveType &&
-                    (gameSettingsOptionsClass?.isAssignableFrom(it.parameterTypes[0]) == true)
-            }
-        } catch (_: Exception) {
-            null
-        }
-    }
-    private val gameSettingsGetOptionMethod by lazy {
-        try {
-            Class.forName("net.minecraft.client.settings.GameSettings").declaredMethods.firstOrNull {
-                it.parameterCount == 1 && it.returnType == Float::class.javaPrimitiveType &&
-                    (gameSettingsOptionsClass?.isAssignableFrom(it.parameterTypes[0]) == true)
-            }
-        } catch (_: Exception) {
-            null
-        }
-    }
-
-    /** The enum constant whose language key is `options.viewBobbing`, or null if anything moved. */
-    private val viewBobbingOption by lazy {
-        val cls = gameSettingsOptionsClass ?: return@lazy null
-        val key = optionsEnumStringMethod ?: return@lazy null
-        // Normally they are `enumConstants`. The fallback covers an obfuscator that stripped the
-        // enum-ness (no `values()`/`valueOf()`, `enumConstants` null): the constants would still be
-        // static fields of the same type, so scan those rather than give up silently.
-        val pool = cls.enumConstants?.toList()
-            ?: cls.declaredFields
-                .filter { it.type == cls && java.lang.reflect.Modifier.isStatic(it.modifiers) }
-                .mapNotNull { f -> try { f.get(null) } catch (_: Exception) { null } }
-        pool.firstOrNull { c ->
-            try {
-                (key.invoke(c) as? String)?.equals("options.viewBobbing", ignoreCase = true) == true
-            } catch (_: Exception) {
-                false
-            }
-        }
-    }
+    // A plain field write, third time around. The first two attempts reached the option through the
+    // `GameSettings.Options` enum, resolved "by shape", and neither engaged in game: that enum
+    // declares four float-taking methods (value min/max/step and getValue), so "the one that takes a
+    // float" is not a unique handle on anything, and the write went somewhere harmless. The repo's own
+    // MCP table — `mappings/verify/fields.csv`, columns `searge,name,side,desc` — answers it outright:
+    // `viewBobbing` is `field_74336_f`. So it is read and written as the field it actually is.
+    private val gsViewBobbingField by lazy { MappingContext.getField("forge:gs_viewBobbing") }
 
     /** The player's own value while the module is on; null = we are not overriding anything. */
-    @Volatile private var savedViewBobbing: Float? = null
+    @Volatile private var savedViewBobbing: Boolean? = null
 
     /** One "what did I resolve" line per enable edge — see applyCameraBobOverride. */
     @Volatile private var cameraBobLogged: Boolean = false
 
+    private fun gameSettings(): Any? = try {
+        getMc()?.let { MappingContext.getFieldValue(it, "forge:mc_gameSettings") }
+    } catch (_: Exception) {
+        null
+    }
+
     /**
-     * NoCameraBob — hold vanilla's View Bobbing off while the module is on, then hand the player's
-     * own value back when it goes off.
+     * NoCameraBob — hold vanilla's View Bobbing off while the module is on, then hand the player's own
+     * value back when it goes off.
      *
-     * Only the camera is affected, by design: 1.8.9's `ItemRenderer` reads no GameSettings field at
-     * all (verified by disassembling the official jar), so the held-item sway keeps working — which
-     * is the whole point of the module rather than simply turning bobbing off by hand.
+     * Only the camera is affected, by design: 1.8.9's `ItemRenderer` reads no GameSettings field at all
+     * (verified by disassembling the official jar), so the held-item sway keeps working — which is the
+     * whole point of the module rather than simply turning bobbing off by hand.
      */
     private fun applyCameraBobOverride() {
         try {
-            if (!EventBridge.suppressCameraBob) {
-                val saved = savedViewBobbing ?: return
-                writeViewBobbing(saved)
-                savedViewBobbing = null
-                cameraBobLogged = false
+            val field = gsViewBobbingField
+            if (field == null) {
+                logCameraBobOnce(null)
                 return
             }
-            val option = viewBobbingOption
-            val gs = getMc()?.let { MappingContext.getFieldValue(it, "forge:mc_gameSettings") }
-            val current = readViewBobbing()
-            if (savedViewBobbing == null) {
-                savedViewBobbing = current ?: 1.0f
-                if (!cameraBobLogged) {
-                    cameraBobLogged = true
-                    // One line per enable, because "the crosshair still bobs" and "the module never
-                    // found the option" look identical from the outside.
-                    io.doppel.core.logging.CoreLogger.info(
-                        "[NoCameraBob] option=${option != null} enum=${gameSettingsOptionsClass?.enumConstants?.size ?: -1} " +
-                            "keyFn=${optionsEnumStringMethod != null} settings=${gs != null} " +
-                            "read=${gameSettingsGetOptionMethod != null} " +
-                            "write=${gameSettingsSetOptionMethod != null || optionsSetValueMethod != null} " +
-                            "current=$current -> off"
-                    )
+            val gs = gameSettings() ?: return
+            if (EventBridge.suppressCameraBob) {
+                if (savedViewBobbing == null) {
+                    val current = try { field.getBoolean(gs) } catch (_: Exception) { true }
+                    savedViewBobbing = current
+                    logCameraBobOnce(current)
                 }
-            }
-            writeViewBobbing(0.0f)
-        } catch (_: Exception) {}
-    }
-
-    /** Read the player's own View Bobbing value, or null when the option cannot be reached. */
-    private fun readViewBobbing(): Float? {
-        val option = viewBobbingOption ?: return null
-        val gs = try {
-            getMc()?.let { MappingContext.getFieldValue(it, "forge:mc_gameSettings") }
-        } catch (_: Exception) {
-            null
-        } ?: return null
-        return try {
-            gameSettingsGetOptionMethod?.invoke(gs, option) as? Float
-        } catch (_: Exception) {
-            null
-        }
-    }
-
-    /** Write View Bobbing through whichever of the two canonical setters this runtime exposes. */
-    private fun writeViewBobbing(value: Float) {
-        val option = viewBobbingOption ?: return
-        val gs = try {
-            getMc()?.let { MappingContext.getFieldValue(it, "forge:mc_gameSettings") }
-        } catch (_: Exception) {
-            null
-        }
-        try {
-            if (gs != null && gameSettingsSetOptionMethod != null) {
-                gameSettingsSetOptionMethod?.invoke(gs, option, value)
+                if (field.getBoolean(gs)) field.setBoolean(gs, false)
             } else {
-                optionsSetValueMethod?.invoke(option, value)
+                val saved = savedViewBobbing ?: return
+                if (field.getBoolean(gs) != saved) field.setBoolean(gs, saved)
+                savedViewBobbing = null
+                cameraBobLogged = false
             }
         } catch (_: Exception) {}
+    }
+
+    private fun logCameraBobOnce(current: Boolean?) {
+        if (cameraBobLogged) return
+        cameraBobLogged = true
+        io.doppel.core.logging.CoreLogger.info(
+            "[NoCameraBob] field=${gsViewBobbingField != null} current=$current -> off"
+        )
     }
 
     /**

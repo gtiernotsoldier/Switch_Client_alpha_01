@@ -129,7 +129,9 @@
             flex: 1; height: 100vh; overflow-y: auto;
             display: flex; flex-direction: column; align-items: center;
         }
-        .col { width: min(820px, 100%); padding: 26px 24px 110px 24px; }
+        /* Wider than the old 820px so a card header can hold icon + full module name + mode /
+           HUD-value / keybind chips without clipping the name at a desktop width. */
+        .col { width: min(1180px, 100%); padding: 26px 24px 110px 24px; }
 
         /* ---- Profile bar (config name + eye + status) ---- */
         .profile-bar {
@@ -268,20 +270,25 @@
                         opacity 0.35s ease, border-color 0.3s ease, visibility 0s;
         }
         .hud-rows { padding: 6px 8px 8px 8px; display: flex; flex-direction: column; gap: 3px; }
+        .hud-hint {
+            font-size: 10px; color: rgba(255,255,255,0.3); padding: 8px 12px 2px 12px;
+            font-family: 'SF Mono', monospace; letter-spacing: 0.02em; line-height: 1.4;
+        }
         .hud-row {
             display: flex; align-items: center; gap: 9px; padding: 4px 7px; border-radius: 8px;
             background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.04);
-            transition: background 0.25s ease, border-color 0.25s ease;
+            transition: background 0.25s ease, border-color 0.25s ease, opacity 0.25s ease;
         }
         .hud-row:hover { background: rgba(34,211,238,0.05); border-color: rgba(34,211,238,0.16); }
-        .hud-dot {
-            width: 18px; height: 18px; flex: 0 0 auto; border-radius: 30px; cursor: pointer;
-            display: flex; align-items: center; justify-content: center; font-size: 10px;
-            color: rgba(52,211,153,0.9); background: rgba(52,211,153,0.09);
-            border: 1px solid rgba(52,211,153,0.2); transition: 0.2s;
-        }
-        .hud-dot:hover { background: rgba(52,211,153,0.2); }
-        .hud-dot.off { color: rgba(255,255,255,0.28); background: rgba(255,255,255,0.04); border-color: rgba(255,255,255,0.08); }
+        /* Hidden rows read as "off" at a glance: the whole row dims, the pill is grey. */
+        .hud-row.off { opacity: 0.45; }
+        .hud-row.off:hover { opacity: 0.75; }
+        /* The same on/off pill as everywhere else, one size down so the row stays compact.
+           Selectors are row-scoped so they win over the base `.toggle-switch.on::after`. */
+        .hud-row .hud-toggle { width: 30px; height: 16px; }
+        .hud-row .hud-toggle::after { width: 12px; height: 12px; }
+        .hud-row .hud-toggle.on::after { transform: translateX(14px); }
+        .hud-row .hud-toggle:not(.on) { background: rgba(255,255,255,0.12); }
         .hud-name { font-size: 12.5px; color: rgba(255,255,255,0.88); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .hud-val {
             font-size: 9.5px; color: rgba(167,139,250,0.85); background: rgba(167,139,250,0.08);
@@ -327,12 +334,18 @@
         .setting-item.expanded::after { opacity: 1; }
 
         .setting-header {
-            display: flex; align-items: center; gap: 11px;
+            display: flex; align-items: center; gap: 8px;
             padding: 11px 14px 7px 14px; cursor: pointer;
         }
         .setting-header:hover { background: rgba(255,255,255,0.03); }
-        .setting-label { display: flex; align-items: center; gap: 11px; font-size: 14px; color: rgba(255,255,255,0.92); font-weight: 500; pointer-events: none; min-width: 0; }
-        .setting-label .m-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        /* The label row wraps instead of truncating: if the name plus every chip cannot fit on one
+           line, the chips drop to a second line rather than the module name being cut off. */
+        .setting-label {
+            display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px;
+            font-size: 13.5px; color: rgba(255,255,255,0.92); font-weight: 500;
+            pointer-events: none; min-width: 0; flex: 1 1 auto;
+        }
+        .setting-label .m-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 0 1 auto; }
         /* Unique per-module SVG icon tile */
         .mod-icon {
             width: 31px; height: 31px; border-radius: 9px; flex-shrink: 0;
@@ -350,16 +363,16 @@
         .mod-icon.cat-MISC     { color:#A78BFA; background:rgba(167,139,250,0.08); border-color:rgba(167,139,250,0.22); }
         /* Mode chip at a glance (e.g. Legit / Pack / Switch) */
         .mode-chip {
-            font-size: 9px; color: rgba(103, 232, 249, 0.75); background: rgba(34, 211, 238, 0.07);
-            padding: 1.5px 8px; border-radius: 30px; border: 1px solid rgba(34, 211, 238, 0.13);
-            font-family: 'SF Mono', monospace; pointer-events: none; flex-shrink: 0;
+            font-size: 8.5px; color: rgba(103, 232, 249, 0.75); background: rgba(34, 211, 238, 0.07);
+            padding: 1px 6px; border-radius: 30px; border: 1px solid rgba(34, 211, 238, 0.13);
+            font-family: 'SF Mono', monospace; pointer-events: none; flex-shrink: 0; line-height: 1.5;
         }
         /* The module's own HUD value, e.g. "Legit 50/50%" — the exact string the external
            overlay draws, so the panel cannot show a different number. */
         .hud-tag {
-            font-size: 9.5px; color: rgba(167, 139, 250, 0.85); background: rgba(167, 139, 250, 0.08);
-            padding: 1.5px 8px; border-radius: 30px; border: 1px solid rgba(167, 139, 250, 0.16);
-            font-family: 'SF Mono', monospace; white-space: nowrap; flex-shrink: 0;
+            font-size: 9px; color: rgba(167, 139, 250, 0.85); background: rgba(167, 139, 250, 0.08);
+            padding: 1px 7px; border-radius: 30px; border: 1px solid rgba(167, 139, 250, 0.16);
+            font-family: 'SF Mono', monospace; white-space: nowrap; flex-shrink: 0; line-height: 1.5;
         }
         .setting-right { margin-left: auto; display: flex; align-items: center; gap: 10px; pointer-events: auto; flex-shrink: 0; }
 
@@ -456,15 +469,18 @@
         }
         .slider-label-row .ver-tag { flex: 0 0 auto; }
         /* Numeric field: keyboard only. The typed value snaps to the declared step on commit;
-           the slider stays the one coarse control, so the old +/- nudge buttons are gone (B2). */
-        .num-group { flex: 0 0 auto; margin-left: auto; display: flex; align-items: center; gap: 4px; }
+           the slider stays the one coarse control, so the old +/- nudge buttons are gone (B2).
+           Drawn as an underlined blank — no box, just the rule, number right-aligned inside it. */
+        .num-group { flex: 0 0 auto; margin-left: auto; display: flex; align-items: center; gap: 5px; }
         .num-input {
-            width: 64px; flex: 0 0 auto; text-align: right; padding: 3px 8px; font-size: 12px;
-            font-family: 'SF Mono', monospace; color: rgba(34,211,238,0.9);
-            background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.08);
-            border-radius: 6px; outline: none; transition: border-color 0.2s, background 0.2s;
+            width: 76px; flex: 0 0 auto; text-align: right; padding: 2px 2px 3px 2px; font-size: 12.5px;
+            font-family: 'SF Mono', monospace; color: rgba(34,211,238,0.92);
+            background: transparent; border: none; border-bottom: 1px solid rgba(34,211,238,0.3);
+            border-radius: 0; outline: none; user-select: text;
+            transition: border-color 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
         }
-        .num-input:focus { border-color: rgba(34,211,238,0.45); background: rgba(34,211,238,0.07); }
+        .num-input:hover { border-bottom-color: rgba(34,211,238,0.55); }
+        .num-input:focus { border-bottom-color: #22D3EE; color: #7DE8F7; box-shadow: 0 8px 14px -12px rgba(34,211,238,1); }
         .num-unit { flex: 0 0 auto; font-size: 11px; color: rgba(255,255,255,0.4); }
         /* Colour option (COLOR): swatch + hex twin, same sub-grid cell as any other option.
            The server keeps an int 0x00RRGGBB; the panel only ever speaks #RRGGBB. */
@@ -489,14 +505,19 @@
         .slider-fill { height: 100%; border-radius: 6px; background: linear-gradient(90deg, #22D3EE, #A78BFA); transition: width 0.25s cubic-bezier(0.22, 1, 0.36, 1); box-shadow: 0 0 14px rgba(34, 211, 238, 0.3); }
         .empty { font-size: 12px; color: rgba(255,255,255,0.25); padding: 16px; text-align: center; animation: colIn 0.4s ease backwards; }
 
-        /* Keybind + HUD rows inside the drawer */
+        /* Keybind chip — lives in the card header, right of the module name, never in the drawer.
+           Bracketed so bound vs unbound is readable at a glance: [NONE] / [F1] / [Space]. */
         .kb-chip {
-            font-size: 10px; color: rgba(34,211,238,0.85); background: rgba(34,211,238,0.08);
-            padding: 2px 10px; border-radius: 30px; border: 1px solid rgba(34,211,238,0.15);
+            font-size: 9.5px; color: rgba(34,211,238,0.88); background: rgba(34,211,238,0.08);
+            padding: 1.5px 7px; border-radius: 6px; border: 1px solid rgba(34,211,238,0.18);
             cursor: pointer; white-space: nowrap; transition: 0.2s; font-family:'SF Mono',monospace;
+            flex: 0 0 auto; line-height: 1.5;
+            pointer-events: auto;   /* .setting-label is pointer-events:none — the chip must stay clickable */
         }
-        .kb-chip:hover { background: rgba(34,211,238,0.18); }
-        .kb-chip.capturing { background: rgba(167,139,250,0.18); border-color: rgba(167,139,250,0.4); color:#fff; animation: pulse-glow 1s infinite; }
+        .kb-chip:hover { background: rgba(34,211,238,0.18); border-color: rgba(34,211,238,0.38); }
+        .kb-chip.unbound { color: rgba(255,255,255,0.34); background: rgba(255,255,255,0.03); border-color: rgba(255,255,255,0.09); }
+        .kb-chip.unbound:hover { color: rgba(255,255,255,0.62); background: rgba(255,255,255,0.07); border-color: rgba(255,255,255,0.2); }
+        .kb-chip.capturing { background: rgba(167,139,250,0.18); border-color: rgba(167,139,250,0.45); color:#fff; animation: pulse-glow 1s infinite; }
         .hud-chip {
             font-size: 12px; color: rgba(52,211,153,0.9); background: rgba(52,211,153,0.08);
             width: 24px; height: 24px; display:flex; align-items:center; justify-content:center;
@@ -504,11 +525,11 @@
         }
         .hud-chip.off { color: rgba(255,255,255,0.3); background: rgba(255,255,255,0.04); border-color: rgba(255,255,255,0.08); }
         .hud-chip:hover { background: rgba(52,211,153,0.18); }
-        /* Vanilla-key cheat sheet that drops in under the chip while a bind is being captured */
+        /* Vanilla-key cheat sheet that drops onto its own line under the chip while capturing */
         .kb-hint {
-            flex: 1 1 100%; margin-top: 2px;
+            flex: 1 1 100%; margin-top: 1px;
             font-size: 9.5px; color: rgba(255,255,255,0.32);
-            font-family: 'SF Mono', monospace; letter-spacing: 0.02em;
+            font-family: 'SF Mono', monospace; letter-spacing: 0.02em; line-height: 1.4;
         }
 
         /* ===== Toast ===== */
@@ -663,6 +684,7 @@
                     <input class="hud-search" id="hudSearch" placeholder="Search modules…" autocomplete="off" spellcheck="false">
                 </div>
                 <div class="hud-body">
+                    <div class="hud-hint">Every module that can draw a line on the in-game HUD · the pill shows or hides it, ▲▼ sets the draw order.</div>
                     <div class="hud-rows" id="hudRows"></div>
                 </div>
             </div>
@@ -900,8 +922,12 @@
         }
         function hudRowHtml(m){
             const name = m.name;
-            return `<div class="hud-row" data-hud-row="${name}">
-                <span class="hud-dot ${hudShown(m)?'':'off'}" data-hud-toggle="${name}" title="Show / hide this line on the HUD">◉</span>
+            const shown = hudShown(m);
+            // A real on/off pill per row (same control as everywhere else) plus a dimmed row when
+            // hidden, so "is this line on the HUD?" is never a guess.
+            return `<div class="hud-row ${shown?'':'off'}" data-hud-row="${name}">
+                <div class="toggle-switch hud-toggle ${shown?'on':''}" data-hud-toggle="${name}"
+                     title="${shown?'Shown on the HUD · click to hide':'Hidden from the HUD · click to show'}"><span class="pulse-ring"></span></div>
                 <span class="hud-name">${name}</span>
                 ${m.hudValue?`<span class="hud-val">${m.hudValue}</span>`:''}
                 <span class="hud-order">
@@ -925,13 +951,15 @@
             }
             const q = hudQuery.trim().toLowerCase();
             const view = q ? all.filter(m => String(m.name).toLowerCase().indexOf(q) >= 0) : all;
+            // Header count is "shown / total", independent of the search filter, so it always
+            // answers "how many lines is the overlay drawing right now?".
+            const cnt = $('#hudCount');
+            if(cnt) cnt.textContent = all.filter(hudShown).length + ' / ' + all.length;
             const sig = all.length + '#' + view.map(m => m.name + (hudShown(m)?'1':'0') + (m.hudValue||'')).join('|');
             if(sig === hudSig) return;
             hudSig = sig;
             rows.innerHTML = view.length ? view.map(hudRowHtml).join('')
                 : `<div class="hud-empty">${all.length ? 'No matching HUD modules' : 'No HUD modules yet'}</div>`;
-            const cnt = $('#hudCount');
-            if(cnt) cnt.textContent = q ? view.length + '/' + all.length : String(all.length);
         }
         function setStatus(ok, n){
             $('#conn').textContent = ok ? '● Online · ' + (n!=null?n:modules.length) + ' modules' : '● Disconnected';
@@ -1131,16 +1159,29 @@
         };
         const CAPTURE_HINT = 'Vanilla: W/A/S/D move · Space jump · LShift sneak · E inventory · Q drop · F offhand · Tab player list · T chat · 1-9 hotbar';
         function keyUse(keyName){ return KEY_USES[keyName] || ''; }
+        // The server answers keyName "NONE" when a module has no key; older builds said "Unbound".
+        function keyLabel(keyName){
+            const k = String(keyName == null ? '' : keyName);
+            return (k === '' || k === 'NONE' || k === 'Unbound') ? '' : k;
+        }
+        function kbLabel(keyName){ return '[' + (keyLabel(keyName) || 'NONE') + ']'; }
         function kbTitle(keyName){
-            const u = keyUse(keyName);
+            const u = keyUse(keyLabel(keyName));
             return 'Click, then press any key to bind (Esc clears)' + (u ? ' · vanilla: ' + u : '');
         }
+        // One place that paints a keybind chip, so render / patch / capture-cancel cannot disagree.
+        function applyKbChip(el, keyName){
+            el.textContent = kbLabel(keyName);
+            el.title = kbTitle(keyName);
+            el.classList.toggle('unbound', !keyLabel(keyName));
+        }
+        function kbChipHtml(m){
+            return `<span class="kb-chip ${keyLabel(m.keyName)?'':'unbound'}" data-kb="${m.name}" title="${kbTitle(m.keyName)}">${kbLabel(m.keyName)}</span>`;
+        }
         function controlsHtml(m){
-            const kn = m.keyName || 'Unbound';
-            // The ◉ chip is on every card: any module can be hidden from the HUD list, so the
-            // per-card shortcut and the HUD panel must agree about what is adjustable.
-            return `<span class="kb-chip" data-kb="${m.name}" title="${kbTitle(kn)}">⏵ ${kn}</span>` +
-                `<span class="hud-chip ${m.hudHidden?'off':''}" data-hud="${m.name}" title="Show / hide this line on the HUD list">◉</span>`;
+            // Only the ◉ HUD chip is left in the drawer: any module can be hidden from the HUD list,
+            // so the per-card shortcut and the HUD panel must agree about what is adjustable.
+            return `<span class="hud-chip ${m.hudHidden?'off':''}" data-hud="${m.name}" title="Show / hide this line on the HUD list">◉</span>`;
         }
         function moduleCard(m){
             const rule = MODE_RULES[m.name];
@@ -1154,6 +1195,7 @@
                     <div class="setting-label">
                         <span class="mod-icon cat-${m.category||'MISC'}">${iconSvg(m.name, m.category)}</span>
                         <span class="m-name">${m.name}</span>
+                        ${kbChipHtml(m)}
                         ${chip?`<span class="mode-chip">${chip}</span>`:''}
                         ${m.hudValue?`<span class="hud-tag">${m.hudValue}</span>`:''}
                     </div>
@@ -1190,6 +1232,12 @@
                 </div>`;
         }
 
+        // The chips after the name are re-inserted by the poll. The keybind chip is the anchor, so a
+        // patched card always ends up in the same order as a fresh render.
+        function chipAnchor(card){
+            return card.querySelector('.setting-label .kb-chip[data-kb]') || card.querySelector('.setting-label .m-name');
+        }
+
         // Patch the live DOM instead of rebuilding — this is what kills the
         // "poll yanks my card around" feeling while keeping values in sync.
         function patchContent(){
@@ -1205,7 +1253,7 @@
                 const chipEl = card.querySelector('.mode-chip');
                 if(chip && chipEl && chipEl.textContent !== chip) chipEl.textContent = chip;
                 else if(chip && !chipEl){
-                    const lbl = card.querySelector('.setting-label .m-name');
+                    const lbl = chipAnchor(card);
                     if(lbl) lbl.insertAdjacentHTML('afterend', `<span class="mode-chip">${chip}</span>`);
                 } else if(!chip && chipEl) chipEl.remove();
                 // The module's own published HUD string (B2). Shown here so the panel and the
@@ -1215,15 +1263,13 @@
                 const hudTagEl = card.querySelector('.hud-tag');
                 if(hudTag && hudTagEl && hudTagEl.textContent !== hudTag) hudTagEl.textContent = hudTag;
                 else if(hudTag && !hudTagEl){
-                    const lbl2 = card.querySelector('.setting-label .m-name');
+                    const lbl2 = chipAnchor(card);
                     if(lbl2) lbl2.insertAdjacentHTML('afterend', `<span class="hud-tag">${hudTag}</span>`);
                 } else if(!hudTag && hudTagEl) hudTagEl.remove();
-                // drawer controls (keybind / hud) — never touch a capturing chip
-                const kb = card.querySelector('.kb-chip[data-kb]');
-                if(kb && !kb.classList.contains('capturing') && !capturingKey){
-                    kb.textContent = '⏵ ' + (m.keyName||'Unbound');
-                    kb.title = kbTitle(m.keyName||'Unbound');
-                }
+                // keybind chip (header) — never touched while a capture is live, or the "press a
+                // key…" prompt would be overwritten by the 3s poll
+                const kb = card.querySelector('.setting-label .kb-chip[data-kb]');
+                if(kb && !kb.classList.contains('capturing') && !capturingKey) applyKbChip(kb, m.keyName);
                 const hudc = card.querySelector('.hud-chip[data-hud]');
                 if(hudc) hudc.classList.toggle('off', !!m.hudHidden);
                 // options: rebuild only when the VISIBLE option set changed (mode swap etc.)
@@ -1329,7 +1375,7 @@
             $$('.kb-chip[data-kb]').forEach(c => {
                 const m = modules.find(x => x.name === c.dataset.kb);
                 c.classList.remove('capturing');
-                if(m){ c.textContent = '⏵ ' + (m.keyName||'Unbound'); c.title = kbTitle(m.keyName||'Unbound'); }
+                if(m) applyKbChip(c, m.keyName);
             });
             $$('.kb-hint').forEach(h=>h.remove());
         }
@@ -1348,13 +1394,16 @@
                 refresh();
                 e.stopPropagation(); return;
             }
-            // HUD list row: show / hide
-            const hdot = e.target.closest('.hud-dot[data-hud-toggle]');
+            // HUD list row: show / hide (the pill toggle)
+            const hdot = e.target.closest('.hud-toggle[data-hud-toggle]');
             if(hdot){
                 const m = modules.find(x => x.name === hdot.dataset.hudToggle);
                 if(!m) return;
                 const hide = hudShown(m);
                 m.hudShown = !hide; m.hudHidden = hide;   // optimistic flip; the poll corrects it
+                hdot.classList.toggle('on', !hide);
+                const hrow = hdot.closest('.hud-row');
+                if(hrow) hrow.classList.toggle('off', hide);
                 hudSig = null; renderHudList();
                 try { await api('/api/modules/'+encodeURIComponent(m.name)+'/hud', {method:'POST', body:JSON.stringify({hidden:hide})}); } catch(err){}
                 refresh(); return;
@@ -1375,14 +1424,18 @@
                 if(!e.target.closest('#hudSearch')) $('#hudPanel').classList.toggle('open');
                 return;
             }
-            // Keybind chip
+            // Keybind chip (card header) — click starts capture
             const kb = e.target.closest('.kb-chip[data-kb]');
             if(kb){
                 cancelCapture();
                 capturingKey = kb.dataset.kb;
                 kb.classList.add('capturing');
-                kb.textContent = '⏵ Press any key… (Esc clears)';
-                kb.insertAdjacentHTML('afterend', `<span class="kb-hint">${CAPTURE_HINT}</span>`);
+                kb.classList.remove('unbound');
+                kb.textContent = '[press a key…]';
+                // The hint is appended to the label row, which wraps, so it lands on its own line
+                // under the chips instead of squeezing in beside them.
+                const hintHost = kb.parentElement;
+                if(hintHost) hintHost.insertAdjacentHTML('beforeend', `<span class="kb-hint">${CAPTURE_HINT}</span>`);
                 return;
             }
             // Panic bar (two-step arm, no accidental wipes)
@@ -1636,8 +1689,9 @@
             if(!capturingKey) return;
             e.preventDefault();
             const name = capturingKey;
+            const esc = e.key === 'Escape';
             let code = -1;
-            if(e.key === 'Escape'){ code = -1; }
+            if(esc){ code = -1; }
             else if(e.key === 'Shift') code = 340;
             else if(e.key === 'Control') code = 341;
             else if(e.key === 'Alt') code = 342;
@@ -1653,15 +1707,22 @@
             (async () => {
                 try {
                     const r = await api('/api/modules/'+encodeURIComponent(name)+'/keybind', {method:'POST', body:JSON.stringify({key:code})});
+                    const kn = (r && r.keyName) ? r.keyName : (code <= 0 ? 'NONE' : 'Key ' + code);
+                    // Paint the chip straight from the POST response — the toast and the chip must
+                    // not wait up to 3s for the next poll before admitting the bind worked.
                     const chip = document.querySelector(`.kb-chip[data-kb="${name}"]`);
-                    if(chip){
-                        const kn = r.keyName || (code<=0 ? 'Unbound' : 'Key '+code);
-                        chip.classList.remove('capturing');
-                        chip.textContent = '⏵ ' + kn;
-                        chip.title = kbTitle(kn);
-                    }
+                    if(chip){ chip.classList.remove('capturing'); applyKbChip(chip, kn); }
+                    // Say out loud what happened — and, for a key the game already uses, what it
+                    // will do in game, so a module bind never clashes with a vanilla key silently.
+                    const knLabel = keyLabel(kn) || 'NONE';
+                    const vanilla = esc ? '' : keyUse(knLabel);
+                    toast(esc ? (name + ' · bind cancelled (Esc)')
+                              : (name + ' · bound to ' + knLabel + (vanilla ? ' · vanilla: ' + vanilla : '')));
                     refresh();
-                } catch(err){}
+                } catch(err){
+                    toast('Keybind failed · ' + name);
+                    cancelCapture();
+                }
             })();
         });
 

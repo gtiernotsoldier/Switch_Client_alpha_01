@@ -44,7 +44,8 @@ class HudStateWriterTest {
             scale = 1.25f,
             opacity = 70,
             lineSpacing = 150,
-            orderPublished = true
+            orderPublished = true,
+            positionLeft = true
         )
 
         HudStateWriter.publish(entries, header) { if (it == "AutoClicker") 200 else 0 }
@@ -58,8 +59,8 @@ class HudStateWriterTest {
 
         val expectedFlags = HudStateWriter.FLAG_WAVE or HudStateWriter.FLAG_SPACED or
             (HudStateWriter.MODE_RISE shl HudStateWriter.MODE_SHIFT) or
-            HudStateWriter.FLAG_ORDER_PUBLISHED
-        assertEquals(expectedFlags, buf.getInt(12), "wave + spaced + mode rise + published order")
+            HudStateWriter.FLAG_ORDER_PUBLISHED or HudStateWriter.FLAG_POSITION_LEFT
+        assertEquals(expectedFlags, buf.getInt(12), "wave + spaced + mode rise + order + left")
         assertEquals(0x112233, buf.getInt(16), "primary 0x00RRGGBB")
         assertEquals(0xAABBCC, buf.getInt(20), "secondary 0x00RRGGBB")
         assertEquals(144, buf.getInt(24), "fps")

@@ -158,6 +158,7 @@ object EventBridge {
         hudTextLine = ""
         localPlayerName = ""
         clientFps = 0
+        toggleNoticeHandler = null
         guiMouseX = 0
         guiMouseY = 0
         guiLeftMouseDown = false
@@ -1229,6 +1230,32 @@ object EventBridge {
 
     // ========== HUD Text (HUD — Render) ==========
     @Volatile var hudTextLine: String = ""
+
+    // ========== Module toggle notices (keybind feedback) ==========
+    private var toggleNoticeHandler: ((String, Boolean) -> Unit)? = null
+
+    fun registerToggleNoticeHandler(handler: (String, Boolean) -> Unit) {
+        toggleNoticeHandler = handler
+    }
+
+    fun clearToggleNoticeHandler() {
+        toggleNoticeHandler = null
+    }
+
+    /**
+     * A module was toggled **by a key press**.
+     *
+     * The user pressed a key and could not tell whether anything happened: "the keybind does not
+     * work" and "it worked and nothing said so" look identical from the outside. The HUD shows a
+     * short-lived line naming the module and its new state, which is also the only confirmation that
+     * survives the module not being listed on the HUD (a module that just switched *off* has no row
+     * of its own any more).
+     *
+     * Only keybind toggles come through here — the WebUI already answers a click with its own UI.
+     */
+    fun noticeModuleToggled(name: String, enabled: Boolean) {
+        toggleNoticeHandler?.invoke(name, enabled)
+    }
 
     // ========== HUD identity (external overlay's watermark — HUD, contract v2) ==========
     // Filled by the platform because the common module cannot reach Minecraft: the adapters read

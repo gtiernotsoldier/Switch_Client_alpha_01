@@ -405,7 +405,12 @@ object WebUIServer {
         }
     }
 
-    private fun moduleJson(module: Module): Map<String, Any?> {
+    /**
+     * One module as the panel sees it. Internal so a test can pin the fields the UI depends on —
+     * the keybind above all, since "the panel does not show my binding" is indistinguishable from a
+     * missing field here.
+     */
+    internal fun moduleJson(module: Module): Map<String, Any?> {
         val options = ConfigManager.optionsOf(module.name).map { optionJson(it) }
         return linkedMapOf(
             "name" to module.name,

@@ -109,6 +109,15 @@ object HudStateWriter {
     /** Draw the rows in the order they were published instead of width-sorted. */
     const val FLAG_ORDER_PUBLISHED: Int = 1 shl 6
 
+    /**
+     * Anchor the module list to the left edge.
+     *
+     * Bit 7 was reserved in v2 and v3, which is exactly what makes this a safe addition rather than a
+     * protocol bump: a reader that does not know the bit already masks it off, and no other field's
+     * meaning moved.
+     */
+    const val FLAG_POSITION_LEFT: Int = 1 shl 7
+
     /** `ArrayListMode` values (`ArrayList.h:14`, plus this port's Modern mode). */
     const val MODE_DEFAULT: Int = 0
     const val MODE_RISE: Int = 1
@@ -156,7 +165,9 @@ object HudStateWriter {
         /** 0 = unset, else the row gap as a percent of the mode's own (50 .. 200). */
         val lineSpacing: Int = 0,
         /** Draw the rows in publication order instead of width-sorted. */
-        val orderPublished: Boolean = false
+        val orderPublished: Boolean = false,
+        /** Anchor the module list to the left edge instead of the right one. */
+        val positionLeft: Boolean = false
     ) {
         /** The `flags` word, with the mode clamped into its three bits. */
         fun flags(): Int =
@@ -164,7 +175,8 @@ object HudStateWriter {
                 (if (spaced) FLAG_SPACED else 0) or
                 (if (watermark) FLAG_WATERMARK else 0) or
                 ((mode and MODE_MASK) shl MODE_SHIFT) or
-                (if (orderPublished) FLAG_ORDER_PUBLISHED else 0)
+                (if (orderPublished) FLAG_ORDER_PUBLISHED else 0) or
+                (if (positionLeft) FLAG_POSITION_LEFT else 0)
 
         /** The `scale` word: the scale x1000, or 0 when unset. */
         fun scaleWord(): Int =

@@ -56,10 +56,15 @@ object HUD : Module("HUD", Category.RENDER) {
     var posY: Int = 20
         private set
 
-    /** "Left" or "Right" — anchored side of the module list (WebUI config).
-     *  The brand card takes the opposite top corner. Default Left (v3.1:
-     *  module list top-left, glass brand card top-right). */
-    var position by choices("Position", arrayOf("Left", "Right"))
+    /**
+     * "Right" or "Left" — the edge the module list hangs off, for the external overlay and the
+     * in-game list alike.
+     *
+     * Right is the default because it is the reference overlay's own placement; the option used to
+     * default to Left for the in-game card alone, and it never reached the overlay at all (the
+     * contract had no field for it), which is why changing it here did nothing.
+     */
+    var position by choices("Position", arrayOf("Right", "Left"))
 
     // ── Configurable display options ──
 
@@ -132,7 +137,8 @@ object HUD : Module("HUD", Category.RENDER) {
         val scale: Float,
         val opacity: Int,
         val lineSpacing: Int,
-        val ordered: Boolean
+        val ordered: Boolean,
+        val positionLeft: Boolean
     )
 
     // Rebuilt only when an option under this module changes. The render loop asks for the header
@@ -154,10 +160,12 @@ object HUD : Module("HUD", Category.RENDER) {
         scale = if (overlayScale == 1.0f) 0f else overlayScale,
         opacity = if (overlayOpacity >= 100) 0 else overlayOpacity,
         lineSpacing = if (overlayLineSpacing == 100) 0 else overlayLineSpacing,
-        // The overlay follows the user's order as soon as they have arranged one. A separate
-        // "Width / Published" switch only asked them to make the same choice twice, so it is gone:
-        // an untouched list stays the reference's width wedge, an arranged one is drawn as arranged.
-        ordered = hudOrderList().isNotEmpty()
+        // The overlay follows the user's order as soon as they have configured one — by arranging
+        // rows, by picking a sort, or by reversing it. A separate "Width / Published" switch only
+        // asked them to make the same choice twice, so it is gone; an untouched list stays the
+        // reference's width wedge.
+        ordered = hudOrderList().isNotEmpty() || sortMode != "None" || reversed,
+        positionLeft = position == "Left"
     )
 
     /**
@@ -178,7 +186,8 @@ object HUD : Module("HUD", Category.RENDER) {
             scale = s.scale,
             opacity = s.opacity,
             lineSpacing = s.lineSpacing,
-            orderPublished = s.ordered
+            orderPublished = s.ordered,
+            positionLeft = s.positionLeft
         )
     }
 
@@ -253,6 +262,45 @@ object HUD : Module("HUD", Category.RENDER) {
     }
 
     // ═══════════════════════════════════════════
+    //  Keybind toggle notice
+    // ═══════════════════════════════════════════
+
+    /** How long "X ON" / "X OFF" stays in the list after a key press. */
+    private const val TOGGLE_NOTICE_MS = 1_500L
+
+    private data class ToggleNotice(val name: String, val enabled: Boolean, val until: Long)
+
+    @Volatile
+    private var toggleNotice: ToggleNotice? = null
+
+    /**
+     * Show a short-lived line for a module that was just toggled by a key press.
+     *
+     * It is a *value* on an existing row rather than a new mechanism: the writer already publishes a
+     * name plus a value, and a module that just switched off has no row of its own any more, so the
+     * confirmation has to carry the name itself.
+     */
+    fun noticeToggle(name: String, enabled: Boolean) {
+        // With the HUD module off there is no list to put a line in, and refreshLines would only
+        // log a warning about it.
+        if (!this.enabled) return
+        toggleNotice = ToggleNotice(name, enabled, System.currentTimeMillis() + TOGGLE_NOTICE_MS)
+        refreshLines()
+    }
+
+    /** The notice row, while it is still live — or null once it has lapsed. */
+    private fun liveNoticeRow(): HUDEntry? {
+        val notice = toggleNotice ?: return null
+        if (System.currentTimeMillis() >= notice.until) return null
+        return HUDEntry(
+            name = notice.name,
+            value = if (notice.enabled) "ON" else "OFF",
+            highlight = true,
+            isRed = false
+        )
+    }
+
+    // ═══════════════════════════════════════════
     //  Collection (event-driven)
     // ═══════════════════════════════════════════
 
@@ -262,9 +310,13 @@ object HUD : Module("HUD", Category.RENDER) {
             io.doppel.core.logging.CoreLogger.warn("[HUD] refreshLines skipped — HUD not enabled")
             return
         }
+        val notice = liveNoticeRow()
         val entries = buildList {
             // Title row ("Doppel") at the top — matches the reference layout.
             add(HUDEntry(name = "Doppel", value = "", highlight = false, isRed = false))
+            // The keybind confirmation goes above the module rows: it is about what just happened,
+            // not about the list's own order.
+            if (notice != null) add(notice)
             addAll(
                 applyHudOrder(
                     ModuleRegistry.getEnabled()
@@ -407,6 +459,8 @@ object HUD : Module("HUD", Category.RENDER) {
 
     override fun onEnable() {
         lastEnabledKey = ""
+        // Keybind toggles are announced through the HUD the user is already watching.
+        EventBridge.registerToggleNoticeHandler { name, enabled -> noticeToggle(name, enabled) }
         refreshLines()
         listenToModuleConfigs()
         EventBridge.registerTickListener(tickListener)
@@ -414,6 +468,8 @@ object HUD : Module("HUD", Category.RENDER) {
 
     override fun onDisable() {
         EventBridge.unregisterTickListener(tickListener)
+        EventBridge.clearToggleNoticeHandler()
+        toggleNotice = null
         EventBridge.hudTextLine = ""
         hudEntries = emptyList()
     }
@@ -435,6 +491,14 @@ object HUD : Module("HUD", Category.RENDER) {
                 lastEnabledKey = key
                 refreshLines()
                 listenToModuleConfigs()
+            }
+            // The keybind notice is a countdown rather than an event, so it has to be collected
+            // again when it lapses — otherwise "WTap OFF" would sit in the list until something else
+            // happened to rebuild it.
+            val notice = toggleNotice
+            if (notice != null && System.currentTimeMillis() >= notice.until) {
+                toggleNotice = null
+                refreshLines()
             }
         }
     }

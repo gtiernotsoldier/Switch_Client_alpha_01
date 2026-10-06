@@ -19,7 +19,8 @@ offset size  field
                     bit2     watermark       (draw the watermark run)
                     bits 3..5 mode          0 default, 1 rise, 2 vape, 3 tesseract, 4 modern
                     bit6     orderPublished  draw rows in published order, not width-sorted
-                    bits 7..31 reserved (ignored)
+                    bit7     positionLeft     anchor the module list to the left edge
+                    bits 8..31 reserved (ignored)
 16      4    u32  primary    0x00RRGGBB
 20      4    u32  secondary  0x00RRGGBB
 24      4    u32  fps        0 = unknown, the FPS segment is omitted
@@ -52,6 +53,7 @@ char value[24]  UTF-8, NUL padded, empty = no value shown
 | `scale_x1000` | reserved (28) | 0 = unset, else scale x1000 (500..4000) | the user can set the HUD scale from the WebUI instead of a CLI flag |
 | `opacity` | reserved (56) | 0 = unset, else 1..100 percent | the user can set the background opacity |
 | `line_spacing` | reserved (60) | 0 = unset, else 50..200 percent | the user can set the row gap (行距) without changing the scale, which would also change the font |
+| `positionLeft` | flags bit 7 (was reserved) | list anchored left when set, right otherwise | the HUD module's `Position` option never reached the overlay; a reader that does not know the bit already masks it off, so the wire version stays 3 |
 | entry `flash` | bool: "module is enabled, draw red" | 0..255 work-pulse strength | the user wants a red flash **while the module works**, decaying; `Module.markWorked()`/`flashStrength()` already exist on the Kotlin side and were never wired in |
 
 An explicit CLI flag still wins over the header, exactly as with mode/wave/watermark today.

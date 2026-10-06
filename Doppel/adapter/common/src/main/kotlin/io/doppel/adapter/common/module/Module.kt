@@ -128,6 +128,9 @@ abstract class Module(
     fun tryKeybindToggle(keyCode: Int): Boolean {
         if (keybind != keyCode) return false
         toggle()
+        // Say so. A key press with no visible result is indistinguishable from a key press that
+        // never arrived, and that ambiguity is what "my keybind does not work" was.
+        io.doppel.adapter.common.api.EventBridge.noticeModuleToggled(name, enabled)
         return true
     }
 

@@ -15,7 +15,8 @@
 //   12     4    uint32 flags      bit0 wave on, bit1 spaced names, bit2 watermark on,
 //                                 bits 3..5 mode (0 default, 1 rise, 2 vape,
 //                                 3 tesseract, 4 modern),
-//                                 bit6 orderPublished, bits 7..31 reserved (ignored)
+//                                 bit6 orderPublished, bit7 positionLeft (the module
+//                                 list on the left edge), bits 8..31 reserved (ignored)
 //   16     4    uint32 primary    0x00RRGGBB
 //   20     4    uint32 secondary  0x00RRGGBB
 //   24     4    uint32 fps        0 = unknown, the FPS segment is omitted
@@ -48,6 +49,11 @@
 //   * `scale_x1000` (offset 28) and `opacity` (offset 56): both were reserved in
 //     v2 and are now the WebUI's own HUD scale and background opacity, each with
 //     0 = "the writer has no opinion, use the overlay's default";
+//   * `positionLeft` (flags bit 7): the WebUI's Position option — the module list
+//     against the left edge rather than the reference's right one. This one is a
+//     *reserved* bit of v3 rather than a new version: a reader that does not know
+//     it already masks it off and no other field's meaning moves, so the wire
+//     version stays 3 (the Kotlin writer sets the same bit);
 //   * entry `flash` stopped being a bool and became a 0..255 work-pulse strength.
 //     It is a *level*, not a flag: the overlay reads it as-is every frame and the
 //     writer recomputes it every publish, so no decay state crosses the wire.
@@ -55,7 +61,8 @@
 // ── contract v2, still accepted ─────────────────────────────────────────────
 //
 // v2 is the same 4096 bytes with mode in bits **3..4** only, `scale_x1000` and
-// `opacity` left at reserved 0, no `orderPublished`, and `flash` a bool. A v2 file
+// `opacity` left at reserved 0, no `orderPublished` and no `positionLeft` (both
+// bits were still reserved there), and `flash` a bool. A v2 file
 // can only be a leftover from an older build — the entries are identical — so it
 // is decoded with the narrow mode mask, the two new fields stay unset and a
 // non-zero `flash` byte reads as full strength (255) rather than as a strength of
@@ -128,11 +135,21 @@ pub const V2_MODE_MASK: u32 = 0b11 << MODE_SHIFT;
 /// width-sorted (contract v3). The user's manual order in the WebUI is otherwise
 /// destroyed by the reference's wedge.
 pub const FLAG_ORDER_PUBLISHED: u32 = 1 << 6;
-/// Everything the v3 contract defines; bits 7..31 are reserved and ignored.
-pub const DEFINED_MASK: u32 =
-    FLAG_WAVE | FLAG_SPACED | FLAG_WATERMARK | MODE_MASK | FLAG_ORDER_PUBLISHED;
-/// The same for a v2 block, whose mode is two bits wide and which has no
-/// `orderPublished` bit to read.
+/// `positionLeft` — hang the module list off the **left** edge instead of the
+/// reference's right one (the WebUI's Position option, the same switch `--position
+/// left` gives). It is flags bit 7, which v3 left reserved: a reader that does not
+/// know the bit already masks it off, no other field's meaning moves, so the wire
+/// version stays 3.
+pub const FLAG_POSITION_LEFT: u32 = 1 << 7;
+/// Everything the v3 contract defines; bits 8..31 are reserved and ignored.
+pub const DEFINED_MASK: u32 = FLAG_WAVE
+    | FLAG_SPACED
+    | FLAG_WATERMARK
+    | MODE_MASK
+    | FLAG_ORDER_PUBLISHED
+    | FLAG_POSITION_LEFT;
+/// The same for a v2 block, whose mode is two bits wide and which has neither an
+/// `orderPublished` nor a `positionLeft` bit to read.
 pub const V2_DEFINED_MASK: u32 = FLAG_WAVE | FLAG_SPACED | FLAG_WATERMARK | V2_MODE_MASK;
 
 /// The `ArrayListMode` combo (`ArrayList.h:14`), as the header's mode bits carry
@@ -202,6 +219,10 @@ pub struct Header {
     pub mode: StateMode,
     /// `flags` bit 6. Always false for a v2 block, which has no such bit.
     pub order_published: bool,
+    /// `flags` bit 7: the module list hangs off the left edge rather than the
+    /// reference's right one. Always false for a v2 block, where the bit is still
+    /// reserved — the same rule as `order_published`, one bit over.
+    pub position_left: bool,
     /// `primary`, `0x00RRGGBB` → three 0..1 channels.
     pub primary: [f32; 3],
     /// `secondary`, same encoding.
@@ -363,6 +384,9 @@ fn decode_header(bytes: &[u8], version: u32) -> Header {
         watermark: flags & FLAG_WATERMARK != 0,
         mode: if v2 { StateMode::from_v2_flags(flags) } else { StateMode::from_flags(flags) },
         order_published: flags & FLAG_ORDER_PUBLISHED != 0,
+        // Bit 7 is defined for v3 and still reserved for v2, whose mask above
+        // clears it — so a v2 block decodes `false` even if the byte is set.
+        position_left: flags & FLAG_POSITION_LEFT != 0,
         primary: colour(le_u32(bytes, 16)),
         secondary: colour(le_u32(bytes, 20)),
         fps: le_u32(bytes, 24),
@@ -553,6 +577,7 @@ mod tests {
         assert_eq!(h.scale, None);
         assert_eq!(h.opacity, None);
         assert!(!h.order_published);
+        assert!(!h.position_left, "flags bit 7 is reserved in v2");
         let _ = fs::remove_file(&path);
     }
 
@@ -643,7 +668,8 @@ mod tests {
         assert_eq!(V1_STATE_SIZE, 3600);
         assert_eq!(SCALE_OFFSET, 28, "the contract's own offset");
         assert_eq!(OPACITY_OFFSET, 56);
-        assert_eq!(DEFINED_MASK, 0x7F, "bits 0..6 are the whole defined set");
+        assert_eq!(DEFINED_MASK, 0xFF, "bits 0..7 are the whole defined set now that bit 7 is positionLeft");
+        assert_eq!(V2_DEFINED_MASK, 0x1F, "v2 still has bit 7 reserved, and no order bit either");
 
         // The v1 entry sits at 16..72; the v3 entry at 64..120. A v3 header's
         // nickname bytes land inside the v1 entry's name field, so this pins the
@@ -671,7 +697,9 @@ mod tests {
         assert!(decode(FLAG_SPACED).spaced);
         assert!(decode(FLAG_WATERMARK).watermark);
         assert!(decode(FLAG_ORDER_PUBLISHED).order_published);
+        assert!(decode(FLAG_POSITION_LEFT).position_left);
         assert!(!decode(0).wave && !decode(0).spaced && !decode(0).watermark);
+        assert!(!decode(0).position_left);
         assert!(!decode(FLAG_WAVE | FLAG_SPACED | FLAG_WATERMARK).order_published);
 
         // The mode is bits 3..5 and nothing else.
@@ -689,8 +717,9 @@ mod tests {
             );
         }
 
-        // Reserved bits 7..31 change nothing at all: not the switches, not the
-        // order, not the mode.
+        // Reserved bits 8..31 change nothing at all: not the switches, not the
+        // order, not the position and not the mode. (Bit 7 used to be in this
+        // set; it is `positionLeft` now.)
         let defined =
             decode(FLAG_WAVE | FLAG_SPACED | FLAG_WATERMARK | FLAG_ORDER_PUBLISHED | (2 << MODE_SHIFT));
         let noisy = decode(
@@ -699,12 +728,13 @@ mod tests {
                 | FLAG_WATERMARK
                 | FLAG_ORDER_PUBLISHED
                 | (2 << MODE_SHIFT)
-                | 0xFFFF_FF80,
+                | 0xFFFF_FF00,
         );
         assert_eq!(defined.wave, noisy.wave);
         assert_eq!(defined.spaced, noisy.spaced);
         assert_eq!(defined.watermark, noisy.watermark);
         assert_eq!(defined.order_published, noisy.order_published);
+        assert_eq!(defined.position_left, noisy.position_left);
         assert_eq!(defined.mode, noisy.mode);
         assert_eq!(noisy.mode, StateMode::Vape);
         assert_eq!(MODE_MASK, 0x38);
@@ -737,6 +767,56 @@ mod tests {
         let b = v2_block(0, FLAG_ORDER_PUBLISHED | modern_bits, "", 0);
         assert!(!decode_header(&b, V2_VERSION).order_published);
         assert_eq!(decode_header(&b, V2_VERSION).mode, StateMode::Default);
+    }
+
+    /// `positionLeft` is a v3 use of a bit v3 left reserved: a reader that does not
+    /// know it already masks it off and no other field's meaning moves, which is why
+    /// the wire version stays 3. A v2 block really does have the bit reserved, so
+    /// there it must decode as `false` however the byte is set.
+    #[test]
+    fn the_position_bit_decodes_only_for_v3() {
+        // v3: bit 7 set is "the module list on the left edge"; clear is the
+        // reference's own right-hand placement.
+        let on = v3_block(0, FLAG_POSITION_LEFT, "", 0, 0, 0);
+        assert!(decode_header(&on, VERSION).position_left);
+        assert!(!decode_header(&v3_block(0, 0, "", 0, 0, 0), VERSION).position_left);
+
+        // It is its own bit: the switches and the mode around it are untouched.
+        let set = decode_header(
+            &v3_block(
+                0,
+                FLAG_POSITION_LEFT | FLAG_WAVE | FLAG_ORDER_PUBLISHED | (2 << MODE_SHIFT),
+                "",
+                0,
+                0,
+                0,
+            ),
+            VERSION,
+        );
+        assert!(set.position_left && set.wave && set.order_published);
+        assert!(!set.spaced && !set.watermark);
+        assert_eq!(set.mode, StateMode::Vape);
+        assert_eq!(DEFINED_MASK, 0x7F | FLAG_POSITION_LEFT, "bit 7 is in the defined set");
+
+        // Through the file reader, not just the decoder: a v3 block whose flags word
+        // is nothing but bit 7 still parses and reports the left placement.
+        let path = write("doppel-hud-state-test-v3-position.bin", &on);
+        assert!(read(&path).expect("a v3 block must parse").header.unwrap().position_left);
+        let _ = fs::remove_file(&path);
+
+        // v2 has no such bit: the same word reads as `false` there and as `true` when
+        // decoded as v3, which is the whole reason the two masks differ.
+        let v2 = v2_block(0, FLAG_POSITION_LEFT, "", 0);
+        assert!(!decode_header(&v2, V2_VERSION).position_left);
+        assert!(decode_header(&v2, VERSION).position_left);
+        assert_eq!(V2_DEFINED_MASK & FLAG_POSITION_LEFT, 0, "not part of the v2 mask at all");
+
+        // A v2 block with every defined bit plus bit 7: the switches and the mode
+        // still decode and only the position is dropped.
+        let h = decode_header(&v2_block(0, V2_DEFINED_MASK | FLAG_POSITION_LEFT, "", 0), V2_VERSION);
+        assert!(h.wave && h.spaced && h.watermark);
+        assert_eq!(h.mode, StateMode::Tesseract, "v2's 0b11 is Tesseract");
+        assert!(!h.position_left && !h.order_published);
     }
 
     #[test]

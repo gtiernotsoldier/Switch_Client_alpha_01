@@ -191,11 +191,14 @@ usage: doppel-hud [options]
   --y <i32>            adjust the chosen rect's y
   --w <u32>            adjust the chosen rect's width
   --h <u32>            adjust the chosen rect's height
-  --position <where>   right (default) = the ported HUD's own placement: the
-                       watermark 10 px in from the left edge and the module list
-                       flushed against the right one (HUD.cpp:537, 611); left =
-                       the same two elements on the opposite pair of edges.
-                       `stacked` is accepted as a synonym of `right`.
+  --position <where>   right = the ported HUD's own placement: the watermark 10 px
+                       in from the left edge and the module list flushed against
+                       the right one (HUD.cpp:537, 611); left = the same two
+                       elements on the opposite pair of edges. `stacked` is
+                       accepted as a synonym of `right`. Default: the state
+                       header's `positionLeft` bit (contract v3 flags bit 7, the
+                       WebUI's Position option) when the block carries a header,
+                       else right. Naming this flag overrides the header.
   --mode <name>        default | rise | vape | tesseract | modern. The four modes
                        of the ported HUD (ArrayList.h:14) plus this port's own
                        Modern, which the contract's version-3 mode field widened
@@ -249,23 +252,24 @@ usage: doppel-hud [options]
                        an ASCII preview and the runtime rect the live window
                        would cover, create no window, exit 0. It draws the state
                        file's own rows and header (nickname, FPS, mode, scale,
-                       opacity and row order included) when one is readable, and
-                       the built-in demo table when there is none, so it works
-                       with no game running.
+                       opacity, row order and position included) when one is
+                       readable, and the built-in demo table when there is none, so
+                       it works with no game running.
   --hide               print one line, create no window, exit 0 (automation check)
   --help               print this text and exit 0
 
 The overlay reads %TEMP%\\doppel-hud.state, published by the game 4096 bytes at a
 time (magic 0x444F5050, version 3: a 64-byte header carrying the mode, the wave /
-spaced / watermark switches, the published-order flag, the two wave colours, the
-player nickname, the frame counter, the HUD scale and the background opacity, then
-64 entries of 56 bytes, whose `flash` byte is a 0..255 work-pulse strength). The
-version-2 and the original 3600-byte version-1 blocks are still read; v2 is
-decoded with its narrower two-bit mode field and leaves the scale, the opacity and
-the published-order flag unset, and v1 has none of those header fields at all, so
-every one of them falls back to the flag defaults above. An explicit flag always
-wins over the header. The file is opened read-only: there is no back channel and
-nothing this process does can reach the game.
+spaced / watermark switches, the published-order flag, the left/right position bit,
+the two wave colours, the player nickname, the frame counter, the HUD scale and the
+background opacity, then 64 entries of 56 bytes, whose `flash` byte is a 0..255
+work-pulse strength). The version-2 and the original 3600-byte version-1 blocks are
+still read; v2 is decoded with its narrower two-bit mode field and leaves the
+scale, the opacity, the published-order flag and the position bit unset, and v1 has
+none of those header fields at all, so every one of them falls back to the flag
+defaults above. An explicit flag always wins over the header. The file is opened
+read-only: there is no back channel and nothing this process does can reach the
+game.
 
 It keeps its own breadcrumbs in %TEMP%\\doppel-hud.log: one line on start (local
 time, pid, the rect it covers, the mode, the resolved state file and whether it was
@@ -317,6 +321,10 @@ struct Args {
     y: Option<i32>,
     w: Option<u32>,
     h: Option<u32>,
+    /// `--position`: which pair of edges the HUD hangs off. Contract v3's
+    /// `positionLeft` bit (flags bit 7) carries the WebUI's own Position option, so
+    /// this is the fallback until `--position` is actually named (see
+    /// `position_set`).
     position: Position,
     /// `--mode`: which of the ported HUD's modes is drawn, plus this port's own
     /// Modern. The state header carries the game's own combo, so this is the
@@ -364,6 +372,7 @@ struct Args {
     primary_set: bool,
     secondary_set: bool,
     spaced_set: bool,
+    position_set: bool,
     /// `--no-topmost`: leave the overlay in the desktop's normal Z-order band.
     topmost: bool,
     /// Headless render to a BMP, no window.
@@ -404,6 +413,7 @@ impl Default for Args {
             primary_set: false,
             secondary_set: false,
             spaced_set: false,
+            position_set: false,
             topmost: true,
             dump: None,
             hide: false,
@@ -434,6 +444,7 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
             "--position" => {
                 let raw = next_value(argv, &mut i, flag)?;
                 args.position = parse_position(&raw)?;
+                args.position_set = true;
             }
             "--mode" => {
                 let raw = next_value(argv, &mut i, flag)?;
@@ -536,14 +547,22 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
 /// Precedence, field by field: an explicit command-line flag wins over the state
 /// header, which wins over the overlay's own default. The header is the game's
 /// own config — the mode combo, `m_Wave` / `m_SpacedModules` / `m_Watermark`, the
-/// two wave colours, and contract v3's HUD scale, background opacity and
-/// published-order flag — and it also carries the watermark's nickname and frame
-/// counter, which no flag supplies. A v1 block (or no file at all) has no header,
-/// so every one of those keeps the value the caller asked for; that is what keeps
-/// the overlay runnable and reviewable with no game attached.
+/// two wave colours, and contract v3's HUD scale, background opacity, published
+/// order and left/right position — and it also carries the watermark's nickname and
+/// frame counter, which no flag supplies. A v1 block (or no file at all) has no
+/// header, so every one of those keeps the value the caller asked for; that is what
+/// keeps the overlay runnable and reviewable with no game attached.
 fn config_from(args: &Args, alpha: f32, header: Option<&state::Header>) -> Config {
     Config {
-        position: args.position,
+        // `positionLeft` is a switch, not a word with an "unset", so a header always
+        // has an opinion: with no flag the bit decides (clear = the reference's
+        // right-hand placement, which is also the default), and `--position` beats
+        // it in both directions.
+        position: if args.position_set {
+            args.position
+        } else {
+            header.map_or(args.position, position_of)
+        },
         alpha,
         mode: if args.mode_set { args.mode } else { header.map_or(args.mode, |h| mode_of(h.mode)) },
         // `scale_x1000` and `opacity` are 0 on the wire when the writer has no
@@ -601,16 +620,44 @@ fn mode_of(bits: state::StateMode) -> Mode {
     }
 }
 
+/// The header's `positionLeft` bit → which pair of edges the HUD hangs off. Bit 7
+/// is a switch with no "unset", so unlike `scale`/`opacity` there is nothing to
+/// fall through to: clear means the reference's own right-hand placement. A v2
+/// block can only be clear, because the bit is still reserved there (`state`'s
+/// `V2_DEFINED_MASK`).
+fn position_of(header: &state::Header) -> Position {
+    if header.position_left {
+        Position::Left
+    } else {
+        Position::Right
+    }
+}
+
+/// Which source decided the drawn position, for the startup line: `--position`
+/// when it was named, the header's `positionLeft` bit when the block carried a
+/// header, and the overlay's own default (`right`) otherwise. `describe_state`
+/// prints what the header asked for and the line prints what is drawn; this is the
+/// word that says which of them won.
+fn position_source(args: &Args, header: Option<&state::Header>) -> &'static str {
+    if args.position_set {
+        "--position"
+    } else if header.is_some() {
+        "header"
+    } else {
+        "default"
+    }
+}
+
 /// What the startup line says about the first read: the block's version, its
 /// entry count and — for a header-carrying block — the config the header asked
 /// for. "The overlay is drawing the wrong mode" and "the overlay never read my
 /// header" are otherwise indistinguishable from a screenshot, and the same goes
-/// for a scale, an opacity or a row order that was silently ignored.
+/// for a scale, an opacity, a row order or a side that was silently ignored.
 fn describe_state(snapshot: &state::Snapshot) -> String {
     match &snapshot.header {
         Some(h) => format!(
             "v{} block, {} entries; header mode {} wave {} spaced {} watermark {} order {} \
-             scale {} opacity {} line spacing {}, nick {:?}, {} fps",
+             position {} scale {} opacity {} line spacing {}, nick {:?}, {} fps",
             h.version,
             snapshot.entries.len(),
             h.mode.label(),
@@ -618,6 +665,7 @@ fn describe_state(snapshot: &state::Snapshot) -> String {
             h.spaced,
             h.watermark,
             h.order_published,
+            if h.position_left { "left" } else { "right" },
             match h.scale {
                 Some(scale) => format!("{scale:.2}"),
                 None => "unset".to_string(),
@@ -848,7 +896,7 @@ fn demo_entries() -> Vec<Entry> {
 /// Cheap change detector: everything the HUD depends on except time. When it
 /// matches the previous frame and nothing is animating, the compositor already
 /// holds the right pixels and the frame is skipped. The header is part of it: a
-/// nickname, frame counter, mode, colour, scale, opacity or row order that
+/// nickname, frame counter, mode, colour, scale, opacity, row order or side that
 /// changes in the state file has to repaint even though every entry is identical.
 fn signature(entries: &[Entry], fade: f32, header: Option<&state::Header>) -> u64 {
     fn mix(hash: &mut u64, byte: u8) {
@@ -883,7 +931,8 @@ fn signature(entries: &[Entry], fade: f32, header: Option<&state::Header>) -> u6
                 h.wave as u8
                     | (h.spaced as u8) << 1
                     | (h.watermark as u8) << 2
-                    | (h.order_published as u8) << 3,
+                    | (h.order_published as u8) << 3
+                    | (h.position_left as u8) << 4,
             );
             mix(&mut hash, h.mode as u8);
             for b in h.fps.to_le_bytes() {
@@ -1098,11 +1147,14 @@ fn run(args: &Args) -> Result<(), String> {
     // file is there but not ours" — the checked form, because the refusal itself
     // (short, foreign, or which version) is the useful part of that line.
     let first_read = state::read_checked(&state_path);
+    // The header the first frame will be built from, named once because both the
+    // effective config and the position source below read it.
+    let first_header = first_read.as_ref().ok().and_then(|snap| snap.header.as_ref());
     // The config as the first frame will actually draw it: `--mode` and the other
     // flags are the request, the header may fill in everything they did not name.
     // Logging the request alone would say "mode default" for a run that is about
     // to draw Tesseract because the game's combo says so.
-    let effective = config_from(args, 1.0, first_read.as_ref().ok().and_then(|snap| snap.header.as_ref()));
+    let effective = config_from(args, 1.0, first_header);
     // The startup line also names the liveness rule this run is under: the exit line
     // says *that* it stopped, and "state stale" cannot be read back without knowing
     // whether a pid was ever consulted. The visibility rule is named for the mirror
@@ -1110,7 +1162,7 @@ fn run(args: &Args) -> Result<(), String> {
     // was hidden because the game was not in front", and the two need opposite
     // diagnoses.
     log.line(&format!(
-        "start: rect {}x{} at ({}, {}) [{}], position {:?}, mode {} (scale {:.2}), \
+        "start: rect {}x{} at ({}, {}) [{}], position {:?} ({}), mode {} (scale {:.2}), \
          opacity {:.0}%, rows {}, watermark {}, wave {}, state {} readable: {}, liveness {}, \
          visibility {}",
         rect.w,
@@ -1118,7 +1170,8 @@ fn run(args: &Args) -> Result<(), String> {
         rect.x,
         rect.y,
         source.label(),
-        args.position,
+        effective.position,
+        position_source(args, first_header),
         effective.mode.label(),
         effective.scale,
         effective.opacity * 100.0,
@@ -1796,7 +1849,7 @@ fn run_dump(path: &str, args: &Args, runtime: Rect, source: RectSource) -> Resul
         "wrote {path} ({w}x{h}, 32-bit BMP, mode {}, {:?} layout, scale {:.2}, background opacity \
          {:.0}%, rows {}, composited over #{:06X}; {})",
         config.mode.label(),
-        args.position,
+        config.position,
         config.scale,
         config.opacity * 100.0,
         if config.ordered { "in published order" } else { "width-sorted" },
@@ -1806,7 +1859,9 @@ fn run_dump(path: &str, args: &Args, runtime: Rect, source: RectSource) -> Resul
     // The rect the live window covers, which is *not* the review canvas: this is
     // the number that decides whether the HUD lands against the screen's edges.
     // Both elements' own origins are given in screen coordinates, so the anchoring
-    // can be checked without running the windowed path.
+    // can be checked without running the windowed path. The position is the
+    // *effective* one (`config.position`: `--position` or the header's bit), so the
+    // printed anchors are the ones the dump above actually drew with.
     let name_font = config.mode.name_font();
     let (_, _, run_w) = hud::measure_watermark(&text, name_font, &config.nickname, config.fps);
     println!(
@@ -1820,9 +1875,9 @@ fn run_dump(path: &str, args: &Args, runtime: Rect, source: RectSource) -> Resul
         runtime.y,
         source.label(),
         run_w.round() as i32,
-        hud::watermark_x(runtime, args.position, &metrics, run_w),
+        hud::watermark_x(runtime, config.position, &metrics, run_w),
         hud::watermark_y(runtime, &metrics),
-        match args.position {
+        match config.position {
             Position::Right => "right",
             Position::Left => "left",
         },
@@ -1839,13 +1894,13 @@ fn run_dump(path: &str, args: &Args, runtime: Rect, source: RectSource) -> Resul
          every row's box ends at x = {} and the first row's top is y = {}; both blocks hang off \
          the rect's top line y = {} (watermark + {}, first row + {}); {} listed rows",
         hud::watermark_text(&config.nickname, config.fps),
-        hud::watermark_x(runtime, args.position, &metrics, run_w),
+        hud::watermark_x(runtime, config.position, &metrics, run_w),
         hud::watermark_y(runtime, &metrics),
-        match args.position {
+        match config.position {
             Position::Right => "right",
             Position::Left => "left",
         },
-        hud::list_flush_x(runtime, args.position, &metrics),
+        hud::list_flush_x(runtime, config.position, &metrics),
         hud::row_y(runtime, &metrics, 0),
         runtime.y,
         metrics.watermark_y,
@@ -2058,6 +2113,7 @@ mod tests {
             watermark: false,
             mode: state::StateMode::Tesseract,
             order_published: true,
+            position_left: true,
             primary: [0.25, 0.5, 0.75],
             secondary: [0.1, 0.2, 0.3],
             fps: 144,
@@ -2095,12 +2151,14 @@ mod tests {
         assert!(!bare.mode_set && !bare.wave_set && !bare.watermark_set);
         assert!(!bare.spaced_set && !bare.primary_set && !bare.secondary_set);
         assert!(!bare.scale_set && !bare.opacity_set && !bare.ordered_set);
+        assert!(!bare.position_set, "nothing named --position either");
         let cfg = config_from(&bare, 1.0, Some(&header));
         assert_eq!(cfg.mode, Mode::Tesseract);
         assert!(!cfg.wave, "the header's m_Wave");
         assert!(cfg.spaced, "the header's m_SpacedModules");
         assert!(!cfg.watermark, "the header's m_Watermark");
         assert!(cfg.ordered, "the header's orderPublished");
+        assert_eq!(cfg.position, Position::Left, "the header's positionLeft (flags bit 7)");
         assert_eq!(cfg.scale, 1.25, "the header's scale_x1000");
         assert_eq!(cfg.opacity, 0.5, "the header's opacity");
         assert_eq!(cfg.primary, header.primary);
@@ -2109,7 +2167,6 @@ mod tests {
         assert_eq!(cfg.fps, 144);
         // The fields no header carries keep the caller's own values.
         assert_eq!(cfg.wave_speed, hud::DEFAULT_WAVE_SPEED);
-        assert_eq!(cfg.position, Position::Right);
         assert_eq!(cfg.alpha, 1.0);
 
         // A header that says the opposite of the CLI's own defaults, with no
@@ -2120,6 +2177,7 @@ mod tests {
             watermark: true,
             mode: state::StateMode::Vape,
             order_published: false,
+            position_left: false,
             scale: Some(2.0),
             opacity: Some(0.25),
             ..header.clone()
@@ -2129,23 +2187,26 @@ mod tests {
         assert!(cfg.wave && cfg.watermark);
         assert!(!cfg.spaced);
         assert!(!cfg.ordered);
+        assert_eq!(cfg.position, Position::Right, "the header's bit clear means right");
         assert_eq!(cfg.scale, 2.0);
         assert_eq!(cfg.opacity, 0.25);
 
         // Every flag named: every flag wins.
         let explicit = parse(
-            "--mode rise --no-wave --no-watermark --spaced --primary 1,2,3 --secondary 4,5,6 \
-             --scale 1.5 --opacity 40 --ordered",
+            "--mode rise --position right --no-wave --no-watermark --spaced --primary 1,2,3 \
+             --secondary 4,5,6 --scale 1.5 --opacity 40 --ordered",
         )
         .unwrap();
         assert!(explicit.mode_set && explicit.wave_set && explicit.watermark_set);
         assert!(explicit.spaced_set && explicit.primary_set && explicit.secondary_set);
         assert!(explicit.scale_set && explicit.opacity_set && explicit.ordered_set);
+        assert!(explicit.position_set);
         let cfg = config_from(&explicit, 0.5, Some(&flipped));
         assert_eq!(cfg.mode, Mode::Rise);
         assert!(!cfg.wave, "--no-wave beats a header with the wave on");
         assert!(!cfg.watermark, "--no-watermark beats a header with it on");
         assert!(cfg.spaced, "--spaced beats a header with it off");
+        assert_eq!(cfg.position, Position::Right, "--position beats the header's bit");
         assert_eq!(cfg.scale, 1.5, "--scale beats scale_x1000");
         assert_eq!(cfg.opacity, 0.4, "--opacity beats the header's percent");
         assert!(cfg.ordered, "--ordered beats a header without the bit");
@@ -2161,6 +2222,7 @@ mod tests {
         let cfg = config_from(&bare, 1.0, None);
         assert_eq!(cfg.mode, Mode::Default);
         assert!(cfg.wave && cfg.watermark && !cfg.spaced && !cfg.ordered);
+        assert_eq!(cfg.position, Position::Right, "the overlay's own default");
         assert_eq!(cfg.scale, 1.0);
         assert_eq!(cfg.opacity, 1.0);
         assert_eq!(cfg.primary, hud::DEFAULT_PRIMARY);
@@ -2249,9 +2311,65 @@ mod tests {
         );
     }
 
+    /// `positionLeft` (contract v3 flags bit 7, the WebUI's Position option) merges
+    /// like every other header field, with one difference: it is a switch with no
+    /// "unset", so a header-carrying block always decides and only an explicit
+    /// `--position` overrides it. This is the bug the bit closes: the WebUI could
+    /// change Position and the overlay never moved.
+    #[test]
+    fn the_position_bit_merges_with_the_flag_winning() {
+        // No flag, bit 7 set: the header's left placement is drawn.
+        let left = state::Header { position_left: true, ..header() };
+        assert_eq!(
+            config_from(&parse("").unwrap(), 1.0, Some(&left)).position,
+            Position::Left,
+            "the header's positionLeft is the default"
+        );
+        // No flag, bit clear: the reference's right-hand placement. Clear is an
+        // opinion too, not an "unset" — there is no third state on the wire.
+        let right = state::Header { position_left: false, ..header() };
+        assert_eq!(
+            config_from(&parse("").unwrap(), 1.0, Some(&right)).position,
+            Position::Right,
+            "a clear bit is the reference placement"
+        );
+
+        // The flag beats the header in both directions.
+        assert_eq!(
+            config_from(&parse("--position right").unwrap(), 1.0, Some(&left)).position,
+            Position::Right,
+            "--position beats a header asking for left"
+        );
+        assert_eq!(
+            config_from(&parse("--position left").unwrap(), 1.0, Some(&right)).position,
+            Position::Left,
+            "--position beats a header asking for right"
+        );
+
+        // No header at all — a v1 block, or no file — is the overlay's own default,
+        // and `stacked` is still the synonym of `right` it always was. `--position`
+        // unset is what lets the header decide in the first place.
+        assert_eq!(config_from(&parse("").unwrap(), 1.0, None).position, Position::Right);
+        assert_eq!(parse("--position stacked").unwrap().position, Position::Right);
+        assert!(parse("--position left").unwrap().position_set);
+        assert!(!parse("").unwrap().position_set);
+
+        // Which of the three decided, for the startup line: `describe_state` prints
+        // what the header asked for and the line prints what is drawn, so the source
+        // word has to agree with the merge above.
+        let snapshot = state::Snapshot { entries: Vec::new(), modified: None, header: Some(left.clone()) };
+        assert!(describe_state(&snapshot).contains("position left"), "{}", describe_state(&snapshot));
+        let snapshot = state::Snapshot { entries: Vec::new(), modified: None, header: Some(right) };
+        assert!(describe_state(&snapshot).contains("position right"), "{}", describe_state(&snapshot));
+        assert_eq!(position_source(&parse("").unwrap(), Some(&left)), "header");
+        assert_eq!(position_source(&parse("--position right").unwrap(), Some(&left)), "--position");
+        assert_eq!(position_source(&parse("").unwrap(), None), "default");
+    }
+
     /// The repaint rule has to see the header: a state file that gains a nickname,
-    /// an FPS, a mode, a colour, a scale, an opacity or the published-order flag is
-    /// a different frame even when every module row is byte-for-byte the same.
+    /// an FPS, a mode, a colour, a scale, an opacity, the published-order flag or the
+    /// left/right position bit is a different frame even when every module row is
+    /// byte-for-byte the same.
     #[test]
     fn a_header_change_reaches_the_frame_signature() {
         let entries = demo_entries();
@@ -2275,6 +2393,7 @@ mod tests {
             state::Header { spaced: false, ..v3.clone() },
             state::Header { watermark: true, ..v3.clone() },
             state::Header { order_published: false, ..v3.clone() },
+            state::Header { position_left: false, ..v3.clone() },
             state::Header { scale: Some(2.0), ..v3.clone() },
             state::Header { opacity: Some(0.75), ..v3.clone() },
             state::Header { primary: [1.0, 1.0, 1.0], ..v3.clone() },

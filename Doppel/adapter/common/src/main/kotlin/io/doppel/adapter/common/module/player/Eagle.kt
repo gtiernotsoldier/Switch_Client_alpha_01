@@ -4,6 +4,7 @@ import io.doppel.core.model.PlayerState
 import io.doppel.core.model.TargetState
 import io.doppel.adapter.common.api.EventBridge
 import io.doppel.adapter.common.module.Module
+import io.doppel.adapter.common.module.ModuleRegistry
 import io.doppel.adapter.common.module.Category
 import io.doppel.adapter.common.option.*
 import kotlin.random.Random
@@ -66,6 +67,15 @@ object Eagle : Module("Eagle", Category.PLAYER) {
     private val placeTicksMin by int("PlaceTicksMin", 1, 1..3, "ticks")
     private val placeTicksMax by int("PlaceTicksMax", 3, 1..3, "ticks")
 
+    /**
+     * How close to [placePitch] the view must actually be before a click is allowed, in degrees.
+     *
+     * The first version aimed and clicked in the same tick, so the click went wherever the view already
+     * happened to point — the user saw placements continuing without any downward aim. This is the
+     * tolerance the aim has to arrive inside first.
+     */
+    private val placeTolerance by int("PlaceTolerance", 6, 1..15, "°")
+
     // ========== Runtime state (owned by the module, mutated only from the tick listener) ==========
     /** Whether the sneak we are currently holding was pressed by this module (not by the player). */
     private var autoSneakActive: Boolean = false
@@ -75,6 +85,12 @@ object Eagle : Module("Eagle", Category.PLAYER) {
 
     /** Ticks left before the next AutoPlace right-click. */
     private var placeCooldownTicks: Int = 0
+
+    /** Whether an aim is in flight — waiting for the view to reach the bridging angle. */
+    private var placeAiming: Boolean = false
+
+    /** Ticks spent waiting for that aim to arrive. */
+    private var placeAimTicks: Int = 0
 
     private val tickListener: (PlayerState, TargetState?) -> Unit = { p, _ ->
         if (enabled) onTick(p)
@@ -123,25 +139,91 @@ object Eagle : Module("Eagle", Category.PLAYER) {
     /**
      * Bridging placement: while on an edge **and** sneaking, click the block in front of the feet.
      *
-     * The look is flicked down to [placePitch] only for the tick the click happens — that is what makes
-     * the ray hit the block below the crosshair rather than the horizon — and the player's own mouse
-     * input takes the view back on the next tick, so this cannot pin the camera.
+     * The aim and the click are deliberately NOT the same tick. The first version set the rotation and
+     * clicked immediately, so the click went wherever the view already pointed — placements kept
+     * happening without ever looking down, which is what the user saw. Here the module asks for the
+     * bridging angle, waits until the view has actually arrived inside [placeTolerance], and only then
+     * clicks; if it does not arrive within [PLACE_MAX_AIM_TICKS] it gives up without clicking.
+     *
+     * BridgeAssist owns the view while it is on: AutoPlace never writes the rotation in that case. If
+     * BridgeAssist already holds the bridging angle the click goes ahead (they cooperate); if it does
+     * not, AutoPlace stands down rather than fighting it for the camera — the other half of the report.
      */
     private fun autoPlaceTick(player: PlayerState, onEdge: Boolean) {
         val sneaking = player.isSneaking || autoSneakActive
         if (!shouldAutoPlace(enabled, autoPlace, onEdge, sneaking)) {
+            // Any gate closing cancels a pending aim: never click after the reason to click is gone.
+            placeAiming = false
+            placeAimTicks = 0
             placeCooldownTicks = 0
             return
         }
-        if (placeCooldownTicks > 0) {
+
+        if (!placeAiming && placeCooldownTicks > 0) {
             placeCooldownTicks--
             return
         }
-        EventBridge.setPlayerRotation(player.rotation.yaw, placePitch.toFloat())
-        EventBridge.syntheticUse = true
-        markWorked() // the HUD row flashes on the placement, like every other acting module
-        placeCooldownTicks = Random.nextInt(placeTicksMin, placeTicksMax + 1)
+
+        val bridgeAssistEnabled = ModuleRegistry.get("BridgeAssist")?.enabled == true
+        when (
+            placeDecision(
+                currentPitch = player.rotation.pitch,
+                targetPitch = placePitch.toFloat(),
+                tolerance = placeTolerance.toFloat(),
+                waitedTicks = placeAimTicks,
+                maxWaitTicks = PLACE_MAX_AIM_TICKS,
+                bridgeAssistEnabled = bridgeAssistEnabled
+            )
+        ) {
+            PlaceStep.AIM -> {
+                // Ask for the bridging angle and wait for it to actually arrive.
+                EventBridge.setPlayerRotation(player.rotation.yaw, placePitch.toFloat())
+                placeAiming = true
+                placeAimTicks++
+            }
+            PlaceStep.CLICK -> {
+                EventBridge.syntheticUse = true
+                markWorked() // the HUD row flashes on the placement, like every other acting module
+                placeAiming = false
+                placeAimTicks = 0
+                placeCooldownTicks = Random.nextInt(placeTicksMin, placeTicksMax + 1)
+            }
+            PlaceStep.ABORT -> {
+                placeAiming = false
+                placeAimTicks = 0
+                // Retry soon, but only ever through the same aim-first path — never a click without the
+                // aim. One tick keeps a bridging rhythm instead of stalling for a whole cooldown.
+                placeCooldownTicks = 1
+            }
+        }
     }
+
+    /**
+     * AutoPlace's per-tick decision, pure so the rule is testable.
+     *
+     * CLICK only when the view is already inside the tolerance of the bridging angle — that is what
+     * stops a placement from firing at the horizon. AIM asks for the angle and keeps waiting, but only
+     * while BridgeAssist is not the one holding the view; ABORT gives up without clicking.
+     */
+    internal fun placeDecision(
+        currentPitch: Float,
+        targetPitch: Float,
+        tolerance: Float,
+        waitedTicks: Int,
+        maxWaitTicks: Int,
+        bridgeAssistEnabled: Boolean
+    ): PlaceStep {
+        if (kotlin.math.abs(currentPitch - targetPitch) <= tolerance) return PlaceStep.CLICK
+        if (waitedTicks >= maxWaitTicks) return PlaceStep.ABORT
+        if (bridgeAssistEnabled) return PlaceStep.ABORT
+        return PlaceStep.AIM
+    }
+
+    /** What AutoPlace should do this tick — see [placeDecision]. */
+    internal enum class PlaceStep { AIM, CLICK, ABORT }
+
+    /** How many ticks an aim may take before AutoPlace gives up on it (no click without the aim). */
+    private const val PLACE_MAX_AIM_TICKS = 3
 
     /**
      * The AutoPlace gate, pure so the rule is testable: the module is on, the option is on, the player

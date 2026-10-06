@@ -1350,6 +1350,30 @@
     ],
     "mcp": "ungrabMouseCursor"
   },
+  "forge:mouseHelper_deltaX": {
+    "class": "net.minecraft.util.MouseHelper",
+    "field": "field_74377_a",
+    "aliases": [
+      "mouseHelper_deltaX"
+    ],
+    "mcp": "deltaX"
+  },
+  "forge:mouseHelper_deltaY": {
+    "class": "net.minecraft.util.MouseHelper",
+    "field": "field_74375_b",
+    "aliases": [
+      "mouseHelper_deltaY"
+    ],
+    "mcp": "deltaY"
+  },
+  "forge:mouseHelper_mouseXYChange": {
+    "class": "net.minecraft.util.MouseHelper",
+    "method": "func_74374_c",
+    "aliases": [
+      "mouseHelper_mouseXYChange"
+    ],
+    "mcp": "mouseXYChange"
+  },
   "forge:mouseHelper_grabMouseCursor": {
     "class": "net.minecraft.util.MouseHelper",
     "method": "func_74372_a",

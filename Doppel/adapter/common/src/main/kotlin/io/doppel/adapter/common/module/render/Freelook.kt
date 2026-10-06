@@ -16,9 +16,8 @@ import io.doppel.core.model.TargetState
  * server is told stay exactly where they were. That is the point of the module — a camera you can swing
  * around while the body keeps facing the way it faced.
  *
- * The mouse movement is recovered from the player's **own** rotation change: vanilla has already applied
- * this tick's mouse delta to the player by the time we are asked, and the player's rotation is then put
- * back every tick, so the body never turns while the camera does.
+ * The look input is `MouseHelper.deltaX/deltaY`, the same source the reference clients read: the mouse
+ * turns the camera, the body keeps its rotation, and the two never get tangled.
  */
 object Freelook : Module("Freelook", Category.VISUAL) {
 
@@ -31,10 +30,6 @@ object Freelook : Module("Freelook", Category.VISUAL) {
     private var freePitch = 0f
     private var realYaw: Float? = null
     private var realPitch: Float? = null
-
-    /** The player's rotation as of the previous tick, used to recover this tick's mouse movement. */
-    private var lastYaw: Float? = null
-    private var lastPitch: Float? = null
 
     private val tickListener: (PlayerState, TargetState?) -> Unit = { player, _ ->
         if (enabled) onTick(player)
@@ -51,24 +46,26 @@ object Freelook : Module("Freelook", Category.VISUAL) {
             realPitch = pitchNow
             freeYaw = yawNow
             freePitch = pitchNow
-            lastYaw = yawNow
-            lastPitch = pitchNow
         }
 
-        // Recover the mouse movement from the PLAYER'S OWN rotation change, not from Mouse.getDX().
-        // Vanilla has already applied this tick's mouse delta to the player before we are asked, and it
-        // has already consumed the LWJGL delta doing so — reading Mouse.getDX() from a 20 Hz tick returns
-        // 0, which is exactly how the first version ended up with a camera locked to its starting angle.
-        val dYaw = wrapDegrees(yawNow - (lastYaw ?: yawNow))
-        val dPitch = pitchNow - (lastPitch ?: pitchNow)
-        lastYaw = yawNow
-        lastPitch = pitchNow
+        // The look input, taken from MouseHelper exactly as the reference clients take it. The previous
+        // version inferred it from how much the player's rotation had changed, while restoring that
+        // rotation every tick — a loop that reads its own reset and therefore always sees zero, which is
+        // why the camera stayed where it started no matter how the mouse was moved.
+        val dx = EventBridge.freelookDeltaX
+        val dy = EventBridge.freelookDeltaY
+        if (dx != 0f || dy != 0f) {
+            // Vanilla's own scaling, so the default sensitivity feels exactly like looking normally.
+            val sens = EventBridge.mouseSensitivity * 0.6f + 0.2f
+            val mult = sens * sens * sens * 8.0f
+            val turned = accumulate(freeYaw, freePitch, dx * mult * 0.15f, dy * mult * 0.15f, sensitivity, invertY)
+            freeYaw = turned.first
+            freePitch = turned.second
+        }
+        EventBridge.freelookDeltaX = 0f
+        EventBridge.freelookDeltaY = 0f
 
-        val turned = accumulate(freeYaw, freePitch, dYaw, dPitch, sensitivity, invertY)
-        freeYaw = turned.first
-        freePitch = turned.second
-
-        // Put the body back where it was, so nothing but the camera ever moves.
+        // Safety net: if vanilla already applied the same delta before we took it, put the body back.
         val ry = realYaw ?: yawNow
         val rp = realPitch ?: pitchNow
         if (yawNow != ry || pitchNow != rp) {
@@ -106,8 +103,6 @@ object Freelook : Module("Freelook", Category.VISUAL) {
     override fun onEnable() {
         realYaw = null
         realPitch = null
-        lastYaw = null
-        lastPitch = null
         EventBridge.freeLookActive = true
         EventBridge.registerTickListener(tickListener)
     }
@@ -119,7 +114,5 @@ object Freelook : Module("Freelook", Category.VISUAL) {
         EventBridge.freeLookActive = false
         realYaw = null
         realPitch = null
-        lastYaw = null
-        lastPitch = null
     }
 }

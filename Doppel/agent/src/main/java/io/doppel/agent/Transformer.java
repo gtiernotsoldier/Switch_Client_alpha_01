@@ -167,31 +167,44 @@ public class Transformer implements ClassFileTransformer {
      * same in a log.
      */
     private static void retransformCameraClasses(Instrumentation inst) {
-        ClassLoader cl = null;
+        // The ClassLoader matters more than the name here. An earlier version asked Display's loader for
+        // these classes and got ClassNotFoundException for all three — that loader is the system one
+        // (Display is an LWJGL class), and the game classes live in Forge's LaunchClassLoader, which it
+        // cannot see. So the classes are taken from the JVM's own loaded-class list instead: whatever
+        // loaded them is, by definition, the loader that can find them.
+        java.util.Map<String, Class<?>> loaded = new java.util.HashMap<>();
         try {
-            Class<?> display = findDisplayClass();
-            if (display != null) cl = display.getClassLoader();
-        } catch (Throwable ignored) {}
-        if (cl == null) {
-            Agent.log("[Transformer] camera redirect: no game ClassLoader — skipped");
+            for (Class<?> cls : inst.getAllLoadedClasses()) {
+                loaded.putIfAbsent(cls.getName(), cls);
+            }
+        } catch (Throwable t) {
+            Agent.log("[Transformer] camera redirect: cannot list loaded classes (" + t + ")");
             return;
         }
+        int retransformed = 0;
         for (String name : new String[] {
                 "net.minecraft.client.renderer.EntityRenderer",
                 "net.minecraft.client.renderer.ActiveRenderInfo",
                 "net.minecraft.client.renderer.RenderGlobal" }) {
+            Class<?> cls = loaded.get(name);
+            if (cls == null) {
+                Agent.log("[Transformer] camera redirect: " + name + " not loaded — the transformer will catch it on load");
+                continue;
+            }
             try {
-                Class<?> cls = Class.forName(name, false, cl);
                 if (inst.isModifiableClass(cls)) {
                     inst.retransformClasses(cls);
-                    Agent.log("[Transformer] camera redirect: retransformed " + name);
+                    retransformed++;
+                    Agent.log("[Transformer] camera redirect: retransformed " + name
+                            + " via " + cls.getClassLoader());
                 } else {
                     Agent.log("[Transformer] camera redirect: " + name + " not modifiable");
                 }
             } catch (Throwable t) {
-                Agent.log("[Transformer] camera redirect: " + name + " skipped (" + t + ")");
+                Agent.log("[Transformer] camera redirect: " + name + " FAILED (" + t + ")");
             }
         }
+        Agent.log("[Transformer] camera redirect: " + retransformed + "/3 class(es) retransformed");
     }
 
     /**

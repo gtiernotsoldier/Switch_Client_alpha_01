@@ -1303,6 +1303,36 @@ object ForgeEventBridge : IEventBridge {
     }
 
 
+    // ── Mouse delta: the look input, taken the way the reference clients take it ──
+    //
+    // Raven's overrideMouse() calls mouseHelper.mouseXYChange() and reads deltaX/deltaY; this does the
+    // same and then ZEROES them, so the application vanilla makes later in the tick moves nothing and the
+    // body keeps its rotation without anyone having to put it back.
+    private fun applyMouseDelta() {
+        try {
+            val mc = getMc() ?: return
+            val helper = MappingContext.getFieldValue(mc, "forge:mc_mouseHelper") ?: return
+            try {
+                MappingContext.invokeMethod(helper, "forge:mouseHelper_mouseXYChange")
+            } catch (_: Exception) {}
+            val dx = (MappingContext.getFieldValue(helper, "forge:mouseHelper_deltaX") as? Int) ?: 0
+            val dy = (MappingContext.getFieldValue(helper, "forge:mouseHelper_deltaY") as? Int) ?: 0
+            if (dx != 0 || dy != 0) {
+                EventBridge.freelookDeltaX += dx
+                EventBridge.freelookDeltaY += dy
+                MappingContext.getField("forge:mouseHelper_deltaX")?.setInt(helper, 0)
+                MappingContext.getField("forge:mouseHelper_deltaY")?.setInt(helper, 0)
+            }
+            val gs = MappingContext.getFieldValue(mc, "forge:mc_gameSettings")
+            if (gs != null && mouseSensitivityField == null) {
+                mouseSensitivityField = gs.javaClass.declaredFields.firstOrNull { it.name.contains("mouseSensitivity") }
+            }
+            mouseSensitivityField?.let {
+                EventBridge.mouseSensitivity = try { it.getFloat(gs) } catch (_: Exception) { 0.5f }
+            }
+        } catch (_: Exception) {}
+    }
+
     // ── Freelook: publish the angles the injected camera redirect reads ──
     //
     // The transform in EntityRenderer / ActiveRenderInfo / RenderGlobal replaces every read of
@@ -1313,6 +1343,7 @@ object ForgeEventBridge : IEventBridge {
 
     /** The player's own third-person choice, put back when Freelook lets go (Raven's previousPerspective). */
     private var freeLookSavedPerspective: Int? = null
+    @Volatile private var mouseSensitivityField: java.lang.reflect.Field? = null
     private var freeLookLogged = false
 
     private fun applyFreeLook() {
@@ -1363,6 +1394,7 @@ object ForgeEventBridge : IEventBridge {
      */
     fun applyFrameOverrides() {
         applyHurtCamOverride()
+        applyMouseDelta()
         applyFreeLook()
     }
 

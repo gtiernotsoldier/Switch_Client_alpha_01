@@ -153,6 +153,8 @@ object EventBridge {
         freeLookActive = false
         freeLookYaw = 0f
         freeLookPitch = 0f
+        freelookDeltaX = 0f
+        freelookDeltaY = 0f
         keepMovementInGui = false
         guiMovementKeepSprint = false
         guiMovementOnlyInventory = false
@@ -1252,6 +1254,19 @@ object EventBridge {
     // NoFOV was deleted at the user's request, and with it the `lockFovModifier` flag it published.
     // The approach it needed was real (a 20 Hz write could never win against
     // `updateFovModifierHand()` inside `Minecraft.runTick()`), but the module itself was not wanted.
+
+    // ========== Look input for Freelook ==========
+    /**
+     * Mouse movement for Freelook, accumulated by the platform from `MouseHelper.deltaX/deltaY` and
+     * drained by the module.
+     *
+     * Deliberately NOT `mouseDelta*`: the platform publishes those per frame from LWJGL's Mouse for other
+     * features, and adding a second source into the same field would double-count. `MouseHelper` is the
+     * authoritative input here for the reason the reference clients use it — it holds the delta until the
+     * next poll, so a 20 Hz reader still sees it, while `Mouse.getDX()` is consumed every frame.
+     */
+    @Volatile var freelookDeltaX: Float = 0f
+    @Volatile var freelookDeltaY: Float = 0f
 
     // ========== Freelook (Visual) ==========
     /**

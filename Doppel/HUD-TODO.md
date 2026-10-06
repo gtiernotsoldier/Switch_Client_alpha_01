@@ -1,21 +1,75 @@
 # Doppel HUD — open work (handoff)
 
-Written after the session that closed every item the previous handoff listed. Everything under
-"Done" is verified by the build/test commands and the commits named with it; everything under
-"Still open" is scoped so it can be picked up without re-deriving anything.
+Written after the session that closed every item the previous handoff listed, plus the round-2 pass
+below. Everything under "Done" is verified by the build/test commands and the commits named with it;
+everything under "Still open" is scoped so it can be picked up without re-deriving anything.
 
 ## Where things stand
 
 | Item | State |
 | --- | --- |
-| Local `main` | 5 commits on top of `00d9119`: `2f9451e` (A1/A4), `9f03f5a` (A2/A3), `c489f73` (B1/B2), `19f267c` (A3 dump), `6429935` (B3). **Not pushed to GitLab yet** |
-| Testable binary | `C:\Users\Administrator\Desktop\swl\doppel-injector-fixed.exe`, 9,156,386 bytes, rebuilt 16:55:17 with the current agent jar and overlay |
-| Kotlin build | `:adapter:common:compileKotlin`, `:adapter:common:test` (59 tests, 7 classes), `:adapter:forge:v1_8_9:compileKotlin`, `:agent:jar` all green |
-| Rust builds | `hud`: 57 tests green. `injector`: 9 tests green, only the 3 pre-existing warnings (`flow.rs` platform, `inject.rs` WAIT_TIMEOUT, `process.rs` GetLastError) |
-| State contract | **v2 writer and v2 reader are both done**, verified against each other across the two languages; v1 is still read so a stale file from an older build cannot break the overlay |
-| Overlay | separate always-on-top click-through layered window; follows the game window (`--follow-pid`); Play font embedded; four module-list modes; reads contract v1 **and** v2 |
+| Local `main` | round 1: `2f9451e`, `9f03f5a`, `c489f73`, `19f267c`, `6429935`. Round 2 (this pass) adds the commits listed under "Round 2" below. **Not pushed to GitLab yet** |
+| Testable binary | `C:\Users\Administrator\Desktop\swl\doppel-injector-fixed.exe`, rebuilt 17:32:20 with the current agent jar and overlay; both embedded RCDATA blobs hash-match their sources |
+| Kotlin build | `:adapter:common:compileKotlin`, `:adapter:common:test` (71 tests, 10 classes), `:adapter:forge:v1_8_9:compileKotlin`, `:agent:jar` all green |
+| Rust builds | `hud`: 72 tests green. `injector`: 10 tests green, only the 3 pre-existing warnings (`flow.rs` platform, `inject.rs` WAIT_TIMEOUT, `process.rs` GetLastError) |
+| State contract | **v3**, writer and reader, verified against each other across the two languages; v1 and v2 are still read so a stale file cannot break the overlay |
+| Overlay | always-on-top click-through layered window anchored to the game window's **client area** (below the title bar) and following it (`--follow-pid`); **five** modes (Default/Rise/VapeV4/Tesseract/**Modern**); row entrance **and exit** animation; decaying red **work flash**; user-set scale, line spacing, background opacity and row order |
 | In-game Keystrokes | reads *effective* key states, so WTap/STap/ADTap/JumpReset light the boxes; Rainbow no longer touches AWT |
+| WebUI | keyboard-only numeric fields (slider + typed value), colour pickers, a HUD list panel (search, show/hide, up/down), English key names with a vanilla-key clash hint |
 | Launcher | restyled to the OpenCommunity dark palette with a short intro fade |
+
+## Round 2 — what the user asked for and where it landed
+
+### 1. The HUD sat over the title bar
+Fixed on both ends: the injector's one-shot `--rect` now comes from `GetClientRect` + `ClientToScreen`
+(`injector/src/process.rs`), and the overlay's `--follow-pid` poll does the same (`hud/src/follow.rs`,
+`client_rect()`). The client area excludes the title bar and the borders, so the HUD's top row starts
+below the window frame. A zero-sized client area still falls back to "no rect" / keep-the-last-good
+one rather than placing a degenerate overlay.
+
+### 2. WebUI numeric options: keyboard only
+The `-`/`+` nudge buttons are gone (template, listener and CSS). Each numeric option keeps the slider
+for coarse dragging and a typed field that commits on change/blur, clamping and snapping to the
+option's declared `step`/`decimals` at that moment. `COLOR` options now render as a swatch plus a hex
+field instead of `—`, and the server publishes their 0..`0xFFFFFF` bounds.
+
+### 3. Toggle transition + red work flash
+The contract's entry byte stopped being the old "this module is enabled" flag and became a 0..255
+**work-pulse strength** sampled from `Module.markWorked()` / `flashStrength()` — code that had existed
+for a long time and was never read by anything (`HUD.flashByte`, published per frame). The overlay
+washes the row red by that strength and lets it decay to nothing, and a row that leaves the published
+list now fades and slides back out over ~220 ms instead of vanishing (`Anim::exits`). Verified on a
+real dump: a row published with `flash = 200` measures 4478 red-washed pixels, the idle row next to
+it measures zero.
+
+### 4. Keybinds: English, and not fighting the game's own keys
+`WebUIServer.keyName` returns `Unbound` / `Space` / `LShift` / `A` / `F1` / … instead of `未绑定` /
+`空格` / `键A`, so the panel and Minecraft's own controls screen use one vocabulary (`WebUIKeyNameTest`
+also pins that every label is plain ASCII). The panel shows which vanilla actions commonly use a key
+while the user is binding it. And the module keybind poll now refuses to run while a screen is open —
+a keybind bound to `E` used to fire while the player was typing in chat.
+
+### 5. Performance
+- `HudStateWriter` no longer issues a 4 KB write every frame: it hashes the packed block and skips the
+  syscall when nothing changed, with a 1-second keep-alive because the file's mtime is the overlay's
+  liveness signal (`writeCount` is exposed for the tests).
+- `HUD.overlayHeader()` caches the option-derived half of the header and invalidates on a config
+  change, instead of reading eight options through `ConfigManager` every frame.
+- The keybind poll above stops doing per-frame reflective work while a screen is open.
+
+### 6. The HUD list is the user's
+New `HUD` options: `OverlayScale`, `OverlayLineSpacing` (a separate knob from the scale, which would
+also resize the text), `OverlayOpacity` (background fills only — the labels stay readable) and
+`OverlayOrder` (`Width` = the reference's wedge, `Published` = the user's order). The manual order is
+a persisted name list with a `POST /api/hud/order` endpoint behind it, and the WebUI grew a "HUD list"
+panel: search, per-module show/hide, up/down reordering, and each module's own published value.
+
+### 7. A modern HUD
+`Mode::Modern` is a fifth mode alongside the ported four, selectable with `--mode modern` or the
+WebUI's `OverlayMode`. It draws rounded four-corner cards with a 3 px accent bar at the right edge, a
+value tag in the live accent, a rounded watermark card, and its own slow cyan→violet sweep. The four
+ported modes are byte-identical to before — the mode's geometry and colours are pinned by the
+existing tests.
 
 ## Done in this pass
 
@@ -84,9 +138,9 @@ never populated on its first call (`now - Long.MIN_VALUE` overflows).
 
 ### B2 — WebUI numeric options + value mismatch
 - The server now publishes each option's declared `step` and the `decimals` it implies
-  (`OptionMeta.decimals()`), and the WebUI uses them end to end: a typed value field with `-`/`+`
-  nudges, slider snapping, and saving at the declared precision instead of a hard-coded tenth.
-  Clamping happens on commit, not while typing.
+  (`OptionMeta.decimals()`), and the WebUI uses them end to end: a typed value field, slider snapping,
+  and saving at the declared precision instead of a hard-coded tenth. Clamping happens on commit, not
+  while typing. (Round 2 removed the `-`/`+` buttons the user did not want; the field is the control.)
 - The module's own published HUD string (`hudValue()`) is now sent to the panel and shown on the
   module card, so the panel and the external overlay display the *same* string instead of two
   different formattings of the same option — the reported Velocity case. The auto-derived HUD value
@@ -104,11 +158,18 @@ pixel-sampling evidence are in commit `6429935`.
 
 Scoped, all of it cosmetic or environmental rather than broken:
 
-1. **Push to GitLab.** The 5 commits above are local only.
-2. **Owner-drawn list rows are unverified against live data** — there was no running `javaw.exe` on
+1. **Push to GitLab.** Every commit above is local only.
+2. **Not verified against a running game.** Nothing in this pass could be exercised against Minecraft
+   on this machine: the client-area rect, the follow poll, the keybind guard, the work flash and the
+   Modern mode are all verified by unit tests, by the `--dump` renderer and by pixel analysis of its
+   BMP output. The first in-game run should confirm the HUD now clears the title bar.
+3. **The WebUI panel's DOM behaviour is reasoned, not observed** — there is no browser here. The
+   script passes `node --check` and its pure helpers have a scratch test harness, but the HUD panel's
+   re-render timing, the colour picker and the keybind clash hint have not been clicked.
+4. **Owner-drawn list rows are unverified against live data** — there was no running `javaw.exe` on
    this machine, so `WM_DRAWITEM`/`WM_MEASUREITEM` never fired with real rows. One look on a box with
    Minecraft running would close it.
-3. **The stock list scrollbar is still OS-drawn** (light next to `#0B0E13`); marked `TODO(B3)` in
+5. **The stock list scrollbar is still OS-drawn** (light next to `#0B0E13`); marked `TODO(B3)` in
    `window.rs` along with rounded *window* corners, per-row hover and DPI awareness.
 4. **The injector is still DPI-unaware**, so its fixed 900x550 client is bitmap-stretched at 125/150%.
 5. **`theme.rs` carries one module-scoped `#![allow(dead_code)]`** because it transcribes the whole
@@ -120,7 +181,7 @@ Scoped, all of it cosmetic or environmental rather than broken:
 
 ## Verification (copy-paste)
 
-Kotlin (59 tests, 7 classes):
+Kotlin (71 tests, 10 classes):
 ```powershell
 $ws='C:\Users\Administrator\Desktop\swl'; $t="$ws\.tools"
 $env:JAVA_HOME="$t\jdk8\jdk8u504-b01"; $env:GRADLE_USER_HOME="$t\gradle-home"
@@ -129,7 +190,7 @@ $env:JAVA_TOOL_OPTIONS="-Dfile.encoding=UTF-8 -Dsun.jnu.encoding=UTF-8"
 $env:PATH="$env:JAVA_HOME\bin;$t\w64devkit\w64devkit\bin;$t\gradle-8.5\bin;$t\MinGit\cmd;$t\cargo\bin;$env:PATH"
 cd "$ws\doppel-final\Doppel"; gradle --offline --no-daemon --console=plain :adapter:common:compileKotlin :adapter:common:test :adapter:forge:v1_8_9:compileKotlin :agent:jar
 ```
-Rust (hud 57 / injector 9):
+Rust (hud 72 / injector 10):
 ```powershell
 cd "$ws\doppel-final\Doppel\hud";      cargo test --release
 cd "$ws\doppel-final\Doppel\injector"; cargo test --release
@@ -137,7 +198,7 @@ cd "$ws\doppel-final\Doppel\injector"; cargo test --release
 The overlay reviewed with no game running (also prints the glyph-coverage answer):
 ```powershell
 cd "$ws\doppel-final\Doppel\hud"; cargo build --release
-& .\target\release\doppel-hud.exe --dump "$env:TEMP\review.bmp"
+& .\target\release\doppel-hud.exe --dump "$env:TEMP\review.bmp" --mode modern --line-spacing 130
 ```
 Kotlin daemon flakiness (`Unknown or invalid session`) is environmental: delete
 `Doppel\adapter\common\build` and rerun; never run two Gradle/Cargo builds against the same tree at
@@ -160,6 +221,9 @@ for the current binary (`agent.jar` `8A04AE3B…`, `doppel-hud.exe` `1039C3AD…
 
 ## Reference material on this machine
 
+- **The state contract**: `Doppel/docs/hud-contract-v3.md` — the frozen wire format both sides
+  implement. Any change there is a protocol change: bump the version on both sides and update the
+  two test suites together.
 - OpenCommunity (the client whose HUD/launcher we mirror): `E:\swl\OpenCommunity\`
   - HUD: `runtime\src\features\render\HUD.cpp` (four modes, all the numbers)
   - launcher UI: `launcher\src\ui\Screen.cpp`, palette `deps\imgui\colors.h`

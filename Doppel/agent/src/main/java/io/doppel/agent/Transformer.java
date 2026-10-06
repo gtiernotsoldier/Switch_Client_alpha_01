@@ -108,6 +108,11 @@ public class Transformer implements ClassFileTransformer {
                     inst.addTransformer(new Transformer(), true);
                     inst.retransformClasses(displayClass);
 
+                    // Freelook: the camera classes are loaded long before we get here, so they have to be
+                    // retransformed. Best-effort and per class: a class that cannot be reached yet is
+                    // simply caught by the transformer when it does load.
+                    retransformCameraClasses(inst);
+
                     // CRITICAL: retransformClasses() does NOT throw if transform() returns null.
                     // We must check the 'hooked' flag to know if the bytecode was actually modified.
                     if (hooked) {
@@ -157,6 +162,39 @@ public class Transformer implements ClassFileTransformer {
     }
 
     /**
+     * Retransform the classes whose rotation reads Freelook redirects. Best-effort: each class is logged
+     * with its outcome, because "the module did nothing" and "the transform never ran" must not look the
+     * same in a log.
+     */
+    private static void retransformCameraClasses(Instrumentation inst) {
+        ClassLoader cl = null;
+        try {
+            Class<?> display = findDisplayClass();
+            if (display != null) cl = display.getClassLoader();
+        } catch (Throwable ignored) {}
+        if (cl == null) {
+            Agent.log("[Transformer] camera redirect: no game ClassLoader — skipped");
+            return;
+        }
+        for (String name : new String[] {
+                "net.minecraft.client.renderer.EntityRenderer",
+                "net.minecraft.client.renderer.ActiveRenderInfo",
+                "net.minecraft.client.renderer.RenderGlobal" }) {
+            try {
+                Class<?> cls = Class.forName(name, false, cl);
+                if (inst.isModifiableClass(cls)) {
+                    inst.retransformClasses(cls);
+                    Agent.log("[Transformer] camera redirect: retransformed " + name);
+                } else {
+                    Agent.log("[Transformer] camera redirect: " + name + " not modifiable");
+                }
+            } catch (Throwable t) {
+                Agent.log("[Transformer] camera redirect: " + name + " skipped (" + t + ")");
+            }
+        }
+    }
+
+    /**
      * Called by agentmain when self-attach succeeds with "retransform-display" arg.
      * This is the callback from the self-attach path.
      */
@@ -186,6 +224,12 @@ public class Transformer implements ClassFileTransformer {
     public byte[] transform(ClassLoader loader, String className,
                            Class<?> classBeingRedefined, ProtectionDomain protectionDomain,
                            byte[] classfileBuffer) {
+        // Freelook: redirect the rotation reads the camera makes. Same seam the reference clients use
+        // (mixin @Redirect on Entity.rotationYaw/rotationPitch inside these classes), done with ASM here.
+        if (STATIC_CAMERA_CLASSES.contains(className)) {
+            return transformStaticCamera(classfileBuffer);
+        }
+
         // Handle the HUD render hook (Display) only.
         if (!"org/lwjgl/opengl/Display".equals(className)) {
             return null;
@@ -349,6 +393,97 @@ public class Transformer implements ClassFileTransformer {
         if (needsFrames) {
             // Where the original body resumes: entry locals, empty stack.
             mv.visitFrame(Opcodes.F_NEW, entryLocals.length, entryLocals, 0, new Object[0]);
+        }
+    }
+
+    /** The classes that read the camera rotation, by obfuscated and deobfuscated name. */
+    private static final java.util.Set<String> STATIC_CAMERA_CLASSES = new java.util.HashSet<>(java.util.Arrays.asList(
+            "bfk", "net/minecraft/client/renderer/EntityRenderer",
+            "auz", "net/minecraft/client/renderer/ActiveRenderInfo",
+            "bfr", "net/minecraft/client/renderer/RenderGlobal"));
+
+    /** `Entity.rotationYaw` / `prevRotationYaw`, in every spelling they can arrive in. */
+    private static final java.util.Set<String> YAW_FIELDS = new java.util.HashSet<>(java.util.Arrays.asList(
+            "y", "field_70177_z", "A", "field_70126_B"));
+
+    /** `Entity.rotationPitch` / `prevRotationPitch`. */
+    private static final java.util.Set<String> PITCH_FIELDS = new java.util.HashSet<>(java.util.Arrays.asList(
+            "z", "field_70125_A", "B", "field_70127_C"));
+
+    /** The system properties the adapter publishes the freelook angles in. */
+    private static final String PROP_YAW = "doppel.freelookYaw";
+    private static final String PROP_PITCH = "doppel.freelookPitch";
+
+    /**
+     * Replace every read of the camera's rotation fields with "the freelook angle, or the value the
+     * entity actually has".
+     *
+     * This is the reference implementation's seam — Raven and LiquidBounce @Redirect exactly these
+     * reads — and the reason it works where swapping the render entity did not is that it changes the
+     * VALUE the camera uses rather than which object it asks. The player's own rotation is never
+     * touched, so movement, hit direction and everything the server sees stay put.
+     *
+     * The replacement is deliberately branchless:
+     *
+     *     GETFIELD Entity.rotationYaw : F
+     *     Float.toString(original)
+     *     System.getProperty("doppel.freelookYaw", thatString)
+     *     Float.parseFloat(...)
+     *
+     * No new jump target means no stack map frames have to be written, and everything it calls is JDK —
+     * nothing is resolved through a ClassLoader the game class cannot see, which is the other thing that
+     * has bitten this hook family. When the property is absent the entity's own value flows through
+     * untouched, so a disabled module changes nothing at all.
+     */
+    private byte[] transformStaticCamera(byte[] classfileBuffer) {
+        try {
+            ClassReader reader = new ClassReader(classfileBuffer);
+            final int[] replaced = new int[] { 0 };
+            ClassWriter writer = new ClassWriter(reader, ClassWriter.COMPUTE_MAXS);
+            ClassVisitor injector = new ClassVisitor(COMPAT_API, writer) {
+                @Override
+                public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
+                    MethodVisitor mv = super.visitMethod(access, name, descriptor, signature, exceptions);
+                    if (mv == null) return null;
+                    return new MethodVisitor(COMPAT_API, mv) {
+                        @Override
+                        public void visitFieldInsn(int opcode, String owner, String fieldName, String fieldDescriptor) {
+                            boolean rotation = opcode == Opcodes.GETFIELD
+                                    && "F".equals(fieldDescriptor)
+                                    && ("pk".equals(owner) || "net/minecraft/entity/Entity".equals(owner))
+                                    && (YAW_FIELDS.contains(fieldName) || PITCH_FIELDS.contains(fieldName));
+                            if (!rotation) {
+                                super.visitFieldInsn(opcode, owner, fieldName, fieldDescriptor);
+                                return;
+                            }
+                            replaced[0]++;
+                            super.visitFieldInsn(opcode, owner, fieldName, fieldDescriptor);
+                            // -> String default = Float.toString(entityRotation)
+                            super.visitMethodInsn(Opcodes.INVOKESTATIC, "java/lang/Float", "toString",
+                                    "(F)Ljava/lang/String;", false);
+                            // -> System.getProperty(key, default): the key is pushed last, hence the SWAP
+                            super.visitLdcInsn(YAW_FIELDS.contains(fieldName) ? PROP_YAW : PROP_PITCH);
+                            super.visitInsn(Opcodes.SWAP);
+                            super.visitMethodInsn(Opcodes.INVOKESTATIC, "java/lang/System", "getProperty",
+                                    "(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;", false);
+                            super.visitMethodInsn(Opcodes.INVOKESTATIC, "java/lang/Float", "parseFloat",
+                                    "(Ljava/lang/String;)F", false);
+                        }
+                    };
+                }
+            };
+            reader.accept(injector, 0);
+            if (replaced[0] == 0) {
+                return null; // nothing to redirect in this class: leave it exactly as it was
+            }
+            Agent.log("[Transformer] " + reader.getClassName() + ": redirected " + replaced[0]
+                    + " camera rotation read(s) for Freelook");
+            return writer.toByteArray();
+        } catch (Throwable t) {
+            // Failing here is safe: null leaves the class untouched, so the worst case is a module that
+            // does nothing rather than a client that does not start.
+            Agent.log("[Transformer] camera redirect failed (Freelook inactive): " + t);
+            return null;
         }
     }
 

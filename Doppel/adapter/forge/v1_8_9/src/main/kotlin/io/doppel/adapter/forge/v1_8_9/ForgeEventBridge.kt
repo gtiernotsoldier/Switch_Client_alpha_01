@@ -1249,6 +1249,10 @@ object ForgeEventBridge : IEventBridge {
     /** The only value vanilla ever assigns to `maxHurtTime` (`hurtTime = maxHurtTime = 10`). */
     private const val VANILLA_MAX_HURT_TIME = 10
 
+    /** The system properties the injected camera redirect reads — keep in step with Transformer. */
+    private const val PROP_FREELOOK_YAW = "doppel.freelookYaw"
+    private const val PROP_FREELOOK_PITCH = "doppel.freelookPitch"
+
     /** Whether the previous frame re-applied the movement keys (InvMove) — see [applyGuiMovement]. */
     private var guiMovementApplied = false
 
@@ -1299,208 +1303,55 @@ object ForgeEventBridge : IEventBridge {
     }
 
 
-    // ── Freelook: point the camera at a stand-in entity ──
+    // ── Freelook: publish the angles the injected camera redirect reads ──
     //
-    // The camera follows `Minecraft.renderViewEntity`, so lending that field a stand-in whose rotation
-    // we own turns the view without touching the player's rotation — movement, hit direction and what
-    // the server is told all stay where they were. A bare Entity reports an eye height of 0, so the
-    // stand-in is placed at the player's eye position directly.
-    /**
-     * `Minecraft.renderViewEntity`, found without trusting a name.
-     *
-     * Two rounds were spent on names: the SRG name from the repo's MCP table does not resolve on the
-     * real client, and the first shape-based fallback used `Class.forName("net.minecraft.client.
-     * Minecraft")`, which our ClassLoader cannot load — so both lookups failed and the log said
-     * "not resolvable" while nothing moved.
-     *
-     * This one asks the INSTANCE for its class (always correct, whatever loaded it) and identifies the
-     * field by what it is: the `Entity`-typed field of Minecraft that currently holds the player.
-     * `pointedEntity` is the other one and is null unless the crosshair is on something, so the
-     * identity check is unambiguous. When the player cannot be read yet the result is NOT cached, so
-     * enabling the module in a menu cannot poison it for the whole session.
-     */
-    @Volatile private var cachedRenderViewEntityField: java.lang.reflect.Field? = null
-    @Volatile private var renderViewEntityFailureLogged = false
-
-    /**
-     * Why a resolution attempt failed — logged once per module enable with enough detail to act on,
-     * because "not resolvable" on its own is what made the last three rounds guesswork.
-     */
-    private fun logRenderViewEntityFailure(detail: String) {
-        if (renderViewEntityFailureLogged) return
-        renderViewEntityFailureLogged = true
-        io.doppel.core.logging.CoreLogger.error("[Freelook] renderViewEntity unresolved: $detail")
-    }
-
-    /**
-     * `Minecraft.renderViewEntity`, found without trusting a name.
-     *
-     * Two rounds were spent on names: the SRG name from the repo's MCP table does not resolve on the
-     * real client, and the first shape-based fallback asked Class.forName for the Minecraft class, which
-     * our ClassLoader cannot load. This one asks the INSTANCE for its class and identifies the field by
-     * what it is — the `Entity`-typed field that currently holds the player.
-     *
-     * Every failure path now says what it saw. A failure is never cached, so enabling the module in a
-     * menu cannot poison the session.
-     */
-    private fun resolveRenderViewEntityField(): java.lang.reflect.Field? {
-        cachedRenderViewEntityField?.let { return it }
-        MappingContext.getField("forge:mc_renderViewEntity")?.let {
-            cachedRenderViewEntityField = it
-            io.doppel.core.logging.CoreLogger.info("[Freelook] renderViewEntity from the mapping: ${it.name}")
-            return it
-        }
-        return try {
-            val mc = getMc()
-            val player = getPlayer()
-            if (mc == null || player == null) {
-                logRenderViewEntityFailure("mc=$mc player=$player")
-                return null
-            }
-            val candidates = generateSequence(mc.javaClass as Class<*>) { it.superclass }
-                .takeWhile { it != null }
-                .flatMap { cls -> cls.declaredFields.asSequence() }
-                .filter { it.type.name == "net.minecraft.entity.Entity" }
-                .toList()
-            val byIdentity = candidates.firstOrNull {
-                try { it.get(mc) === player } catch (_: Exception) { false }
-            }
-            val chosen = byIdentity ?: candidates.singleOrNull()
-            if (chosen == null) {
-                val names = candidates.joinToString { f ->
-                    f.name + "(" + f.type.name + "=" + (try { f.get(mc)?.javaClass?.simpleName } catch (_: Exception) { "?" }) + ")"
-                }
-                logRenderViewEntityFailure(
-                    "no Entity field holds the player; mcClass=${mc.javaClass.name} " +
-                        "playerClass=${player.javaClass.name} candidates=[$names]"
-                )
-            } else {
-                cachedRenderViewEntityField = chosen
-                io.doppel.core.logging.CoreLogger.info(
-                    "[Freelook] renderViewEntity resolved by shape: ${chosen.name} (identity=${byIdentity != null})"
-                )
-            }
-            chosen
-        } catch (t: Throwable) {
-            logRenderViewEntityFailure("${t.javaClass.simpleName}: ${t.message}")
-            null
-        }
-    }
-
+    // The transform in EntityRenderer / ActiveRenderInfo / RenderGlobal replaces every read of
+    // Entity.rotationYaw/rotationPitch with "the value in this system property, or the entity's own".
+    // A property is the one channel that crosses to those classes with no ClassLoader on the path, and
+    // it is absent whenever the module is off, so the vanilla value flows through untouched.
     private val gsThirdPersonViewField by lazy { MappingContext.getField("forge:gs_thirdPersonView") }
 
-    /** The player's own third-person choice, put back when Freelook lets go (Raven: previousPerspective). */
+    /** The player's own third-person choice, put back when Freelook lets go (Raven's previousPerspective). */
     private var freeLookSavedPerspective: Int? = null
-    private var freeLookDummy: Any? = null
-    private var freeLookSwapped = false
     private var freeLookLogged = false
-    private var freeLookStickLogged = false
 
-    private fun ensureFreeLookEntity(): Any? {
-        freeLookDummy?.let { return it }
-        return try {
-            val world = getWorld() ?: return null
-            val cls = Class.forName("net.minecraft.entity.Entity")
-            val ctor = cls.getDeclaredConstructor(Class.forName("net.minecraft.world.World"))
-            ctor.isAccessible = true
-            ctor.newInstance(world).also { freeLookDummy = it }
-        } catch (_: Exception) {
-            null
-        }
-    }
-
-    private fun syncFreeLookEntity(dummy: Any, player: Any) {
-        val px = MappingContext.getFieldValue(player, "forge:entity_posX") as? Double ?: return
-        val py = MappingContext.getFieldValue(player, "forge:entity_posY") as? Double ?: return
-        val pz = MappingContext.getFieldValue(player, "forge:entity_posZ") as? Double ?: return
-        val eye = py + 1.62
-        // prev == current, so the camera does not interpolate in from wherever the stand-in was.
-        for ((key, v) in listOf(
-            "forge:entity_posX" to px, "forge:entity_prevPosX" to px,
-            "forge:entity_posY" to eye, "forge:entity_prevPosY" to eye,
-            "forge:entity_posZ" to pz, "forge:entity_prevPosZ" to pz
-        )) {
-            MappingContext.getField(key)?.setDouble(dummy, v)
-        }
-        for ((key, v) in listOf(
-            "forge:entity_rotationYaw" to EventBridge.freeLookYaw,
-            "forge:entity_prevRotationYaw" to EventBridge.freeLookYaw,
-            "forge:entity_rotationPitch" to EventBridge.freeLookPitch,
-            "forge:entity_prevRotationPitch" to EventBridge.freeLookPitch
-        )) {
-            MappingContext.getField(key)?.setFloat(dummy, v)
-        }
-    }
-
-    /**
-     * Freelook — lend `renderViewEntity` to the stand-in while the module is on, hand it back when it
-     * goes off. The read-back on the first frame is deliberate: if the game reassigns the field after
-     * us, the log says so instead of the module looking broken for no stated reason.
-     */
     private fun applyFreeLook() {
         try {
             val mc = getMc() ?: return
-            val player = getPlayer() ?: return
-            val field = resolveRenderViewEntityField()
+            val gs = MappingContext.getFieldValue(mc, "forge:mc_gameSettings")
+            val view = gsThirdPersonViewField
+
             if (!EventBridge.freeLookActive) {
-                if (freeLookSwapped) {
-                    field?.set(mc, player)
-                    freeLookSwapped = false
-                }
-                // Hand the player's own perspective back, exactly like Raven's resetPerspective().
-                freeLookSavedPerspective?.let { saved ->
+                System.clearProperty(PROP_FREELOOK_YAW)
+                System.clearProperty(PROP_FREELOOK_PITCH)
+                if (freeLookSavedPerspective != null) {
                     try {
-                        val gs = MappingContext.getFieldValue(mc, "forge:mc_gameSettings")
-                        if (gs != null) gsThirdPersonViewField?.setInt(gs, saved)
+                        if (gs != null && view != null) view.setInt(gs, freeLookSavedPerspective!!)
                     } catch (_: Exception) {}
                     freeLookSavedPerspective = null
-                    freeLookStickLogged = false
                 }
                 freeLookLogged = false
-                freeLookStickLogged = false
-                renderViewEntityFailureLogged = false
                 return
             }
-            // Raven's trick, and the reason their camera feels natural: freelook puts the game into
-            // third person, so the vanilla orbit camera does the work and the player's own body keeps
-            // rendering with its own rotation. The camera then orbits the stand-in we lend
-            // renderViewEntity, which carries the freelook angles.
+
+            System.setProperty(PROP_FREELOOK_YAW, java.lang.Float.toString(EventBridge.freeLookYaw))
+            System.setProperty(PROP_FREELOOK_PITCH, java.lang.Float.toString(EventBridge.freeLookPitch))
+
+            // Raven's enterPerspective(): third person, so the vanilla orbit camera does the work and the
+            // player's body keeps rendering with its own rotation.
             try {
-                val gs = MappingContext.getFieldValue(mc, "forge:mc_gameSettings")
-                val view = gsThirdPersonViewField
                 if (gs != null && view != null) {
                     if (freeLookSavedPerspective == null) freeLookSavedPerspective = view.getInt(gs)
                     if (view.getInt(gs) == 0) view.setInt(gs, 1)
                 }
             } catch (_: Exception) {}
 
-            if (field == null) {
-                if (!freeLookLogged) {
-                    freeLookLogged = true
-                    io.doppel.core.logging.CoreLogger.error(
-                        "[Freelook] renderViewEntity not resolvable (mapping and shape) — the camera cannot be redirected"
-                    )
-                }
-                return
-            }
-
-            val dummy = ensureFreeLookEntity() ?: return
-            syncFreeLookEntity(dummy, player)
-            field.set(mc, dummy)
-            freeLookSwapped = true
             if (!freeLookLogged) {
                 freeLookLogged = true
                 io.doppel.core.logging.CoreLogger.info(
-                    "[Freelook] camera redirected to the stand-in entity, third-person view = " +
+                    "[Freelook] camera angles published (yaw=" + EventBridge.freeLookYaw +
+                        ", pitch=" + EventBridge.freeLookPitch + "), third-person view = " +
                         (freeLookSavedPerspective ?: -1) + " -> 1"
-                )
-            }
-            if (!freeLookStickLogged) {
-                freeLookStickLogged = true
-                val stuck = try { field.get(mc) === dummy } catch (_: Exception) { false }
-                io.doppel.core.logging.CoreLogger.info(
-                    "[Freelook] renderViewEntity write stuck=$stuck" +
-                        (if (stuck) "" else " — the game reassigns it after us; the swap needs to move earlier")
                 )
             }
         } catch (_: Exception) {}

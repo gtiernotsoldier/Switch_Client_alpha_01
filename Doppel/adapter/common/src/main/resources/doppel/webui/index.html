@@ -289,6 +289,18 @@
         .hud-row .hud-toggle::after { width: 12px; height: 12px; }
         .hud-row .hud-toggle.on::after { transform: translateX(14px); }
         .hud-row .hud-toggle:not(.on) { background: rgba(255,255,255,0.12); }
+        /* Second per-row control, next to the pill: the red work-flash. Lit red = the row flashes
+           red while the module works, dim grey = it does not. Independent of show/hide. */
+        .hud-red {
+            width: 22px; height: 16px; flex: 0 0 auto; border-radius: 30px; cursor: pointer;
+            display: flex; align-items: center; justify-content: center; font-size: 8px; line-height: 1;
+            color: #F87171; background: rgba(248,113,113,0.10); border: 1px solid rgba(248,113,113,0.26);
+            transition: background 0.25s ease, border-color 0.25s ease, color 0.25s ease;
+        }
+        .hud-red.on { box-shadow: 0 0 10px rgba(248,113,113,0.22); }
+        .hud-red.off { color: rgba(255,255,255,0.2); background: rgba(255,255,255,0.03); border-color: rgba(255,255,255,0.08); }
+        .hud-red:hover { border-color: rgba(248,113,113,0.5); }
+        .hud-red.off:hover { color: rgba(255,255,255,0.42); border-color: rgba(255,255,255,0.2); }
         .hud-name { font-size: 12.5px; color: rgba(255,255,255,0.88); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .hud-val {
             font-size: 9.5px; color: rgba(167,139,250,0.85); background: rgba(167,139,250,0.08);
@@ -606,9 +618,6 @@
         .setting-item.expanded .sub-grid > *:nth-child(8) { animation-delay: 0.23s; }
         @keyframes optIn { from { opacity: 0.25; transform: translateY(5px); } to { opacity: 1; transform: none; } }
 
-        @media (prefers-reduced-motion: reduce) {
-            * { animation: none !important; transition: none !important; }
-        }
         ::-webkit-scrollbar { width: 4px; }
         ::-webkit-scrollbar-track { background: transparent; }
         ::-webkit-scrollbar-thumb { background: rgba(34, 211, 238, 0.16); border-radius: 10px; }
@@ -621,18 +630,130 @@
             .nav-item::before { left: -6px; }
             .rail-brand { justify-content: center; padding-left: 0; padding-right: 0; }
         }
-        @media (max-width: 720px) {
-            .col { padding: 18px 14px 90px 14px; }
-            .module-grid { flex-direction: column; }
-            .sub-grid { grid-template-columns: 1fr; }
-            .tab { padding: 8px 16px; }
-        }
+        /* The old 720px block was folded into the phone pass at the end of this sheet,
+           so there is exactly one narrow-viewport query. */
         .subtitle-overlay {
             position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
             background: rgba(0,0,0,0.5); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
             padding: 8px 20px; border-radius: 40px; color: rgba(255,255,255,0.5); font-size: 13px;
             border: 1px solid rgba(255,255,255,0.04); white-space: nowrap; z-index: 100; font-weight: 300;
             pointer-events: none;
+        }
+
+        /* =========================================================
+           Phone pass — one column, stacked chrome, >=40px touch
+           targets, no soft glow or blur. Every rule lives inside
+           this query, so the desktop look above is untouched.
+           ========================================================= */
+        @media (max-width: 720px) {
+            .col { padding: 18px 14px 90px 14px; }
+            .module-grid { flex-direction: column; }
+            .sub-grid { grid-template-columns: 1fr; }
+            .tab { padding: 8px 16px; }
+
+            /* --- layout: one column, nothing wider than the viewport --- */
+            .col { width: 100%; overflow-x: hidden; }
+            .stage { overflow-x: hidden; }
+            /* Column direction + the grid's `align-items: flex-start` would size each column to its
+               content, so the columns are pinned to full width here. */
+            .module-column { flex: 0 0 auto; width: 100%; min-width: 0; }
+            /* Stacked, the half-empty second column would print its "no modules" filler under the
+               real cards. Progressive: where :has() is unknown the filler simply stays as before. */
+            .module-grid:has(.setting-item) .module-column:has(.empty) { display: none; }
+            .profile-bar, .panic-bar, .hud-head, .cat-row { flex-wrap: wrap; }
+            #tabBar { flex: 1 1 100%; }
+            #tabBar .tab { flex: 1 1 auto; justify-content: center; min-height: 40px; }
+            .hud-search { flex: 1 1 100%; width: auto; min-height: 40px; padding: 9px 10px; }
+            .hud-panel.open .hud-body { max-height: 46vh; }
+            .hud-rows { gap: 6px; }
+            /* Two toggles + name + value + ▲▼ do not fit 360px on one line: the value and the
+               order buttons drop to a second line instead of squeezing the name to nothing. */
+            .hud-row { padding: 11px 8px; gap: 8px; flex-wrap: wrap; }
+            .setting-header { padding: 11px 12px 7px 12px; gap: 6px; }
+            .setting-label { gap: 4px 6px; font-size: 13px; }
+            .nav-item { padding: 11px 0; }
+
+            /* --- touch targets: real switches grow, extras get invisible hit areas --- */
+            .tab { min-height: 40px; display: flex; align-items: center; }
+            .icon-btn, .eye-chip { width: 40px; height: 40px; }
+            .hud-chip { width: 40px; height: 40px; font-size: 15px; }
+            .hud-head { padding: 13px; }
+            .panic-bar { padding: 12px 14px; }
+            .m-btn { min-height: 40px; display: inline-flex; align-items: center; padding: 8px 14px; }
+            .kb-chip { min-height: 40px; display: inline-flex; align-items: center; padding: 0 12px; font-size: 11px; }
+            /* Pill switches: 44x24 (rows: 40x22) with an invisible band so the tap target is 40px tall. */
+            .toggle-switch { width: 44px; height: 24px; }
+            .toggle-switch::after { width: 20px; height: 20px; }
+            .toggle-switch.on::after { transform: translateX(20px); }
+            .toggle-switch::before { content: ''; position: absolute; top: -9px; bottom: -9px; left: -4px; right: -4px; }
+            .hud-row .hud-toggle { width: 40px; height: 22px; }
+            .hud-row .hud-toggle::after { width: 18px; height: 18px; }
+            .hud-row .hud-toggle.on::after { transform: translateX(18px); }
+            .hud-mv { position: relative; width: 34px; height: 34px; font-size: 11px; }
+            .hud-mv::before { content: ''; position: absolute; top: -6px; bottom: -6px; left: 0; right: 0; }
+            .hud-red { position: relative; width: 26px; height: 22px; font-size: 9px; }
+            .hud-red::before { content: ''; position: absolute; top: -9px; bottom: -9px; left: -4px; right: -4px; }
+            /* Slider: a full 40px tap band, the visible bar stays 6px and centred inside it. */
+            .slider-track { height: 40px; background: transparent; }
+            .slider-track::before {
+                content: ''; position: absolute; left: 0; right: 0; top: 17px; height: 6px;
+                border-radius: 6px; background: rgba(255,255,255,0.08);
+            }
+            .slider-fill { position: relative; top: 17px; height: 6px; }
+            .color-swatch { width: 46px; height: 40px; }
+            .num-input, .color-hex, .text-input, .sub-select { min-height: 40px; }
+
+            /* --- no overflow at ~360px: fields, chips and names fit --- */
+            .num-input { width: 64px; }
+            .color-hex { width: 66px; }
+            .sub-select { max-width: 46%; }
+            .hud-name { flex: 1 1 auto; min-width: 0; }
+            .meta-row .bd { max-width: 100%; overflow-wrap: anywhere; }
+            #toast { white-space: normal; max-width: calc(100vw - 20px); text-align: center; }
+            .subtitle-overlay { white-space: normal; max-width: calc(100vw - 20px); text-align: center; font-size: 12px; }
+            .modal-card { padding: 16px 14px; }
+            .modal-card textarea { white-space: pre-wrap; word-break: break-all; font-size: 10.5px; }
+
+            /* --- expensive looks off: same palette, solid alpha instead of blur and glow --- */
+            .rail, .profile-bar, .hud-panel, .setting-item, #toast, .modal-mask, .subtitle-overlay {
+                backdrop-filter: none; -webkit-backdrop-filter: none;
+            }
+            .rail { background: rgba(7, 10, 16, 0.97); box-shadow: none; }
+            .profile-bar, .hud-panel, .setting-item { background: rgba(13, 18, 28, 0.95); }
+            .setting-item:hover { background: rgba(18, 24, 36, 0.97); }
+            .setting-item.expanded { background: rgba(13, 18, 28, 0.98); box-shadow: 0 6px 20px rgba(0,0,0,0.4); }
+            .modal-mask { background: rgba(3, 5, 9, 0.88); }
+            #toast { background: rgba(13, 18, 28, 0.98); box-shadow: 0 6px 18px rgba(0,0,0,0.45); }
+            .subtitle-overlay { background: rgba(0, 0, 0, 0.72); }
+            .rail-mark, .header-status, .toggle-switch.on, .hud-red.on, .slider-fill { box-shadow: none; }
+
+            /* --- no infinite loops, no entrance cascades, no long transitions --- */
+            *, *::before, *::after {
+                animation: none !important;
+                transition-duration: 0.12s !important;
+                transition-delay: 0s !important;
+            }
+        }
+
+        /* =========================================================
+           Reduced motion — same calm panel, zero movement. A bare
+           `*` never matched `body::before`, so the 24s aurora drift
+           kept running here; `*::before/::after` fixes that.
+           Placed last so it also wins over the phone pass above.
+           ========================================================= */
+        @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after { animation: none !important; transition: none !important; }
+            .rail, .profile-bar, .hud-panel, .setting-item, #toast, .modal-mask, .subtitle-overlay {
+                backdrop-filter: none; -webkit-backdrop-filter: none;
+            }
+            .rail { background: rgba(7, 10, 16, 0.97); box-shadow: none; }
+            .profile-bar, .hud-panel, .setting-item { background: rgba(13, 18, 28, 0.95); }
+            .setting-item:hover { background: rgba(18, 24, 36, 0.97); }
+            .setting-item.expanded { background: rgba(13, 18, 28, 0.98); box-shadow: 0 6px 20px rgba(0,0,0,0.4); }
+            .modal-mask { background: rgba(3, 5, 9, 0.88); }
+            #toast { background: rgba(13, 18, 28, 0.98); }
+            .subtitle-overlay { background: rgba(0, 0, 0, 0.72); }
+            .rail-mark, .header-status, .toggle-switch.on, .hud-red.on, .slider-fill { box-shadow: none; }
         }
     </style>
 </head>
@@ -674,17 +795,17 @@
                 <kbd>RSHIFT + DELETE</kbd>
             </div>
 
-            <!-- ===== HUD list: every module that can draw a line on the overlay ===== -->
+            <!-- ===== HUD list: which modules are listed on the overlay, and in what order ===== -->
             <div class="hud-panel open" id="hudPanel">
                 <div class="hud-head" id="hudHead">
                     <span class="hud-caret">⌄</span>
-                    <span class="hud-title">HUD list</span>
+                    <span class="hud-title">HUD list · which lines &amp; order</span>
                     <span class="hud-count" id="hudCount">0</span>
                     <div class="spacer"></div>
                     <input class="hud-search" id="hudSearch" placeholder="Search modules…" autocomplete="off" spellcheck="false">
                 </div>
                 <div class="hud-body">
-                    <div class="hud-hint">Every module that can draw a line on the in-game HUD · the pill shows or hides it, ▲▼ sets the draw order.</div>
+                    <div class="hud-hint">Shown here = listed on the in-game HUD. The pill lists / unlists that module's line (it does not turn the module on — use its card for that), ▲▼ moves the line up or down the HUD, and the red dot switches that line's red work-flash.</div>
                     <div class="hud-rows" id="hudRows"></div>
                 </div>
             </div>
@@ -916,6 +1037,17 @@
         // otherwise. (`hudEnabled` only says the module defines its own HUD string — it is not
         // "can be shown".) Order is the user's, by hudIndex.
         function hudShown(m){ return typeof m.hudShown === 'boolean' ? m.hudShown : !m.hudHidden; }
+        // The red work-flash is its own per-module flag (`redIndicator`, default true server-side —
+        // the stealth modules ship it off). Never guessed here: the payload is authoritative.
+        function redOn(m){ return typeof m.redIndicator === 'boolean' ? m.redIndicator : true; }
+        // One place that names the two per-row controls, so row HTML and the patch cannot disagree.
+        function hudPillTitle(shown){
+            return (shown ? 'Listed on the HUD' : 'Not listed on the HUD')
+                 + " · click to " + (shown ? 'hide' : 'show') + " this module's line";
+        }
+        function hudRedTitle(red){
+            return red ? 'Red work-flash on · click to turn it off' : 'Red work-flash off · click to turn it on';
+        }
         function hudListModules(){
             return modules.slice().sort((a,b) =>
                 ((a.hudIndex|0) - (b.hudIndex|0)) || String(a.name).localeCompare(String(b.name)));
@@ -923,11 +1055,15 @@
         function hudRowHtml(m){
             const name = m.name;
             const shown = hudShown(m);
+            const red = redOn(m);
             // A real on/off pill per row (same control as everywhere else) plus a dimmed row when
-            // hidden, so "is this line on the HUD?" is never a guess.
+            // hidden, so "is this line on the HUD?" is never a guess. The red chip beside it is the
+            // separate work-flash switch — it never changes whether the line is listed.
             return `<div class="hud-row ${shown?'':'off'}" data-hud-row="${name}">
                 <div class="toggle-switch hud-toggle ${shown?'on':''}" data-hud-toggle="${name}"
-                     title="${shown?'Shown on the HUD · click to hide':'Hidden from the HUD · click to show'}"><span class="pulse-ring"></span></div>
+                     title="${hudPillTitle(shown)}"><span class="pulse-ring"></span></div>
+                <span class="hud-red ${red?'on':'off'}" data-hud-red="${name}"
+                      title="${hudRedTitle(red)}">●</span>
                 <span class="hud-name">${name}</span>
                 ${m.hudValue?`<span class="hud-val">${m.hudValue}</span>`:''}
                 <span class="hud-order">
@@ -955,7 +1091,7 @@
             // answers "how many lines is the overlay drawing right now?".
             const cnt = $('#hudCount');
             if(cnt) cnt.textContent = all.filter(hudShown).length + ' / ' + all.length;
-            const sig = all.length + '#' + view.map(m => m.name + (hudShown(m)?'1':'0') + (m.hudValue||'')).join('|');
+            const sig = all.length + '#' + view.map(m => m.name + (hudShown(m)?'1':'0') + (redOn(m)?'1':'0') + (m.hudValue||'')).join('|');
             if(sig === hudSig) return;
             hudSig = sig;
             rows.innerHTML = view.length ? view.map(hudRowHtml).join('')
@@ -1181,7 +1317,7 @@
         function controlsHtml(m){
             // Only the ◉ HUD chip is left in the drawer: any module can be hidden from the HUD list,
             // so the per-card shortcut and the HUD panel must agree about what is adjustable.
-            return `<span class="hud-chip ${m.hudHidden?'off':''}" data-hud="${m.name}" title="Show / hide this line on the HUD list">◉</span>`;
+            return `<span class="hud-chip ${m.hudHidden?'off':''}" data-hud="${m.name}" title="List / unlist this module's line on the HUD (same switch as the HUD list panel)">◉</span>`;
         }
         function moduleCard(m){
             const rule = MODE_RULES[m.name];
@@ -1321,6 +1457,22 @@
                     }
                 });
             });
+            // HUD rows: renderHudList() rebuilds them on a signature change; this keeps both
+            // per-row controls honest even when the row survives the poll untouched.
+            $$('#hudRows .hud-row[data-hud-row]').forEach(row => {
+                const m = modules.find(x => x.name === row.dataset.hudRow);
+                if(!m) return;
+                const shown = hudShown(m), red = redOn(m);
+                row.classList.toggle('off', !shown);
+                const pill = row.querySelector('.hud-toggle[data-hud-toggle]');
+                if(pill){ pill.classList.toggle('on', shown); pill.title = hudPillTitle(shown); }
+                const dot = row.querySelector('.hud-red[data-hud-red]');
+                if(dot){
+                    dot.classList.toggle('on', red);
+                    dot.classList.toggle('off', !red);
+                    dot.title = hudRedTitle(red);
+                }
+            });
             updateEye();
         }
 
@@ -1406,6 +1558,20 @@
                 if(hrow) hrow.classList.toggle('off', hide);
                 hudSig = null; renderHudList();
                 try { await api('/api/modules/'+encodeURIComponent(m.name)+'/hud', {method:'POST', body:JSON.stringify({hidden:hide})}); } catch(err){}
+                refresh(); return;
+            }
+            // HUD list row: red work-flash (same endpoint, `red` body — independent of show/hide)
+            const hred = e.target.closest('.hud-red[data-hud-red]');
+            if(hred){
+                const m = modules.find(x => x.name === hred.dataset.hudRed);
+                if(!m) return;
+                const red = !redOn(m);
+                m.redIndicator = red;                      // optimistic flip; the poll corrects it
+                hred.classList.toggle('on', red);
+                hred.classList.toggle('off', !red);
+                hred.title = hudRedTitle(red);
+                hudSig = null; renderHudList();
+                try { await api('/api/modules/'+encodeURIComponent(m.name)+'/hud', {method:'POST', body:JSON.stringify({red:red})}); } catch(err){}
                 refresh(); return;
             }
             // HUD list row: one slot up/down in the overlay draw order

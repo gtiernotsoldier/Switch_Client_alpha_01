@@ -3,22 +3,19 @@ package io.doppel.agent;
 import java.lang.reflect.Method;
 
 /**
- * ClassLoader bridge between Javassist-injected Display.update() and ForgeBootstrap.render().
+ * ClassLoader bridge between the bytecode-injected Display.update() hook and
+ * ForgeBootstrap.render().
  *
- * Architecture role: This is the Javassist render bridge.
+ * Architecture role: this is the render bridge.
  * - Called every frame from Display.update() BEFORE buffer swap
  * - GL context is current, MC has finished its render
  * - Delegates ALL rendering to ForgeBootstrap.render() via reflection
  * - Does NOT do any GL drawing itself — that's ForgeBootstrap's job
  *
- * Classloader note: RenderBridge is on the bootstrap CL (after appendToBootstrapClassLoaderSearch).
- * ForgeBootstrap is on the game CL. We use Thread.currentThread().getContextClassLoader()
- * to bridge the classloader gap.
- *
- * Why this bridge exists: Javassist injects bytecode into Display.update() which runs in
- * LWJGL's ClassLoader. ForgeBootstrap lives in the agent's ClassLoader. The injected code
- * can reference RenderBridge because it's on the bootstrap CL (visible to all).
- * RenderBridge then uses the context ClassLoader to find and call ForgeBootstrap.
+ * Why this bridge exists: the hook runs inside Display, which is defined by the game's
+ * LaunchClassLoader, while ForgeBootstrap lives on the agent's ClassLoader. The injected
+ * code therefore does not reference RenderBridge directly — it looks it up through the
+ * render thread's context ClassLoader, which is the game CL and can see both sides.
  */
 public class RenderBridge {
 

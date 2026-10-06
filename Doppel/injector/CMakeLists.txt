@@ -4,6 +4,12 @@ project(Doppel_Injector)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# LEGACY: the C++ injector executable below is no longer built by CI (the Rust
+# injector at src/main.rs is the shipping one; CI only builds the payload DLL from
+# src/payload/CMakeLists.txt). The sources are kept on purpose as a historical
+# record of how the injection path was first implemented. See CXX-LEGACY.md before
+# changing or removing any of it.
+
 # ── Injector executable ──
 
 set(SOURCES

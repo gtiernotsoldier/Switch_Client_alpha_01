@@ -64,11 +64,12 @@ jobs:
             echo "ERROR: RenderBridge.class not found in fat jar. Render bridge missing!"
             exit 1
           fi
-          # Javassist is referenced by Transformer.class at load time. If it's missing
-          # from the fat jar, the JVM fails with NoClassDefFoundError: javassist/ClassPath
-          # the moment Transformer is first touched (real failure seen in production logs).
-          if ! jar tf "$JAR" | grep -q "javassist/ClassPool"; then
-            echo "ERROR: javassist/ClassPool not found in fat jar. Javassist dependency missing!"
+          # ASM is referenced by Transformer.class at load time. If it's missing from the
+          # fat jar, the JVM fails with NoClassDefFoundError: org/objectweb/asm/ClassReader
+          # the moment Transformer is first touched (same failure shape Javassist used to
+          # produce, which is why this check exists at all).
+          if ! jar tf "$JAR" | grep -q "org/objectweb/asm/ClassReader"; then
+            echo "ERROR: org/objectweb/asm/ClassReader not found in fat jar. ASM dependency missing!"
             exit 1
           fi
           echo "agent.jar validation passed. All modules + render bridge present."
@@ -145,3 +146,30 @@ jobs:
         with:
           name: doppel-injector
           path: Doppel/injector/target/release/doppel-injector.exe
+
+  # ─── External HUD overlay (Windows, Rust) ───
+  # The HUD was moved out of the JVM because sharing the GL state machine with the game
+  # is what kept breaking it. This job exists so the new crate can never rot the way the
+  # Fabric adapter did: it is compiled on every push, whether or not anything uses it yet.
+  hud:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Build HUD overlay (cargo)
+        run: |
+          cd Doppel/hud
+          cargo build --release
+      - name: Show build info
+        shell: pwsh
+        run: |
+          $dir = "Doppel\hud\target\release"
+          $exe = Get-ChildItem -Path $dir -Filter "*.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $exe) { Write-Error "no HUD executable produced in $dir"; exit 1 }
+          Write-Host "HUD binary: $($exe.Name) ($($exe.Length) bytes)"
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: doppel-hud
+          path: Doppel/hud/target/release/*.exe

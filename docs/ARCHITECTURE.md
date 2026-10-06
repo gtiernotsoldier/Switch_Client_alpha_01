@@ -8,7 +8,7 @@
 ```
 Doppel/
 ├── injector/            # Rust/C++ DLL 注入器：改进程、版本识别、注入 payload
-├── agent/               # Java agent：javassist 字节码注入 + MappingContext（映射抽象）
+├── agent/               # Java agent：ASM 字节码注入 + MappingContext（映射抽象）
 ├── core/                # 纯 Kotlin 算法，零 MC 依赖
 │   ├── strategy/        #   VelocityStrategy, AimStrategy, KeepSprintStrategy, ReachRaycast...
 │   ├── algorithm/       #   RotationCalculator, VectorOperations, NoiseProvider
@@ -41,7 +41,7 @@ Doppel/
 
 ```
 Rust injector → payload.dll (JNI) → agentmain("jni-attach")
-  → javassist retransform Display.update()，在方法体开头插入 RenderBridge.onFrame()
+  → ASM retransform Display.update()，在方法体开头插入 RenderBridge.onFrame()
   → 每渲染帧调用 → ForgeBootstrap.render()
 ```
 

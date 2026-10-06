@@ -292,18 +292,19 @@ public class Agent {
         //      missing stderr, leaving us blind. Now we log the full stack trace
         //      to doppel-agent.log so the user can see exactly what failed.
         try {
-            // 5. Install Transformer hook (Javassist's job, not Agent's)
+            // 5. Install Transformer hook (Agent owns Instrumentation, Transformer owns bytes)
             //
             // CRITICAL FIX: when inst == null (JNI bootstrap), do NOT touch the
             // Transformer class AT ALL. Loading Transformer from the game
             // ClassLoader (LaunchClassLoader) triggers JVM class verification,
-            // which resolves the javassist.* references in transform() — and
-            // LaunchClassLoader cannot see javassist in the fat jar, throwing
-            // NoClassDefFoundError: javassist/ClassPath (confirmed in real logs).
+            // which resolves the org.objectweb.asm.* references in transform() — and
+            // LaunchClassLoader cannot see ASM inside the fat jar, throwing
+            // NoClassDefFoundError: org/objectweb/asm/ClassReader (confirmed in real
+            // logs with the previous bytecode library). The same rule still applies.
             //
             // The hook is installed later by payload.dll via
             // agentmain("jni-attach", inst) — that callback runs on the
-            // AppClassLoader (agent.jar on system CL via JPLIS), where javassist
+            // AppClassLoader (agent.jar on system CL via JPLIS), where ASM
             // IS visible. So in JNI mode we defer and let jni-attach do it.
             if (inst != null) {
                 boolean hookInstalled = Transformer.install(inst);
@@ -313,7 +314,7 @@ public class Agent {
                     log("[Agent] Render path: Transformer + RenderBridge → ForgeBootstrap.render() (every frame, stealthy)");
                 }
             } else {
-                log("[Agent] JNI mode — Transformer hook deferred to agentmain(jni-attach). Not loading Transformer from game CL (avoids javassist linkage error).");
+                log("[Agent] JNI mode — Transformer hook deferred to agentmain(jni-attach). Not loading Transformer from game CL (avoids ASM linkage error).");
             }
 
             // 6. Start threads (dispatch only — no rendering)

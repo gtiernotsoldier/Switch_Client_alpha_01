@@ -34,7 +34,7 @@ import io.doppel.agent.MappingContext
  * 1. init() — register modules, wire EventBridge, inject packet interceptor
  * 2. tick() — called at 20Hz by Agent.java — extracts player state, dispatches to EventBridge
  * 3. onKey(lwjglCode, pressed) — called by Agent.java key poll thread
- * 4. render() — called by Javassist hook or Agent.java fallback.
+ * 4. render() — called by the Display.update() bytecode hook or Agent.java fallback.
  *
  * NOTE: The in-game ClickGUI / HUD overlay was removed in favor of a WebUI
  * panel (cross-version, community-maintainable). render() is kept as a no-op
@@ -275,7 +275,7 @@ object ForgeBootstrap {
     }
 
     /**
-     * Called by Javassist hook (or Agent.java fallback) on MC's render thread.
+     * Called by the Display.update() bytecode hook (or Agent.java fallback) on MC's render thread.
      *
      * Renders ONLY the in-game HUD (module status card) + toasts via
      * OverlayRenderer. The ClickGUI configuration panels were removed in favor

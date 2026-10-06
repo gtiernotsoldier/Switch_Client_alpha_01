@@ -25,8 +25,10 @@ dependencies {
     // Must be explicit because the java plugin doesn't resolve Kotlin transitive deps.
     implementation("org.jetbrains.kotlin:kotlin-stdlib:1.9.10")
 
-    // Javassist for bytecode manipulation
-    implementation("org.javassist:javassist:3.29.2-GA")
+    // ASM for bytecode manipulation. Replaced Javassist: ASM emits the bytecode directly
+    // instead of compiling a Java snippet, so there is no ClassPool to populate and none
+    // of the dual-ClassLoader LinkageErrors that came with it (see Transformer.java).
+    implementation("org.ow2.asm:asm:9.7")
 
     // JSON parsing (Jackson)
     implementation("com.fasterxml.jackson.core:jackson-databind:2.15.2")

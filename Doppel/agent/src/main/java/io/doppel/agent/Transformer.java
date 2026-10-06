@@ -1,6 +1,5 @@
 package io.doppel.agent;
 
-import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.lang.instrument.ClassFileTransformer;
 import java.lang.instrument.Instrumentation;
@@ -8,13 +7,18 @@ import java.lang.reflect.Method;
 import java.net.URL;
 import java.net.URLClassLoader;
 import java.security.ProtectionDomain;
+import java.util.HashSet;
+import java.util.Set;
 
-import javassist.ClassPool;
-import javassist.CtClass;
-import javassist.CtMethod;
+import org.objectweb.asm.ClassReader;
+import org.objectweb.asm.ClassVisitor;
+import org.objectweb.asm.ClassWriter;
+import org.objectweb.asm.Label;
+import org.objectweb.asm.MethodVisitor;
+import org.objectweb.asm.Opcodes;
 
 /**
- * Javassist bytecode injection layer — hooks Display.update() for HUD rendering.
+ * ASM bytecode injection layer — hooks Display.update() for HUD rendering.
  *
  * Architecture role: This is the "stealthy" injection layer.
  * - Gets Instrumentation (via provided inst or self-attach)
@@ -76,18 +80,11 @@ public class Transformer implements ClassFileTransformer {
                 Class<?> displayClass = findDisplayClass();
                 Agent.log("[Transformer] Display class found via: " + displayClass.getClassLoader());
                 if (inst.isModifiableClass(displayClass)) {
-                    // CRITICAL FIX: do NOT append agent.jar to the bootstrap ClassLoader.
-                    // Real log evidence (2026-08-05): appendAgentToBootstrapCL() caused
-                    // javassist to be loaded by the bootstrap CL while Transformer was
-                    // loaded by AppClassLoader (JPLIS agentmain). Two ClassLoaders each
-                    // define javassist.ClassPath → LinkageError: loader constraint
-                    // violation when Transformer calls ClassPool.appendClassPath(...).
-                    //
-                    // agent.jar is ALREADY on the system CL (JPLIS appends it to load
-                    // this agent), so AppClassLoader can see javassist + RenderBridge.
-                    // The injected bytecode loads RenderBridge via the render thread's
-                    // context CL (LaunchClassLoader, which has agent.jar via payload.dll
-                    // addURL) — no bootstrap CL involvement needed anywhere.
+                    // NOTE: keep agent.jar OFF the bootstrap ClassLoader. The hook itself
+                    // is a self-call inside Display (always resolvable) and RenderBridge is
+                    // looked up through the render thread's context CL (LaunchClassLoader,
+                    // which sees agent.jar via payload.dll addURL), so no bootstrap
+                    // visibility is needed anywhere.
                     inst.addTransformer(new Transformer(), true);
                     inst.retransformClasses(displayClass);
 
@@ -99,7 +96,7 @@ public class Transformer implements ClassFileTransformer {
                         return true;
                     } else {
                         Agent.log("[Transformer] FATAL: retransformClasses completed but transform() returned null — bytecode was NOT modified");
-                        Agent.log("[Transformer] This usually means Javassist could not find RenderBridge in its ClassPool");
+                        Agent.log("[Transformer] This means Display.update() (()V) was not found in the class we transformed");
                         return false;
                     }
                 }
@@ -146,7 +143,8 @@ public class Transformer implements ClassFileTransformer {
     public static void handleRetransform(Instrumentation inst) {
         try {
             // See install(): agent.jar is already on the system CL — do NOT append
-            // to bootstrap CL (causes javassist dual-classloader LinkageError).
+            // it to the bootstrap CL (that would put the bytecode library on a second
+            // ClassLoader and re-create the old linker conflict).
             inst.addTransformer(new Transformer(), true);
             Class<?> displayClass = findDisplayClass();
             Agent.log("[Transformer] handleRetransform: Display class found via: " + displayClass.getClassLoader());
@@ -183,107 +181,157 @@ public class Transformer implements ClassFileTransformer {
      */
     private byte[] transformDisplay(byte[] classfileBuffer) {
         try {
-            ClassPool pool = ClassPool.getDefault();
+            ClassReader reader = new ClassReader(classfileBuffer);
 
-            // NOTE: We previously tried to add RenderBridge to the ClassPool so that
-            // insertBefore("io.doppel.agent.RenderBridge.onFrame()") could compile.
-            // That approach failed because:
-            //   - appendToBootstrapClassLoaderSearch() puts the jar on the bootstrap CL,
-            //     but Javassist's ClassPool.getDefault() does NOT search the bootstrap CL
-            //   - LoaderClassPath(gameCL) may return null if Transformer is on bootstrap CL
-            //   - findAgentJar() may not find the jar at the expected path
-            //
-            // Instead, we now use Class.forName() + reflection in the injected code, which
-            // only requires java.lang.Class and java.lang.reflect.Method (always available).
-            // No ClassPool modifications needed for compilation.
-            //
-            // We still add the game ClassLoader and agent.jar to the pool as a diagnostic —
-            // if future insertBefore() calls need to reference other classes, they'll benefit.
-
-            // Diagnostic: log which ClassLoader loaded Transformer
+            // Diagnostic: which CL loaded Transformer (and therefore ASM) — it decides
+            // which classes we can reference from the code that runs here.
             ClassLoader transformerCL = Transformer.class.getClassLoader();
             Agent.log("[Transformer] Transformer classloader: " + (transformerCL != null ? transformerCL.getClass().getName() : "bootstrap (null)"));
+            Agent.log("[Transformer] ASM ClassReader loaded by: " + ClassReader.class.getClassLoader());
 
-            // Diagnostic: confirm javassist is visible and from which CL.
-            // If this throws, the next catch(Throwable) will print the chain.
-            Agent.log("[Transformer] javassist.ClassPool loaded by: " + javassist.ClassPool.class.getClassLoader());
-
-            try {
-                if (transformerCL != null) {
-                    pool.appendClassPath(new javassist.LoaderClassPath(transformerCL));
-                    Agent.log("[Transformer] Added Transformer CL to ClassPool");
+            // The hook is emitted as a NEW private static method, and update() only gets a
+            // single self-INVOKESTATIC. Two reasons:
+            //   1. a self-call can never hit the cross-ClassLoader resolution problem that
+            //      the reflective RenderBridge lookup inside the hook exists to dodge;
+            //   2. inserting a try/catch directly into update() would make the original
+            //      method body a jump target, which forces StackMapTable frames to be
+            //      recomputed for the whole method — and re-deriving frames for a game
+            //      class means resolving game types, which this ClassLoader cannot do.
+            // The hook body carries its own frames (we know their exact shape), so the
+            // original method's frames are left untouched.
+            final Set<String> existingMethods = new HashSet<String>();
+            reader.accept(new ClassVisitor(Opcodes.ASM9) {
+                @Override
+                public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
+                    existingMethods.add(name);
+                    return null;
                 }
-            } catch (Exception e) {
-                Agent.log("[Transformer] Failed to add Transformer CL to ClassPool: " + e.getMessage());
-            }
+            }, ClassReader.SKIP_CODE | ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
 
-            String agentJarPath = findAgentJar();
-            if (agentJarPath != null) {
-                try {
-                    String canonicalPath = new File(agentJarPath).getCanonicalPath();
-                    pool.appendClassPath(canonicalPath);
-                    Agent.log("[Transformer] Added agent.jar to ClassPool: " + canonicalPath);
-                } catch (Exception e) {
-                    Agent.log("[Transformer] Failed to add agent.jar to ClassPool: " + e.getMessage());
+            // Short, non-branded name (a synthetic method is visible in a heap dump, and the
+            // plan's de-characterisation rule applies to bytecode too). Collisions are checked.
+            String hookName = "h";
+            while (existingMethods.contains(hookName)) hookName = hookName + "h";
+            final String hook = hookName;
+            final String owner = reader.getClassName();
+            // Frames are mandatory from class file version 50 (Java 6) onwards; LWJGL 2.x may
+            // be older, in which case writing a StackMapTable would itself be invalid.
+            final boolean needsFrames = (reader.readShort(6) & 0xffff) >= 50;
+
+            final boolean[] injected = new boolean[] { false };
+            ClassWriter writer = new ClassWriter(reader, ClassWriter.COMPUTE_MAXS);
+            ClassVisitor injector = new ClassVisitor(Opcodes.ASM9, writer) {
+                @Override
+                public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
+                    MethodVisitor mv = super.visitMethod(access, name, descriptor, signature, exceptions);
+                    if (mv == null) return null;
+                    if (!injected[0] && "update".equals(name) && "()V".equals(descriptor)) {
+                        injected[0] = true;
+                        return new MethodVisitor(Opcodes.ASM9, mv) {
+                            @Override
+                            public void visitCode() {
+                                super.visitCode();
+                                // Display.update() must run the hook before anything else.
+                                super.visitMethodInsn(Opcodes.INVOKESTATIC, owner, hook, "()V", false);
+                            }
+                        };
+                    }
+                    return mv;
                 }
-            } else {
-                Agent.log("[Transformer] findAgentJar() returned null — no jar path added to ClassPool");
+
+                @Override
+                public void visitEnd() {
+                    if (injected[0]) emitHookMethod(this, hook, needsFrames);
+                    super.visitEnd();
+                }
+            };
+            reader.accept(injector, 0);
+
+            if (!injected[0]) {
+                Agent.log("[Transformer] Display.update() (()V) not present — nothing injected");
+                return null;
             }
 
-            // Diagnostic: check if RenderBridge is findable in the pool (informational only)
-            try {
-                pool.get("io.doppel.agent.RenderBridge");
-                Agent.log("[Transformer] RenderBridge found in ClassPool (informational — not needed for compilation)");
-            } catch (javassist.NotFoundException e) {
-                Agent.log("[Transformer] RenderBridge NOT found in ClassPool (OK — we use Class.forName() at runtime)");
-            }
-
-            CtClass ctClass = pool.makeClass(new ByteArrayInputStream(classfileBuffer));
-
-            // Display.update() → insert RenderBridge.onFrame() at the very beginning.
-            // Same anti-constant-folding pattern as before (see comments): wrap the right
-            // operand in new String(...) so javassist cannot fold it into a class reference.
-            CtMethod updateMethod = ctClass.getDeclaredMethod("update");
-            updateMethod.insertBefore(
-                "try { Class.forName(\"io.doppel.agent.\" + new String(\"RenderBridge\"), true, " +
-                "Thread.currentThread().getContextClassLoader())" +
-                ".getMethod(\"onFrame\", new java.lang.Class[0])" +
-                ".invoke(null, new java.lang.Object[0]); } catch (Throwable t) {}"
-            );
-
-            byte[] result = ctClass.toBytecode();
-            ctClass.defrost();
+            byte[] result = writer.toByteArray();
             hooked = true;
             Agent.log("[Transformer] Display.update() bytecode injected — RenderBridge.onFrame() will be called every frame");
             return result;
         } catch (Throwable e) {
-            // NOTE: catch(Throwable) — must catch Errors too. NoClassDefFoundError
-            // (javassist missing from some classloader view) is an Error, NOT an
-            // Exception, so a catch(Exception) silently drops it and transform()
-            // returns null with zero diagnostics (confirmed in real logs).
-            String errorType = e.getClass().getSimpleName();
-            String errorMsg = e.getMessage();
-            if ("CannotCompileException".equals(errorType)) {
-                Agent.log("[Transformer] Compile error: " + errorMsg);
-            } else if ("NotFoundException".equals(errorType)) {
-                Agent.log("[Transformer] Display.update() not found: " + errorMsg);
-            } else {
-                Agent.log("[Transformer] Failed: " + errorType + ": " + errorMsg);
-                // Print the root cause chain — helps find javassist linkage issues
-                Throwable cause = e;
-                int depth = 0;
-                while (cause != null && depth < 5) {
-                    Agent.log("[Transformer]   Caused by: " + cause.getClass().getName() + ": " + cause.getMessage());
-                    cause = cause.getCause();
-                    depth++;
-                }
+            // catch(Throwable) is deliberate. A failure here (malformed class file, an
+            // unexpected method shape, an Error from the verifier) must never be swallowed:
+            // a silent null return with no diagnostics is exactly the failure mode that
+            // cost days of guessing. Print the type, the message and the cause chain.
+            Agent.log("[Transformer] Failed: " + e.getClass().getSimpleName() + ": " + e.getMessage());
+            Throwable cause = e;
+            int depth = 0;
+            while (cause != null && depth < 5) {
+                Agent.log("[Transformer]   Caused by: " + cause.getClass().getName() + ": " + cause.getMessage());
+                cause = cause.getCause();
+                depth++;
             }
         }
         return null;
     }
 
+    /**
+     * Emit the hook body as a new private static synthetic method on the class being
+     * transformed: a best-effort reflective call to RenderBridge.onFrame() that swallows
+     * every failure.
+     *
+     * Reflection instead of a direct INVOKESTATIC is deliberate. Display is defined by the
+     * game's LaunchClassLoader, while RenderBridge lives in agent.jar; letting the JVM
+     * resolve that reference from Display would put a ClassLoader it cannot see on the
+     * resolution path, and a NoClassDefFoundError there would propagate straight into
+     * Display.update(). Going through the render thread's context CL keeps the failure
+     * inside the hook, where it is caught.
+     *
+     * Frames are written by hand because the writer runs with COMPUTE_MAXS only: computing
+     * frames for a game class would require resolving game types (see transformDisplay).
+     */
+    private static void emitHookMethod(ClassVisitor cv, String hookName, boolean needsFrames) {
+        MethodVisitor hm = cv.visitMethod(
+            Opcodes.ACC_PRIVATE | Opcodes.ACC_STATIC | Opcodes.ACC_SYNTHETIC,
+            hookName, "()V", null, null);
+        hm.visitCode();
+        Label start = new Label();
+        Label end = new Label();
+        Label handler = new Label();
+        Label after = new Label();
+        hm.visitTryCatchBlock(start, end, handler, "java/lang/Throwable");
+        hm.visitLabel(start);
+        hm.visitLdcInsn("io.doppel.agent.RenderBridge");
+        hm.visitInsn(Opcodes.ICONST_1);
+        hm.visitMethodInsn(Opcodes.INVOKESTATIC, "java/lang/Thread", "currentThread", "()Ljava/lang/Thread;", false);
+        hm.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/Thread", "getContextClassLoader", "()Ljava/lang/ClassLoader;", false);
+        hm.visitMethodInsn(Opcodes.INVOKESTATIC, "java/lang/Class", "forName", "(Ljava/lang/String;ZLjava/lang/ClassLoader;)Ljava/lang/Class;", false);
+        hm.visitLdcInsn("onFrame");
+        hm.visitInsn(Opcodes.ICONST_0);
+        hm.visitTypeInsn(Opcodes.ANEWARRAY, "java/lang/Class");
+        hm.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/Class", "getMethod", "(Ljava/lang/String;[Ljava/lang/Class;)Ljava/lang/reflect/Method;", false);
+        hm.visitInsn(Opcodes.ACONST_NULL);
+        hm.visitInsn(Opcodes.ICONST_0);
+        hm.visitTypeInsn(Opcodes.ANEWARRAY, "java/lang/Object");
+        hm.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/reflect/Method", "invoke", "(Ljava/lang/Object;[Ljava/lang/Object;)Ljava/lang/Object;", false);
+        hm.visitInsn(Opcodes.POP);
+        hm.visitLabel(end);
+        hm.visitJumpInsn(Opcodes.GOTO, after);
+        hm.visitLabel(handler);
+        // Handler entry state: no locals (static, no arguments), the thrown object on the stack.
+        if (needsFrames) {
+            hm.visitFrame(Opcodes.F_FULL, 0, new Object[0], 1, new Object[] { "java/lang/Throwable" });
+        }
+        hm.visitInsn(Opcodes.POP);
+        hm.visitLabel(after);
+        if (needsFrames) {
+            hm.visitFrame(Opcodes.F_FULL, 0, new Object[0], 0, new Object[0]);
+        }
+        hm.visitInsn(Opcodes.RETURN);
+        hm.visitMaxs(0, 0);
+        hm.visitEnd();
+    }
+
     // ═══════════════════════════════════════════
-    //  Instrumentation acquisition — this is Javassist's job, not Agent's
+    //  Instrumentation acquisition — Agent installs, Transformer only rewrites bytes
     // ═══════════════════════════════════════════
 
     // ═══════════════════════════════════════════

@@ -62,7 +62,7 @@ We firmly believe that a ghost client capable of long-term survival must adhere 
 ├─────────────────────────────────────────────┤
 │          Java Agent (agent)                 │
 │  · Class-loading-time bytecode modification │
-│    (Javassist/ASM)                          │
+│    (ASM)                                    │
 │  · Provide MappingContext                   │
 │    (cross-version class/method mapping)     │
 │  · Cache serialization (avoid reflection    │
@@ -255,7 +255,7 @@ Strafe	Perfect movement lock	Assists only when the player is already strafing; n
 
 Layer	Language	Responsibility	Key Components	
 Injector	C++ / Rust	Process detection, version recognition, Agent injection / Fabric Mod deployment	Process enumeration, remote thread, version probing, payload DLL	
-Agent	Java	Class-loading-time bytecode modification, providing cross-version mapping	Javassist / ASM, MappingContext, MappingLoader, cache serialization, RenderBridge	
+Agent	Java	Class-loading-time bytecode modification, providing cross-version mapping	ASM, MappingContext, MappingLoader, cache serialization, RenderBridge	
 Core	Kotlin	Pure math algorithms, strategy interfaces + implementations, condition engine, noise perturbation	AimStrategy, VelocityStrategy, TriggerCondition, NoiseProvider, SafetyWrapper	
 Adapter	Kotlin	Version adaptation (1.8.9 Forge / 1.21 Fabric) + cross-version common modules	VelocityModule, AimModule, BattleInsight, WebUIServer, render bridges	
 

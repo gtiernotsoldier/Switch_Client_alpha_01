@@ -1,0 +1,21 @@
+[package]
+name = "doppel-hud"
+version = "0.1.0-alpha"
+edition = "2021"
+description = "Doppel out-of-process HUD overlay — a layered Win32 window, no third-party deps"
+
+[[bin]]
+name = "doppel-hud"
+path = "src/main.rs"
+
+[dependencies]
+# Zero third-party deps, same rule as the injector: user32/gdi32/kernel32 are
+# reached through raw extern "system" FFI, and the pixel work is done by hand in
+# src/draw.rs so nothing has to be pulled in for rasterising or colour maths.
+
+[profile.release]
+lto = true
+opt-level = 2
+# The overlay owns no resources that need unwinding, and abort keeps the binary
+# small enough to sit next to the game without being noticed.
+panic = "abort"

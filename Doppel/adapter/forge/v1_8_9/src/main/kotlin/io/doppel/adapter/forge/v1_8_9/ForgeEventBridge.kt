@@ -912,7 +912,7 @@ object ForgeEventBridge : IEventBridge {
      * Apply synthetic input (attack / use-item) on the MC RENDER thread.
      *
      * Called from ForgeBootstrap.render() (which runs inside the Display.update()
-     * Javassist hook — i.e. the MC main thread). Combat modules set their desired
+     * bytecode hook — i.e. the MC main thread). Combat modules set their desired
      * state on the 20Hz background thread via EventBridge.syntheticAttack /
      * EventBridge.syntheticUse; this method is the only place that writes the
      * real KeyBinding.pressed fields, so there is no cross-thread race and MC's

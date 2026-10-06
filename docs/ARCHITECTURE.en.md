@@ -9,7 +9,7 @@
 
 Doppel/
 ├── injector/            # Rust/C++ DLL injector: process detection, version identification, payload injection
-├── agent/               # Java agent: javassist bytecode injection + MappingContext (mapping abstraction)
+├── agent/               # Java agent: ASM bytecode injection + MappingContext (mapping abstraction)
 ├── core/                # Pure Kotlin algorithms, zero MC dependencies
 │   ├── strategy/        #   VelocityStrategy, AimStrategy, KeepSprintStrategy, ReachRaycast...
 │   ├── algorithm/       #   RotationCalculator, VectorOperations, NoiseProvider
@@ -44,7 +44,7 @@ Doppel/
 ```
 
 Rust injector → payload.dll (JNI) → agentmain("jni-attach")
-→ javassist retransform Display.update(), insert RenderBridge.onFrame() at method entry
+→ ASM retransform Display.update(), insert RenderBridge.onFrame() at method entry
 → called every render frame → ForgeBootstrap.render()
 
 ```

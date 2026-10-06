@@ -9,16 +9,56 @@ without re-deriving anything.
 
 | Item | State |
 | --- | --- |
-| Local `main` | round 1: `2f9451e`, `9f03f5a`, `c489f73`, `19f267c`, `6429935`. Round 2: `a29fb8e`, `75b1c6a`, `0d946be`, `e7ad03b`. Round 3: `3f720f5`, `c2fbcfc`, `c660949`, `ea8e9e1`. Round 4 (this pass) adds the commits listed under "Round 4". **Not pushed to GitLab yet** |
-| Testable binary | `C:\Users\Administrator\Desktop\swl\doppel-injector-fixed.exe`, rebuilt 18:21:51 with the current agent jar and overlay; both embedded RCDATA blobs hash-match their sources |
-| Kotlin build | `:core:test` (94 tests), `:adapter:common:compileKotlin`, `:adapter:common:test` (97 tests, 19 classes), `:adapter:forge:v1_8_9:compileKotlin`, `:agent:jar` all green |
-| Rust builds | `hud`: 80 tests green. `injector`: 10 tests green, only the 3 pre-existing warnings (`flow.rs` platform, `inject.rs` WAIT_TIMEOUT, `process.rs` GetLastError) |
+| Local `main` | round 1: `2f9451e`, `9f03f5a`, `c489f73`, `19f267c`, `6429935`. Round 2: `a29fb8e`, `75b1c6a`, `0d946be`, `e7ad03b`. Round 3: `3f720f5`, `c2fbcfc`, `c660949`, `ea8e9e1`. Round 4: `1171427`, `4f677e8`, `810c674`, `e33a25a`, `7764bae`. Round 5 (this pass) adds the commits listed under "Round 5". **Not pushed to GitLab yet** |
+| Testable binary | `C:\Users\Administrator\Desktop\swl\doppel-injector-fixed.exe`, rebuilt 18:50:46 with the current agent jar and overlay; both embedded RCDATA blobs hash-match their sources |
+| Kotlin build | `:core:test` (94 tests), `:adapter:common:compileKotlin`, `:adapter:common:test` (99 tests, 19 classes), `:adapter:forge:v1_8_9:compileKotlin`, `:agent:jar` all green |
+| Rust builds | `hud`: 83 tests green. `injector`: 10 tests green, only the 3 pre-existing warnings (`flow.rs` platform, `inject.rs` WAIT_TIMEOUT, `process.rs` GetLastError) |
 | State contract | **v3**, writer and reader, verified against each other across the two languages; v1 and v2 are still read so a stale file cannot break the overlay |
 | Overlay | always-on-top click-through layered window anchored to the game window's **client area** (below the title bar) and following it (`--follow-pid`); **five** modes (Default/Rise/VapeV4/Tesseract/**Modern**); row entrance **and exit** animation; decaying red **work flash**; user-set scale, line spacing, background opacity and row order |
 | In-game Keystrokes | reads *effective* key states, so WTap/STap/ADTap/JumpReset light the boxes; Rainbow no longer touches AWT |
 | WebUI | keyboard-only numeric fields (slider + an underlined typed value), colour pickers, a HUD list panel (search, pill show/hide, up/down), keybind chips beside the module name reading `[NONE]`/`[N]` |
 | Launcher | restyled to the OpenCommunity dark palette with a short intro fade |
 | Option sanity | Min/Max option pairs are kept ordered on every write, so `Random.nextInt(min, max + 1)` can no longer be handed an inverted range |
+
+## Round 5 — visibility, animations, and the knobs that should not exist
+
+### The animation that only ran on the phone
+The panel had a `prefers-reduced-motion: reduce` block with a blanket `animation: none !important`.
+The user's PC reports that preference (Windows' own "show animations" setting is off), so the whole
+designed experience — entrances, pulses, the aurora — was dead on the machine they actually use,
+while their phone animated normally. The block is gone, and the mobile pass no longer kills
+animations either; its layout and touch-target work stays. **Do not reintroduce a global
+animation/transition kill switch** — the product owner has asked for the animations explicitly.
+
+### The HUD list only belongs over the game window
+The overlay was always-on-top over *every* application, so alt-tabbing to a browser left the HUD
+glued on top of it. It is now gated on the game window being in front: visible while the followed
+pid's window is the foreground window and not minimised, hidden (`SW_HIDE`, no window on screen)
+otherwise, re-checked on the follow poll's slow cadence while the frame loop keeps running. No pid
+means no way to know which window is the game, so that case keeps the old always-shown behaviour.
+
+### The overlay was spawning a visible console window
+Found while wiring the gate above, and it was the bigger stealth hole: `doppel-hud.exe` is a
+console-subsystem binary and the injector spawned it without `CREATE_NO_WINDOW`. The injector itself
+is a GUI app launched by `javaw.exe`, so it has no console to hand down — Windows gave the overlay a
+brand-new console window: a black box titled with the exe path, floating over the game, listed in the
+taskbar, and (because a new console takes the foreground) it made the new visibility gate see *our*
+pid in front and hide the HUD until the game was clicked again. The spawn now passes
+`CREATE_NO_WINDOW`, so the console never exists.
+
+### Two knobs that asked the user to make the same choice twice
+`HUD.HudOrder` was the raw `"WTap,STap,…"` string the ▲▼ buttons maintain, and it was rendered as a
+free-text field in the option list; it is now a hidden option like the keybind. And
+`OverlayOrder` (Width / Published) is gone entirely: the overlay follows the user's arrangement as
+soon as they have one, and stays the reference's width wedge until then. Arranging a row clears the
+cached header style, so the first ▲/▼ takes effect immediately.
+
+### Keybinds: the last gap in the round trip
+Round 4 made the keybind persist, but the file was still only read as a side effect of the *WebUI
+module* starting — with the WebUI switched off, a restart left every keybind unbound again. The
+config now loads at bootstrap, before anything can read it, and the startup line reports how many
+keybinds came back (`N module keybind(s) restored`), which is the line to check when asking "did the
+game get told?".
 
 ## Round 4 — world-load exits, keybinds that did not stick, and the phone
 
@@ -65,7 +105,7 @@ A separate `prefers-reduced-motion` query does the same for motion-sensitive use
 `body::before`, which the old `*`-only rule never matched, so the 24 s aurora drift used to keep
 running for them. Desktop rules are untouched (all scoped to the queries).
 
-## Round 3 — the users second round of feedback
+## Round 3 — the user's second round of feedback
 
 ### A Min above its Max was a crash, not just a bad number
 Every ranged module feeds its two options straight into `Random.nextInt(min, max + 1)`, which

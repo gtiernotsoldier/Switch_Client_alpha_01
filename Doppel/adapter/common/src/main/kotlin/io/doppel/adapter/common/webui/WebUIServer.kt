@@ -162,7 +162,6 @@ object WebUIServer {
 
             when {
                 path.startsWith("/api/modules") -> handleModules(exchange)
-                path.startsWith("/api/hud/order") -> handleHudOrder(exchange)
                 path.startsWith("/api/options") -> handleOptions(exchange)
                 path.startsWith("/api/config") -> handleConfig(exchange)
                 else -> handleStatic(exchange)
@@ -214,37 +213,23 @@ object WebUIServer {
     // ═══════════════════════════════════════════
 
     /**
-     * `POST /api/hud/order` — move one module a slot up or down in the HUD list order.
+     * Every per-module route: `<name>`, `<name>/toggle`, `<name>/keybind`, `<name>/hud`.
      *
-     * The order is the user's, not the module's: it decides what the overlay draws on top when the
-     * header's `orderPublished` flag is set (the HUD module's `OverlayOrder` option), so the WebUI
-     * is where the dragging happens (B2 round 2).
+     * The manual HUD order (`POST /api/hud/order`) is gone with the HUD-list panel: the overlay
+     * always draws the length staircase, which is what the user asked for, so the only thing that
+     * endpoint could still do was reorder a list nothing reads in that order.
      */
-    private fun handleHudOrder(exchange: HttpExchange) {
-        if (exchange.requestMethod != "POST") return methodNotAllowed(exchange)
-        val body = String(exchange.requestBody.readBytes(), StandardCharsets.UTF_8)
-        @Suppress("UNCHECKED_CAST")
-        val req = mapper.readValue(body, Map::class.java) as Map<String, Any?>
-        val name = (req["name"] as? String).orEmpty()
-        val direction = (req["direction"] as? String)?.lowercase().orEmpty()
-        val hud = io.doppel.adapter.common.module.render.HUD
-        val ok = name.isNotBlank() && (direction == "up" || direction == "down") &&
-            hud.moveInHud(name, direction)
-        respondJson(exchange, 200, mapper.writeValueAsString(
-            mapOf("ok" to ok, "order" to hud.hudOrderedNames())
-        ))
-    }
-
     private fun handleModules(exchange: HttpExchange) {
         try {
             val path = exchange.requestURI.path
-            val name = path.removePrefix("/api/modules/")
-                .removeSuffix("/toggle")
-                .let { URLDecoder.decode(it, StandardCharsets.UTF_8.name()) }
+            val route = moduleRoute(path)
+            if (route == null) return notFound(exchange, "no such module route: $path")
+            val (name, action) = route
 
-            when {
-                path.endsWith("/toggle") && name.isNotBlank() -> {
+            when (action) {
+                "toggle" -> {
                     if (exchange.requestMethod != "POST") return methodNotAllowed(exchange)
+                    if (ModuleRegistry.get(name) == null) return notFound(exchange, "no such module: $name")
                     synchronized(lock) { ModuleRegistry.toggle(name) }
                     // Poke the HUD so the arraylist reflects the toggle instantly
                     // (the tick-diff safety net would also catch it, one tick later).
@@ -254,36 +239,41 @@ object WebUIServer {
                         mapOf("name" to name, "enabled" to (mod?.enabled ?: false))
                     ))
                 }
-                path.endsWith("/keybind") && name.isNotBlank() -> {
+                "keybind" -> {
                     if (exchange.requestMethod != "POST") return methodNotAllowed(exchange)
+                    val module = ModuleRegistry.get(name)
+                    if (module == null) return notFound(exchange, "no such module: $name")
                     val body = String(exchange.requestBody.readBytes(), StandardCharsets.UTF_8)
                     @Suppress("UNCHECKED_CAST")
                     val req = mapper.readValue(body, Map::class.java) as Map<String, Any?>
                     val code = (req["key"] as? Number)?.toInt() ?: -1
-                    synchronized(lock) { ModuleRegistry.get(name)?.keybind = code }
+                    synchronized(lock) { module.keybind = code }
                     // The HUD row carries the key now (`... [N]`), so it has to be re-collected or
                     // the list keeps showing the old binding until some other change comes along.
                     try { io.doppel.adapter.common.module.render.HUD.notifyModuleToggled() } catch (_: Throwable) {}
                     try { ConfigStore.save() } catch (_: Exception) {}
                     respondJson(exchange, 200, mapper.writeValueAsString(
-                        mapOf("ok" to true, "name" to name, "key" to code, "keyName" to keyName(code))))
+                        mapOf(
+                            "ok" to true, "name" to name,
+                            "key" to module.keybind, "keyName" to keyName(module.keybind)
+                        )
+                    ))
                 }
-                path.endsWith("/hud") && name.isNotBlank() -> {
+                "hud" -> {
                     if (exchange.requestMethod != "POST") return methodNotAllowed(exchange)
+                    val module = ModuleRegistry.get(name)
+                    if (module == null) return notFound(exchange, "no such module: $name")
                     val body = String(exchange.requestBody.readBytes(), StandardCharsets.UTF_8)
                     @Suppress("UNCHECKED_CAST")
                     val req = mapper.readValue(body, Map::class.java) as Map<String, Any?>
-                    // One endpoint drives both HUD-list controls: whether the module's line is
+                    // One endpoint drives both per-module HUD controls: whether the module's line is
                     // listed at all ("hidden"), and whether it flashes red while it works ("red").
                     // Either field may be absent, and an absent one is left alone.
                     val hidden = req["hidden"] as? Boolean
                     val red = req["red"] as? Boolean
-                    val module = ModuleRegistry.get(name)
                     synchronized(lock) {
-                        if (module != null) {
-                            if (hidden != null) module.hudHidden = hidden
-                            if (red != null) module.showRedIndicator = red
-                        }
+                        if (hidden != null) module.hudHidden = hidden
+                        if (red != null) module.showRedIndicator = red
                     }
                     // Poke the HUD to re-collect immediately.
                     try {
@@ -292,20 +282,22 @@ object WebUIServer {
                     try { ConfigStore.save() } catch (_: Exception) {}
                     respondJson(exchange, 200, mapper.writeValueAsString(
                         mapOf(
-                            "ok" to (module != null),
+                            "ok" to true,
                             "name" to name,
-                            "hudHidden" to (module?.hudHidden ?: false),
-                            "redIndicator" to (module?.showRedIndicator ?: true)
+                            "hudHidden" to module.hudHidden,
+                            "hudShown" to !module.hudHidden,
+                            "redIndicator" to module.showRedIndicator
                         )
                     ))
                 }
-                exchange.requestMethod == "GET" -> {
+                "" -> {
+                    if (exchange.requestMethod != "GET") return methodNotAllowed(exchange)
                     val list = synchronized(lock) {
                         ModuleRegistry.getAll().filter { !it.hidden }.map { moduleJson(it) }
                     }
                     respondJson(exchange, 200, mapper.writeValueAsString(list))
                 }
-                else -> methodNotAllowed(exchange)
+                else -> notFound(exchange, "no such module action: $action")
             }
         } catch (e: Exception) {
             respondJson(exchange, 500, """{"error":"${e.message}"}""")
@@ -420,10 +412,8 @@ object WebUIServer {
             "keyName" to keyName(module.keybind),
             "hudHidden" to module.hudHidden,
             "hudShown" to !module.hudHidden,
-            // The HUD-list panel's second control: does this module flash red while it works?
+            // Does this module flash red while it works?
             "redIndicator" to module.showRedIndicator,
-            // Where the module sits in the user's HUD order — the WebUI's HUD panel sorts by this.
-            "hudIndex" to io.doppel.adapter.common.module.render.HUD.hudIndexOf(module.name),
             "hudEnabled" to (module is io.doppel.adapter.common.module.HudLineProvider),
             // The module's OWN published HUD string (B2). The external overlay draws exactly this
             // text; publishing it to the panel is what stops the two from showing two different
@@ -489,5 +479,40 @@ object WebUIServer {
     private fun methodNotAllowed(exchange: HttpExchange) {
         exchange.sendResponseHeaders(405, -1)
         exchange.close()
+    }
+
+    /**
+     * A route or a module that does not exist.
+     *
+     * Explicit rather than a 200 with `{"ok":false}`: a silent no-op that answers "fine" is exactly
+     * how a dead endpoint looks like a working one, and the panel has nothing to report.
+     */
+    private fun notFound(exchange: HttpExchange, message: String) {
+        respondJson(exchange, 404, mapper.writeValueAsString(mapOf("error" to message)))
+    }
+
+    /**
+     * `/api/modules` → `"" to ""`, `/api/modules/<name>` → `name to ""`,
+     * `/api/modules/<name>/<action>` → `name to action`; anything else → null.
+     *
+     * The name is the **first** segment after the prefix. Deriving it by stripping the known
+     * suffixes (`.removeSuffix("/toggle")`) meant every other action looked up a module literally
+     * named `"Velocity/keybind"`, which resolved to null and turned the request into that silent
+     * no-op — so keybinds, the HUD eye and the red dot were all dead in the panel.
+     */
+    internal fun moduleRoute(path: String): Pair<String, String>? {
+        val prefix = "/api/modules"
+        if (path != prefix && !path.startsWith("$prefix/")) return null
+        val rest = path.removePrefix(prefix).trimStart('/')
+        if (rest.isEmpty()) return "" to ""
+        val rawName = rest.substringBefore('/')
+        if (rawName.isEmpty()) return null
+        val action = if (rest.contains('/')) rest.substringAfter('/').substringBefore('/') else ""
+        val name = try {
+            URLDecoder.decode(rawName, StandardCharsets.UTF_8.name())
+        } catch (_: Exception) {
+            rawName
+        }
+        return name to action
     }
 }

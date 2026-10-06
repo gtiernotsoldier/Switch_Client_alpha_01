@@ -13,10 +13,10 @@ import org.junit.jupiter.api.Test
 /**
  * Every option the HUD module exposes must actually reach the external overlay.
  *
- * The reported bug was exactly a gap in this: `Position` and `Sort`/`Reversed` were tunable in the
- * panel and had no effect on the overlay at all, because the state contract had no field carrying
- * them and nothing published them. A per-option test is the only way that stays true — the next
- * option added without a wire path fails here instead of in the user's game.
+ * The reported bug was exactly a gap in this: `Position` was tunable in the panel and had no path to
+ * the overlay at all, because the state contract had no field carrying it. A per-option test is the
+ * only way that stays true — the next option added without a wire path fails here instead of in the
+ * user's game.
  */
 class HUDOptionContractTest {
 
@@ -25,14 +25,12 @@ class HUDOptionContractTest {
         // The HUD module is not registered by a test JVM's bootstrap, and its config listeners are
         // subscribed from its own onEnable — register, then enable, so the real path is exercised.
         if (ModuleRegistry.get(HUD.name) == null) ModuleRegistry.register(HUD)
-        HUD.hudOrderRaw = ""
         HUD.enable()
     }
 
     @AfterEach
     fun tearDown() {
         HUD.disable()
-        HUD.hudOrderRaw = ""
     }
 
     /** Everything the overlay is told: the header plus the rows. */
@@ -84,23 +82,17 @@ class HUDOptionContractTest {
     }
 
     @Test
-    fun `position and sort reach the header rather than being silently dropped`() {
+    fun `position reaches the header and the overlay is always length-ordered`() {
         ConfigManager.set("HUD.Position", "Left")
         assertTrue(HUD.overlayHeader().positionLeft, "Position=Left must anchor the list left")
         ConfigManager.set("HUD.Position", "Right")
         assertTrue(!HUD.overlayHeader().positionLeft, "Position=Right is the default anchor")
 
-        ConfigManager.set("HUD.Sort", "Alphabetical")
+        // The overlay draws the reference's width staircase unconditionally — longest row first,
+        // which is what the user asked for — so nothing here can turn the published order back on.
         assertTrue(
-            HUD.overlayHeader().orderPublished,
-            "picking a sort must make the overlay follow the published order"
+            !HUD.overlayHeader().orderPublished,
+            "the length order is the only order the overlay draws"
         )
-        ConfigManager.set("HUD.Sort", "None")
-        ConfigManager.set("HUD.Reversed", true)
-        assertTrue(
-            HUD.overlayHeader().orderPublished,
-            "reversing the list must make the overlay follow it too"
-        )
-        ConfigManager.set("HUD.Reversed", false)
     }
 }

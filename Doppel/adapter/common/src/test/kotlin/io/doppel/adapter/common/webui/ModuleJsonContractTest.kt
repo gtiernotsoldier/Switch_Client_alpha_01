@@ -38,7 +38,6 @@ class ModuleJsonContractTest {
         assertEquals(true, json["hudHidden"])
         assertEquals(false, json["hudShown"], "hudShown is the inverse the panel reads")
         assertEquals(false, json["redIndicator"], "the red work-flash state")
-        assertTrue(json.containsKey("hudIndex"), "the row order")
         assertTrue(json.containsKey("hudValue"), "the module's own published HUD string")
         assertTrue(json.containsKey("options"), "the tunable options")
     }

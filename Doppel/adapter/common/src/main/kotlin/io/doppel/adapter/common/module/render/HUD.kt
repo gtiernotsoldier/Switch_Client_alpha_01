@@ -66,10 +66,10 @@ object HUD : Module("HUD", Category.RENDER) {
      */
     var position by choices("Position", arrayOf("Right", "Left"))
 
-    // ── Configurable display options ──
-
-    var sortMode by choices("Sort", arrayOf("None", "Alphabetical", "Length", "Category"))
-    var reversed by boolean("Reversed", false)
+    // "Sort" and "Reversed" used to pick the order of the published rows. The overlay draws the
+    // reference's width staircase unconditionally now (longest row first, which is what the user
+    // asked for), so those two only ever re-ordered a list nobody reads in that order any more —
+    // they are gone rather than left as switches that do nothing.
 
     // ── External overlay options (contract v2) ──
     // The overlay's own look, picked from the game/WebUI instead of a command line flag: these go
@@ -112,16 +112,6 @@ object HUD : Module("HUD", Category.RENDER) {
      */
     var overlayLineSpacing by int("OverlayLineSpacing", 100, 50..200, "%")
 
-    /**
-     * The user's manual HUD order, as a comma-separated list of module names.
-     *
-     * Stored as a plain string because it is a list, not a value: names not in it keep their
-     * alphabetical/category order after the listed ones, so adding a module never invalidates it.
-     * Hidden from the option list — the WebUI's ▲▼ buttons own this value, and a raw
-     * "WTap,STap,…" text field is noise nobody can act on.
-     */
-    var hudOrderRaw by string("HudOrder", "", hidden = true)
-
     // ═══════════════════════════════════════════
     //  Overlay style (cached; rebuilt on config change)
     // ═══════════════════════════════════════════
@@ -160,11 +150,11 @@ object HUD : Module("HUD", Category.RENDER) {
         scale = if (overlayScale == 1.0f) 0f else overlayScale,
         opacity = if (overlayOpacity >= 100) 0 else overlayOpacity,
         lineSpacing = if (overlayLineSpacing == 100) 0 else overlayLineSpacing,
-        // The overlay follows the user's order as soon as they have configured one — by arranging
-        // rows, by picking a sort, or by reversing it. A separate "Width / Published" switch only
-        // asked them to make the same choice twice, so it is gone; an untouched list stays the
-        // reference's width wedge.
-        ordered = hudOrderList().isNotEmpty() || sortMode != "None" || reversed,
+        // The overlay always draws the reference's width staircase: longest row first. The user
+        // asked for exactly that, and with the HUD-list panel gone there is no way to arrange rows
+        // anyway — a manually stored order (from the rounds when there was one) must not silently
+        // win over the length order.
+        ordered = false,
         positionLeft = position == "Left"
     )
 
@@ -202,63 +192,6 @@ object HUD : Module("HUD", Category.RENDER) {
     fun flashByte(name: String): Int {
         val module = ModuleRegistry.get(name) ?: return 0
         return (module.flashStrength() * 255f).toInt().coerceIn(0, 255)
-    }
-
-    // ═══════════════════════════════════════════
-    //  Manual HUD order
-    // ═══════════════════════════════════════════
-
-    private fun hudOrderList(): List<String> =
-        hudOrderRaw.split(',').map { it.trim() }.filter { it.isNotEmpty() }
-
-    /**
-     * Every module that can appear on the HUD, in the user's order.
-     *
-     * Deliberately the whole HUD-capable set rather than the currently enabled rows: the WebUI's
-     * up/down buttons must be able to place a module *before* it is switched on, and a disabled
-     * module keeps its slot instead of being re-appended when it comes back.
-     */
-    fun hudOrderedNames(): List<String> {
-        val rank = hudOrderList().withIndex().associate { (index, name) -> name to index }
-        return ModuleRegistry.getAll()
-            .filter { !it.hudHidden }
-            .map { it.name }
-            .sortedBy { rank[it] ?: Int.MAX_VALUE } // stable: unlisted names keep their own order
-    }
-
-    /** Where [name] sits in the HUD order, or -1. The WebUI's row order. */
-    fun hudIndexOf(name: String): Int = hudOrderedNames().indexOf(name)
-
-    /**
-     * Move one module a slot up or down in the HUD order, persist it and re-collect the rows.
-     * Returns false when the name is unknown or already at that end.
-     */
-    fun moveInHud(name: String, direction: String): Boolean {
-        // Validated here rather than only at the HTTP edge: anything that is not "up" used to fall
-        // through to the down branch, so a typo moved the row the wrong way instead of being
-        // ignored.
-        if (direction != "up" && direction != "down") return false
-        val order = hudOrderedNames().toMutableList()
-        val index = order.indexOf(name)
-        if (index < 0) return false
-        val target = if (direction == "up") index - 1 else index + 1
-        if (target < 0 || target >= order.size) return false
-        val moved = order[index]
-        order[index] = order[target]
-        order[target] = moved
-        hudOrderRaw = order.joinToString(",")
-        // The header's `orderPublished` flag is derived from this list, so the cached style has to go
-        // with it — otherwise the first move would only take effect after some unrelated change.
-        styleCache = null
-        refreshLines()
-        return true
-    }
-
-    /** Apply the manual order to a module list, leaving unlisted modules where they were. */
-    private fun applyHudOrder(modules: List<Module>): List<Module> {
-        val rank = hudOrderList().withIndex().associate { (index, name) -> name to index }
-        if (rank.isEmpty()) return modules
-        return modules.sortedBy { rank[it.name] ?: Int.MAX_VALUE }
     }
 
     // ═══════════════════════════════════════════
@@ -318,11 +251,10 @@ object HUD : Module("HUD", Category.RENDER) {
             // not about the list's own order.
             if (notice != null) add(notice)
             addAll(
-                applyHudOrder(
-                    ModuleRegistry.getEnabled()
-                        .filter { !it.hudHidden }
-                        .sortedWith(comparator())
-                )
+                // Registry order. What the overlay draws does not depend on it: the rows are always
+                // sorted by their rendered length there, and that is measured in the overlay's own
+                // font, which the Kotlin side cannot do.
+                ModuleRegistry.getEnabled().filter { !it.hudHidden }
                     .map { module ->
                         val provider = module as? HudLineProvider
                         // Custom value if the module overrides; else auto-derive the
@@ -413,21 +345,6 @@ object HUD : Module("HUD", Category.RENDER) {
         val lowText = (if (ordered) minMeta else maxMeta).formatNumber(low)
         val highText = (if (ordered) maxMeta else minMeta).formatNumber(high)
         return if (lowText == highText) lowText else "$lowText-$highText"
-    }
-
-    private fun comparator(): Comparator<Module> {
-        val base = Comparator<Module> { a, b ->
-            when (sortMode) {
-                "Alphabetical" -> a.name.compareTo(b.name)
-                "Length" -> a.name.length.compareTo(b.name.length)
-                "Category" -> {
-                    val c = a.category.ordinal.compareTo(b.category.ordinal)
-                    if (c != 0) c else a.name.compareTo(b.name)
-                }
-                else -> 0
-            }
-        }
-        return if (reversed) base.reversed() else base
     }
 
     // ═══════════════════════════════════════════

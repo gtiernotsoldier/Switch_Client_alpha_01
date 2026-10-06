@@ -37,6 +37,7 @@
 // every constant it takes and the README says what could not be reproduced.
 
 mod draw;
+mod follow;
 mod hud;
 mod log;
 mod preview;
@@ -131,6 +132,16 @@ usage: doppel-hud [options]
                        GetSystemMetrics(SM_CXSCREEN / SM_CYSCREEN) (the primary
                        monitor's origin is (0, 0) by definition), or 1920x1080 if
                        that call gives nothing usable.
+  --follow-pid <pid>   re-read the game window's own rect (EnumWindows +
+                       GetWindowThreadProcessId + GetWindowRect) about once a second
+                       and move/resize the overlay when it changes. `--rect` is
+                       only read once at launch, so without this a fullscreen
+                       switch, a window resize or a move to another monitor leaves
+                       the overlay on the old rect. A missing/minimised window
+                       changes nothing (the last good rect is kept). NOTE: under
+                       EXCLUSIVE fullscreen no external overlay can ever be
+                       visible — the display belongs to the game; windowed or
+                       borderless fullscreen is required.
   --x <i32>            adjust the chosen rect's x (default: the rect's own)
   --y <i32>            adjust the chosen rect's y
   --w <u32>            adjust the chosen rect's width
@@ -211,6 +222,10 @@ in this console.";
 struct Args {
     /// `--rect x y w h`: the rect the window covers. `None` = the primary monitor.
     rect: Option<Rect>,
+    /// `--follow-pid <pid>`: re-read the game window's rect every second and re-place
+    /// the overlay when it changes. `None` keeps the overlay on the rect it was
+    /// created with, which is what the injector's one-shot `--rect` gives it.
+    follow_pid: Option<u32>,
     /// Per-field adjustments applied on top of whichever rect was chosen. `None`
     /// keeps the rect's own value, which is what makes the monitor the default
     /// rather than a silent 520x400 shrink.
@@ -261,6 +276,7 @@ impl Default for Args {
     fn default() -> Args {
         Args {
             rect: None,
+            follow_pid: None,
             x: None,
             y: None,
             w: None,
@@ -295,6 +311,14 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
         let flag = argv[i].as_str();
         match flag {
             "--rect" => args.rect = Some(parse_rect(argv, &mut i)?),
+            "--follow-pid" => {
+                let raw = next_value(argv, &mut i, flag)?;
+                let pid: u32 = parse_num(flag, &raw)?;
+                if pid == 0 {
+                    return Err("--follow-pid: 0 is not a process id".to_string());
+                }
+                args.follow_pid = Some(pid);
+            }
             "--x" => args.x = Some(parse_num(flag, &next_value(argv, &mut i, flag)?)?),
             "--y" => args.y = Some(parse_num(flag, &next_value(argv, &mut i, flag)?)?),
             "--w" => args.w = Some(parse_num(flag, &next_value(argv, &mut i, flag)?)?),
@@ -699,6 +723,72 @@ fn signature(entries: &[Entry], fade: f32, header: Option<&state::Header>) -> u6
 
 // ── entry points ────────────────────────────────────────────────────────────
 
+/// The overlay's drawing surface: a memory DC with a top-down 32-bit DIB selected into
+/// it, plus the size and the DIB's own pixel base.
+///
+/// Named and owned rather than three loose locals because A2 has to *replace* it: following
+/// the game window can change the overlay's size at any moment (a fullscreen switch changes
+/// it drastically), and a leaked DC/DIB per switch would be a slow resource leak in a
+/// process that is meant to live as long as the game does.
+struct Surface {
+    dc: Hdc,
+    dib: *mut c_void,
+    /// What was selected into the DC before the DIB — a stock bitmap on a fresh DC. Must be
+    /// restored before the DIB is deleted, and must never be deleted itself.
+    previous: *mut c_void,
+    /// The DIB's pixel base. The canvas is blitted here every painted frame.
+    bits: *mut c_void,
+    size: Size,
+}
+
+impl Surface {
+    /// Create a `w`x`h` surface. `Err` carries the reason for the log.
+    ///
+    /// Negative height asks for a top-down DIB — row 0 is the top scanline, which is the order
+    /// the canvas writes in — and everything left zero is "use the default", matching the
+    /// window-class setup next door.
+    unsafe fn new(w: i32, h: i32) -> Result<Surface, String> {
+        let dc = CreateCompatibleDC(std::ptr::null_mut());
+        if dc.is_null() {
+            return Err("CreateCompatibleDC failed".to_string());
+        }
+
+        let mut info: BitmapInfo = std::mem::zeroed();
+        info.header.size = std::mem::size_of::<BitmapInfoHeader>() as u32;
+        info.header.width = w;
+        info.header.height = -h;
+        info.header.planes = 1;
+        info.header.bit_count = 32;
+        info.header.compression = BI_RGB;
+
+        let mut bits: *mut c_void = std::ptr::null_mut();
+        let dib = CreateDIBSection(dc, &info, DIB_RGB_COLORS, &mut bits, std::ptr::null_mut(), 0);
+        if dib.is_null() || bits.is_null() {
+            DeleteDC(dc);
+            return Err("CreateDIBSection failed".to_string());
+        }
+
+        let previous = SelectObject(dc, dib);
+        Ok(Surface { dc, dib, previous, bits, size: Size { cx: w, cy: h } })
+    }
+
+    /// The DIB's pixel stride in bytes — `w * 4`, asserted by the blit below.
+    fn byte_len(&self) -> usize {
+        self.size.cx as usize * self.size.cy as usize * std::mem::size_of::<u32>()
+    }
+}
+
+impl Drop for Surface {
+    fn drop(&mut self) {
+        unsafe {
+            // Reverse order: a DIB must not be deleted while it is still selected.
+            SelectObject(self.dc, self.previous);
+            DeleteObject(self.dib);
+            DeleteDC(self.dc);
+        }
+    }
+}
+
 /// Create the overlay and run the frame loop until the game goes away or the
 /// window is closed.
 ///
@@ -709,7 +799,7 @@ fn run(args: &Args) -> Result<(), String> {
     let mut log = log::Log::open();
     let state_path = state::default_path();
 
-    let (rect, source) = match resolve_rect(args) {
+    let (mut rect, source) = match resolve_rect(args) {
         Ok(chosen) => chosen,
         Err(reason) => {
             log.line(&format!("start refused: {reason}"));
@@ -766,6 +856,42 @@ fn run(args: &Args) -> Result<(), String> {
             text.face_name(text::FontId::Body),
             text.em_px(text::FontId::Body)
         ));
+    }
+
+    // A3: "the faces loaded" is not the same claim as "the faces can draw this text". A report of
+    // text rendering as squares can only be settled by asking GDI which characters the selected
+    // face actually has glyphs for, so the log answers it at startup instead of leaving it to a
+    // screenshot. The sample is every character the HUD's own strings use, plus the published
+    // nickname — the one string the overlay draws that it does not control, and the realistic way
+    // a Latin-only embedded family meets a character it has no glyph for (a CJK player name).
+    {
+        const SAMPLE: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 %/.-:()[]";
+        let total = SAMPLE.chars().count();
+        let missing = text.missing_glyphs(text::FontId::Body, SAMPLE);
+        log.line(&format!(
+            "glyphs: body face draws {}/{} sample characters{}",
+            total - missing.len(),
+            total,
+            if missing.is_empty() {
+                " — no tofu source in this face".to_string()
+            } else {
+                format!(" — MISSING {missing:?}: these would draw as boxes")
+            }
+        ));
+
+        let nickname = first_read
+            .as_ref()
+            .ok()
+            .and_then(|snapshot| snapshot.header.as_ref())
+            .map(|header| header.nickname.clone())
+            .unwrap_or_default();
+        if !nickname.is_empty() {
+            let missing = text.missing_glyphs(text::FontId::Name, &nickname);
+            log.line(&format!(
+                "glyphs: watermark nickname {nickname:?} — {} character(s) the name face cannot draw",
+                missing.len()
+            ));
+        }
     }
 
     // How many frames reached the compositor. Zero on a run that ended by itself
@@ -884,37 +1010,17 @@ fn run(args: &Args) -> Result<(), String> {
 
         // A never-showing, never-focusing window is also never painted, so the
         // HUD is rendered into a DIB and pushed through UpdateLayeredWindow;
-        // that is the whole reason WS_EX_LAYERED is here.
-        //
-        // CreateCompatibleDC(NULL) gives a DC compatible with the screen, which
-        // is all the DIB needs — no window DC is acquired, so there is nothing to
-        // release if the next call fails.
-        let mem_dc = CreateCompatibleDC(std::ptr::null_mut());
-        if mem_dc.is_null() {
-            log.line(&format!("exit: error: CreateCompatibleDC failed, {frames} frames drawn"));
-            return Err("CreateCompatibleDC failed".to_string());
-        }
+        // that is the whole reason WS_EX_LAYERED is here. The surface is owned by
+        // `Surface`: A2 replaces it when following the game window changes our size,
+        // and the Drop impl is the one place that releases it.
+        let mut surface = match Surface::new(rect.w, rect.h) {
+            Ok(surface) => surface,
+            Err(reason) => {
+                log.line(&format!("exit: error: {reason}, {frames} frames drawn"));
+                return Err(reason);
+            }
+        };
 
-        let mut info: BitmapInfo = std::mem::zeroed();
-        info.header.size = std::mem::size_of::<BitmapInfoHeader>() as u32;
-        info.header.width = rect.w;
-        // Negative height asks for a top-down DIB: row 0 is the top scanline,
-        // which is the order the canvas writes in, so no flip is needed.
-        info.header.height = -rect.h;
-        info.header.planes = 1;
-        info.header.bit_count = 32;
-        info.header.compression = BI_RGB;
-
-        let mut bits: *mut c_void = std::ptr::null_mut();
-        let dib = CreateDIBSection(mem_dc, &info, DIB_RGB_COLORS, &mut bits, std::ptr::null_mut(), 0);
-        if dib.is_null() || bits.is_null() {
-            DeleteDC(mem_dc);
-            log.line(&format!("exit: error: CreateDIBSection failed, {frames} frames drawn"));
-            return Err("CreateDIBSection failed".to_string());
-        }
-        let previous = SelectObject(mem_dc, dib);
-
-        let size = Size { cx: rect.w, cy: rect.h };
         let src_pos = Point { x: 0, y: 0 };
         let blend = BlendFunction {
             blend_op: AC_SRC_OVER,
@@ -949,6 +1055,11 @@ fn run(args: &Args) -> Result<(), String> {
         // exit line, which keeps its existing shape.
         let mut next_topmost_check = started + Duration::from_millis(TOPMOST_CHECK_MS);
         let mut reasserts: u64 = 0;
+        // A2: when the followed game window's rect is read next. The first poll is one
+        // interval out, not immediate: `--rect` already carries the injector's own
+        // fresh reading, so polling at t=0 would only repeat the same answer.
+        let mut next_follow_check = started + Duration::from_millis(follow::POLL_MS);
+        let mut follows: u64 = 0;
 
         let mut previous_frame = started;
         let mut msg: Msg = std::mem::zeroed();
@@ -1014,6 +1125,80 @@ fn run(args: &Args) -> Result<(), String> {
                 }
             }
 
+            // A2: keep the overlay on the game window. The injector's `--rect` was read once at
+            // launch, so a fullscreen switch, a resize or a move to another monitor leaves the
+            // overlay on the old rect until this puts it back. The rect is taken verbatim (never
+            // clamped to a monitor, same rule as `resolve_rect`), and `None` — the game briefly
+            // minimised, or between two windows mid-switch — keeps the last good rect instead of
+            // teleporting the HUD.
+            if let Some(pid) = args.follow_pid {
+                if now >= next_follow_check {
+                    next_follow_check = now + Duration::from_millis(follow::POLL_MS);
+                    if let Some(found) = follow::game_window_rect(pid) {
+                        if found != rect {
+                            // Resize first, and only move once the new surface exists: a failed
+                            // resize keeps the old surface AND the old rect, because a wrongly
+                            // sized overlay beats no overlay at all.
+                            let mut ready = true;
+                            if found.w != rect.w || found.h != rect.h {
+                                match Surface::new(found.w, found.h) {
+                                    Ok(fresh) => surface = fresh,
+                                    Err(reason) => {
+                                        ready = false;
+                                        log.line(&format!(
+                                            "follow: resize to {}x{} failed: {reason}",
+                                            found.w, found.h
+                                        ));
+                                    }
+                                }
+                            }
+                            if ready {
+                                // One call moves and resizes. `SWP_NOACTIVATE` keeps the game's
+                                // foreground rights; without `--topmost` the Z-order is left
+                                // alone (`SWP_NOZORDER`) rather than silently promoted.
+                                let (after, extra) = if args.topmost {
+                                    (HWND_TOPMOST, 0u32)
+                                } else {
+                                    (std::ptr::null_mut(), SWP_NOZORDER)
+                                };
+                                let moved = SetWindowPos(
+                                    hwnd,
+                                    after,
+                                    found.x,
+                                    found.y,
+                                    found.w,
+                                    found.h,
+                                    SWP_NOACTIVATE | SWP_NOOWNERZORDER | extra,
+                                ) != 0;
+                                let from = rect;
+                                rect = found;
+                                canvas = Canvas::placed(rect.x, rect.y, rect.w as u32, rect.h as u32);
+                                // The signature only covers the state and the fade, so the
+                                // repaint has to be forced by hand — otherwise a resize to the
+                                // same content would leave the old pixels on screen.
+                                animating = true;
+                                follows += 1;
+                                if follows <= 5 || follows % 20 == 0 {
+                                    log.line(&format!(
+                                        "follow (#{follows}): pid {pid} rect {}x{} at ({}, {}) → \
+                                         {}x{} at ({}, {}), SetWindowPos {}",
+                                        from.w,
+                                        from.h,
+                                        from.x,
+                                        from.y,
+                                        rect.w,
+                                        rect.h,
+                                        rect.x,
+                                        rect.y,
+                                        if moved { "ok" } else { "FAILED" }
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             // D2: read the published block. A missing, short or foreign file
             // leaves the last good frame on screen — never garbage.
             if let Some(snapshot) = state::read(&state_path) {
@@ -1068,23 +1253,27 @@ fn run(args: &Args) -> Result<(), String> {
                 last_signature = current;
 
                 let pixels = canvas.pixels();
+                // The canvas is exactly the surface: `Canvas::placed` was rebuilt from the same
+                // rect `Surface::new` was given, and A2 resizes the two together. Asserted rather
+                // than assumed — a mismatch here would be a buffer overrun, not a wrong colour.
+                debug_assert_eq!(pixels.len() * std::mem::size_of::<u32>(), surface.byte_len());
                 std::ptr::copy_nonoverlapping(
                     pixels.as_ptr() as *const u8,
-                    bits as *mut u8,
+                    surface.bits as *mut u8,
                     pixels.len() * std::mem::size_of::<u32>(),
                 );
                 // A null destination position keeps the coordinates
-                // CreateWindowExW was given — moving the window here would be a
-                // second chance to get the placement wrong. A failure is fatal,
-                // not a frame to skip: without it the window would stay empty
-                // while the process kept looping, which is precisely the silent
-                // "it started and I see nothing" this log exists to rule out.
+                // CreateWindowExW (and any later follow move) left the window at.
+                // A failure is fatal, not a frame to skip: without it the window
+                // would stay empty while the process kept looping, which is
+                // precisely the silent "it started and I see nothing" this log
+                // exists to rule out.
                 if UpdateLayeredWindow(
                     hwnd,
                     std::ptr::null_mut(),
                     std::ptr::null(),
-                    &size,
-                    mem_dc,
+                    &surface.size,
+                    surface.dc,
                     &src_pos,
                     0,
                     &blend,
@@ -1118,11 +1307,8 @@ fn run(args: &Args) -> Result<(), String> {
             }
         }
 
-        // Released in reverse: a DIB must not be deleted while it is still
-        // selected into the DC.
-        SelectObject(mem_dc, previous);
-        DeleteObject(dib);
-        DeleteDC(mem_dc);
+        // The surface releases itself (Surface's Drop): the DC and the DIB have to go
+        // in reverse order, and A2 may have replaced them several times along the way.
         result
     };
 

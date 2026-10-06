@@ -159,6 +159,11 @@ pub fn get_embedded_hud_path() -> String {
 ///
 /// `pid` is the game process that was just injected: its window's rect is what the overlay is told
 /// to cover (`--rect`), so the HUD sits on the game window rather than on the primary monitor.
+///
+/// The rect is only a snapshot from launch time, though, so the pid goes along as `--follow-pid`:
+/// the overlay then re-reads the game window's own rect about once a second and re-places itself
+/// when a fullscreen switch or a window resize moves it (A2). `--rect` stays as the initial
+/// placement, and as the whole answer when the lookup found no usable window.
 pub fn launch_hud_when_ready(pid: u32) {
     std::thread::spawn(move || {
         let dir = temp_dir();
@@ -203,6 +208,10 @@ pub fn launch_hud_when_ready(pid: u32) {
         // falls back to the overlay's own default, the primary monitor.
         let game = process::find_game_window(pid);
         let mut command = std::process::Command::new(&exe);
+        // A2: follow the game window for the overlay's whole life, not just at launch. Passed
+        // unconditionally — even with no usable rect the overlay should track the window once it
+        // appears (a game that is still loading when this runs).
+        command.args(["--follow-pid", &pid.to_string()]);
         match game.rect {
             Some(rect) => {
                 let args = rect.rect_args();

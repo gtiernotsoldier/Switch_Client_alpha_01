@@ -328,6 +328,40 @@ impl TextEngine {
         }
     }
 
+    /// The characters of `text` this face has **no** glyph for.
+    ///
+    /// A3: `AddFontMemResourceEx` succeeding only proves the bytes registered — it says nothing
+    /// about coverage, which is exactly why "the log says the embedded Play faces loaded" does not
+    /// settle a tofu report. GDI does settle it: under `GGI_MARK_NONEXISTING_GLYPHS` a character the
+    /// selected face cannot draw comes back as `GLYPH_MISSING`, and drawing it is the box a user
+    /// sees. An empty result means this face can draw every character of `text`.
+    ///
+    /// A failed call (GDI_ERROR) returns an empty list: an unanswerable question must not look like
+    /// a clean bill of health *or* a false alarm, and the caller logs the sample it asked about.
+    pub fn missing_glyphs(&self, id: FontId, text: &str) -> Vec<char> {
+        let buf: Vec<u16> = text.encode_utf16().collect();
+        if buf.is_empty() {
+            return Vec::new();
+        }
+        let mut indices = vec![0u16; buf.len()];
+        // SAFETY: the DC and the face handle are live for the life of the engine, the buffers
+        // outlive the call, and `count` is exactly the number of units in `buf`.
+        unsafe {
+            SelectObject(self.dc, self.font(id).handle);
+            let mapped = GetGlyphIndicesW(
+                self.dc,
+                buf.as_ptr(),
+                buf.len() as i32,
+                indices.as_mut_ptr(),
+                GGI_MARK_NONEXISTING_GLYPHS,
+            );
+            if mapped == u32::MAX {
+                return Vec::new();
+            }
+        }
+        chars_without_glyphs(text, &indices)
+    }
+
     /// Draw `text` with the top of its line box at (x, y). Returns the advance
     /// width. `y` is the source's own `textY`: ImGui's `AddText` places the top of
     /// a 16 px line box there, so this does the same (see the header note on
@@ -479,6 +513,23 @@ fn exact_family(resolved: &str, family: &str) -> bool {
     resolved == family || resolved.starts_with(&format!("{family} "))
 }
 
+/// The characters of `text` whose glyph index says "this face has no glyph for it".
+///
+/// Pure, so the mapping is testable without a device context. Paired with
+/// `GetGlyphIndicesW` + `GGI_MARK_NONEXISTING_GLYPHS`, an empty result is positive evidence that
+/// the face really can draw the text — which is the question behind the "text renders as squares"
+/// report (A3), and one that `AddFontMemResourceEx` returning success cannot answer.
+///
+/// The HUD only ever draws BMP text (Latin module names, digits, `% / . - :`), so one UTF-16 unit
+/// per character and a plain zip is exact here.
+fn chars_without_glyphs(text: &str, indices: &[u16]) -> Vec<char> {
+    text.chars()
+        .zip(indices.iter())
+        .filter(|(_, index)| **index == GLYPH_MISSING)
+        .map(|(c, _)| c)
+        .collect()
+}
+
 /// Create a face and read back its cell height, internal leading and the face name
 /// GDI actually resolved. A face that cannot be created falls back to the stock GUI
 /// font: a missing font must not cost the HUD all of its text.
@@ -561,6 +612,17 @@ mod tests {
         assert!(!exact_family("Play Regular", "Play Bold"));
         assert!(exact_family("Play", "Play"));
         assert!(exact_family("Play Regular", "Play Regular"));
+    }
+
+    /// A3: a glyph the face cannot draw is reported per character, not silently accepted.
+    #[test]
+    fn a_missing_glyph_is_reported_by_character() {
+        // 0xFFFF is what GDI answers with under GGI_MARK_NONEXISTING_GLYPHS; a real index is not.
+        let indices = [0x0024u16, GLYPH_MISSING, 0x0031];
+        assert_eq!(chars_without_glyphs("a b", &indices), vec![' ']);
+        assert!(chars_without_glyphs("abc", &[1, 2, 3]).is_empty());
+        assert_eq!(chars_without_glyphs("ab", &[]).len(), 0, "a short run invents no glyphs");
+        assert_eq!(chars_without_glyphs("", &[GLYPH_MISSING]).len(), 0, "empty text, no misses");
     }
 
     /// The two `include_bytes!` assets must really be the extracted Play faces.

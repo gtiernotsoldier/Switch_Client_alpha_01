@@ -43,6 +43,11 @@ pub type Wparam = usize;
 pub type Lparam = isize;
 pub type Lresult = isize;
 
+/// `WNDENUMPROC`: returns non-zero to continue the enumeration. `extern "system"`
+/// and `unsafe` because the caller passes a raw pointer to its own state through
+/// `l_param` — the one place in this crate where a callback crosses the FFI.
+pub type EnumWindowsProc = Option<unsafe extern "system" fn(Hwnd, Lparam) -> i32>;
+
 /// The layout structs below carry `#[allow(dead_code)]`: every field exists
 /// because Win32 dictates the byte offset, and the padding and reserved ones are
 /// only ever zeroed, so the never-read-field lint would otherwise flag perfectly
@@ -63,6 +68,21 @@ pub struct Point {
 pub struct Size {
     pub cx: i32,
     pub cy: i32,
+}
+
+/// Win32 `RECT`: four LONGs, left/top/right/bottom — the order matters and the two
+/// corners are *inclusive* in some APIs and exclusive in others, so the rect is
+/// only ever converted through one place (`follow::rect_from_corners`).
+///
+/// Named `RectWin` because `hud::Rect` is the overlay's own origin+size rectangle;
+/// two different shapes with the same name would be a silent way to mix them up.
+#[repr(C)]
+#[allow(dead_code)]
+pub struct RectWin {
+    pub left: i32,
+    pub top: i32,
+    pub right: i32,
+    pub bottom: i32,
 }
 
 #[repr(C)]
@@ -222,6 +242,19 @@ extern "system" {
     pub fn TranslateMessage(msg: *const Msg) -> i32;
     pub fn DispatchMessageW(msg: *const Msg) -> Lresult;
     pub fn PostQuitMessage(code: i32);
+    /// Walk every top-level window. The callback returns non-zero to continue, zero
+    /// to stop; it runs on this thread, which is why the DPI awareness set at
+    /// startup applies to the `GetWindowRect` calls it makes (`follow.rs`).
+    pub fn EnumWindows(callback: EnumWindowsProc, param: Lparam) -> i32;
+    /// The process that owns a window — how the follow search tells the game's own
+    /// windows from every other application's.
+    pub fn GetWindowThreadProcessId(hwnd: Hwnd, pid: *mut u32) -> u32;
+    pub fn GetWindowTextW(hwnd: Hwnd, text: *mut u16, max_count: i32) -> i32;
+    pub fn IsWindowVisible(hwnd: Hwnd) -> i32;
+    /// A minimised window's rect is the classic (-32000, -32000) icon position, so
+    /// it is refused rather than used to place the overlay in a desktop corner.
+    pub fn IsIconic(hwnd: Hwnd) -> i32;
+    pub fn GetWindowRect(hwnd: Hwnd, rect: *mut RectWin) -> i32;
     pub fn UpdateLayeredWindow(
         hwnd: Hwnd,
         dst_dc: Hdc,
@@ -284,6 +317,17 @@ extern "system" {
     /// proves whether `CreateFontW("Play", ...)` picked the registered family or
     /// silently substituted something else.
     pub fn GetTextFaceW(hdc: Hdc, count: i32, face: *mut u16) -> i32;
+    /// Maps characters to the glyph indices of the DC's currently selected font. With
+    /// `GGI_MARK_NONEXISTING_GLYPHS` a character the face has no glyph for comes back as
+    /// `GLYPH_MISSING` (0xFFFF) — the mechanical answer to "is this face really drawing these
+    /// characters, or a row of boxes?". Registration success alone proves nothing about coverage.
+    pub fn GetGlyphIndicesW(
+        hdc: Hdc,
+        text: *const u16,
+        count: i32,
+        indices: *mut u16,
+        flags: u32,
+    ) -> u32;
     pub fn GetTextMetricsW(hdc: Hdc, metrics: *mut TextMetricsW) -> i32;
     pub fn GetTextExtentPoint32W(hdc: Hdc, text: *const u16, count: i32, size: *mut Size) -> i32;
     pub fn TextOutW(hdc: Hdc, x: i32, y: i32, text: *const u16, count: i32) -> i32;
@@ -324,6 +368,10 @@ pub const HWND_TOPMOST: Hwnd = -1isize as Hwnd;
 /// the show — a hidden window cannot be seen however topmost it is.
 pub const SWP_NOSIZE: u32 = 0x0001;
 pub const SWP_NOMOVE: u32 = 0x0002;
+/// `SWP_NOZORDER` — move/resize without touching the Z-order. Used when the overlay
+/// is deliberately NOT topmost (`--no-topmost`): `HWND_TOPMOST` would silently
+/// override that choice on every follow step.
+pub const SWP_NOZORDER: u32 = 0x0004;
 pub const SWP_NOACTIVATE: u32 = 0x0010;
 pub const SWP_SHOWWINDOW: u32 = 0x0040;
 pub const SWP_NOOWNERZORDER: u32 = 0x0200;
@@ -399,6 +447,11 @@ pub const SW_SHOWNOACTIVATE: i32 = 4;
 
 pub const DIB_RGB_COLORS: u32 = 0;
 pub const BI_RGB: u32 = 0;
+
+/// `GetGlyphIndicesW` flag: report a character the face cannot draw as [GLYPH_MISSING] instead of
+/// substituting a default glyph, and the value it reports.
+pub const GGI_MARK_NONEXISTING_GLYPHS: u32 = 0x0001;
+pub const GLYPH_MISSING: u16 = 0xFFFF;
 
 pub const AC_SRC_OVER: u8 = 0x00;
 pub const AC_SRC_ALPHA: u8 = 0x01;

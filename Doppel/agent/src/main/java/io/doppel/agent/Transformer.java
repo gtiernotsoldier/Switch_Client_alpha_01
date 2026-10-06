@@ -448,38 +448,22 @@ public class Transformer implements ClassFileTransformer {
      * render method.
      */
     private static void emitSkipHook(MethodVisitor mv, Object[] entryLocals, boolean needsFrames) {
-        Label start = new Label();
-        Label end = new Label();
-        Label handler = new Label();
         Label after = new Label();
-        mv.visitTryCatchBlock(start, end, handler, "java/lang/Throwable");
-        mv.visitLabel(start);
-        mv.visitLdcInsn("io.doppel.agent.RenderBridge");
-        mv.visitInsn(Opcodes.ICONST_1);
-        mv.visitMethodInsn(Opcodes.INVOKESTATIC, "java/lang/Thread", "currentThread", "()Ljava/lang/Thread;", false);
-        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/Thread", "getContextClassLoader", "()Ljava/lang/ClassLoader;", false);
-        mv.visitMethodInsn(Opcodes.INVOKESTATIC, "java/lang/Class", "forName", "(Ljava/lang/String;ZLjava/lang/ClassLoader;)Ljava/lang/Class;", false);
-        mv.visitLdcInsn("skipViewBobbing");
-        mv.visitInsn(Opcodes.ICONST_0);
-        mv.visitTypeInsn(Opcodes.ANEWARRAY, "java/lang/Class");
-        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/Class", "getMethod", "(Ljava/lang/String;[Ljava/lang/Class;)Ljava/lang/reflect/Method;", false);
-        mv.visitInsn(Opcodes.ACONST_NULL);
-        mv.visitInsn(Opcodes.ICONST_0);
-        mv.visitTypeInsn(Opcodes.ANEWARRAY, "java/lang/Object");
-        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/reflect/Method", "invoke", "(Ljava/lang/Object;[Ljava/lang/Object;)Ljava/lang/Object;", false);
-        mv.visitTypeInsn(Opcodes.CHECKCAST, "java/lang/Boolean");
-        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/Boolean", "booleanValue", "()Z", false);
+        // `"true".equals(System.getProperty("doppel.skipViewBobbing"))` — note the receiver order: the
+        // constant is the receiver so a null property cannot NPE.
+        //
+        // This is deliberately NOT the reflective RenderBridge call that emitInlineHook uses. That
+        // pattern is right for the Display hook, where the alternative would be a cross-ClassLoader
+        // symbolic reference from LWJGL; but in a game class it resolved to nothing on a real client and
+        // the failure was swallowed by its own catch, so the hook installed cleanly and did nothing —
+        // exactly what the user saw. System.getProperty is a plain JDK call any class can make, with no
+        // ClassLoader on the resolution path and no exception to hide behind.
+        mv.visitLdcInsn("true");
+        mv.visitLdcInsn("doppel.skipViewBobbing");
+        mv.visitMethodInsn(Opcodes.INVOKESTATIC, "java/lang/System", "getProperty", "(Ljava/lang/String;)Ljava/lang/String;", false);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/String", "equals", "(Ljava/lang/Object;)Z", false);
         mv.visitJumpInsn(Opcodes.IFEQ, after);
         mv.visitInsn(Opcodes.RETURN);
-        // The protected range ends exactly where the handler starts. Deliberately no trailing GOTO: the
-        // instruction after a RETURN is an unreachable basic block, and the verifier demands a stack map
-        // frame at it ("Expecting a stack map frame ... at goto") — the first VerifyError this hook hit.
-        mv.visitLabel(end);
-        mv.visitLabel(handler);
-        if (needsFrames) {
-            mv.visitFrame(Opcodes.F_NEW, entryLocals.length, entryLocals, 1, new Object[] { "java/lang/Throwable" });
-        }
-        mv.visitInsn(Opcodes.POP);
         mv.visitLabel(after);
         if (needsFrames) {
             mv.visitFrame(Opcodes.F_NEW, entryLocals.length, entryLocals, 0, new Object[0]);

@@ -36,6 +36,9 @@ class BobHookTransformTest {
 
     private static final String OWNER = "net/minecraft/client/renderer/EntityRenderer";
 
+    /** The system property the injected hook reads — kept in step with RenderBridge and the adapter. */
+    private static final String PROPERTY = "doppel.skipViewBobbing";
+
     @AfterEach
     void clearProperty() {
         System.clearProperty("doppel.skipViewBobbing");
@@ -77,7 +80,9 @@ class BobHookTransformTest {
                 return new MethodVisitor(Opcodes.ASM4, mv) {
                     @Override
                     public void visitLdcInsn(Object value) {
-                        if ("skipViewBobbing".equals(value)) sawCall[0] = true;
+                        // The hook reads the property directly (no reflective RenderBridge call), so the
+                        // marker is the property key itself.
+                        if (PROPERTY.equals(value)) sawCall[0] = true;
                         super.visitLdcInsn(value);
                     }
                 };

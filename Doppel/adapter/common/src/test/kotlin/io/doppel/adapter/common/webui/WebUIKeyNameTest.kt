@@ -1,6 +1,7 @@
 package io.doppel.adapter.common.webui
 
 import io.doppel.adapter.common.api.KeyCode
+import io.doppel.adapter.common.api.KeyNames
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -17,8 +18,9 @@ class WebUIKeyNameTest {
 
     @Test
     fun `special keys use the game's own names`() {
-        assertEquals("Unbound", WebUIServer.keyName(-1))
-        assertEquals("Unbound", WebUIServer.keyName(0))
+        assertEquals("NONE", WebUIServer.keyName(-1))
+        assertEquals("NONE", WebUIServer.keyName(0))
+        assertEquals(KeyNames.UNBOUND, WebUIServer.keyName(-1), "the panel's chip shows [NONE]")
         assertEquals("Space", WebUIServer.keyName(KeyCode.SPACE))
         assertEquals("Enter", WebUIServer.keyName(KeyCode.ENTER))
         assertEquals("Tab", WebUIServer.keyName(KeyCode.TAB))

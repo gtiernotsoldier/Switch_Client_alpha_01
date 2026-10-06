@@ -16,6 +16,7 @@ import io.doppel.adapter.common.option.float
 import io.doppel.adapter.common.option.int
 import io.doppel.adapter.common.option.choices
 import io.doppel.adapter.common.option.triggerOptions
+import kotlin.math.roundToInt
 import kotlin.random.Random
 
 /**
@@ -32,11 +33,27 @@ import kotlin.random.Random
 object Velocity : Module("Velocity", Category.COMBAT), HudLineProvider {
 
     // ========== HUD value (read once on enable/config change) ==========
-    override fun hudValue(): String {
-        val hPct = ((horizontalMin + horizontalMax) / 2f * 100f).toInt()
-        val vPct = ((verticalMin + verticalMax) / 2f * 100f).toInt()
-        return "$mode ${hPct}/${vPct}%"
+    /**
+     * What the HUD row shows: the *ranges the user configured*, not a derived single number.
+     *
+     * It used to print the midpoint of each pair — a 0%..100% horizontal range showed as "50%",
+     * which is a number the user never set and which disagrees with the two values the panel shows.
+     */
+    override fun hudValue(): String = when (mode) {
+        "Click" -> "Click $clicksMin-$clicksMax clicks"
+        else -> "Legit ${pctRange(horizontalMin, horizontalMax)}/${pctRange(verticalMin, verticalMax)}"
     }
+
+    /**
+     * One retention range as the HUD spells it: `80%-100%`, collapsing to a single value when both
+     * ends are equal (`100%`) so an unchanged axis does not read as `100%-100%`.
+     */
+    private fun pctRange(min: Float, max: Float): String {
+        val lo = (min * 100f).roundToInt()
+        val hi = (max * 100f).roundToInt()
+        return if (lo == hi) "$lo%" else "${minOf(lo, hi)}%-${maxOf(lo, hi)}%"
+    }
+
     override fun hudHighlight(): Boolean = true
 
     // ========== Mode ==========

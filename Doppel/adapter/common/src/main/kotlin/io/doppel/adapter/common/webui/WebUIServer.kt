@@ -261,6 +261,9 @@ object WebUIServer {
                     val req = mapper.readValue(body, Map::class.java) as Map<String, Any?>
                     val code = (req["key"] as? Number)?.toInt() ?: -1
                     synchronized(lock) { ModuleRegistry.get(name)?.keybind = code }
+                    // The HUD row carries the key now (`... [N]`), so it has to be re-collected or
+                    // the list keeps showing the old binding until some other change comes along.
+                    try { io.doppel.adapter.common.module.render.HUD.notifyModuleToggled() } catch (_: Throwable) {}
                     try { ConfigStore.save() } catch (_: Exception) {}
                     respondJson(exchange, 200, mapper.writeValueAsString(
                         mapOf("ok" to true, "name" to name, "key" to code, "keyName" to keyName(code))))
@@ -413,39 +416,11 @@ object WebUIServer {
     /**
      * GLFW key code → the key's name for the WebUI keybind display.
      *
-     * English on purpose. The panel used to print `未绑定` / `空格` / `键A`, while Minecraft's own
-     * controls screen names the same keys `Space` / `A` / `LSHIFT` — two vocabularies for one
-     * keyboard is how a user ends up binding a module to a key the game already uses and not
-     * noticing. These strings are also what the module keybind poll compares against mentally, so
-     * they follow the game's own spelling (`LShift`, `Space`, `F1`).
+     * Delegates to [io.doppel.adapter.common.api.KeyNames] so the panel, the HUD list's `[KEY]`
+     * suffix and anything else that names a key cannot drift apart. `NONE` is what an unbound
+     * module shows, and it is what the panel renders inside the `[...]` chip.
      */
-    fun keyName(code: Int): String {
-        if (code <= 0) return "Unbound"
-        return when (code) {
-            io.doppel.adapter.common.api.KeyCode.ESC -> "Esc"
-            io.doppel.adapter.common.api.KeyCode.ENTER -> "Enter"
-            io.doppel.adapter.common.api.KeyCode.TAB -> "Tab"
-            io.doppel.adapter.common.api.KeyCode.BACKSPACE -> "Backspace"
-            io.doppel.adapter.common.api.KeyCode.SPACE -> "Space"
-            io.doppel.adapter.common.api.KeyCode.LEFT_SHIFT -> "LShift"
-            io.doppel.adapter.common.api.KeyCode.RIGHT_SHIFT -> "RShift"
-            io.doppel.adapter.common.api.KeyCode.LEFT_CONTROL -> "LCtrl"
-            io.doppel.adapter.common.api.KeyCode.RIGHT_CONTROL -> "RCtrl"
-            io.doppel.adapter.common.api.KeyCode.LEFT_ALT -> "LAlt"
-            io.doppel.adapter.common.api.KeyCode.RIGHT_ALT -> "RAlt"
-            in 48..57 -> "" + (code - 48)
-            in 65..90 -> "" + ((code - 65) + 'A'.code).toChar()
-            in 290..301 -> "F${code - 290 + 1}"
-            // GLFW's arrow keys, which a module keybind may well use.
-            265 -> "Up"
-            264 -> "Down"
-            263 -> "Left"
-            262 -> "Right"
-            // GLFW's numpad block.
-            in 320..329 -> "Num ${code - 320}"
-            else -> "Key $code"
-        }
-    }
+    fun keyName(code: Int): String = io.doppel.adapter.common.api.KeyNames.name(code)
 
     private fun optionJson(desc: OptionDescriptor): Map<String, Any?> {
         val meta = desc.meta

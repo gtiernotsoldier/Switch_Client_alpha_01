@@ -1,6 +1,7 @@
 package io.doppel.adapter.common.module.render
 
 import io.doppel.adapter.common.api.EventBridge
+import io.doppel.adapter.common.api.KeyNames
 import io.doppel.adapter.common.hud.HudStateWriter
 import io.doppel.adapter.common.module.Category
 import io.doppel.adapter.common.module.HudLineProvider
@@ -275,7 +276,7 @@ object HUD : Module("HUD", Category.RENDER) {
                         } ?: autoHudValue(module)
                         HUDEntry(
                             name = module.name,
-                            value = value,
+                            value = withKeybind(module, value),
                             highlight = hl,
                             isRed = module.enabled && module.showRedIndicator &&
                                 module.category !in Module.silentCategories
@@ -287,6 +288,22 @@ object HUD : Module("HUD", Category.RENDER) {
         val names = entries.drop(1).joinToString(" | ") { it.name }
         EventBridge.hudTextLine = if (names.isNotEmpty()) "Doppel | $names" else "Doppel"
         io.doppel.core.logging.CoreLogger.info("[HUD] refreshLines: ${entries.size} entries, enabled=$enabled")
+    }
+
+    /**
+     * A row's value with the module's bound key appended: `Legit 80%-100%/100%[N]`.
+     *
+     * The key is part of the row because that is how the user finds out which key toggles a module
+     * without opening the panel — and because an unbound module showing nothing is exactly the
+     * ambiguity that made them ask whether binding had worked at all.
+     *
+     * The contract's value field is 24 bytes, so a very long value plus a key can lose its tail when
+     * the writer truncates; module values are short enough that this does not bite in practice.
+     */
+    internal fun withKeybind(module: Module, value: String): String {
+        if (module.keybind <= 0) return value
+        val key = "[${KeyNames.name(module.keybind)}]"
+        return if (value.isEmpty()) key else "$value$key"
     }
 
     /**

@@ -9,16 +9,61 @@ without re-deriving anything.
 
 | Item | State |
 | --- | --- |
-| Local `main` | round 1: `2f9451e`, `9f03f5a`, `c489f73`, `19f267c`, `6429935`. Round 2: `a29fb8e`, `75b1c6a`, `0d946be`, `e7ad03b`. Round 3: `3f720f5`, `c2fbcfc`, `c660949`, `ea8e9e1`. Round 4: `1171427`, `4f677e8`, `810c674`, `e33a25a`, `7764bae`. Round 5 (this pass) adds the commits listed under "Round 5". **Not pushed to GitLab yet** |
-| Testable binary | `C:\Users\Administrator\Desktop\swl\doppel-injector-fixed.exe`, rebuilt 18:50:46 with the current agent jar and overlay; both embedded RCDATA blobs hash-match their sources |
-| Kotlin build | `:core:test` (94 tests), `:adapter:common:compileKotlin`, `:adapter:common:test` (99 tests, 19 classes), `:adapter:forge:v1_8_9:compileKotlin`, `:agent:jar` all green |
-| Rust builds | `hud`: 83 tests green. `injector`: 10 tests green, only the 3 pre-existing warnings (`flow.rs` platform, `inject.rs` WAIT_TIMEOUT, `process.rs` GetLastError) |
+| Local `main` | round 1: `2f9451e`, `9f03f5a`, `c489f73`, `19f267c`, `6429935`. Round 2: `a29fb8e`, `75b1c6a`, `0d946be`, `e7ad03b`. Round 3: `3f720f5`, `c2fbcfc`, `c660949`, `ea8e9e1`. Round 4: `1171427`, `4f677e8`, `810c674`, `e33a25a`, `7764bae`. Round 5: `efcf6db`, `c70866c`, `d12f35b`, `25d8175`, `f0f0822`. Round 6 (this pass) adds the commits listed under "Round 6". **Not pushed to GitLab yet** |
+| Testable binary | `C:\Users\Administrator\Desktop\swl\doppel-injector-fixed.exe`, rebuilt 19:18:23 with the current agent jar and overlay; both embedded RCDATA blobs hash-match their sources |
+| Kotlin build | `:core:test` (94 tests), `:adapter:common:compileKotlin`, `:adapter:common:test` (111 tests, 21 classes), `:adapter:forge:v1_8_9:compileKotlin`, `:agent:jar` all green |
+| Rust builds | `hud`: 85 tests green. `injector`: 10 tests green, only the 3 pre-existing warnings (`flow.rs` platform, `inject.rs` WAIT_TIMEOUT, `process.rs` GetLastError) |
 | State contract | **v3**, writer and reader, verified against each other across the two languages; v1 and v2 are still read so a stale file cannot break the overlay |
 | Overlay | always-on-top click-through layered window anchored to the game window's **client area** (below the title bar) and following it (`--follow-pid`); **five** modes (Default/Rise/VapeV4/Tesseract/**Modern**); row entrance **and exit** animation; decaying red **work flash**; user-set scale, line spacing, background opacity and row order |
 | In-game Keystrokes | reads *effective* key states, so WTap/STap/ADTap/JumpReset light the boxes; Rainbow no longer touches AWT |
 | WebUI | keyboard-only numeric fields (slider + an underlined typed value), colour pickers, a HUD list panel (search, pill show/hide, up/down), keybind chips beside the module name reading `[NONE]`/`[N]` |
 | Launcher | restyled to the OpenCommunity dark palette with a short intro fade |
 | Option sanity | Min/Max option pairs are kept ordered on every write, so `Random.nextInt(min, max + 1)` can no longer be handed an inverted range |
+
+## Round 6 — the HUD list goes away, and the HUD finally follows its own options
+
+### Why the overlay ignored the HUD module's settings
+`Position` and `Sort`/`Reversed` are tunable in the panel and had **no path to the overlay at all**:
+the contract had no field for the side the list hangs off, and the published-order flag only turned on
+for a manually arranged list. So changing them did nothing — which is what "the HUD does not keep up
+with the HUD module's config" was.
+
+- Contract: **flags bit 7 = `positionLeft`**. Reserved in v2/v3, so it is a backward-compatible use of
+  a reserved bit — a reader that does not know it masks it off, no other field moved, and the wire
+  version stays 3. `--position` still wins over the header, which wins over the default (Right, the
+  reference placement).
+- `Sort`/`Reversed` now make the overlay follow the published order the moment they are not the
+  default, the same way an arranged list already did.
+- The Rust side also had to mix the position bit into the frame `signature()`, or a position-only
+  change would rewrite the state file, leave the signature identical, and skip the frame — the bug
+  would have survived the fix.
+- **`HUDOptionContractTest` is the guard**: for every option the HUD module exposes, changing it must
+  change what the overlay is told. The next option added without a wire path fails there instead of in
+  the user's game.
+
+### Pressing a key says so
+A key press with no visible result is indistinguishable from a key press that never arrived — which is
+why "my keybind does not work" was unanswerable. A keybind toggle now puts a short-lived line at the
+top of the HUD (`WTap ON` / `WTap OFF`) for 1.5 s, driven through `EventBridge.noticeModuleToggled`
+from `Module.tryKeybindToggle`, so it works for every module including one that just switched off and
+therefore has no row of its own. It rides the existing name+value row rather than a new mechanism.
+The panel's keybind chain was re-checked end to end and pinned by `ModuleJsonContractTest` (the payload
+carries `keybind`, `keyName`, `hudHidden`, `hudShown`, `redIndicator`).
+
+### The work flash now has something to flash about
+Only five call sites marked a module as working (WTap/STap/ADTap/Velocity/AutoClicker), and
+AutoClicker is a silent module by default — so in normal play the red wash almost never appeared even
+though the mechanism was fine. `markWorked()` now also fires on TriggerBot's clicks (both click
+strategies), HitSelect's counter-hits, AutoBlock's block *transitions* (never the steady hold),
+BlockHit's presses and KnockbackDelay actually holding a packet back.
+
+### The HUD list is gone
+The user asked what it was for and said to delete it, so it is deleted: markup, CSS, JS and the
+`renderHudList` path. Its two controls moved onto every module card, in the order the user asked for:
+`[icon] name [KEYBIND] [EYE] [RED DOT]` — a real SVG eye (open = listed, struck through = hidden) that
+posts `{"hidden":bool}`, and a red dot that posts `{"red":bool}`. Both keep the optimistic flip, the
+`hudBusy` guard against the poll fighting a click, and the authoritative value from the response. The
+server endpoints stay (this page simply no longer calls `/api/hud/order`).
 
 ## Round 5 — visibility, animations, and the knobs that should not exist
 

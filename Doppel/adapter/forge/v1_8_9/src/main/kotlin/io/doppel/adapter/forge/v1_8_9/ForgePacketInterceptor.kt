@@ -154,6 +154,58 @@ object ForgePacketInterceptor : ChannelDuplexHandler() {
         return null
     }
 
+    // ── Outbound lag (AutoBlock's Lag mode) ──────────────────────────────────────────────────────
+    // Hold outbound packets instead of blocking: the server keeps the last state it saw (the block)
+    // while nothing new arrives, and the held packets go out the moment the window ends or an attack
+    // must land. Everything here runs on the Netty event loop.
+    private val heldOutbound = java.util.ArrayDeque<Pair<Any, io.netty.channel.ChannelPromise>>()
+    @Volatile private var lagStartedMs = 0L
+
+    /** Hard cap: if a module stops refreshing the flag mid-lag, the connection must not stay stalled. */
+    private val lagHardCapMs = 2500L
+
+    private fun lagActive(): Boolean {
+        if (!EventBridge.packetLagActive) return false
+        if (lagStartedMs == 0L) return true
+        return System.currentTimeMillis() - lagStartedMs <= lagHardCapMs
+    }
+
+    private fun releaseHeld(ctx: ChannelHandlerContext) {
+        lagStartedMs = 0L
+        if (heldOutbound.isEmpty()) return
+        val n = heldOutbound.size
+        while (heldOutbound.isNotEmpty()) {
+            val (m, pr) = heldOutbound.poll()
+            ctx.write(m, pr)
+        }
+        ctx.flush()
+        CoreLogger.info("[ForgePacketInterceptor] lag released: $n packet(s) sent")
+    }
+
+    override fun write(ctx: ChannelHandlerContext, msg: Any, promise: io.netty.channel.ChannelPromise) {
+        try {
+            if (lagActive()) {
+                // An attack is never delayed: let everything held go first, then this packet, and tell the
+                // module so it can block again immediately (Raven's prevent-delaying-attacks).
+                if (c02PacketClass.isInstance(msg)) {
+                    releaseHeld(ctx)
+                    EventBridge.packetLagAttackReleased = true
+                } else {
+                    if (lagStartedMs == 0L) lagStartedMs = System.currentTimeMillis()
+                    heldOutbound.add(msg to promise)
+                    return
+                }
+            } else if (heldOutbound.isNotEmpty()) {
+                // The module turned the flag off and this is the first packet since: flush the backlog.
+                releaseHeld(ctx)
+            }
+            super.write(ctx, msg, promise)
+        } catch (t: Throwable) {
+            // A failure here must never kill the connection.
+            try { super.write(ctx, msg, promise) } catch (_: Throwable) {}
+        }
+    }
+
     override fun channelRead(ctx: ChannelHandlerContext, msg: Any) {
         // Runs on the Netty thread. Any unexpected exception here (e.g. racing the main thread's
         // entity-list mutation during an explosion) must never escape and kill the connection.

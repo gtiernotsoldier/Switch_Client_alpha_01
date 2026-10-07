@@ -46,7 +46,7 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
     // Switch = AutoBlock maintains the block; each fresh left-click attack (physical or
     //          AutoClick) briefly cancels the block, then re-blocks after [delayMs].
     // Srg    = hold-style: block continuously while the player keeps attacking.
-    private val mode by choices("Mode", arrayOf("Normal", "Switch", "Sag", "Predict"))
+    private val mode by choices("Mode", arrayOf("Normal", "Switch", "Sag", "Predict", "Lag"))
 
     // ========== Distance Range ==========
     private val maxDistance by float("MaxDistance", 3.0f, 0.0f..6.0f, "blocks")
@@ -102,6 +102,14 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
      */
     private val predictHurtTime by int("PredictHurtTime", 10, 1..20, "ticks", modes = arrayOf("Predict"))
 
+    // ========== Lag (packet lag instead of a block) ==========
+    /** Chance that a lag window starts at all (Raven's Lag Chance). */
+    private val lagChance by int("LagChance", 100, 0..100, "%", modes = arrayOf("Lag"))
+    /** How long one lag window may last (Raven's Lag Max Duration). */
+    private val lagMaxMs by int("LagMax", 200, 50..500, "ms", modes = arrayOf("Lag"))
+    /** Block immediately after an attack was let through (Raven's Block again immediately). */
+    private val lagBlockAgain by boolean("LagBlockAgain", true, modes = arrayOf("Lag"))
+
     /** [Switch] mode only: only perform the block-hit switch while the player holds right-click. */
     private val switchOnRightHold by boolean("SwitchOnRightHold", true, modes = arrayOf("Switch"))
 
@@ -109,6 +117,9 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
 
     /** Whether AutoBlock pressed the right-click (not the player). */
     private var blockHeld: Boolean = false
+
+    /** nanoTime when the current Lag window started (0 = not lagging). */
+    private var lagStartNano: Long = 0L
 
     /** nanoTime when blocking started (Normal mode countdown). */
     private var blockStartNano: Long = 0L
@@ -305,6 +316,39 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
                 } else if (blockHeld && elapsedNs(blockStartNano) >= maxHoldMs * 1_000_000L) {
                     releaseBlock()
                 }
+            }
+
+            // ── Lag: do not block at all — hold the outgoing packets instead. Raven's Lag mode: the
+            // server keeps seeing the last state it had (the block) while nothing new arrives, and the
+            // held traffic goes out the moment the module stops asking or an attack must land.
+            "Lag" -> {
+                val want = conditionsMet && inRange && probPass && isAttacking
+                val lagging = lagStartNano != 0L
+                if (!lagging && want && (lagChance >= 100 || Random.nextInt(100) < lagChance)) {
+                    lagStartNano = nowNs
+                    EventBridge.packetLagActive = true
+                    markWorked() // a lag window starting is a transition, like a block starting
+                } else if (lagging) {
+                    // Keep the request alive (the platform releases it if it is not refreshed), and end it
+                    // when the window is up or the player stopped attacking.
+                    EventBridge.packetLagActive = true
+                    if (elapsedNs(lagStartNano) >= lagMaxMs * 1_000_000L || !want) {
+                        lagStartNano = 0L
+                        EventBridge.packetLagActive = false
+                    }
+                }
+                // An attack was let through: block at once, so the server sees the block right after it.
+                if (EventBridge.packetLagAttackReleased) {
+                    EventBridge.packetLagAttackReleased = false
+                    if (lagBlockAgain && conditionsMet && inRange) {
+                        EventBridge.syntheticUse = true
+                        blockHeld = true
+                        blockStartNano = nowNs
+                        markWorked()
+                    }
+                }
+                // Let any immediately-re-blocked use go after [delayMs], the same as Normal mode.
+                if (blockHeld && elapsedNs(blockStartNano) >= delayMs * 1_000_000L) releaseBlock()
             }
 
             // ── Normal: click-style — block while AutoClicker is working (mouseButton0 cadence)

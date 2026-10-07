@@ -1309,6 +1309,22 @@ object EventBridge {
     @Volatile var freelookDeltaX: Float = 0f
     @Volatile var freelookDeltaY: Float = 0f
 
+    // ========== Outbound packet lag (AutoBlock's Lag mode) ==========
+    /**
+     * Hold outgoing packets while this is set.
+     *
+     * This is the reference's Lag mode: instead of pressing the block, the client simply stops telling
+     * the server anything new, so the server keeps seeing the last state it had — the block — while the
+     * player keeps attacking locally. The platform releases everything the moment an attack has to land.
+     *
+     * Refreshed by the module every tick while it wants the lag, and defended in the platform by a hard
+     * time cap, so a module that dies mid-lag cannot leave the connection silently stalled.
+     */
+    @Volatile var packetLagActive: Boolean = false
+
+    /** Set when the platform let an attack through during a lag — the module then re-blocks at once. */
+    @Volatile var packetLagAttackReleased: Boolean = false
+
     // ========== Freelook (Visual) ==========
     /**
      * True while a module wants the camera to follow its own angles instead of the player's.

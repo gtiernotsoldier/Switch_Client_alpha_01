@@ -45,7 +45,7 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
     // Switch = AutoBlock maintains the block; each fresh left-click attack (physical or
     //          AutoClick) briefly cancels the block, then re-blocks after [delayMs].
     // Srg    = hold-style: block continuously while the player keeps attacking.
-    private val mode by choices("Mode", arrayOf("Normal", "Switch", "Sag"))
+    private val mode by choices("Mode", arrayOf("Normal", "Switch", "Sag", "Predict"))
 
     // ========== Distance Range ==========
     private val maxDistance by float("MaxDistance", 3.0f, 0.0f..6.0f, "blocks")
@@ -83,6 +83,22 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
         onlyMoveForward = this@AutoBlock.onlyMoveForward
         onlyWhenTargetGoesBack = this@AutoBlock.onlyWhenTargetGoesBack
     }
+
+    /**
+     * [Sag] and [Predict]: release the block after holding it this long, then re-engage on the next
+     * trigger. A hold-style block that never lets go is what the server sees as "always blocking"; a
+     * hold-and-release rhythm is what the block-hit timing is supposed to look like.
+     */
+    private val maxHoldMs by int("MaxHold", 700, 400..2000, "ms")
+
+    /**
+     * [Predict]: block when our own hurtTime reaches this value, counted down from 10.
+     *
+     * The i-frame countdown is a clock: our hurtTime only runs while the opponent's hit is still being
+     * absorbed, and the next one lands as it expires. Blocking when it passes this tick times the block
+     * for the hit that is coming instead of reacting to the one that already landed.
+     */
+    private val predictHurtTick by int("PredictTick", 9, 1..10, "ticks")
 
     /** [Switch] mode only: only perform the block-hit switch while the player holds right-click. */
     private val switchOnRightHold by boolean("SwitchOnRightHold", true)
@@ -204,8 +220,12 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
                         EventBridge.syntheticUse = true
                         markWorked() // block starting — a transition, not the steady hold
                         blockHeld = true
+                        blockStartNano = nowNs
+                    } else if (elapsedNs(blockStartNano) >= maxHoldMs * 1_000_000L) {
+                        // Held long enough: let go. The next attack re-engages on its own, which is the
+                        // block/release rhythm instead of a block that stays up for the whole fight.
+                        releaseBlock()
                     }
-                    // Keep blocking while attacking.
                 } else if (blockHeld && elapsedNs(lastAttackNano) >= 250_000_000L) {
                     releaseBlock()
                 }
@@ -218,6 +238,15 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
             // player to be holding (long-pressing) right-click. Uses a debounced attack state
             // (not a rising edge) so both long-press left and AutoClick are detected reliably.
             "Switch" -> {
+                // SwitchOnRightHold: with it on, the mode runs ONLY while the player holds right-click —
+                // and holding right-click is the player blocking manually, so we step aside entirely
+                // rather than maintaining a block nobody asked for. It used to gate only the cancel,
+                // so the block was maintained anyway and the option looked broken because it was.
+                if (switchOnRightHold && !EventBridge.isRightMousePhysicallyDown) {
+                    if (blockHeld) releaseBlock()
+                    lastAttackNano = 0L
+                    return
+                }
                 val cancelAllowed = !switchOnRightHold || EventBridge.isRightMousePhysicallyDown
                 val baseBlock = conditionsMet && inRange && probPass
                 if (isAttacking) lastAttackNano = nowNs
@@ -235,6 +264,21 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
                         blockHeld = true
                     }
                 } else if (blockHeld) {
+                    releaseBlock()
+                }
+            }
+
+            // ── Predict: block on the i-frame clock rather than on the attack. See [predictHurtTick].
+            "Predict" -> {
+                val trigger = conditionsMet && inRange && probPass && player.hurtTime == predictHurtTick
+                if (trigger) {
+                    if (!blockHeld) {
+                        EventBridge.syntheticUse = true
+                        markWorked() // block starting — a transition, not the steady hold
+                        blockHeld = true
+                        blockStartNano = nowNs
+                    }
+                } else if (blockHeld && elapsedNs(blockStartNano) >= maxHoldMs * 1_000_000L) {
                     releaseBlock()
                 }
             }

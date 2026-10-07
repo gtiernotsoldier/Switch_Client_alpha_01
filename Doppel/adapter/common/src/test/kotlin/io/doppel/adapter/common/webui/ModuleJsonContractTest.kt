@@ -4,7 +4,9 @@ import io.doppel.adapter.common.module.Category
 import io.doppel.adapter.common.module.Module
 import io.doppel.adapter.common.module.ModuleRegistry
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
+import io.doppel.adapter.common.module.combat.AutoBlock
 import org.junit.jupiter.api.Test
 
 /**
@@ -68,5 +70,28 @@ class ModuleJsonContractTest {
         val names = options.map { it["name"] }
         assertTrue(!names.contains("Keybind"), "a Keybind slider is not a setting: $names")
         assertTrue(!names.contains("RedIndicator"))
+    }
+
+    @Test
+    fun `an option declares the modes it belongs to`() {
+        // This is what lets the panel show a mode's own settings without keeping its own table of option
+        // names (which drifted from the modules). AutoBlock is the worked example: Switch holds the block,
+        // Sag holds it for MaxHold, Predict blocks on the target's i-frame window.
+        val options = WebUIServer.moduleJson(AutoBlock)["options"] as List<Map<String, Any?>>
+
+        // The field is unconditional — the page reads o.modes and must never see undefined.
+        assertTrue(options.all { it.containsKey("modes") }, "every option carries its modes field")
+
+        // Options register when first READ, so which of them exist here depends on what else ran. Assert
+        // the declared values when they are present rather than making this test order-dependent.
+        options.firstOrNull { it["name"] == "MaxHold" }?.let {
+            assertEquals(listOf("Sag", "Predict"), it["modes"])
+        }
+        options.firstOrNull { it["name"] == "SwitchOnRightHold" }?.let {
+            assertEquals(listOf("Switch"), it["modes"])
+        }
+        options.firstOrNull { it["name"] == "Chance" }?.let {
+            assertNull(it["modes"], "an option for every mode declares nothing")
+        }
     }
 }

@@ -1035,7 +1035,12 @@
             const natIncr = (nat==='Both' || nat==='Incremental');
             const natNth  = (nat==='Both' || nat==='EveryNth');
             const trigModeOpt = m.options.find(o => o.name==='TriggerMode');
+            // The module's mode selector. An option that declares its own modes is shown only for those
+            // modes: that declaration is the single source of truth, and MODE_RULES below is the older
+            // hard-coded table, which now only applies to options that have not declared anything.
+            const modeSel = m.options.find(o => o.name==='Mode') || (rule ? m.options.find(o => o.name===rule.selector) : null);
             return m.options.filter(o => {
+                if(o.modes && o.modes.length) return modeSel ? o.modes.includes(modeSel.value) : true;
                 if(cvOpt && o.name==='CombatVersion') return true;
                 if(cv && versionOf(o)!=='' && !(versionOf(o)==='18' && cv==='1.8') && !(versionOf(o)==='19' && cv==='1.9+')) return false;
                 if(selOpt && o.name===rule.selector) return true;

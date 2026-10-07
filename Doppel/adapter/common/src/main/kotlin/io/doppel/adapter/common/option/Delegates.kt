@@ -25,7 +25,9 @@ fun float(
     range: ClosedFloatingPointRange<Float>,
     unit: String = "",
     /** Granularity of the WebUI's +/- steps and slider snapping (0 = type default). */
-    step: Double = 0.0
+    step: Double = 0.0,
+    /** Modes this option belongs to; null/empty = every mode (see [OptionMeta.modes]). */
+    modes: Array<String>? = null
 ): ReadWriteProperty<Any?, Float> {
     require(default in range) { "Default value $default must be in range $range" }
     return object : ReadWriteProperty<Any?, Float> {
@@ -51,7 +53,8 @@ fun float(
                 unit = unit,
                 rangeMin = range.start,
                 rangeMax = range.endInclusive,
-                step = step
+                step = step,
+                modes = modes
             ))
             key = k
             return k
@@ -67,7 +70,9 @@ fun int(
     range: IntRange,
     unit: String = "",
     /** Granularity of the WebUI's +/- steps (0 = 1). */
-    step: Double = 0.0
+    step: Double = 0.0,
+    /** Modes this option belongs to; null/empty = every mode (see [OptionMeta.modes]). */
+    modes: Array<String>? = null
 ): ReadWriteProperty<Any?, Int> {
     require(default in range) { "Default value $default must be in range $range" }
     return object : ReadWriteProperty<Any?, Int> {
@@ -93,7 +98,8 @@ fun int(
                 unit = unit,
                 intRangeMin = range.first,
                 intRangeMax = range.last,
-                step = step
+                step = step,
+                modes = modes
             ))
             key = k
             return k
@@ -147,7 +153,9 @@ fun color(
 
 fun boolean(
     name: String,
-    default: Boolean
+    default: Boolean,
+    /** Modes this option belongs to; null/empty = every mode (see [OptionMeta.modes]). */
+    modes: Array<String>? = null
 ): ReadWriteProperty<Any?, Boolean> {
     return object : ReadWriteProperty<Any?, Boolean> {
         private var key: String? = null
@@ -168,7 +176,8 @@ fun boolean(
             val k = "$modulePrefix.$optName"
             ConfigManager.register(k, default, OptionMeta(
                 type = OptionType.BOOLEAN,
-                default = default
+                default = default,
+                modes = modes
             ))
             key = k
             return k
@@ -220,7 +229,9 @@ fun <T : Enum<T>> enum(
 
 fun choices(
     name: String,
-    options: Array<String>
+    options: Array<String>,
+    /** Modes this option belongs to; null/empty = every mode (see [OptionMeta.modes]). */
+    modes: Array<String>? = null
 ): ReadWriteProperty<Any?, String> {
     return object : ReadWriteProperty<Any?, String> {
         private var key: String? = null
@@ -242,7 +253,8 @@ fun choices(
             ConfigManager.register(k, options[0], OptionMeta(
                 type = OptionType.CHOICES,
                 default = options[0],
-                choices = options
+                choices = options,
+                modes = modes
             ))
             key = k
             return k

@@ -62,7 +62,7 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
     private val probability by int("Chance", 100, 0..100, "%")
 
     // ========== Timing ==========
-    private val delayMs by int("Delay", 50, 1..500, "ms")
+    private val delayMs by int("Delay", 50, 1..500, "ms", modes = arrayOf("Normal", "Switch"))
 
     // ========== Conditions (Unified Engine — shared with BlockHit/WTap/AimAssist/etc.) ==========
     // Defaults are all OFF so the base block behavior is unchanged (block wherever you attack).
@@ -90,7 +90,7 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
      * trigger. A hold-style block that never lets go is what the server sees as "always blocking"; a
      * hold-and-release rhythm is what the block-hit timing is supposed to look like.
      */
-    private val maxHoldMs by int("MaxHold", 700, 400..2000, "ms")
+    private val maxHoldMs by int("MaxHold", 700, 400..2000, "ms", modes = arrayOf("Sag", "Predict"))
 
     /**
      * [Predict]: the i-frame window the core trigger fires in — the same PRE mode WTap uses.
@@ -100,10 +100,10 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
      * reacting to the one that already landed. Reusing the core algorithm (instead of re-deriving the
      * window here) is what keeps Predict, WTap and BlockHit consistent with each other.
      */
-    private val predictHurtTime by int("PredictHurtTime", 10, 1..20, "ticks")
+    private val predictHurtTime by int("PredictHurtTime", 10, 1..20, "ticks", modes = arrayOf("Predict"))
 
     /** [Switch] mode only: only perform the block-hit switch while the player holds right-click. */
-    private val switchOnRightHold by boolean("SwitchOnRightHold", true)
+    private val switchOnRightHold by boolean("SwitchOnRightHold", true, modes = arrayOf("Switch"))
 
     // ========== Internal State ==========
 

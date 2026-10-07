@@ -39,7 +39,15 @@ data class OptionMeta(
      * them and hiding them here gives them the config file's save/load/validate path
      * without putting a "Keybind: -1" slider in the panel.
      */
-    val hidden: Boolean = false
+    val hidden: Boolean = false,
+    /**
+     * Which of the module's modes this option belongs to, or null for all of them.
+     *
+     * Declared at the option itself, so the panel and the module cannot disagree about which settings a
+     * mode has: the WebUI simply hides options whose list does not contain the selected mode. Before
+     * this, the panel kept its own per-module table of option names, which drifted from the modules.
+     */
+    val modes: Array<String>? = null
 ) {
     /**
      * Validate a candidate value against this option's constraints.

@@ -437,6 +437,9 @@ object WebUIServer {
         val meta = desc.meta
         val current = ConfigManager.currentValue(desc.key)
         return linkedMapOf(
+            // The modes this option is for (null = all). Declared on the option itself, so
+            // the panel cannot hold a table that drifts from the modules.
+            "modes" to meta.modes?.toList(),
             "key" to desc.key,
             "name" to desc.name,
             "type" to meta.type.name,

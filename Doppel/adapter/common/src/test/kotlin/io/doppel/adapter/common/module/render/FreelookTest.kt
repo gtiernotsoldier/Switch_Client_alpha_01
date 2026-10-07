@@ -30,16 +30,6 @@ class FreelookTest {
     }
 
     @Test
-    fun `crossing the yaw seam is a small step, not a full spin`() {
-        // The input is the player's rotation change, which can wrap at +/-180; without this the camera
-        // would whip all the way around whenever the player crossed the seam.
-        assertEquals(10f, Freelook.wrapDegrees(-170f - 180f), 0.001f)
-        assertEquals(-10f, Freelook.wrapDegrees(170f - (-180f)), 0.001f)
-        assertEquals(5f, Freelook.wrapDegrees(5f), 0.001f)
-        assertEquals(0f, Freelook.wrapDegrees(360f), 0.001f)
-    }
-
-    @Test
     fun `sensitivity one is the vanilla feel`() {
         val (yaw, pitch) = Freelook.accumulate(0f, 0f, 12f, -7f, 1.0f, invertY = false)
         assertEquals(12f, yaw, 0.001f)

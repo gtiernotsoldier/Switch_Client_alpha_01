@@ -41,8 +41,7 @@ object HUD : Module("HUD", Category.VISUAL) {
         val value: String = "",
         val highlight: Boolean = false,
         /** True = module currently enabled (draw red). */
-        val isRed: Boolean = false
-    )
+        )
 
     /** Current HUD lines — rebuilt on events, not per tick. */
     @Volatile
@@ -228,8 +227,7 @@ object HUD : Module("HUD", Category.VISUAL) {
         return HUDEntry(
             name = notice.name,
             value = if (notice.enabled) "ON" else "OFF",
-            highlight = true,
-            isRed = false
+            highlight = true
         )
     }
 
@@ -246,7 +244,7 @@ object HUD : Module("HUD", Category.VISUAL) {
         val notice = liveNoticeRow()
         val entries = buildList {
             // Title row ("Doppel") at the top — matches the reference layout.
-            add(HUDEntry(name = "Doppel", value = "", highlight = false, isRed = false))
+            add(HUDEntry(name = "Doppel", value = "", highlight = false))
             // The keybind confirmation goes above the module rows: it is about what just happened,
             // not about the list's own order.
             if (notice != null) add(notice)
@@ -266,9 +264,7 @@ object HUD : Module("HUD", Category.VISUAL) {
                         HUDEntry(
                             name = module.name,
                             value = withKeybind(module, value),
-                            highlight = hl,
-                            isRed = module.enabled && module.showRedIndicator &&
-                                module.category !in Module.silentCategories
+                            highlight = hl
                         )
                     }
             )

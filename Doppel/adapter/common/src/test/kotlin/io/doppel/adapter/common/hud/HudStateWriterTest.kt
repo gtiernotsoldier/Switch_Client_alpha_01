@@ -29,8 +29,8 @@ class HudStateWriterTest {
     @Test
     fun `publishes the documented v3 header and entries`() {
         val entries = listOf(
-            HUD.HUDEntry(name = "AutoClicker", value = "12.3 cps", highlight = true, isRed = true),
-            HUD.HUDEntry(name = "Velocity", value = "", highlight = false, isRed = false),
+            HUD.HUDEntry(name = "AutoClicker", value = "12.3 cps", highlight = true),
+            HUD.HUDEntry(name = "Velocity", value = "", highlight = false),
         )
         val header = HudStateWriter.Header(
             wave = true,

@@ -66,13 +66,6 @@ object Freelook : Module("Freelook", Category.VISUAL) {
         }
     }
 
-    /** Shortest signed difference, so crossing the +/-180 seam is a small step and not a full spin. */
-    internal fun wrapDegrees(delta: Float): Float {
-        var d = delta % 360f
-        if (d >= 180f) d -= 360f
-        if (d < -180f) d += 360f
-        return d
-    }
 
     /** The camera angles after this tick's mouse movement. Pure, so the arithmetic is testable. */
     internal fun accumulate(

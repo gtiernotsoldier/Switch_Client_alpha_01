@@ -1,6 +1,0 @@
-Manifest-Version: 1.0
-Premain-Class: io.doppel.agent.Agent
-Agent-Class: io.doppel.agent.Agent
-Can-Redefine-Classes: true
-Can-Retransform-Classes: true
-

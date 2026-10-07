@@ -6,6 +6,7 @@ import io.doppel.core.model.PlayerState
 import io.doppel.core.model.TargetState
 import io.doppel.core.strategy.autoblock.RangeGate
 import io.doppel.core.strategy.click.WeaponType
+import io.doppel.core.strategy.combat.CombatTrigger
 import io.doppel.adapter.common.api.EventBridge
 import io.doppel.adapter.common.module.Module
 import io.doppel.adapter.common.module.Category
@@ -92,13 +93,14 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
     private val maxHoldMs by int("MaxHold", 700, 400..2000, "ms")
 
     /**
-     * [Predict]: block when our own hurtTime reaches this value, counted down from 10.
+     * [Predict]: the i-frame window the core trigger fires in — the same PRE mode WTap uses.
      *
-     * The i-frame countdown is a clock: our hurtTime only runs while the opponent's hit is still being
-     * absorbed, and the next one lands as it expires. Blocking when it passes this tick times the block
-     * for the hit that is coming instead of reacting to the one that already landed.
+     * `CombatTrigger` PRE fires while the target is inside its hurt-resistance window, i.e. while it is
+     * still recovering. Blocking there times the block against the hit that is coming rather than
+     * reacting to the one that already landed. Reusing the core algorithm (instead of re-deriving the
+     * window here) is what keeps Predict, WTap and BlockHit consistent with each other.
      */
-    private val predictHurtTick by int("PredictTick", 9, 1..10, "ticks")
+    private val predictHurtTime by int("PredictHurtTime", 10, 1..20, "ticks")
 
     /** [Switch] mode only: only perform the block-hit switch while the player holds right-click. */
     private val switchOnRightHold by boolean("SwitchOnRightHold", true)
@@ -122,6 +124,10 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
 
     /** OnEnter range-mode latch (algorithm state, owned by core RangeGate). */
     private val rangeGateState = RangeGate.State()
+
+    /** [Predict]: hit counter/threshold handed back and forth with the core trigger. */
+    private var predictHits: Int = 0
+    private var predictThreshold: Int = 1
 
     /** Throttle counter for diagnostic logging (every ~40 ticks ≈ 2s). */
     private var diagCount: Int = 0
@@ -268,9 +274,27 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
                 }
             }
 
-            // ── Predict: block on the i-frame clock rather than on the attack. See [predictHurtTick].
+            // ── Predict: block inside the target's i-frame window, via the same core trigger WTap's PRE
+            // uses (see [predictHurtTime]). The window is the point: the target is still recovering, so
+            // the block is timed against the hit that is coming rather than the one that already landed.
             "Predict" -> {
-                val trigger = conditionsMet && inRange && probPass && player.hurtTime == predictHurtTick
+                var trigger = false
+                if (target != null) {
+                    val eval = CombatTrigger.evaluate(
+                        mode = CombatTrigger.Mode.PRE,
+                        target = target,
+                        maxHurtTime = predictHurtTime,
+                        hitCounter = predictHits,
+                        hitThreshold = predictThreshold,
+                        hitPerMin = 1,
+                        hitPerMax = 1,
+                        chance = 100
+                    )
+                    predictHits = eval.hitCounter
+                    predictThreshold = eval.hitThreshold
+                    trigger = eval.fire
+                }
+                trigger = trigger && conditionsMet && inRange && probPass
                 if (trigger) {
                     if (!blockHeld) {
                         EventBridge.syntheticUse = true

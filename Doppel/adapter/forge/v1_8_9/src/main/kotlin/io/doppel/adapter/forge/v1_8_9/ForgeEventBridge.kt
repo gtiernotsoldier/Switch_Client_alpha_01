@@ -1,6 +1,7 @@
 package io.doppel.adapter.forge.v1_8_9
 
 import io.doppel.adapter.common.api.EventBridge
+import io.doppel.core.logging.CoreLogger
 import io.doppel.adapter.common.api.IEventBridge
 import io.doppel.adapter.common.module.movement.InvMoveRules
 import io.doppel.core.model.*
@@ -43,6 +44,9 @@ object ForgeEventBridge : IEventBridge {
     private val clothMaterial by lazy { armorMaterialClass.enumConstants.firstOrNull { it.toString() == "CLOTH" } }
 
     // — packet classes
+    /** Diagnostic counter for AutoTool's slot resolution (see the handler below). */
+    private var autoToolDiag: Int = 0
+
     private val c02PacketUseEntityClass by lazy { Class.forName("net.minecraft.network.play.client.C02PacketUseEntity") }
     private val c02ActionClass by lazy { Class.forName("net.minecraft.network.play.client.C02PacketUseEntity\$Action") }
     private val attackAction by lazy { c02ActionClass.enumConstants.firstOrNull { it.toString() == "ATTACK" } }
@@ -459,19 +463,33 @@ object ForgeEventBridge : IEventBridge {
                 val player = getPlayer() ?: return@registerSwitchSlotHandler
                 inventoryCurrentItemField?.setInt(player, slot)
                 sendPacket(c09Constructor.newInstance(slot))
+                CoreLogger.info("[AutoTool] switched to slot $slot")
             } catch (_: Exception) {}
         }
 
         EventBridge.registerGetBestSlotHandler {
             var bestSlot = -1
             var bestSpeed = 1.0f
+            // Diagnostic (once a second, only while this is asked for): AutoTool reported as not working
+            // and the reason has to be nameable. This prints what the chain actually resolved — the ray
+            // trace type, the block, and every hotbar slot's dig speed — so a failure says which step it
+            // was instead of "nothing happened".
+            val diag: (String) -> Unit = { msg ->
+                if (++autoToolDiag % 20 == 0) CoreLogger.info("[AutoTool] $msg")
+            }
             val player = getPlayer() ?: return@registerGetBestSlotHandler -1
             val mc = getMc()
             val objMouseOver = try { MappingContext.getFieldValue(mc, "forge:mc_objectMouseOver") } catch (_: Exception) { null }
-            if (objMouseOver == null) return@registerGetBestSlotHandler -1
+            if (objMouseOver == null) {
+                diag("no objectMouseOver (field_71476_x) — nothing under the crosshair")
+                return@registerGetBestSlotHandler -1
+            }
 
             val typeOfHit = try { MappingContext.getFieldValue(objMouseOver, "forge:movingObjectPosition_typeOfHit") } catch (_: Exception) { null }
-            if (typeOfHit !== movingObjectTypeBlock) return@registerGetBestSlotHandler -1
+            if (typeOfHit !== movingObjectTypeBlock) {
+                diag("ray trace is not a block (type=${typeOfHit?.javaClass?.simpleName} block=${movingObjectTypeBlock?.javaClass?.simpleName} same=${typeOfHit === movingObjectTypeBlock})")
+                return@registerGetBestSlotHandler -1
+            }
 
             val blockPos = try { MappingContext.getFieldValue(objMouseOver, "forge:movingObjectPosition_blockPos") } catch (_: Exception) { null }
             val world = getWorld() ?: return@registerGetBestSlotHandler -1
@@ -485,12 +503,19 @@ object ForgeEventBridge : IEventBridge {
                 val item = try { MappingContext.getFieldValue(stack, "forge:itemStack_item") } catch (_: Exception) { null }
                 if (item == null || block == null) continue
                 val speed = try { MappingContext.invokeMethod(item, "forge:item_getDigSpeed", stack, block) as? Float } catch (_: Exception) { null }
+                if (i == 0) diag("block=${block?.javaClass?.simpleName} item0=${item.javaClass.simpleName} speed0=$speed")
                 if (speed != null && speed > bestSpeed) {
                     bestSpeed = speed
                     bestSlot = i
                 }
             }
-            if (bestSpeed > 1.0f) bestSlot else -1
+            if (bestSpeed > 1.0f) {
+                diag("best slot=$bestSlot speed=$bestSpeed")
+                bestSlot
+            } else {
+                diag("no tool beats hand (bestSpeed=$bestSpeed) — block=${block?.javaClass?.simpleName}")
+                -1
+            }
         }
 
         EventBridge.registerPressSneakHandler { setKeyBindPressed("forge:gs_keyBindSneak", true) }

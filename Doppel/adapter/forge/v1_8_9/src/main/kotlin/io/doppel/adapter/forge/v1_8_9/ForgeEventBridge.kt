@@ -473,10 +473,20 @@ object ForgeEventBridge : IEventBridge {
                 } catch (_: Throwable) {
                     null
                 }
+                // The field belongs to InventoryPlayer, NOT to the player. Writing it on the player threw
+                // "Can not set int field InventoryPlayer.field_70461_c to EntityPlayerSP" on every single
+                // attempt — the search was right and the write was aimed at the wrong object.
+                val inventory = try {
+                    MappingContext.getFieldValue(player, "forge:player_inventory")
+                } catch (_: Throwable) {
+                    null
+                }
                 if (field == null) {
                     CoreLogger.error("[AutoTool] switch: InventoryPlayer.currentItem unresolved")
+                } else if (inventory == null) {
+                    CoreLogger.error("[AutoTool] switch: player.inventory unresolved")
                 } else {
-                    field.setInt(player, slot)
+                    field.setInt(inventory, slot)
                 }
                 val packet = try {
                     c09Constructor.newInstance(slot)
@@ -524,6 +534,32 @@ object ForgeEventBridge : IEventBridge {
             val block = try { MappingContext.invokeMethod(blockState, "forge:iblockstate_block") } catch (_: Exception) { null }
 
             val inventory = try { MappingContext.getFieldValue(player, "forge:player_inventory") } catch (_: Exception) { null }
+            // Baseline: what is held right now. The reference clients compare against the held tool, not
+            // against the bare hand, so holding the right pickaxe already means "no better tool" and the
+            // module stops asking — without this it re-selected a slot every tick.
+            val heldSlot = try {
+                (MappingContext.getFieldValue(inventory, "forge:inventory_currentItem") as? Int) ?: 0
+            } catch (_: Exception) {
+                0
+            }
+            val heldStack = try {
+                MappingContext.invokeMethod(inventory, "forge:inventory_getStackInSlot", heldSlot)
+            } catch (_: Exception) {
+                null
+            }
+            val heldItem = try {
+                if (heldStack == null) null else MappingContext.getFieldValue(heldStack, "forge:itemStack_item")
+            } catch (_: Exception) {
+                null
+            }
+            if (heldItem != null && block != null) {
+                val heldSpeed = try {
+                    MappingContext.invokeMethod(heldItem, "forge:item_getDigSpeed", heldStack, block) as? Float
+                } catch (_: Exception) {
+                    null
+                }
+                if (heldSpeed != null) bestSpeed = heldSpeed
+            }
             for (i in 0..8) {
                 val stack = try { MappingContext.invokeMethod(inventory, "forge:inventory_getStackInSlot", i) } catch (_: Exception) { null }
                 if (stack == null) continue
@@ -531,13 +567,14 @@ object ForgeEventBridge : IEventBridge {
                 if (item == null || block == null) continue
                 val speed = try { MappingContext.invokeMethod(item, "forge:item_getDigSpeed", stack, block) as? Float } catch (_: Exception) { null }
                 if (i == 0) diag("block=${block?.javaClass?.simpleName} item0=${item.javaClass.simpleName} speed0=$speed")
-                if (speed != null && speed > bestSpeed) {
+                // Strictly better than what is held, and an actual tool (> 1.0 = better than a hand).
+                if (speed != null && speed > bestSpeed && speed > 1.0f) {
                     bestSpeed = speed
                     bestSlot = i
                 }
             }
-            if (bestSpeed > 1.0f) {
-                diag("best slot=$bestSlot speed=$bestSpeed")
+            if (bestSlot >= 0) {
+                diag("best slot=$bestSlot speed=$bestSpeed (held=$heldSlot)")
                 bestSlot
             } else {
                 diag("no tool beats hand (bestSpeed=$bestSpeed) — block=${block?.javaClass?.simpleName}")

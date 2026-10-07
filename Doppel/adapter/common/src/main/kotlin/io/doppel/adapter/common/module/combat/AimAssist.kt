@@ -122,6 +122,16 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
      * [config]'s minFov keeps the reference's other half: while the crosshair is already inside the box
      * (within that angle of the centre) the player aims freely and the assist does not fight them.
      */
+    /**
+     * The reference's speed scale as a rate: `(speed/30)^2 * 180` degrees per tick, at 20 ticks per
+     * second. Speed 10 — the default — is therefore 400 degrees per second.
+     */
+    private fun aimRateDegPerSec(config: AimConfig): Float {
+        val t = config.speed.coerceIn(0, 30) / 30f
+        return t * t * 180f * 20f * config.smoothness.coerceIn(0f, 1f)
+    }
+
+    @Suppress("unused")
     private fun applyAimForTick(player: PlayerState, config: AimConfig, result: AimResult.ApplyRotation) {
         val eye = Vec3(player.position.x, player.position.y + EYE_HEIGHT, player.position.z)
         val want = RotationCalculator.calculateRotation(eye, result.worldPoint)
@@ -260,12 +270,11 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
                     // Write target world point + hitbox + per-axis fractions; the MAIN thread
                     // recomputes the rotation toward it every frame.
                     is AimResult.ApplyRotation -> {
-                        // Apply here, once per tick, and stand the frame path down — see applyAimForTick.
-                        applyAimForTick(effPlayer, config, result)
+                        // Publish the point AND the rate; the main thread applies it every frame, scaled by
+                        // the frame time, so the speed does not depend on the frame rate.
                         EventBridge.desiredTargetWorld = result.worldPoint
                         EventBridge.desiredHitbox = result.hitbox
-                        EventBridge.desiredRotationFractionY = 0f
-                        EventBridge.desiredRotationFractionP = 0f
+                        EventBridge.aimRateDegPerSec = aimRateDegPerSec(config)
                     }
                     is AimResult.Skip -> {
                         // No assist this tick — clear the pending target so the main thread stops
@@ -286,15 +295,12 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
                 )
                 val result = legitStrategy.execute(config, legitState, input)
                 when (result) {
-                    // Write target world point + hitbox + per-axis fractions; the MAIN thread
-                    // recomputes the rotation toward it every frame.
+                    // Write the target world point + hitbox + the travel RATE; the main thread recomputes
+                    // the rotation toward it every rendered frame, scaled by the frame time.
                     is AimResult.ApplyRotation -> {
-                        // Apply here, once per tick, and stand the frame path down — see applyAimForTick.
-                        applyAimForTick(effPlayer, config, result)
                         EventBridge.desiredTargetWorld = result.worldPoint
                         EventBridge.desiredHitbox = result.hitbox
-                        EventBridge.desiredRotationFractionY = 0f
-                        EventBridge.desiredRotationFractionP = 0f
+                        EventBridge.aimRateDegPerSec = aimRateDegPerSec(config)
                     }
                     is AimResult.Skip -> {
                         // No assist this tick — clear the pending target so the main thread stops

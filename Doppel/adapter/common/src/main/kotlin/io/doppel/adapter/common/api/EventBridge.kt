@@ -135,6 +135,7 @@ object EventBridge {
         rotationApplier = null
         desiredTargetWorld = null
         desiredHitbox = null
+        aimRateDegPerSec = 0f
         desiredRotationFractionY = 0.2f
         desiredRotationFractionP = 0.1f
         aimOffsetYaw = 0f
@@ -901,6 +902,16 @@ object EventBridge {
     /** Target hitbox (world AABB) — for the per-frame "crosshair inside the box = free" check. */
     @Volatile var desiredHitbox: io.doppel.core.model.Hitbox? = null
     /** Per-frame yaw interpolation fraction (0..1, set by the strategy). */
+    /**
+     * How fast the aim may travel, in DEGREES PER SECOND.
+     *
+     * A rate rather than a per-tick step, because the aim is applied every rendered frame: a per-tick
+     * step means the assist covers 20 fixed jumps a second and leans on the game's interpolation in
+     * between, which is what made it feel like it was not keeping up. Scaled by the frame time, the same
+     * rate covers the same ground at 20 fps and at 300 fps.
+     */
+    @Volatile var aimRateDegPerSec: Float = 0f
+
     @Volatile var desiredRotationFractionY: Float = 0.2f
     /** Per-frame pitch interpolation fraction (0..1, set by the strategy). */
     @Volatile var desiredRotationFractionP: Float = 0.1f
@@ -956,6 +967,22 @@ object EventBridge {
      * @param mouseDeltaX raw mouse delta X this frame (pixels).
      * @param mouseDeltaY raw mouse delta Y this frame (pixels).
      */
+    /** Frame time in seconds, clamped so a stalled frame cannot teleport the aim. */
+    private var lastAimFrameNano: Long = 0L
+    private var smoothAimWorld: Vec3? = null
+    private var smoothYield: Float = 1f
+
+    private fun frameDeltaSeconds(): Float {
+        val now = System.nanoTime()
+        if (lastAimFrameNano == 0L) {
+            lastAimFrameNano = now
+            return 1f / 60f
+        }
+        val dt = (now - lastAimFrameNano) / 1_000_000_000.0
+        lastAimFrameNano = now
+        return dt.coerceIn(0.002, 0.1).toFloat()
+    }
+
     fun drainDesiredRotationFrame(
         currentYaw: Float,
         currentPitch: Float,
@@ -995,6 +1022,21 @@ object EventBridge {
 
         // Recompute the target rotation from the player's CURRENT position each frame — this is
         // what keeps the aim smooth as the player moves (no 20Hz jump).
+        // Smooth the aim POINT across frames, not just the angles. The strategy publishes a new point at
+        // 20 Hz, and when the box moves — circling, strafing — that point jumps between the hitbox centre
+        // and its corner blend; the direction to it then snaps, which is the twitch that showed up while
+        // circling even though the speed itself was constant.
+        val dtPoint = frameDeltaSeconds()
+        val prevPoint = smoothAimWorld
+        smoothAimWorld = if (prevPoint == null) world else {
+            val a = kotlin.math.min(1f, 25f * dtPoint)
+            Vec3(
+                prevPoint.x + (world.x - prevPoint.x) * a,
+                prevPoint.y + (world.y - prevPoint.y) * a,
+                prevPoint.z + (world.z - prevPoint.z) * a
+            )
+        }
+        world = smoothAimWorld!!
         val targetRot = rotationCalculatorForAim().calculateRotation(currentEye, world)
         val yaw = targetRot.yaw
         val pitch = targetRot.pitch
@@ -1009,37 +1051,30 @@ object EventBridge {
         // Desired total correction this frame.
         val desiredOffsetYaw = normalizeAngle(yaw - currentYaw)
         val desiredOffsetPitch = pitch - currentPitch
-        // Dead zone: already aligned → stop entirely (no micro-jitter at the edge). Skipped while
-        // Normal tracks the crosshair projection inside the box, so the offset soft-releases through
-        // the damping instead of snapping to zero.
+        val gap = kotlin.math.sqrt(desiredOffsetYaw * desiredOffsetYaw + desiredOffsetPitch * desiredOffsetPitch)
+        if (gap < 0.001f) {
+            aimOffsetYaw = 0f
+            aimOffsetPitch = 0f
+            return false
+        }
+        // Dead zone: aligned → stop entirely (no micro-jitter at the edge).
         if (!trackingInsideBox && abs(desiredOffsetYaw) < DEAD_YAW && abs(desiredOffsetPitch) < DEAD_PITCH) {
             aimOffsetYaw = 0f
             aimOffsetPitch = 0f
             return false
         }
 
-        // Soft-landing: the pull weakens as the crosshair gets close to the target — near the aim
-        // point it drops to ~30%, so the assist "lets go" instead of hard-locking the crosshair.
-        val gap = abs(desiredOffsetYaw) + abs(desiredOffsetPitch)
-        val relax = (gap / HARD_LOCK_ANGLE).coerceIn(SOFT_MIN, 1f)
-
-        // Damping: SelfAdaptive uses a second-order critically-damped spring (velocity and
-        // acceleration stay continuous → silky smooth, no abrupt speed change); the other modes
-        // keep the legacy first-order exponential ease so their existing presets feel unchanged.
-        if (aimSecondOrder) {
-            val omega = AIM_OMEGA * yield * relax
-            if (omega <= 0f) return false
-            aimVelocityYaw += (omega * omega * (desiredOffsetYaw - aimOffsetYaw) - 2f * omega * aimVelocityYaw)
-            aimVelocityPitch += (omega * omega * (desiredOffsetPitch - aimOffsetPitch) - 2f * omega * aimVelocityPitch)
-            aimOffsetYaw = normalizeAngle(aimOffsetYaw + aimVelocityYaw)
-            aimOffsetPitch += aimVelocityPitch
-        } else {
-            val fY = desiredRotationFractionY.coerceIn(0f, 1f) * yield * relax
-            val fP = desiredRotationFractionP.coerceIn(0f, 1f) * yield * relax
-            if (fY <= 0f && fP <= 0f) return false
-            aimOffsetYaw = normalizeAngle(aimOffsetYaw + (desiredOffsetYaw - aimOffsetYaw) * fY)
-            aimOffsetPitch = aimOffsetPitch + (desiredOffsetPitch - aimOffsetPitch) * fP
-        }
+        // The pull, in degrees per second scaled by the actual frame time, applied to BOTH axes with one
+        // scale so the aim travels straight at the target. The old path multiplied a soft-landing factor
+        // (steepest right at the target), a player-yield factor (worst while pulling back) and a GCD
+        // carry into every frame — three quantities re-derived per frame, which is what trembled.
+        val dt = frameDeltaSeconds()
+        smoothYield += (yield - smoothYield) * kotlin.math.min(1f, 20f * dt)
+        val rate = aimRateDegPerSec.coerceAtLeast(0f) * smoothYield
+        if (rate <= 0f) return false
+        val scale = kotlin.math.min(1f, rate * dt / gap)
+        aimOffsetYaw = normalizeAngle(desiredOffsetYaw * scale)
+        aimOffsetPitch = desiredOffsetPitch * scale
 
         // GCD fix (Nemui author: "add gcd fix before rotating towards it so it doesnt flag").
         // Quantize the correction to the smallest rotation step the ORIGINAL Minecraft mouse math

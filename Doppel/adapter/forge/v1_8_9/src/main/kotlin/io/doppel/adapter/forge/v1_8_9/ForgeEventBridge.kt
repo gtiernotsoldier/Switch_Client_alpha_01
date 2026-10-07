@@ -474,8 +474,11 @@ object ForgeEventBridge : IEventBridge {
             // and the reason has to be nameable. This prints what the chain actually resolved — the ray
             // trace type, the block, and every hotbar slot's dig speed — so a failure says which step it
             // was instead of "nothing happened".
+            // The first few calls are the interesting ones (a mining edge is rare), so they are never
+            // throttled away; after that it is every twentieth call.
             val diag: (String) -> Unit = { msg ->
-                if (++autoToolDiag % 20 == 0) CoreLogger.info("[AutoTool] $msg")
+                val n = ++autoToolDiag
+                if (n <= 5 || n % 20 == 0) CoreLogger.info("[AutoTool] $msg")
             }
             val player = getPlayer() ?: return@registerGetBestSlotHandler -1
             val mc = getMc()

@@ -1309,6 +1309,16 @@ object EventBridge {
     @Volatile var freelookDeltaX: Float = 0f
     @Volatile var freelookDeltaY: Float = 0f
 
+    // ========== Inbound hold (Backtrack) ==========
+    /**
+     * Hold incoming entity-position packets while this is set.
+     *
+     * Backtrack's network half: the client keeps showing (and, later, resolving) the enemy at the position
+     * the server reported before, by not applying the newest updates until the window closes. The platform
+     * caps a hold, so a module that dies mid-hold cannot freeze entities for good.
+     */
+    @Volatile var backtrackActive: Boolean = false
+
     // ========== Outbound packet lag (AutoBlock's Lag mode) ==========
     /**
      * Hold outgoing packets while this is set.

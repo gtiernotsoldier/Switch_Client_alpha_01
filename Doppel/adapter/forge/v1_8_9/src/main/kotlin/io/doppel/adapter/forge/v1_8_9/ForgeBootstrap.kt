@@ -127,7 +127,7 @@ object ForgeBootstrap {
             SprintReset, STap, SuperKnockback, TriggerBot, Velocity, WTap,
             NoJumpDelay, NoKeyboardFix, NoMouseFix, Sprint, Strafe, StrafeFix, InvMove,
             AntiBot, AutoTool, BridgeAssist, Eagle, FakeLag, Teams, TargetFilter,
-            Freelook, Fullbright, HUD, NoHurtCam, Keystrokes, Speedometer, VelocityDisplay, JumpStatus,
+            Backtrack, LagRange, Freelook, Fullbright, HUD, NoHurtCam, Keystrokes, Speedometer, VelocityDisplay, JumpStatus,
             JumpTiming, KnockbackDisplay,
             WebUI,
             FastPlace

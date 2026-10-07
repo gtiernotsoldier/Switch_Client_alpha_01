@@ -206,10 +206,48 @@ object ForgePacketInterceptor : ChannelDuplexHandler() {
         }
     }
 
+    // ── Inbound hold (Backtrack) ─────────────────────────────────────────────────────────────────
+    // Entity position updates are queued rather than delivered, so the entities in view stay where the
+    // server last said until the window closes. Only OTHER entities: the player's own position is
+    // client-authoritative here and delaying it would freeze the player, not the opponent.
+    private val heldInbound = java.util.ArrayDeque<Any>()
+    @Volatile private var inboundHoldStartMs = 0L
+    private val inboundCapMs = 500L
+
+    private val s14PacketClass by lazy { Class.forName("net.minecraft.network.play.server.S14PacketEntity") }
+    private val s18PacketClass by lazy { Class.forName("net.minecraft.network.play.server.S18PacketEntityTeleport") }
+
+    private fun backtracking(): Boolean {
+        if (!EventBridge.backtrackActive) return false
+        if (inboundHoldStartMs == 0L) return true
+        return System.currentTimeMillis() - inboundHoldStartMs <= inboundCapMs
+    }
+
+    private fun releaseInbound(ctx: ChannelHandlerContext) {
+        inboundHoldStartMs = 0L
+        if (heldInbound.isEmpty()) return
+        val n = heldInbound.size
+        while (heldInbound.isNotEmpty()) {
+            try { ctx.fireChannelRead(heldInbound.poll()) } catch (_: Throwable) {}
+        }
+        CoreLogger.info("[ForgePacketInterceptor] backtrack released: $n packet(s)")
+    }
+
     override fun channelRead(ctx: ChannelHandlerContext, msg: Any) {
         // Runs on the Netty thread. Any unexpected exception here (e.g. racing the main thread's
         // entity-list mutation during an explosion) must never escape and kill the connection.
         try {
+            // Backtrack's hold, before anything else looks at the packet.
+            val isPosUpdate = s14PacketClass.isInstance(msg) || s18PacketClass.isInstance(msg)
+            if (isPosUpdate && backtracking()) {
+                if (inboundHoldStartMs == 0L) inboundHoldStartMs = System.currentTimeMillis()
+                heldInbound.add(msg)
+                return
+            }
+            if (heldInbound.isNotEmpty() && !backtracking()) {
+                // The module stopped asking: what was held goes in first, in the order the server sent it.
+                releaseInbound(ctx)
+            }
             if (s12PacketClass.isInstance(msg)) {
                 // PROBE: confirm S12 knockback packets actually reach this handler (interception alive).
                 if (++s12Diag % 5 == 0) {

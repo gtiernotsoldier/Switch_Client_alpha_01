@@ -18,6 +18,8 @@ object AgentBridge {
     private val moduleEntries = listOf(
         // Combat
         "ADTap" to "combat",
+        "Backtrack" to "combat",
+        "LagRange" to "combat",
         "AimAssist" to "combat",
         "AutoBlock" to "combat",
         "AutoClicker" to "combat",

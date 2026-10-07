@@ -459,12 +459,36 @@ object ForgeEventBridge : IEventBridge {
 
         // ── Player helpers ──
         EventBridge.registerSwitchSlotHandler { slot ->
+            // Every step is named, because the previous version wrapped this in an empty catch: it threw
+            // every time, the exception was swallowed, and the module looked like it was doing nothing —
+            // while the log showed the search succeeding and the decision being made.
             try {
-                val player = getPlayer() ?: return@registerSwitchSlotHandler
-                inventoryCurrentItemField?.setInt(player, slot)
-                sendPacket(c09Constructor.newInstance(slot))
-                CoreLogger.info("[AutoTool] switched to slot $slot")
-            } catch (_: Exception) {}
+                val player = getPlayer()
+                if (player == null) {
+                    CoreLogger.error("[AutoTool] switch: no player")
+                    return@registerSwitchSlotHandler
+                }
+                val field = inventoryCurrentItemField ?: try {
+                    MappingContext.getField("forge:inventory_currentItem")
+                } catch (_: Throwable) {
+                    null
+                }
+                if (field == null) {
+                    CoreLogger.error("[AutoTool] switch: InventoryPlayer.currentItem unresolved")
+                } else {
+                    field.setInt(player, slot)
+                }
+                val packet = try {
+                    c09Constructor.newInstance(slot)
+                } catch (t: Throwable) {
+                    CoreLogger.error("[AutoTool] switch: C09 construction failed: $t")
+                    null
+                }
+                if (packet != null) sendPacket(packet)
+                CoreLogger.info("[AutoTool] switched to slot $slot (field=${field != null}, packet=${packet != null})")
+            } catch (t: Throwable) {
+                CoreLogger.error("[AutoTool] switch to $slot failed: ${t.javaClass.simpleName}: ${t.message}")
+            }
         }
 
         EventBridge.registerGetBestSlotHandler {

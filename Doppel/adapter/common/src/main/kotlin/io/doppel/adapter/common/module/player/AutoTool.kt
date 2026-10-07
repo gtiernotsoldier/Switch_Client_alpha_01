@@ -30,16 +30,29 @@ object AutoTool : Module("AutoTool", Category.PLAYER) {
         if (enabled) onTick(p)
     }
 
+    /**
+     * Whether the player is mining right now.
+     *
+     * `PlayerState.isMining` comes from `playerController.isHittingBlock` — a single mapping, and when it
+     * does not resolve the flag is silently false, which is exactly how this module came to look dead:
+     * the "started mining" edge never fired. Holding attack with the crosshair on a block IS mining, and
+     * it is derived from contract flags that are already proven in-game (HitSelect uses both), so it
+     * backstops the mapping instead of replacing it.
+     */
+    private fun miningNow(player: PlayerState): Boolean =
+        player.isMining || (player.isAttackKeyDown && EventBridge.isLookingAtBlock)
+
     private fun onTick(player: PlayerState) {
+        val mining = miningNow(player)
         // Edge detection: started mining
-        if (player.isMining && !wasMining) {
+        if (mining && !wasMining) {
             onStartMining(player)
         }
         // Edge detection: stopped mining
-        if (!player.isMining && wasMining) {
+        if (!mining && wasMining) {
             onStopMining()
         }
-        wasMining = player.isMining
+        wasMining = mining
     }
 
     private fun onStartMining(player: PlayerState) {

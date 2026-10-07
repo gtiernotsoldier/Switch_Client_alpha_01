@@ -47,9 +47,9 @@ object AgentBridge {
         // Player
         "AntiBot" to "player",
         "AutoTool" to "player",
+        "FakeLag" to "player",
         "BridgeAssist" to "player",
         "Eagle" to "player",
-        "ParallaxStrike" to "player",
         "Teams" to "player",
         "TargetFilter" to "player",
         // Render

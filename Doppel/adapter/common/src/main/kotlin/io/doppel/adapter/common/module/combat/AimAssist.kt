@@ -49,10 +49,11 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
      *  assist. Judged per-frame on the main thread. Default 8° ≈ a player's hitbox half-angle. */
     private val minFov by float("MinFov", 8.0f, 0.0f..30.0f, "degrees")
 
-    // Behavior settings — independent axis speeds (Slinky-style)
-    private val aimSpeedY by float("SpeedY", 0.25f, 0.0f..1.0f, "per-frame")
-    private val aimSpeedP by float("SpeedP", 0.10f, 0.0f..1.0f, "per-frame")
-    private val smoothness by float("Smoothness", 0.85f, 0.0f..1.0f)
+    // Behavior settings — the reference clients' single speed scale (Raven/LB): 0 = no movement,
+    // 30 = snap to the target, 10 = the default glide.
+    private val speed by int("Speed", 10, 0..30)
+    /** Multiplier on the per-tick step; 1.00 is the reference's speed curve exactly. */
+    private val smoothness by float("Smoothness", 1.0f, 0.0f..1.0f)
     private val noiseIntensity by float("NoiseIntensity", 0.05f, 0.0f..0.5f)
     /** Natural aim offset (degrees): the aim point drifts slowly within ±offset so the crosshair
      *  never locks dead-on — reads like a human hand, not a machine. */
@@ -115,8 +116,7 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
         rangeMax = rangeMax,
         fov = fov,
         minFov = minFov,
-        aimSpeedY = aimSpeedY,
-        aimSpeedP = aimSpeedP,
+        speed = speed,
         smoothness = smoothness,
         noiseIntensity = noiseIntensity,
         offset = offset,

@@ -682,4 +682,25 @@ object RotationCalculator {
             kotlin.math.cos(yawRad)
         )
     }
+
+    /**
+     * The fraction of the remaining gap to cover in one step, under the reference clients' speed model.
+     *
+     * Raven's smoothRotation: `t = speed/30`, `step = t^2 * 180` degrees, capped by the distance left.
+     * The step is a fixed angular distance, so the aim travels at a constant rate instead of closing a
+     * proportion of the gap every frame (which reads as "fast, then crawling") — and it is computed once
+     * from the delta's magnitude and applied to BOTH axes, so the aim goes straight at the target instead
+     * of easing yaw and pitch independently and drifting sideways.
+     *
+     * @return 0..1, the scale to apply to both deltas. 1 = arrive this step.
+     */
+    fun stepScale(deltaYaw: Float, deltaPitch: Float, speed: Int, smoothness: Float): Float {
+        val magnitude = kotlin.math.sqrt(deltaYaw * deltaYaw + deltaPitch * deltaPitch)
+        if (magnitude < 0.001f) return 1f
+        if (speed <= 0) return 0f
+        if (speed >= 30) return 1f
+        val t = speed / 30f
+        val stepDegrees = t * t * 180f * smoothness.coerceIn(0f, 1f)
+        return kotlin.math.min(1f, stepDegrees / magnitude)
+    }
 }

@@ -117,22 +117,15 @@ class LegitAimStrategy : AimStrategy {
             }
         }
 
-        // 8. Speed — independent yaw/pitch fractions per frame.
-        // Regular: exponential ease (fraction of remaining gap). Linear: near-linear (fixed small
-        // fraction, stable low-speed tracking — Slinky Linear mode).
+        // 8. Speed — the reference clients' model: a fixed angular step per tick, applied to both axes
+        // with ONE scale so the aim travels straight at the target (see RotationCalculator.stepScale).
+        // The old per-axis fractions eased proportionally to what was left, which is faster at the start
+        // and slower at the end than the reference and was reported as "too fast".
         val clickBoost = if (player.isAttackKeyDown) CLICK_SPEED_BOOST else 1f
         val rotDiff = RotationCalculator.calculateDifference(aim, targetRot)
         val onTargetFactor = if (abs(rotDiff.yaw) < 5f && abs(rotDiff.pitch) < 3f) ON_TARGET_FACTOR else 1f
-        val fracY = if (config.linear) {
-            0.06f * clickBoost * onTargetFactor * config.smoothness
-        } else {
-            config.aimSpeedY * clickBoost * onTargetFactor * config.smoothness
-        }
-        val fracP = if (config.linear) {
-            0.06f * clickBoost * onTargetFactor * config.smoothness
-        } else {
-            config.aimSpeedP * clickBoost * onTargetFactor * config.smoothness
-        }
-        return AimResult.ApplyRotation(finalWorld, target.hitbox, fracY, fracP)
+        val scale = (RotationCalculator.stepScale(rotDiff.yaw, rotDiff.pitch, config.speed, config.smoothness) *
+            clickBoost * onTargetFactor).coerceIn(0f, 1f)
+        return AimResult.ApplyRotation(finalWorld, target.hitbox, scale, scale)
     }
 }

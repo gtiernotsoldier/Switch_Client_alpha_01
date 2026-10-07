@@ -19,7 +19,7 @@ import io.doppel.core.option.TriggerOptions
  *        outside. Hides the assist while recording / feels natural.
  * @property aimSpeedY yaw pull fraction per frame (0..1).
  * @property aimSpeedP pitch pull fraction per frame (0..1, independent axis speed).
- * @property smoothness smoothing multiplier (0.0-1.0).
+ * @property smoothness multiplier on the per-tick step (0.0-1.0; 1.0 is the reference exactly).
  * @property noiseIntensity magnitude of per-frame random-walk noise (degrees).
  * @property offset natural aim offset (degrees): the aim point drifts slowly within ±offset so the
  *        crosshair never locks dead-on the target — reads as a human hand, not a machine.
@@ -39,6 +39,13 @@ data class AimConfig(
     val minFov: Float = 8.0f,
     val aimSpeedY: Float = 0.25f,
     val aimSpeedP: Float = 0.1f,
+    /**
+     * Aim speed, 0..30, the scale the reference clients use: 0 = no movement at all, 30 = snap
+     * straight to the target, 10 = the default glide. The step it produces is a FIXED number of
+     * degrees per tick, `(speed/30)^2 * 180`, rather than a fraction of the remaining gap — that
+     * constant-speed travel is what the reference's aim feels like.
+     */
+    val speed: Int = 10,
     val smoothness: Float = 0.85f,
     val noiseIntensity: Float = 0.05f,
     val offset: Float = 0.5f,

@@ -45,6 +45,12 @@ import io.doppel.adapter.common.option.int
  */
 object HitSelect : Module("HitSelect", Category.COMBAT) {
 
+    init {
+        // COMBAT modules are silent on the HUD by default, and this one especially needs the indicator:
+        // its whole job is invisible — a swallowed click looks exactly like a click that did nothing.
+        showRedIndicator = true
+    }
+
     // ========== Burst window ==========
     /** Hold clicks for this long after a confirmed hit on the target (raven-bs "Pause duration"). */
     private val pauseMs by int("Pause", 500, 0..1000, "ms")
@@ -94,7 +100,16 @@ object HitSelect : Module("HitSelect", Category.COMBAT) {
 
     // ========== Main-thread attack gate ==========
     private val gate: () -> Boolean = {
-        if (!enabled) true else evaluateGate()
+        if (!enabled) {
+            true
+        } else {
+            // Every swallowed click is this module working, and that is what the HUD pulse shows. It is
+            // pulsed from here rather than from the tick because the decision — and therefore the work —
+            // happens at the click, on the render thread.
+            val pass = evaluateGate()
+            if (!pass) markWorked()
+            pass
+        }
     }
 
     private fun evaluateGate(): Boolean {

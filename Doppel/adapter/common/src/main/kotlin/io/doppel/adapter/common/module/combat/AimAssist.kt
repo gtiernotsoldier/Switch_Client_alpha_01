@@ -6,7 +6,9 @@ import io.doppel.core.option.AimMode
 import io.doppel.core.strategy.aim.AimConfig
 import io.doppel.core.strategy.aim.AimInput
 import io.doppel.core.strategy.aim.AimResult
+import io.doppel.core.algorithm.RotationCalculator
 import io.doppel.core.strategy.aim.AimStrategy
+import io.doppel.core.util.Vec3
 import io.doppel.core.strategy.aim.LegitAimStrategy
 import io.doppel.core.strategy.aim.SelfAdaptiveAimStrategy
 import io.doppel.adapter.common.api.EventBridge
@@ -35,6 +37,9 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
         // Aim is a stealth module — no visible red indicator on HUD
         showRedIndicator = false
     }
+
+    /** Player eye height — the same value the strategies add to the feet position. */
+    private const val EYE_HEIGHT = 1.62f
 
     // ========== Configuration (Delegated Properties) ==========
     // Range settings (3D distance, blocks)
@@ -102,6 +107,40 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
     private val legitState = AimStrategy.State()
     private val adaptiveStrategy = SelfAdaptiveAimStrategy()
     private val adaptiveState = SelfAdaptiveAimStrategy.AdaptiveState()
+
+    /**
+     * Apply the aim ONCE for this tick, the way the reference clients do.
+     *
+     * Raven hands its result to a rotation event that fires per tick and lets the game interpolate
+     * `prevRotation -> rotation` across the frames in between; there are no per-frame gains anywhere in
+     * it. This codebase instead published a target point and let the main thread recompute the pull every
+     * frame, multiplying by a soft-landing factor that changes with the gap and a player-yield factor that
+     * changes with the mouse, then quantising the result to whole mouse steps and carrying the remainder.
+     * Three quantities re-derived every frame is what twitched — on arrival at the point, where the
+     * soft-landing factor is steepest, and on the pull back, where the gap changes fastest.
+     *
+     * [config]'s minFov keeps the reference's other half: while the crosshair is already inside the box
+     * (within that angle of the centre) the player aims freely and the assist does not fight them.
+     */
+    private fun applyAimForTick(player: PlayerState, config: AimConfig, result: AimResult.ApplyRotation) {
+        val eye = Vec3(player.position.x, player.position.y + EYE_HEIGHT, player.position.z)
+        val want = RotationCalculator.calculateRotation(eye, result.worldPoint)
+        val have = player.rotation
+        var deltaYaw = (want.yaw - have.yaw) % 360f
+        if (deltaYaw >= 180f) deltaYaw -= 360f
+        if (deltaYaw < -180f) deltaYaw += 360f
+        val deltaPitch = want.pitch - have.pitch
+
+        // Inside the box: hands off.
+        val gap = kotlin.math.sqrt(deltaYaw * deltaYaw + deltaPitch * deltaPitch)
+        if (config.minFov > 0f && gap <= config.minFov) return
+
+        // One scale for both axes, so the aim travels straight (see RotationCalculator.stepScale).
+        val scale = result.fractionY.coerceIn(0f, 1f)
+        val yaw = have.yaw + deltaYaw * scale
+        val pitch = (have.pitch + deltaPitch * scale).coerceIn(-90f, 90f)
+        EventBridge.setPlayerRotation(yaw, pitch)
+    }
 
     // ========== Config Builder (shared by all modes) ==========
     private fun buildConfig(modeOverride: AimMode? = null): AimConfig = AimConfig(
@@ -221,10 +260,12 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
                     // Write target world point + hitbox + per-axis fractions; the MAIN thread
                     // recomputes the rotation toward it every frame.
                     is AimResult.ApplyRotation -> {
+                        // Apply here, once per tick, and stand the frame path down — see applyAimForTick.
+                        applyAimForTick(effPlayer, config, result)
                         EventBridge.desiredTargetWorld = result.worldPoint
                         EventBridge.desiredHitbox = result.hitbox
-                        EventBridge.desiredRotationFractionY = result.fractionY
-                        EventBridge.desiredRotationFractionP = result.fractionP
+                        EventBridge.desiredRotationFractionY = 0f
+                        EventBridge.desiredRotationFractionP = 0f
                     }
                     is AimResult.Skip -> {
                         // No assist this tick — clear the pending target so the main thread stops
@@ -248,10 +289,12 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
                     // Write target world point + hitbox + per-axis fractions; the MAIN thread
                     // recomputes the rotation toward it every frame.
                     is AimResult.ApplyRotation -> {
+                        // Apply here, once per tick, and stand the frame path down — see applyAimForTick.
+                        applyAimForTick(effPlayer, config, result)
                         EventBridge.desiredTargetWorld = result.worldPoint
                         EventBridge.desiredHitbox = result.hitbox
-                        EventBridge.desiredRotationFractionY = result.fractionY
-                        EventBridge.desiredRotationFractionP = result.fractionP
+                        EventBridge.desiredRotationFractionY = 0f
+                        EventBridge.desiredRotationFractionP = 0f
                     }
                     is AimResult.Skip -> {
                         // No assist this tick — clear the pending target so the main thread stops

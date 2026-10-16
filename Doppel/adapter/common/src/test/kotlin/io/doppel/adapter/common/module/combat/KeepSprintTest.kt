@@ -1,126 +1,126 @@
 package io.doppel.adapter.common.module.combat
 
+import io.doppel.adapter.common.api.EventBridge
 import io.doppel.adapter.common.option.ConfigManager
-import io.doppel.adapter.common.option.OptionMeta
+import io.doppel.core.model.Hitbox
+import io.doppel.core.model.TargetState
+import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
-import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
-import kotlin.math.sqrt
 
 /**
- * KeepSprint — Raven's `movement/KeepSprint.java`.
+ * KeepSprint — the sprint STATE, not the sprint SPEED.
  *
- * The module replaces vanilla's post-hit `motion *= 0.6; setSprinting(false)` with its own damp
- * (default `Slow % = 40` → 0.6, i.e. vanilla-looking) and never stops the sprint. These tests pin
- * that math, the `vanilla` short-circuits, and the option wiring (Raven's exact option set).
+ * The module used to undo vanilla's post-hit `motion *= 0.6` (Raven's `Slow %`). That entire path is
+ * deleted — see the module doc for why it cannot be made safe — and these tests pin what replaced
+ * it: the sprint flag survives a landed swing and the server is told about it, because MC-69459
+ * leaves the server believing the player is walking from the second hit onward. Nothing here writes
+ * motion.
  */
 class KeepSprintTest {
 
-    // ================= Keep factor =================
+    private val sent = mutableListOf<String>()
 
-    @Test
-    fun `the default 40 percent equals vanilla's damp`() {
-        assertEquals(0.6, KeepSprintLogic.keepFactor(40f), 1e-9)
+    @BeforeEach
+    fun setUp() {
+        EventBridge.reset()
+        EventBridge.registerEntityActionHandler { sent.add(it) }
+        sent.clear()
+        EventBridge.crosshairTarget = null
+        EventBridge.isLeftMousePhysicallyDown = false
+        EventBridge.syntheticAttack = false
+    }
+
+    @AfterEach
+    fun tearDown() {
+        KeepSprint.disable()
+        EventBridge.crosshairTarget = null
+        EventBridge.isLeftMousePhysicallyDown = false
+        EventBridge.syntheticAttack = false
+        EventBridge.reset()
+        sent.clear()
+    }
+
+    private fun target(health: Float = 20f) = TargetState(
+        entityId = 7,
+        name = "dummy",
+        posX = 1.0, posY = 0.0, posZ = 0.0,
+        motionX = 0.0, motionY = 0.0, motionZ = 0.0,
+        health = health,
+        hurtTime = 0,
+        distance = 1.5f,
+        hitbox = Hitbox(0.0, 0.0, 0.0, 0.6, 1.8, 0.6)
+    )
+
+    /** One render frame with the given inputs. */
+    private fun frame(attacking: Boolean = false, target: TargetState? = null) {
+        EventBridge.crosshairTarget = target
+        EventBridge.isLeftMousePhysicallyDown = attacking
+        KeepSprint.onRenderFrame(Unit)
     }
 
     @Test
-    fun `zero percent keeps the whole swing speed`() {
-        assertEquals(1.0, KeepSprintLogic.keepFactor(0f), 1e-9)
+    fun `a landed swing tells a server that thinks we stopped sprinting`() {
+        KeepSprint.enable()
+        // MC-69459: the last landed hit is what clears the server's copy.
+        EventBridge.reportServerSprintState(false)
+
+        frame(attacking = true, target = target())
+
+        assertEquals(listOf("START_SPRINTING"), sent)
     }
 
     @Test
-    fun `the factor interpolates and clamps to Raven's slider`() {
-        assertEquals(0.8, KeepSprintLogic.keepFactor(20f), 1e-9)
-        assertEquals(0.6, KeepSprintLogic.keepFactor(60f), 1e-9, "above the slider max clamps to 40")
-        assertEquals(1.0, KeepSprintLogic.keepFactor(-10f), 1e-9, "below the slider min clamps to 0")
-    }
+    fun `no packet when the server already believes we are sprinting`() {
+        KeepSprint.enable()
+        EventBridge.reportServerSprintState(true)
 
-    // ================= Vanilla short-circuits =================
+        frame(attacking = true, target = target())
 
-    @Test
-    fun `disable while jumping leaves the vanilla damp in place in the air`() {
-        assertTrue(KeepSprintLogic.useVanilla(true, onGround = false, onlyReduceReachHits = false, hitDistance = 3f))
-        assertFalse(KeepSprintLogic.useVanilla(true, onGround = true, onlyReduceReachHits = false, hitDistance = 3f))
+        assertTrue(sent.isEmpty(), "the mirror is already correct — there is nothing to report")
     }
 
     @Test
-    fun `only reduce reach hits hands close hits back to vanilla`() {
-        // Raven: `if (distance != -1.0 && distance <= 3.0) vanilla = true;`
-        assertTrue(KeepSprintLogic.useVanilla(false, true, onlyReduceReachHits = true, hitDistance = 3.0f))
-        assertTrue(KeepSprintLogic.useVanilla(false, true, onlyReduceReachHits = true, hitDistance = 1.2f))
-        assertFalse(KeepSprintLogic.useVanilla(false, true, onlyReduceReachHits = true, hitDistance = 3.1f))
+    fun `a swing at nothing asserts nothing`() {
+        KeepSprint.enable()
+        EventBridge.reportServerSprintState(false)
+
+        frame(attacking = true, target = null)
+
+        assertTrue(sent.isEmpty(), "vanilla only clears the flag for a hit that landed")
     }
 
     @Test
-    fun `both gates off never falls back to vanilla`() {
-        assertFalse(KeepSprintLogic.useVanilla(false, onGround = false, onlyReduceReachHits = false, hitDistance = 0.5f))
-    }
+    fun `a swing at a dead target asserts nothing`() {
+        KeepSprint.enable()
+        EventBridge.reportServerSprintState(false)
 
-    // ================= The motion correction =================
+        frame(attacking = true, target = target(health = 0f))
 
-    /** Vanilla has already run: a 0.1/0.16 pre-hit sprint motion comes back as 0.06/0.096. */
-    private val afterVanillaX = 0.06
-    private val afterVanillaZ = 0.096
-
-    @Test
-    fun `the default options reproduce vanilla's speed without stopping the sprint`() {
-        val c = KeepSprintLogic.correct(afterVanillaX, afterVanillaZ, slowPercent = 40f, stopSprint = true, sprintCap = 0.28)!!
-        // scale = 0.6/0.6 = 1 → Z is untouched, X takes Raven's extra stop-sprint half.
-        assertEquals(0.096, c.motionZ, 1e-9)
-        assertEquals(0.03, c.motionX, 1e-9)
+        assertTrue(sent.isEmpty())
     }
 
     @Test
-    fun `slow zero with stop sprint off restores the pre-hit speed`() {
-        val c = KeepSprintLogic.correct(afterVanillaX, afterVanillaZ, slowPercent = 0f, stopSprint = false, sprintCap = 0.28)!!
-        assertEquals(0.1, c.motionX, 1e-9, "vanilla's 0.6 is undone and nothing is removed")
-        assertEquals(0.16, c.motionZ, 1e-9)
+    fun `holding the button sends one packet, not one per frame`() {
+        KeepSprint.enable()
+        EventBridge.reportServerSprintState(false)
+        val dummy = target()
+
+        repeat(10) { frame(attacking = true, target = dummy) }
+
+        assertEquals(1, sent.size, "only the rising edge of the swing counts")
     }
 
     @Test
-    fun `stop sprint halves X only, exactly like the reference`() {
-        val kept = KeepSprintLogic.correct(afterVanillaX, afterVanillaZ, 20f, stopSprint = false, sprintCap = 0.28)!!
-        val stopped = KeepSprintLogic.correct(afterVanillaX, afterVanillaZ, 20f, stopSprint = true, sprintCap = 0.28)!!
-        assertEquals(kept.motionX / 2.0, stopped.motionX, 1e-12)
-        assertEquals(kept.motionZ, stopped.motionZ, 1e-12)
-    }
-
-    @Test
-    fun `the correction can never exceed the observed sprint speed`() {
-        // The ceiling is what keeps the "undo vanilla" divide from becoming a boost on a frame where
-        // vanilla never applied its damp.
-        val c = KeepSprintLogic.correct(afterVanillaX, afterVanillaZ, slowPercent = 0f, stopSprint = false, sprintCap = 0.1)!!
-        assertEquals(0.1, sqrt(c.motionX * c.motionX + c.motionZ * c.motionZ), 1e-9)
-    }
-
-    @Test
-    fun `no ceiling observed yet leaves Raven's plain factor alone`() {
-        val c = KeepSprintLogic.correct(afterVanillaX, afterVanillaZ, slowPercent = 0f, stopSprint = false, sprintCap = 0.0)!!
-        assertEquals(0.1, c.motionX, 1e-9)
-    }
-
-    @Test
-    fun `a standing player is left alone`() {
-        assertNull(KeepSprintLogic.correct(0.0, 0.0, 40f, true, 0.28))
-        assertNull(KeepSprintLogic.correct(1e-6, 0.0, 40f, true, 0.28))
-    }
-
-    // ================= Option wiring =================
-
-    @Test
-    fun `the option set is Raven's, with its defaults`() {
-        val t = KeepSprint.tunables()
-        assertEquals(40f, t.slow)
-        assertTrue(t.stopSprint)
-        assertFalse(t.disableWhileJump)
-        assertFalse(t.onlyReduceReachHits)
-
-        val meta: OptionMeta = ConfigManager.getMeta("KeepSprint.Slow")!!
-        assertEquals(0f, meta.rangeMin)
-        assertEquals(40f, meta.rangeMax)
-        assertEquals("%", meta.unit)
-        assertEquals(1.0, meta.effectiveStep()!!, 1e-9)
+    fun `the numeric knobs are gone`() {
+        // Not defaulted off — removed. No configuration can make this module move the client faster
+        // than the server's own post-hit model, because that damp is a bilateral rule.
+        assertNull(ConfigManager.getMeta("KeepSprint.Slow"))
+        assertNull(ConfigManager.getMeta("KeepSprint.StopSprint"))
+        assertNull(ConfigManager.getMeta("KeepSprint.DisableWhileJump"))
+        assertNull(ConfigManager.getMeta("KeepSprint.OnlyReduceReachHits"))
     }
 }

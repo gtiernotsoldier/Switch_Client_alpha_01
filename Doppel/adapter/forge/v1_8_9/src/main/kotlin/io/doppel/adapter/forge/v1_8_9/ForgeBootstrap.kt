@@ -366,8 +366,9 @@ object ForgeBootstrap {
             // frame's.
             try { ForgeEventBridge.applyGuiMovement() } catch (_: Exception) {}
 
-            // KeepSprint — pure module-layer, main thread. When the player is attacking + moving,
-            // scale motionX/Z back up so the attack slowdown doesn't reduce speed (no inject needed).
+            // KeepSprint — pure module-layer, main thread. For a landed swing it holds the sprint
+            // flag across the tick vanilla clears it and tells the server we are still sprinting
+            // (MC-69459). It does not touch motion.
             try { KeepSprint.onRenderFrame(mc) } catch (_: Exception) {}
 
             // Module keybinds — poll keyboard state on the render thread, throttled.

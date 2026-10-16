@@ -47,6 +47,9 @@ interface VelocityStrategy : Strategy<VelocityConfig, VelocityStrategy.State, Ve
         val delayQueue: MutableList<DelayedEntry> = mutableListOf()
         var tickCounter: Int = 0
 
+        /** LEGIT mode: did the previous hit pass the gate? The chain's second state. */
+        var reduceLastPassed: Boolean = false
+
         // ── SPRINT mode (SprintVelocityStrategy) ──
         /** Ticks left in the armed brace window; 0 = not bracing. */
         var braceTicksLeft: Int = 0
@@ -59,6 +62,7 @@ interface VelocityStrategy : Strategy<VelocityConfig, VelocityStrategy.State, Ve
         override fun reset() {
             delayQueue.clear()
             tickCounter = 0
+            reduceLastPassed = false
             braceTicksLeft = 0
             braceSourceX = 0.0
             braceSourceZ = 0.0

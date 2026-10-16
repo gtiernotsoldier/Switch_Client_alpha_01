@@ -14,7 +14,10 @@ import io.doppel.core.option.TriggerOptions
  * @property horizontalMax maximum horizontal factor.
  * @property verticalMin minimum vertical factor.
  * @property verticalMax maximum vertical factor.
- * @property probability chance (0-100) that the strategy activates per packet.
+ * @property reduceGivenReduced P(reduce | the previous hit was reduced). With [reduceGivenSkipped]
+ *   this is the whole gate — one memoryless two-state chain, not a cadence.
+ * @property reduceGivenSkipped P(reduce | the previous hit was skipped).
+ * @property onlyOnHitFrame reduce only on an attack's knockback (S12); explosions (S27) pass.
  * @property triggerOptions unified condition engine settings.
  * @property clickBurstMin minimum clicks to burst in CLICK mode.
  * @property clickBurstMax maximum clicks to burst in CLICK mode.
@@ -29,7 +32,11 @@ data class VelocityConfig(
     val horizontalMax: Float = 0.6f,
     val verticalMin: Float = 0.4f,
     val verticalMax: Float = 0.6f,
-    val probability: Int = 100,
+    val reduceGivenReduced: Int = 25,
+    /** P(reduce | the previous hit was skipped). */
+    val reduceGivenSkipped: Int = 25,
+    /** Reduce only on an attack's knockback (S12); explosions (S27) pass through untouched. */
+    val onlyOnHitFrame: Boolean = false,
     val triggerOptions: TriggerOptions = TriggerOptions(),
     val clickBurstMin: Int = 2,
     val clickBurstMax: Int = 5,

@@ -4,19 +4,31 @@ import io.doppel.core.algorithm.VectorOperations
 import io.doppel.core.condition.ConditionChecker
 import io.doppel.core.model.VelocityContext
 import io.doppel.core.option.RandomRange
-import io.doppel.core.util.Vec3
+import kotlin.random.Random
 
 /**
  * Default LEGIT mode velocity strategy.
  *
  * Behaviour per invocation:
  * 1. Run unified condition check → Pass if failed.
- * 2. Roll probability check → Pass if missed.
- * 3. Sample h/v factors from configured ranges.
- * 4. Scale the motion vector → Modify.
+ * 2. Hit-frame filter → Pass for anything that is not an attack's knockback.
+ * 3. Roll the gate → Pass if it says skip.
+ * 4. Sample h/v factors from the configured ranges.
+ * 5. Scale the motion vector → Modify.
  *
- * This is the foundational velocity reduction — DELAY mode
- * delegates to this same logic after buffering the packet.
+ * **The gate is one memoryless two-state chain, and it lives here rather than in the module.**
+ * It used to be two independent dice: this strategy rolled `probability`, and the module rolled a
+ * second, *cadence-shaped* gate on top of it (`NaturalMode` = EveryNth / Incremental). A cadence is
+ * the one shape a run-length detector is built for — measured against the human sprint-reset
+ * population, a fixed "every Nth hit" cycle scores D ≈ 0.17–0.30 and a rate-matched memoryless gate
+ * scores ≈ 0.03. So the two dice became one chain with two numbers: P(reduce | reduced on the
+ * previous hit) and P(reduce | skipped on the previous hit). Equal values are memoryless; unequal
+ * values are what a real human's autocorrelation would look like, and that has to come from a
+ * recording rather than from a guess.
+ *
+ * Note what this does *not* fix. The reduction is still a packet rewrite, so every hit the gate
+ * lets through still opens with a first-tick position error of `r × 0.4` blocks. The gate buys the
+ * distribution and rhythm layers, never the physics layer.
  */
 class LegitVelocityStrategy : VelocityStrategy {
 
@@ -30,8 +42,11 @@ class LegitVelocityStrategy : VelocityStrategy {
     }
 
     // Visible-for-testing entry point
-    @Suppress("UNUSED_PARAMETER")
-    internal fun processLegit(config: VelocityConfig, state: VelocityStrategy.State, ctx: VelocityContext): VelocityResult {
+    internal fun processLegit(
+        config: VelocityConfig,
+        state: VelocityStrategy.State,
+        ctx: VelocityContext
+    ): VelocityResult {
         val player = ctx.player
         val target = ctx.target
         val original = ctx.originalMotion
@@ -41,13 +56,20 @@ class LegitVelocityStrategy : VelocityStrategy {
             return VelocityResult.Pass(original)
         }
 
-        // 2. Probability check
-        if (config.probability < 100) {
-            val roll = (Math.random() * 100).toInt()
-            if (roll >= config.probability) return VelocityResult.Pass(original)
+        // 2. Hit-frame filter — reduce on an attack's knockback (S12) and leave explosions (S27)
+        //    alone. The S12 arriving IS the hit-frame signal, without reading hurtResistantTime.
+        if (config.onlyOnHitFrame && !ctx.isKnockbackHit) {
+            return VelocityResult.Pass(original)
         }
 
-        // 3. Sample and scale
+        // 3. The gate: one chain, two states, no cadence.
+        val chance =
+            if (state.reduceLastPassed) config.reduceGivenReduced else config.reduceGivenSkipped
+        val passed = Random.nextInt(100) < chance
+        state.reduceLastPassed = passed
+        if (!passed) return VelocityResult.Pass(original)
+
+        // 4. Sample and scale
         val h = RandomRange.sample(config.horizontalMin, config.horizontalMax)
         val v = RandomRange.sample(config.verticalMin, config.verticalMax)
         val reduced = VectorOperations.scale(original, h, v, h)

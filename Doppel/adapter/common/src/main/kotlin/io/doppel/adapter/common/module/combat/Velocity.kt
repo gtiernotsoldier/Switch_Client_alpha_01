@@ -18,7 +18,6 @@ import io.doppel.adapter.common.option.int
 import io.doppel.adapter.common.option.choices
 import io.doppel.adapter.common.option.triggerOptions
 import kotlin.math.roundToInt
-import kotlin.random.Random
 
 /**
  * Velocity Module — knockback reduction.
@@ -114,26 +113,21 @@ object Velocity : Module("Velocity", Category.COMBAT), HudLineProvider {
     private val verticalMin by float("VerticalMin", 0.4f, 0.0f..1.0f)
     private val verticalMax by float("VerticalMax", 0.6f, 0.0f..1.0f)
 
-    // ========== Probability ==========
-    private val probability by int("Chance", 100, 0..100, "%")
+    // ========== Gate — one chain, two numbers ==========
+    // Replaces the old `Chance` option plus the module-side `NaturalMode` combo gate. Those were
+    // two independent dice, and the second was cadence-shaped ("every Nth hit", or a chance that
+    // ramps with the combo) — the one shape a run-length detector is built for. Measured against
+    // the human sprint-reset population a cadence scores D ≈ 0.17–0.30, while a rate-matched
+    // memoryless gate scores ≈ 0.03. Equal values below = memoryless at that rate; unequal values
+    // are what a real human's autocorrelation would look like, which needs a recording to set.
+    /** P(reduce | the previous hit was reduced). */
+    private val reduceGivenReduced by int("ReduceGivenReduced", 25, 0..100, "%")
+    /** P(reduce | the previous hit was skipped). */
+    private val reduceGivenSkipped by int("ReduceGivenSkipped", 25, 0..100, "%")
 
     // ========== Legit: only reduce on the frame the player is hit (LB port) ==========
+    // The check itself moved into LegitVelocityStrategy; this only feeds the config.
     private val onlyOnHitFrame by boolean("OnlyOnHitFrame", false)
-
-    // ========== OnlyOnHitFrame combo naturalisation ==========
-    // Extra anti-pattern layer for sustained attacks: instead of reducing on EVERY hit, skip some
-    // hits randomly so the reduction doesn't form a fixed, detectable rhythm.
-    //   Incremental — reduce chance grows with combo count (rare → more often as you keep getting hit).
-    //   EveryNth    — reduce only every Nth hit (N randomized each cycle) — a spaced-out rhythm.
-    //   Both        — EveryNth picks WHICH hits are candidates, Incremental adds randomness on top.
-    // A combo is consecutive hits within [HitWindowMs]; a longer gap resets it.
-    private val naturalMode by choices("NaturalMode", arrayOf("Both", "Incremental", "EveryNth", "Off"))
-    private val hitWindowMs by int("HitWindowMs", 800, 100..2000, "ms")
-    private val baseChance by int("BaseChance", 20, 0..100, "%")
-    private val chancePerHit by int("ChancePerHit", 25, 0..100, "%")
-    private val maxChance by int("MaxChance", 95, 0..100, "%")
-    private val nthMin by int("NthMin", 2, 1..10)
-    private val nthMax by int("NthMax", 4, 1..10)
 
     // ========== Condition flags (six independent toggles) ==========
     private val onlyMove by boolean("OnlyMove", false)
@@ -172,13 +166,6 @@ object Velocity : Module("Velocity", Category.COMBAT), HudLineProvider {
         if (enabled) onVelocityPacket(ctx) else PlatformCommand.Pass(ctx.originalMotion)
     }
 
-    // ========== Combo state (OnlyOnHitFrame naturalisation) ==========
-    // Consecutive-hit counter (within HitWindowMs). Written on the Netty thread.
-    @Volatile private var combo = 0
-    @Volatile private var lastHitNano = 0L
-    // EveryNth: how many hits remain before the next reduce candidate.
-    @Volatile private var nthRemaining = 2
-
     // ========== Sprint mode state ==========
     // The arithmetic and the gate live in SprintVelocityStrategy (Core); only the adapter-side
     // bookkeeping of "am I currently holding keys" stays here.
@@ -196,7 +183,9 @@ object Velocity : Module("Velocity", Category.COMBAT), HudLineProvider {
         horizontalMax = horizontalMax,
         verticalMin = verticalMin,
         verticalMax = verticalMax,
-        probability = probability,
+        reduceGivenReduced = reduceGivenReduced,
+        reduceGivenSkipped = reduceGivenSkipped,
+        onlyOnHitFrame = onlyOnHitFrame,
         triggerOptions = triggerOptions,
         clickBurstMin = clicksMin,
         clickBurstMax = clicksMax,
@@ -228,21 +217,9 @@ object Velocity : Module("Velocity", Category.COMBAT), HudLineProvider {
         // point: vanilla applies the knockback itself, so there is nothing to detect.
         if (mode == "Sprint") return onSprintKnockback(ctx)
 
-        val config = cachedConfig { buildConfig() }
-        // OnlyOnHitFrame — LiquidBounce's VelocityLegit semantics, expressed with OUR architecture:
-        // reduce velocity only on the hit frame (i.e. when knocked by an actual attack, the S12
-        // packet), and pass explosions (S27) through untouched. We do NOT try to read
-        // hurtResistantTime (LB is a mod running on MC's main tick where that field is readable;
-        // we are an injector reading from the Netty thread where it is stale/0) — the S12 packet
-        // arriving IS the hit-frame signal, which is the logical equivalent without the read.
-        if (onlyOnHitFrame && mode == "Legit") {
-            // Explosions are not "being hit" — pass through.
-            if (!ctx.isKnockbackHit) return PlatformCommand.Pass(ctx.originalMotion)
-            // Combo naturalisation: under sustained attacks, skip some hits so the reduction
-            // doesn't form a fixed, detectable rhythm. "Off" = reduce every hit (plain LB).
-            if (!comboGatePasses()) return PlatformCommand.Pass(ctx.originalMotion)
-        }
-        return reduceNormally(config, ctx)
+        // The hit-frame filter and the gate both live in LegitVelocityStrategy now — the module
+        // assembles the config and maps the result, which is all the architecture asks of it.
+        return reduceNormally(cachedConfig { buildConfig() }, ctx)
     }
 
     // ========== Sprint mode ==========
@@ -302,50 +279,6 @@ object Velocity : Module("Velocity", Category.COMBAT), HudLineProvider {
         braceKeysHeld = false
     }
 
-    // ========== OnlyOnHitFrame combo gate ==========
-    // Maintains the consecutive-hit counter and returns whether THIS hit should be reduced,
-    // per the configured NaturalMode. Runs on the Netty thread (single writer for the combo
-    // state — no race).
-    private fun comboGatePasses(): Boolean {
-        val now = System.nanoTime()
-        // A gap longer than the window breaks the combo and resets the EveryNth rhythm.
-        if (lastHitNano != 0L && now - lastHitNano > hitWindowMs * 1_000_000L) {
-            combo = 0
-            nthRemaining = Random.nextInt(nthMin, nthMax + 1).coerceAtLeast(1)
-        }
-        lastHitNano = now
-        combo = combo + 1
-
-        return when (naturalMode) {
-            "Off" -> true
-            "Incremental" -> rollIncremental()
-            "EveryNth" -> rollEveryNth()
-            else -> {
-                // Both: EveryNth picks the candidate, Incremental adds randomness on top.
-                val everyNthOk = rollEveryNth()
-                everyNthOk && rollIncremental()
-            }
-        }
-    }
-
-    // Reduce chance grows with combo: base + (combo-1)*perHit, capped at MaxChance.
-    private fun rollIncremental(): Boolean {
-        val raw = baseChance + (combo - 1) * chancePerHit
-        val chance = if (raw > maxChance) maxChance else raw
-        val roll = Random.nextInt(100)
-        return roll < chance
-    }
-
-    // Reduce only every Nth hit; N randomized to nthMin..nthMax each cycle (spaced rhythm).
-    private fun rollEveryNth(): Boolean {
-        if (nthRemaining > 0) {
-            nthRemaining = nthRemaining - 1
-            return false
-        }
-        nthRemaining = Random.nextInt(nthMin, nthMax + 1).coerceAtLeast(1)
-        return true
-    }
-
     /** Run the strategy (conditions + scaling) and return its command. */
     private fun reduceNormally(config: VelocityConfig, ctx: VelocityContext): PlatformCommand {
         val result = currentStrategy().execute(config, strategyState, ctx)
@@ -369,7 +302,7 @@ object Velocity : Module("Velocity", Category.COMBAT), HudLineProvider {
             io.doppel.core.logging.CoreLogger.info(
                 "[Velocity] packet result=${result.javaClass.simpleName} modified=$modified " +
                 "mode=$mode hMin=$horizontalMin hMax=$horizontalMax vMin=$verticalMin vMax=$verticalMax " +
-                "chance=$probability onlyOnHit=$onlyOnHitFrame"
+                "onlyOnHit=$onlyOnHitFrame"
             )
         }
         return mapResultToCommand(result)
@@ -388,11 +321,8 @@ object Velocity : Module("Velocity", Category.COMBAT), HudLineProvider {
     // ========== Lifecycle ==========
 
     override fun onEnable() {
-        // Reset OnlyOnHitFrame combo state.
-        combo = 0
-        lastHitNano = 0L
-        nthRemaining = Random.nextInt(nthMin, nthMax + 1).coerceAtLeast(1)
-        // Sprint-mode brace state lives in strategyState and is cleared by reset().
+        // The gate's chain state and the Sprint brace window both live in strategyState and are
+        // cleared by strategyState.reset() in onDisable.
         braceKeysHeld = false
         EventBridge.registerTickListener { currentTick ->
             if (enabled) onTick(currentTick)

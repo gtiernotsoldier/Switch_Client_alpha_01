@@ -6,7 +6,7 @@ import io.doppel.core.model.PlayerState
 import io.doppel.core.model.TargetState
 import io.doppel.core.strategy.autoblock.RangeGate
 import io.doppel.core.strategy.click.WeaponType
-import io.doppel.core.strategy.combat.CombatTrigger
+import io.doppel.core.strategy.combat.BlockPredictor
 import io.doppel.adapter.common.api.EventBridge
 import io.doppel.adapter.common.module.Module
 import io.doppel.adapter.common.module.Category
@@ -36,9 +36,13 @@ import kotlin.random.Random
 object AutoBlock : Module("AutoBlock", Category.COMBAT) {
 
     // ========== Mode ==========
-    // Normal = click-style: while AutoClicker / physical left-click is working, block for
-    //          [delayMs] then release (re-engages each hit).
-    // Srg    = hold-style: block continuously while the player keeps attacking.
+    // Normal  = click-style: while AutoClicker / physical left-click is working, block for
+    //           [delayMs] then release (re-engages each hit).
+    // Sag     = hold-style: block continuously while the player keeps attacking.
+    // Predict = lock-style: hold the guard while the target's damage lock is up, and swing the
+    //           moment it lifts; also holds ahead of the opponent's own estimated attack.
+    //           The algorithm lives in [BlockPredictor].
+    // Lag     = no block at all: hold the packet stream back instead.
     private val mode by choices("Mode", arrayOf("Normal", "Sag", "Predict", "Lag"))
 
     // ========== Distance Range ==========
@@ -79,21 +83,50 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
     }
 
     /**
-     * [Sag] and [Predict]: release the block after holding it this long, then re-engage on the next
-     * trigger. A hold-style block that never lets go is what the server sees as "always blocking"; a
+     * [Sag]: release the block after holding it this long, then re-engage on the next trigger. A
+     * hold-style block that never lets go is what the server sees as "always blocking"; a
      * hold-and-release rhythm is what the block-hit timing is supposed to look like.
+     *
+     * Predict does not use this any more. Its hold length is derived from the target's damage lock,
+     * which is already bounded (~half the i-frame countdown), so a wall-clock cap would only ever
+     * cut a correct hold short.
      */
-    private val maxHoldMs by int("MaxHold", 700, 400..2000, "ms", modes = arrayOf("Sag", "Predict"))
+    private val maxHoldMs by int("MaxHold", 700, 400..2000, "ms", modes = arrayOf("Sag"))
+
+    // ========== Predict (see BlockPredictor) ==========
+    // Layer A is arithmetic — the target's i-frame countdown, high half = our hit is discarded.
+    // Layer B is an estimate — the opponent's attack rhythm, learned from hits we take.
+    //
+    // The old Predict reused `CombatTrigger` PRE, which fires on hurtResistantTime in 1..10.
+    // That is the *open* half of the window, so it blocked exactly when a hit would have landed and
+    // released exactly when it would not. `PredictHurtTime` went with it: it capped that window at
+    // 10 by hand, which is the half-way value, not the window.
 
     /**
-     * [Predict]: the i-frame window the core trigger fires in — the same PRE mode WTap uses.
-     *
-     * `CombatTrigger` PRE fires while the target is inside its hurt-resistance window, i.e. while it is
-     * still recovering. Blocking there times the block against the hit that is coming rather than
-     * reacting to the one that already landed. Reusing the core algorithm (instead of re-deriving the
-     * window here) is what keeps Predict, WTap and BlockHit consistent with each other.
+     * [Predict]: release the guard this many ticks before the damage lock lifts, so the swing is
+     * armed the moment it does. 0 = release exactly when a hit starts landing.
      */
-    private val predictHurtTime by int("PredictHurtTime", 10, 1..20, "ticks", modes = arrayOf("Predict"))
+    private val predictLead by int(
+        "PredictLead", BlockPredictor.DEFAULT_LEAD_TICKS, 0..10, "ticks", modes = arrayOf("Predict"))
+
+    /**
+     * [Predict]: ticks to subtract from the target's i-frame counter before comparing, because the
+     * client sees a delayed copy of it. Raise it for a laggier connection; too high and the guard
+     * comes off before a hit can actually land.
+     */
+    private val predictRtt by int(
+        "PredictRtt", BlockPredictor.DEFAULT_RTT_TICKS, 0..10, "ticks", modes = arrayOf("Predict"))
+
+    /** [Predict]: also hold the guard when the opponent's own next attack is due (layer B). */
+    private val predictAttacks by boolean("PredictAttacks", true, modes = arrayOf("Predict"))
+
+    /** [Predict]: how close the predicted attack must be, in ticks. */
+    private val predictWindow by int(
+        "PredictWindow", BlockPredictor.DEFAULT_PREDICT_WINDOW, 0..20, "ticks", modes = arrayOf("Predict"))
+
+    /** [Predict]: probability that a due prediction holds the guard (0-100). */
+    private val predictChance by int(
+        "PredictChance", BlockPredictor.DEFAULT_PREDICT_CHANCE, 0..100, "%", modes = arrayOf("Predict"))
 
     // ========== Lag (packet lag instead of a block) ==========
     /** Chance that a lag window starts at all (Raven's Lag Chance). */
@@ -120,9 +153,17 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
     /** OnEnter range-mode latch (algorithm state, owned by core RangeGate). */
     private val rangeGateState = RangeGate.State()
 
-    /** [Predict]: hit counter/threshold handed back and forth with the core trigger. */
-    private var predictHits: Int = 0
-    private var predictThreshold: Int = 1
+    /** [Predict]: the opponent-attack clock and its layer-B estimate (algorithm state, in core). */
+    private val predictState = BlockPredictor.State()
+
+    /** [Predict]: previous tick's own i-frame counter, for the "we were just hit" rising edge. */
+    private var lastSelfHurt: Int = 0
+
+    /** [Predict]: last non-zero maxHurtResistantTime read from the player (1.8: 20). */
+    private var lastKnownMaxHurt: Int = 0
+
+    /** Monotonic tick index; the predictor only ever looks at differences. */
+    private var tickCounter: Int = 0
 
     /** Throttle counter for diagnostic logging (every ~40 ticks ≈ 2s). */
     private var diagCount: Int = 0
@@ -141,6 +182,16 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
                 "onGround=${player.onGround} m0=${EventBridge.mouseButton0} physL=${player.isAttackKeyDown} " +
                 "rightHeld=${EventBridge.isRightMousePhysicallyDown} target=${target?.distance ?: "null"}")
         }
+
+        // ---------- Per-tick clocks ----------
+        // Kept before every early return. The tick index is wall-clock for the predictor, and the
+        // rising edge of our OWN i-frame counter is the "we were just hit" signal layer B learns
+        // from. Skipping either just because the module is idle this tick would corrupt the
+        // estimate rather than merely slow it down.
+        tickCounter++
+        val selfJustHit = player.hurtResistantTime > lastSelfHurt
+        lastSelfHurt = player.hurtResistantTime
+        if (player.maxHurtResistantTime > 0) lastKnownMaxHurt = player.maxHurtResistantTime
 
         // ---------- Platform-level guards ----------
         // Any open screen — inventory, chest, crafting, chat, pause — means the player is not
@@ -216,36 +267,40 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
                 }
             }
 
-            // ── Predict: block inside the target's i-frame window, via the same core trigger WTap's PRE
-            // uses (see [predictHurtTime]). The window is the point: the target is still recovering, so
-            // the block is timed against the hit that is coming rather than the one that already landed.
+            // ── Predict: time the guard against the target's damage lock.
+            //
+            // After we land a hit the target cannot be damaged for the high half of its i-frame
+            // countdown (11..20 of 20) and it can still hit us back. Swinging into that window is a
+            // wasted swing with the guard down; the useful move is to hold, and to swing the moment
+            // the lock lifts. Layer B adds the guessed half: hold even outside the lock when the
+            // opponent's own next attack is due. The algorithm is entirely in [BlockPredictor].
             "Predict" -> {
-                var trigger = false
-                if (target != null) {
-                    val eval = CombatTrigger.evaluate(
-                        mode = CombatTrigger.Mode.PRE,
-                        target = target,
-                        maxHurtTime = predictHurtTime,
-                        hitCounter = predictHits,
-                        hitThreshold = predictThreshold,
-                        hitPerMin = 1,
-                        hitPerMax = 1,
-                        chance = 100
-                    )
-                    predictHits = eval.hitCounter
-                    predictThreshold = eval.hitThreshold
-                    trigger = eval.fire
-                }
-                trigger = trigger && conditionsMet && inRange && probPass
-                if (trigger) {
+                val decision = BlockPredictor.evaluate(
+                    targetHurtResistantTime = target?.hurtResistantTime,
+                    currentTick = tickCounter,
+                    opponentJustHit = selfJustHit,
+                    state = predictState,
+                    config = predictConfig(),
+                    rng = Random
+                )
+                if (decision.block && conditionsMet && inRange && probPass) {
                     if (!blockHeld) {
                         EventBridge.syntheticUse = true
                         markWorked() // block starting — a transition, not the steady hold
                         blockHeld = true
-                        blockStartNano = nowNs
                     }
-                } else if (blockHeld && elapsedNs(blockStartNano) >= maxHoldMs * 1_000_000L) {
+                } else {
+                    // Release whenever the decision says swing: no wall-clock hold here, the lock
+                    // length already bounds it.
                     releaseBlock()
+                }
+                if (diagCount % 40 == 0) {
+                    CoreLogger.info(
+                        "[AutoBlock] predict reason=${decision.reason} block=${decision.block} " +
+                        "effHurt=${decision.effectiveHurt} held=$blockHeld " +
+                        "ivl=${predictState.intervalEma.toInt()}t/" +
+                        "${predictState.intervalSamples}smp"
+                    )
                 }
             }
 
@@ -321,6 +376,22 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
     private fun elapsedNs(startNano: Long): Long =
         System.nanoTime() - startNano
 
+    /**
+     * [Predict]: assemble the core predictor's config.
+     *
+     * `maxHurtResistantTime` comes from the player (1.8: 20), not from the module. The removed
+     * `PredictHurtTime` option hardcoded 10 as the window's *upper bound* — 10 is the half-way
+     * value, so the window it selected was the wrong half of the countdown.
+     */
+    private fun predictConfig() = BlockPredictor.Config(
+        maxHurtResistantTime = if (lastKnownMaxHurt > 0) lastKnownMaxHurt else BlockPredictor.DEFAULT_MAX_HURT,
+        rttTicks = predictRtt,
+        leadTicks = predictLead,
+        predictAttacks = predictAttacks,
+        predictWindowTicks = predictWindow,
+        predictChance = predictChance
+    )
+
     // ========== Lifecycle ==========
 
     override fun onEnable() {
@@ -329,6 +400,9 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
         // player's manual blocking.
         lastAttackNano = 0L
         rangeGateState.reset()
+        predictState.reset()
+        lastSelfHurt = 0
+        tickCounter = 0
         EventBridge.registerTickListener(tickListener)
     }
 
@@ -338,5 +412,7 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
         EventBridge.syntheticUse = false
         lastAttackNano = 0L
         rangeGateState.reset()
+        predictState.reset()
+        lastSelfHurt = 0
     }
 }

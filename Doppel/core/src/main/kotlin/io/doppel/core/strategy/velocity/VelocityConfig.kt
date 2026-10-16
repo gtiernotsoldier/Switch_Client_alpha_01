@@ -36,7 +36,16 @@ data class VelocityConfig(
     val hurtTimeToClick: Int = 8,
     val whenFacingEnemyOnly: Boolean = true,
     val maxAngleDifference: Float = 90f,
-    val clickRange: Float = 3.0f
+    val clickRange: Float = 3.0f,
+    // ── SPRINT mode ──
+    /** Ticks to keep pressing toward the knockback source after a hit. */
+    val sprintHoldTicks: Int = 4,
+    /** P(brace | braced on the previous hit). Equal to [sprintGateIdle] makes the gate memoryless. */
+    val sprintGateBraced: Int = 25,
+    /** P(brace | did not brace on the previous hit). */
+    val sprintGateIdle: Int = 25,
+    /** cos of the half-angle of the press cones (cos 67.5° ≈ 0.38). */
+    val sprintSector: Float = 0.38f
 )
 
 /**

@@ -1,9 +1,9 @@
 package io.doppel.adapter.common.module.combat
 
-import io.doppel.core.condition.ConditionChecker
 import io.doppel.core.model.*
 import io.doppel.core.strategy.velocity.ClickVelocityStrategy
 import io.doppel.core.strategy.velocity.LegitVelocityStrategy
+import io.doppel.core.strategy.velocity.SprintVelocityStrategy
 import io.doppel.core.strategy.velocity.VelocityConfig
 import io.doppel.core.strategy.velocity.VelocityMode
 import io.doppel.core.strategy.velocity.VelocityResult
@@ -18,9 +18,6 @@ import io.doppel.adapter.common.option.int
 import io.doppel.adapter.common.option.choices
 import io.doppel.adapter.common.option.triggerOptions
 import kotlin.math.roundToInt
-import kotlin.math.sin
-import kotlin.math.cos
-import kotlin.math.sqrt
 import kotlin.random.Random
 
 /**
@@ -167,6 +164,7 @@ object Velocity : Module("Velocity", Category.COMBAT), HudLineProvider {
     // ========== Core Strategies (Algorithm lives here) ==========
     private val legitStrategy = LegitVelocityStrategy()
     private val clickStrategy = ClickVelocityStrategy()
+    private val sprintStrategy = SprintVelocityStrategy()
     private val strategyState = VelocityStrategy.State()
 
     /** Named listener reference so we can unregister exactly this handler (chain-friendly). */
@@ -182,13 +180,9 @@ object Velocity : Module("Velocity", Category.COMBAT), HudLineProvider {
     @Volatile private var nthRemaining = 2
 
     // ========== Sprint mode state ==========
-    /** Unit vector of the knockback SOURCE (opposite the knockback itself). */
-    @Volatile private var braceSrcX = 0.0
-    @Volatile private var braceSrcZ = 0.0
-    @Volatile private var braceTicksLeft = 0
+    // The arithmetic and the gate live in SprintVelocityStrategy (Core); only the adapter-side
+    // bookkeeping of "am I currently holding keys" stays here.
     @Volatile private var braceKeysHeld = false
-    /** Gate state across hits: did the previous hit brace? */
-    @Volatile private var braceLastPassed = false
 
     // ========== Config Builder ==========
     private fun buildConfig(): VelocityConfig = VelocityConfig(
@@ -209,7 +203,11 @@ object Velocity : Module("Velocity", Category.COMBAT), HudLineProvider {
         hurtTimeToClick = hurtTimeToClick,
         whenFacingEnemyOnly = whenFacingEnemyOnly,
         maxAngleDifference = maxAngleDifference,
-        clickRange = clickRange
+        clickRange = clickRange,
+        sprintHoldTicks = sprintHoldTicks,
+        sprintGateBraced = sprintGateP,
+        sprintGateIdle = sprintGateQ,
+        sprintSector = sprintSector
     )
 
     /** Select the active strategy based on mode. */
@@ -250,68 +248,36 @@ object Velocity : Module("Velocity", Category.COMBAT), HudLineProvider {
     // ========== Sprint mode ==========
 
     /**
-     * A knockback arrived. Decide whether to brace, arm the direction, and hand the
-     * packet straight back to vanilla.
+     * A knockback arrived. The strategy owns the condition check, the gate roll and the arm; this
+     * method only reports whether it acted and hands the packet straight back to vanilla. That is
+     * the whole mode: it contributes nothing to the packet stream.
      */
     private fun onSprintKnockback(ctx: VelocityContext): PlatformCommand {
-        val player = ctx.player
-        if (!ConditionChecker.check(triggerOptions, player, ctx.target)) {
-            return PlatformCommand.Pass(ctx.originalMotion)
-        }
-        if (!sprintGatePasses()) {
-            return PlatformCommand.Pass(ctx.originalMotion)
-        }
-        val m = ctx.originalMotion
-        val hSpeed = sqrt(m.x * m.x + m.z * m.z)
-        // A pure-vertical knockback has no source direction to brace against.
-        if (hSpeed < 1e-4) return PlatformCommand.Pass(ctx.originalMotion)
-
-        braceSrcX = -m.x / hSpeed
-        braceSrcZ = -m.z / hSpeed
-        braceTicksLeft = sprintHoldTicks
-        markWorked()
+        if (sprintStrategy.arm(cachedConfig { buildConfig() }, strategyState, ctx)) markWorked()
         return PlatformCommand.Pass(ctx.originalMotion)
     }
 
     /**
-     * Two-state gate: `SprintGateBraced` is P(brace | braced last hit), `SprintGateIdle`
-     * is P(brace | did not). Equal values make it memoryless — the shape the human
-     * sprint-reset population has. This replaces `NaturalMode`'s EveryNth/Incremental
-     * cadences, which are deterministic and therefore exactly what the run-length test
-     * catches (measured: iid D≈0.01, EveryNth D=0.21).
+     * One tick of the brace. The key resolution is Core's (it depends on the player's *current*
+     * yaw, which is why it is a per-tick call rather than part of the packet handling); this method
+     * only moves the result onto EventBridge.
      */
-    private fun sprintGatePasses(): Boolean {
-        val p = if (braceLastPassed) sprintGateP else sprintGateQ
-        val pass = Random.nextInt(100) < p
-        braceLastPassed = pass
-        return pass
-    }
-
-    /** One tick of the brace: press the movement keys that point at the knockback source. */
     private fun sprintTick(player: PlayerState) {
-        if (braceTicksLeft <= 0) {
+        val keys = sprintStrategy.braceKeys(
+            cachedConfig { buildConfig() }, strategyState, player.rotation.yaw
+        )
+        if (keys == null) {
             releaseBraceKeys()
-            return
+        } else {
+            // ADDITIVE claims, not direct writes: WTap/STap OWN W/S while a tap is live and beat us
+            // on a shared tick (a trade), after which we resume. Writing the fields directly was
+            // what let the tap and the brace silently cancel each other.
+            EventBridge.claimForward(name, keys.forward)
+            EventBridge.claimBack(name, keys.back)
+            EventBridge.claimRight(name, keys.right)
+            EventBridge.claimLeft(name, keys.left)
+            braceKeysHeld = true
         }
-        braceTicksLeft--
-
-        val yaw = Math.toRadians(player.rotation.yaw.toDouble())
-        val fwdX = -sin(yaw)
-        val fwdZ = cos(yaw)
-        // Right of forward in the (x, z) plane: (x, z) -> (-z, x).
-        val rgtX = -fwdZ
-        val rgtZ = fwdX
-        val fDot = fwdX * braceSrcX + fwdZ * braceSrcZ
-        val rDot = rgtX * braceSrcX + rgtZ * braceSrcZ
-        val sector = sprintSector.toDouble()
-        // ADDITIVE claims, not direct writes: WTap/STap OWN W/S while a tap is live and beat us on
-        // a shared tick (a trade), after which we resume. Writing the fields directly was what let
-        // the tap and the brace silently cancel each other.
-        EventBridge.claimForward(name, fDot > sector)
-        EventBridge.claimBack(name, fDot < -sector)
-        EventBridge.claimRight(name, rDot > sector)
-        EventBridge.claimLeft(name, rDot < -sector)
-        braceKeysHeld = true
 
         if (sprintSyncServerSprint) {
             // ADDITIVE claim, asserted only when the game has actually cleared sprint — the same
@@ -426,10 +392,8 @@ object Velocity : Module("Velocity", Category.COMBAT), HudLineProvider {
         combo = 0
         lastHitNano = 0L
         nthRemaining = Random.nextInt(nthMin, nthMax + 1).coerceAtLeast(1)
-        // Reset Sprint-mode brace state.
-        braceTicksLeft = 0
+        // Sprint-mode brace state lives in strategyState and is cleared by reset().
         braceKeysHeld = false
-        braceLastPassed = false
         EventBridge.registerTickListener { currentTick ->
             if (enabled) onTick(currentTick)
         }
@@ -443,7 +407,6 @@ object Velocity : Module("Velocity", Category.COMBAT), HudLineProvider {
         EventBridge.unregisterTickListener(sprintTickListenerRef)
         strategyState.reset()
         releaseBraceKeys()
-        braceTicksLeft = 0
     }
     /**
      * Called on every tick to drain any delayed velocity packets from the

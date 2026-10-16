@@ -47,9 +47,22 @@ interface VelocityStrategy : Strategy<VelocityConfig, VelocityStrategy.State, Ve
         val delayQueue: MutableList<DelayedEntry> = mutableListOf()
         var tickCounter: Int = 0
 
+        // ── SPRINT mode (SprintVelocityStrategy) ──
+        /** Ticks left in the armed brace window; 0 = not bracing. */
+        var braceTicksLeft: Int = 0
+        /** Knocked-back source direction the window was armed with. */
+        var braceSourceX: Double = 0.0
+        var braceSourceZ: Double = 0.0
+        /** Gate state carried across hits: did the previous hit brace? */
+        var braceLastPassed: Boolean = false
+
         override fun reset() {
             delayQueue.clear()
             tickCounter = 0
+            braceTicksLeft = 0
+            braceSourceX = 0.0
+            braceSourceZ = 0.0
+            braceLastPassed = false
         }
     }
 }

@@ -314,8 +314,11 @@ object Velocity : Module("Velocity", Category.COMBAT), HudLineProvider {
         braceKeysHeld = true
 
         if (sprintSyncServerSprint) {
-            // ADDITIVE: "also be sprinting". Claimed each brace tick, released when the window ends.
-            EventBridge.claimSprint(name, true)
+            // ADDITIVE claim, asserted only when the game has actually cleared sprint — the same
+            // condition the direct call used. Released when the brace window ends.
+            if (!player.isSprinting) {
+                EventBridge.claimSprint(name, true)
+            }
             if (!EventBridge.serverSprintState) {
                 EventBridge.sendEntityAction("START_SPRINTING")
             }

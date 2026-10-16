@@ -35,6 +35,9 @@ object FabricEventBridge : IEventBridge {
         // Register sprint setter (KeepSprint)
         EventBridge.registerSprintSetter { sprinting ->
             mc.player?.setSprinting(sprinting)
+            // Same approximation as the forge setter — see the comment there. Fabric never wrote
+            // this, so the two platforms disagreed about what serverSprintState meant.
+            EventBridge.reportServerSprintState(sprinting)
         }
 
         // Register releaseUsingItem handler (AutoClicker OnItemUse.STOP / AutoBlock)

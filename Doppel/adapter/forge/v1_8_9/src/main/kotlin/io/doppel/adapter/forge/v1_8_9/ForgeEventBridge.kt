@@ -341,12 +341,21 @@ object ForgeEventBridge : IEventBridge {
         EventBridge.registerSprintSetter { sprinting ->
             val player = getPlayer() ?: return@registerSprintSetter
             MappingContext.invokeMethod(player, "forge:player_setSprinting", sprinting)
-            // Deliberately does NOT touch EventBridge.serverSprintState. The local flag and the
-            // server's flag are different facts — that divergence is MC-69459 — and the mirror is
-            // now written only where a C0B actually goes on the wire. Writing it here made the
-            // "mirror" a copy of the local flag, which reduced SuperKnockback's
-            // `player.isSprinting && serverSprintState` guard to a tautology. Fabric never wrote it
-            // here, so the two platforms also disagreed about what the field meant.
+            // Keep the mirror in sync with local sprint changes.
+            //
+            // This is an APPROXIMATION, and it has to stay: in vanilla a local setSprinting makes
+            // the client send its own C0B, so the server's flag follows the local one — except when
+            // MC-69459's auto-clear on attack desyncs them, which the client cannot observe. Moving
+            // this write to "only where a C0B goes on the wire" looked tidier but broke
+            // SuperKnockback's SprintTap: that mode sends no packets of its own, so its guard
+            // (`player.isSprinting && serverSprintState`) never passed and the tap stopped firing
+            // entirely. Modelling MC-69459 in the mirror is the real fix; until then the mirror
+            // tracks the local flag and SprintTap behaves as it always did.
+            //
+            // What did change: the field is now private-set, so modules cannot write it, and
+            // SprintReset's Nostop burst reports it too (it used to send raw packets and never
+            // update the mirror at all).
+            EventBridge.reportServerSprintState(sprinting)
         }
 
         // Generic C0B entity-action sender (SuperKnockback Old/SneakPacket, ported from LB).

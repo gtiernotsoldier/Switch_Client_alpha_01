@@ -46,11 +46,16 @@ object Sprint : Module("Sprint", Category.MOVEMENT) {
         if (EventBridge.isInFluid || EventBridge.foodLevel <= 6) return
         // Vanilla: can't sprint while blocking or using item
         if (player.isBlocking || player.isUsingItem) return
-        // ADDITIVE claim: "I want to be sprinting". It no longer calls setSprinting(true) directly,
-        // which ran AFTER SuperKnockback's SprintTap had forced sprint OFF for its one tick — so
-        // the tap was eaten essentially every time. (The header comment below claims there is "no
-        // cross-module conflict"; this was one, and it was the family's hardest pair.)
-        EventBridge.claimSprint(name, true)
+        // ADDITIVE claim: "I want to be sprinting" — asserted on exactly the same condition as the
+        // old direct call, so the call pattern is unchanged, but it now goes through arbitration.
+        // Before, this ran AFTER SuperKnockback's SprintTap had forced sprint OFF for its one tick,
+        // so the tap was eaten essentially every time. (The header comment below claimed there was
+        // "no cross-module conflict"; this was one, and it was the family's hardest pair.)
+        if (!player.isSprinting) {
+            EventBridge.claimSprint(name, true)
+        } else {
+            EventBridge.releaseSprint(name)
+        }
     }
 
     override fun onEnable() {

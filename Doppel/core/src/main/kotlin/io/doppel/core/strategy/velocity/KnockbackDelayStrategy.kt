@@ -8,29 +8,35 @@ import io.doppel.core.util.Vec3
 import kotlin.random.Random
 
 /**
- * Independent KnockbackDelay strategy.
+ * KnockbackDelay strategy — hold back the knockback we receive and re-apply it later.
  *
- * Delays incoming knockback (already reduced by Velocity if that module runs earlier in the
- * velocity chain) with a DISTANCE-AWARE dynamic delay + random jitter, then releases it with an
- * optional final reduction.
+ * This changes WHEN the knockback lands, never HOW MUCH: the motion value is carried through
+ * untouched and released at a later tick. If Velocity also runs (it is earlier in the chain) the
+ * motion being delayed is whatever Velocity left behind.
  *
- * Independent algorithm (vs Slinky's fixed random delay):
- *  - dynamic delay: farther targets → longer delay (unpredictable at range)
- *  - jitter: ±ticks so the delay never forms a fixed, detectable rhythm
- *  - release reduce: optional extra cut applied at release time
+ * The model is Slinky's, deliberately: one random delay drawn from 1..[Config.maxDelayTicks], gated
+ * by [Config.chance] and by the shared condition engine. Three knobs that used to live here are
+ * gone for the same reason — each of them made this module do something it is not supposed to:
+ *
+ *  - **distance-proportional extra delay** made the delay an observable function of range, so the
+ *    delay length was a learnable signature instead of a constant. Slinky uses distance as a gate
+ *    ("lower this to prevent the module activating when you are still too far away"), which is a
+ *    yes/no and leaks nothing;
+ *  - **± jitter around a fixed base** is what the uniform draw over 1..max already does, and more
+ *    directly — a random range *is* the unpredictability, there is no separate knob for it;
+ *  - **a release-time reduction** re-cut the motion, which pulled the SIZE channel back into a
+ *    module whose only job is timing. That would stack a physical-layer anomaly on top of a timing
+ *    anomaly rather than replacing one with the other.
  */
 class KnockbackDelayStrategy {
 
     data class Config(
+        /** Probability that a given knockback is delayed (0-100). */
         val chance: Int = 100,
-        val minDelayTicks: Int = 1,
+        /**
+         * Upper bound of the delay, in ticks. The actual delay is uniform over 1..this.
+         */
         val maxDelayTicks: Int = 4,
-        /** Extra delay ticks per block of distance to the target. */
-        val distanceFactor: Float = 0.5f,
-        /** Random ±jitter applied to the delay, in ticks. */
-        val jitterTicks: Int = 1,
-        /** Optional motion scale applied at release time (1.0 = unchanged). */
-        val releaseReduce: Float = 1.0f,
         /** Require the held item to be a weapon (sword/axe). */
         val requireWeapon: Boolean = false,
         val triggerOptions: TriggerOptions = TriggerOptions()
@@ -58,36 +64,33 @@ class KnockbackDelayStrategy {
         if (!ConditionChecker.check(config.triggerOptions, player, target)) return false
         if (config.chance < 100 && Random.nextInt(100) >= config.chance) return false
 
-        // Dynamic delay: base range + distance-proportional extra + random jitter.
-        val min = config.minDelayTicks.coerceAtLeast(1)
-        val max = config.maxDelayTicks.coerceAtLeast(min)
-        val base = Random.nextInt(min, max + 1)
-        val distExtra = ((target?.distance ?: 0f) * config.distanceFactor).toInt()
-        val jitter = Random.nextInt(-config.jitterTicks, config.jitterTicks + 1)
-        val total = (base + distExtra + jitter).coerceAtLeast(1)
+        val delay = Random.nextInt(1, config.maxDelayTicks.coerceAtLeast(1) + 1)
 
         state.queue.add(
             State.Entry(
                 motion = ctx.originalMotion,
-                releaseTick = state.tickCounter + total
+                releaseTick = state.tickCounter + delay
             )
         )
         return true
     }
 
     /**
-     * Called every tick. Returns the motions whose delay expired, with [Config.releaseReduce]
-     * already applied.
+     * Called every tick. Returns the motions whose delay expired — unchanged, because this
+     * strategy owns timing and nothing else.
+     *
+     * [Config] is taken so the signature stays stable if a queue-policy knob is ever needed; the
+     * delay itself is already decided at [enqueue] time.
      */
+    @Suppress("UNUSED_PARAMETER")
     fun pump(config: Config, state: State, currentTick: Int): List<Vec3> {
         state.tickCounter = currentTick
-        val factor = config.releaseReduce.coerceIn(0f, 1f).toDouble()
         val released = mutableListOf<Vec3>()
         val it = state.queue.iterator()
         while (it.hasNext()) {
             val e = it.next()
             if (currentTick < e.releaseTick) continue
-            released.add(Vec3(e.motion.x * factor, e.motion.y * factor, e.motion.z * factor))
+            released.add(e.motion)
             it.remove()
         }
         return released

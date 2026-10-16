@@ -141,15 +141,23 @@ object ADTap : Module("ADTap", Category.COMBAT) {
 
     private fun nextGapMs(): Int = Random.nextInt(gapMinMs, gapMaxMs + 1)
 
+    /**
+     * A/D are ADDITIVE claims — ADTap deliberately never hijacks the player's own strafing.
+     * Routing through the arbiter also stops [abort] from releasing a key another module is
+     * holding, which is exactly what the Velocity Sprint brace's release used to do to ADTap.
+     */
     private fun setSide(side: Side, down: Boolean) {
-        if (side == Side.LEFT) EventBridge.syntheticLeft = down
-        else EventBridge.syntheticRight = down
+        if (side == Side.LEFT) {
+            if (down) EventBridge.claimLeft(name, true) else EventBridge.releaseLeft(name)
+        } else {
+            if (down) EventBridge.claimRight(name, true) else EventBridge.releaseRight(name)
+        }
     }
 
     /** Release both synthetic strafe keys and reset the pattern. */
     private fun abort() {
-        EventBridge.syntheticLeft = false
-        EventBridge.syntheticRight = false
+        EventBridge.releaseLeft(name)
+        EventBridge.releaseRight(name)
         machine.reset()
     }
 

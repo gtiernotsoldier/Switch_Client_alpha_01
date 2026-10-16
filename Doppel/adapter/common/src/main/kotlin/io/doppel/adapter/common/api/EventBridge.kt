@@ -117,6 +117,7 @@ object EventBridge {
         cancelAttackHandler = null
         syntheticAttack = false
         syntheticUse = false
+        clearAllClaims()
         attackGateProvider = null
         syntheticAttackOverride = false
         syntheticUseOverride = false
@@ -593,11 +594,12 @@ object EventBridge {
     fun currentAttackGate(): Boolean = attackGateProvider?.invoke() ?: true
 
     /**
-     * Synthetic forward/back key states, written by WTap/STap on the background tick
-     * thread and applied to the real W/S KeyBinding on the render thread (in
-     * ForgeEventBridge.applySyntheticInput). This puts WTap/STap's tap on the main
-     * thread and lets the Keystrokes HUD flash the W/S keys. When the override flag is
-     * true the adapter drives the key fully from this state.
+     * Synthetic forward/back key states — the *resolved* result of the arbitration below, applied
+     * to the real W/S KeyBinding on the render thread (ForgeEventBridge.applySyntheticInput). When
+     * the override flag is true the adapter drives the key fully from this state.
+     *
+     * Do not write these directly: claim through [claimForward]/[claimBack] instead. Writing them
+     * directly is what let WTap and the Velocity Sprint brace clobber each other.
      */
     @Volatile var syntheticForward: Boolean = false
     @Volatile var syntheticBack: Boolean = false
@@ -613,6 +615,230 @@ object EventBridge {
      */
     @Volatile var syntheticLeft: Boolean = false
     @Volatile var syntheticRight: Boolean = false
+
+    // ========== Synthetic key arbitration ==========
+    //
+    // The four fields above are the RESOLVED output — the platform reads them exactly as before
+    // (ForgeEventBridge.applySyntheticInput / FabricEventBridge). Modules must NOT write them any
+    // more; they claim and release through this arbiter, which recomputes the fields.
+    //
+    // Why this exists. `syntheticForward` used to be one plain field with several writers and no
+    // owner. WTap writes it false (releasing W is what a W-tap *is*) and the Velocity Sprint brace
+    // writes it true (pressing W toward the knockback source). In a trade both fire on the same
+    // tick, so whichever wrote last silently discarded the other — and releaseBraceKeys() cleared
+    // ADTap's A/D as a side effect. That is not a tuning problem, it is a missing ownership model.
+    //
+    // Two claim kinds, because the OR path cannot express what a tap needs:
+    //   ADDITIVE — "also hold this key". ORs with the physical key and with other additive claims.
+    //              Used by the brace.
+    //   OWNED    — "the game sees only my value this tick"; the physical key is ignored (that is
+    //              precisely what a tap is) and additive claims are suppressed while it is live.
+    //              Exactly one owned claim wins, by priority then by source name, so the outcome
+    //              never depends on write order.
+    //
+    // In a shared tick an owned tap therefore beats an additive brace, and the brace resumes on the
+    // next tick — the same serialisation SuperKnockback already uses to avoid firing its C0B burst
+    // in the same tick as SprintReset.
+
+    enum class KeyClaimMode { ADDITIVE, OWNED }
+
+    /** A tap must beat a brace when both want the key on the same tick. */
+    const val KEY_PRIORITY_TAP = 10
+
+    /** Default priority for an additive claim (the brace). */
+    const val KEY_PRIORITY_BRACE = 0
+
+    private class KeyClaim(
+        val source: String,
+        val value: Boolean,
+        val mode: KeyClaimMode,
+        val priority: Int
+    )
+
+    private val forwardClaims = LinkedHashMap<String, KeyClaim>()
+    private val backClaims = LinkedHashMap<String, KeyClaim>()
+    private val leftClaims = LinkedHashMap<String, KeyClaim>()
+    private val rightClaims = LinkedHashMap<String, KeyClaim>()
+
+    fun claimForward(source: String, value: Boolean,
+                     mode: KeyClaimMode = KeyClaimMode.ADDITIVE,
+                     priority: Int = KEY_PRIORITY_BRACE) =
+        claim(forwardClaims, source, value, mode, priority)
+
+    fun claimBack(source: String, value: Boolean,
+                  mode: KeyClaimMode = KeyClaimMode.ADDITIVE,
+                  priority: Int = KEY_PRIORITY_BRACE) =
+        claim(backClaims, source, value, mode, priority)
+
+    fun claimLeft(source: String, value: Boolean,
+                  mode: KeyClaimMode = KeyClaimMode.ADDITIVE,
+                  priority: Int = KEY_PRIORITY_BRACE) =
+        claim(leftClaims, source, value, mode, priority)
+
+    fun claimRight(source: String, value: Boolean,
+                   mode: KeyClaimMode = KeyClaimMode.ADDITIVE,
+                   priority: Int = KEY_PRIORITY_BRACE) =
+        claim(rightClaims, source, value, mode, priority)
+
+    fun releaseForward(source: String) = drop(forwardClaims, source)
+    fun releaseBack(source: String) = drop(backClaims, source)
+    fun releaseLeft(source: String) = drop(leftClaims, source)
+    fun releaseRight(source: String) = drop(rightClaims, source)
+
+    /**
+     * Drop every claim a source holds, on every key **and on the sprint flag**.
+     *
+     * Safety net for [io.doppel.adapter.common.module.Module.disable]. A module that forgets to
+     * release leaves its key stuck on, and a stale OWNED claim is worse than a stuck key: it keeps
+     * winning the arbitration *while the module is off*. The base class calls this, so a module
+     * cannot forget — the only requirement is that it claims under its own `Module.name`.
+     */
+    @Synchronized
+    fun releaseAllClaims(source: String) {
+        val any = forwardClaims.remove(source) != null
+        val anyBack = backClaims.remove(source) != null
+        val anyLeft = leftClaims.remove(source) != null
+        val anyRight = rightClaims.remove(source) != null
+        if (any || anyBack || anyLeft || anyRight) resolveKeys()
+        releaseSprint(source)
+    }
+
+    // ========== Sprint state arbitration ==========
+    //
+    // Same claim model as the keys, with one difference that matters: **"no claim" is not "force it
+    // off"**. Sprint is driven by the game; a module that states no opinion must leave it alone.
+    //
+    // Why this exists. `setSprinting` was a plain call-through, so the LAST caller in the tick won.
+    // Sprint (movement) asserts `true` every tick you hold W, which silently ate SuperKnockback's
+    // SprintTap — and that tap's entire mechanism is holding sprint OFF for one tick so the server
+    // sees a reset. Note the comment in Sprint.kt claiming there is "no cross-module conflict";
+    // there was, and it was this one.
+
+    enum class SprintClaimMode { ADDITIVE, OWNED }
+
+    /** A forced sprint transition must beat a module that merely wants to run. */
+    const val SPRINT_PRIORITY_TAP = 10
+
+    private val sprintClaims = LinkedHashMap<String, KeyClaim>()
+
+    /** ADDITIVE: "also be sprinting". OWNED: "the sprint state is exactly this". */
+    @Synchronized
+    fun claimSprint(source: String, value: Boolean,
+                    mode: SprintClaimMode = SprintClaimMode.ADDITIVE,
+                    priority: Int = 0) {
+        sprintClaims[source] = KeyClaim(source, value, mode.toKeyMode(), priority)
+        applySprintClaims()
+    }
+
+    @Synchronized
+    fun releaseSprint(source: String) {
+        if (sprintClaims.remove(source) != null) applySprintClaims()
+    }
+
+    private fun SprintClaimMode.toKeyMode() = when (this) {
+        SprintClaimMode.ADDITIVE -> KeyClaimMode.ADDITIVE
+        SprintClaimMode.OWNED -> KeyClaimMode.OWNED
+    }
+
+    /** null = nobody has an opinion — leave the game's own sprint state alone. */
+    private fun resolveSprint(): Boolean? {
+        var best: KeyClaim? = null
+        for (c in sprintClaims.values) {
+            if (c.mode != KeyClaimMode.OWNED) continue
+            val b = best
+            if (b == null || c.priority > b.priority ||
+                (c.priority == b.priority && c.source < b.source)
+            ) {
+                best = c
+            }
+        }
+        best?.let { return it.value }
+        if (sprintClaims.values.any { it.value }) return true
+        return null
+    }
+
+    private fun applySprintClaims() {
+        val v = resolveSprint() ?: return
+        sprintSetter?.invoke(v)
+    }
+
+    /**
+     * What the **server** believes about our sprint flag.
+     *
+     * Written only by the platform, and only when it actually puts a C0B STOP/START_SPRINTING on
+     * the wire — never by a module, and no longer as a side effect of [setSprinting].
+     *
+     * The separation is the point. MC-69459 exists precisely because the local flag and the
+     * server's flag diverge (attacking while holding sprint is enough to desync them). A "mirror"
+     * that is just a copy of the local flag cannot represent that, and every reader of it —
+     * SuperKnockback's SprintTap guard asks `player.isSprinting && serverSprintState` — degrades to
+     * `player.isSprinting && player.isSprinting`. Before this change the two platforms also
+     * disagreed about the field's meaning: forge's sprint setter wrote it, fabric's did not.
+     */
+    @Volatile var serverSprintState: Boolean = false
+        private set
+
+    /** Called by the platform's entity-action / sprint-reset senders after a successful send. */
+    fun reportServerSprintState(sprinting: Boolean) {
+        serverSprintState = sprinting
+    }
+
+
+    /**
+     * Drop every claim from every source (shutdown, [reset]).
+     *
+     * Synchronised with the claim/release path: claims arrive from the background tick thread while
+     * [reset] runs on the platform thread during teardown, and resolveKeys() iterates the maps.
+     */
+    @Synchronized
+    fun clearAllClaims() {
+        forwardClaims.clear()
+        backClaims.clear()
+        leftClaims.clear()
+        rightClaims.clear()
+        sprintClaims.clear()
+        resolveKeys()
+    }
+
+    @Synchronized
+    private fun claim(claims: MutableMap<String, KeyClaim>, source: String, value: Boolean,
+                      mode: KeyClaimMode, priority: Int) {
+        claims[source] = KeyClaim(source, value, mode, priority)
+        resolveKeys()
+    }
+
+    @Synchronized
+    private fun drop(claims: MutableMap<String, KeyClaim>, source: String) {
+        if (claims.remove(source) != null) resolveKeys()
+    }
+
+    /** (value, ownsKey) for one key. Owned beats additive; ties broken by source name. */
+    private fun resolveOne(claims: Map<String, KeyClaim>): Pair<Boolean, Boolean> {
+        var best: KeyClaim? = null
+        for (c in claims.values) {
+            if (c.mode != KeyClaimMode.OWNED) continue
+            val b = best
+            if (b == null || c.priority > b.priority ||
+                (c.priority == b.priority && c.source < b.source)
+            ) {
+                best = c
+            }
+        }
+        best?.let { return it.value to true }
+        return claims.values.any { it.value } to false
+    }
+
+    private fun resolveKeys() {
+        val f = resolveOne(forwardClaims)
+        syntheticForward = f.first
+        syntheticForwardOverride = f.second
+        val b = resolveOne(backClaims)
+        syntheticBack = b.first
+        syntheticBackOverride = b.second
+        syntheticLeft = resolveOne(leftClaims).first
+        syntheticRight = resolveOne(rightClaims).first
+    }
+
 
     /**
      * Whether a fully-automatic clicker (AutoClicker/TriggerBot) is active.

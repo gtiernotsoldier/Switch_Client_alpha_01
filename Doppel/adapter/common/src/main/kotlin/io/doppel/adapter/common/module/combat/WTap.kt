@@ -70,6 +70,19 @@ object WTap : Module("WTap", Category.COMBAT) {
     private var hitCounter: Int = 0
     private var hitThreshold: Int = 1
 
+    /**
+     * Claim W with OWNED semantics.
+     *
+     * A W-tap is *defined* by the physical key being ignored (see the override contract in
+     * [EventBridge.isKeyForwardActive] and its test), so the tap must own the key rather than OR
+     * with it. Going through the arbiter instead of writing `syntheticForward` /
+     * `syntheticForwardOverride` directly is what stops the Velocity Sprint brace — which asks for
+     * W = pressed in the same tick on a trade — from cancelling the tap, and vice versa.
+     */
+    private fun ownW(value: Boolean) = EventBridge.claimForward(
+        name, value, EventBridge.KeyClaimMode.OWNED, EventBridge.KEY_PRIORITY_TAP
+    )
+
     // ========== Tick Listener ==========
     private val tickListener: (PlayerState, TargetState?) -> Unit = { p, _ ->
         if (enabled) onTick(p, EventBridge.crosshairTarget)
@@ -80,7 +93,7 @@ object WTap : Module("WTap", Category.COMBAT) {
 
         // ---- State machine events ----
         when (machine.tick(now)) {
-            TapStateMachine.Event.END_TAP -> EventBridge.syntheticForward = true
+            TapStateMachine.Event.END_TAP -> ownW(true)
             TapStateMachine.Event.SHOULD_START_TAP -> startTap(now)
             TapStateMachine.Event.NONE -> {}
         }
@@ -93,12 +106,12 @@ object WTap : Module("WTap", Category.COMBAT) {
         // tap releases W) and not isKeyForwardDown (which the override rewrites). This is
         // exactly Raven's Keyboard.isKeyDown(keyBindForward.getKeyCode()).
         if (!EventBridge.physicalForwardDown) {
-            EventBridge.syntheticForward = false
+            ownW(false)
             hitCounter = 0
             return
         }
         // Player is holding W and not tapping — ensure the key reads as pressed.
-        EventBridge.syntheticForward = true
+        ownW(true)
 
         // Raven: only tap while attacking — require the effective left click (physical OR
         // synthetic) so it works both manually and with AutoClicker.
@@ -170,7 +183,7 @@ object WTap : Module("WTap", Category.COMBAT) {
     // Execution
     // ================================================================
     private fun startTap(nowNs: Long) {
-        EventBridge.syntheticForward = false  // release W for the tap
+        ownW(false)                           // release W for the tap
         markWorked()                          // HUD work flash — the module just acted
         val ms = when (combatVersion) {
             "1.8" -> Random.nextInt(actionMin18, actionMax18 + 1)
@@ -184,14 +197,13 @@ object WTap : Module("WTap", Category.COMBAT) {
     override fun onEnable() {
         hitCounter = 0
         hitThreshold = Random.nextInt(onceEveryMin, onceEveryMax + 1).coerceAtLeast(1)
-        EventBridge.syntheticForwardOverride = true
+        ownW(EventBridge.physicalForwardDown)
         EventBridge.registerTickListener(tickListener)
     }
 
     override fun onDisable() {
         EventBridge.unregisterTickListener(tickListener)
-        EventBridge.syntheticForward = false
-        EventBridge.syntheticForwardOverride = false
+        EventBridge.releaseForward(name)
         machine.reset()
         hitCounter = 0
     }

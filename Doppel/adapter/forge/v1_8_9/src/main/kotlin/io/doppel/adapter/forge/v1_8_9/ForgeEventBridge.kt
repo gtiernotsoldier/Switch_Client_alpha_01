@@ -312,8 +312,8 @@ object ForgeEventBridge : IEventBridge {
             val action = c0bAction(actionName) ?: return
             sendPacket(c0bConstructor.newInstance(player, action))
             when (actionName) {
-                "STOP_SPRINTING" -> EventBridge.serverSprintState = false
-                "START_SPRINTING" -> EventBridge.serverSprintState = true
+                "STOP_SPRINTING" -> EventBridge.reportServerSprintState(false)
+                "START_SPRINTING" -> EventBridge.reportServerSprintState(true)
                 else -> {}
             }
         } catch (_: Exception) {}
@@ -341,8 +341,12 @@ object ForgeEventBridge : IEventBridge {
         EventBridge.registerSprintSetter { sprinting ->
             val player = getPlayer() ?: return@registerSprintSetter
             MappingContext.invokeMethod(player, "forge:player_setSprinting", sprinting)
-            // Keep the server-side sprint mirror in sync with local sprint changes.
-            EventBridge.serverSprintState = sprinting
+            // Deliberately does NOT touch EventBridge.serverSprintState. The local flag and the
+            // server's flag are different facts — that divergence is MC-69459 — and the mirror is
+            // now written only where a C0B actually goes on the wire. Writing it here made the
+            // "mirror" a copy of the local flag, which reduced SuperKnockback's
+            // `player.isSprinting && serverSprintState` guard to a tautology. Fabric never wrote it
+            // here, so the two platforms also disagreed about what the field meant.
         }
 
         // Generic C0B entity-action sender (SuperKnockback Old/SneakPacket, ported from LB).
@@ -356,7 +360,9 @@ object ForgeEventBridge : IEventBridge {
                 "Nostop" -> {
                     try {
                         sendPacket(c0bConstructor.newInstance(player, stopSprintingAction))
+                        EventBridge.reportServerSprintState(false)
                         sendPacket(c0bConstructor.newInstance(player, startSprintingAction))
+                        EventBridge.reportServerSprintState(true)
                     } catch (_: Exception) {}
                 }
                 "Silent" -> {

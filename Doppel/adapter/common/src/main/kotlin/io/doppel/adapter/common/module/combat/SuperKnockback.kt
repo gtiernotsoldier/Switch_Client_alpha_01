@@ -76,6 +76,15 @@ object SuperKnockback : Module("SuperKnockback", Category.COMBAT) {
     /** One-tick offset countdown when coordinated with SprintReset. */
     private var coordOffsetTicks = 0
 
+    /**
+     * OWNED sprint claim — SprintTap works by the sprint state being *forced*, not merely
+     * requested, and it has to beat Sprint (movement), which asks for sprinting every tick you hold
+     * W. Direct setSprinting() calls could not express that; the last caller in the tick won.
+     */
+    private fun ownSprint(value: Boolean) = EventBridge.claimSprint(
+        name, value, EventBridge.SprintClaimMode.OWNED, EventBridge.SPRINT_PRIORITY_TAP
+    )
+
     private val attackListener: (TargetState?) -> Unit = {
         // Coordination: when SprintReset is also active, SprintReset acts first and we offset
         // our action by one tick so the two never fire a C0B burst in the same tick.
@@ -88,19 +97,21 @@ object SuperKnockback : Module("SuperKnockback", Category.COMBAT) {
         if (phase == Phase.SPRINT_TAP && mode == "SprintTap") {
             when (sprintTicks) {
                 2 -> {
-                    EventBridge.setSprinting(false)
+                    ownSprint(false)
                     forceSprintState = 2
                     sprintTicks--
                 }
                 1 -> {
                     if (player.isMovingForward) {
-                        EventBridge.setSprinting(true)
+                        ownSprint(true)
                     }
                     forceSprintState = 1
                     sprintTicks--
                 }
                 else -> {
                     forceSprintState = 0
+                    // The tap is over. A sticky OWNED claim would pin the sprint state forever.
+                    EventBridge.releaseSprint(name)
                     phase = Phase.IDLE
                 }
             }
@@ -187,9 +198,9 @@ object SuperKnockback : Module("SuperKnockback", Category.COMBAT) {
                 EventBridge.sendEntityActions(
                     "START_SPRINTING", "STOP_SPRINTING", "START_SPRINTING"
                 )
-                // Force local + server sprint on.
-                EventBridge.setSprinting(true)
-                EventBridge.serverSprintState = true
+                // Force local sprint on. The server mirror is not ours to write any more — the
+                // platform reports it when the C0B actually goes out above.
+                ownSprint(true)
             }
             "SneakPacket" -> {
                 EventBridge.sendEntityActions(
@@ -215,9 +226,9 @@ object SuperKnockback : Module("SuperKnockback", Category.COMBAT) {
         EventBridge.unregisterAttackListener(attackListener)
         EventBridge.unregisterTickListener(tickListener)
         EventBridge.setSuperKnockbackActive(false)
-        // Clean up stuck state — restore sprint.
-        EventBridge.setSprinting(true)
-        EventBridge.serverSprintState = true
+        // Clean up stuck state. The claim is released by Module.disable() -> releaseAllClaims,
+        // which is also why the old "restore sprint" write is gone: releasing our claim hands the
+        // decision back to whatever else wants it, instead of asserting a value we do not own.
         phase = Phase.IDLE
         hitPending = false
         sprintTicks = 0

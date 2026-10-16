@@ -21,8 +21,10 @@ import io.doppel.adapter.common.option.triggerOptions
  *   - Sprint blocked while blocking/using item (player.isBlocking/isUsingItem)
  *   - Attack cancellation intentionally NOT handled (KeepSprint owns that)
  *
- * Compatible with SprintReset, WTap/STap, SuperKnockback, KeepSprint —
- * all call EventBridge.setSprinting() with no cross-module conflict.
+ * Compatible with SprintReset, WTap/STap, SuperKnockback, KeepSprint — all of them now go through
+ * EventBridge's claim arbitration rather than calling setSprinting() directly, so the outcome no
+ * longer depends on tick order. (It used to: this module asserts sprinting every tick you hold W,
+ * which silently cancelled SuperKnockback's one-tick SprintTap.)
  */
 object Sprint : Module("Sprint", Category.MOVEMENT) {
 
@@ -44,9 +46,11 @@ object Sprint : Module("Sprint", Category.MOVEMENT) {
         if (EventBridge.isInFluid || EventBridge.foodLevel <= 6) return
         // Vanilla: can't sprint while blocking or using item
         if (player.isBlocking || player.isUsingItem) return
-        if (!player.isSprinting) {
-            EventBridge.setSprinting(true)
-        }
+        // ADDITIVE claim: "I want to be sprinting". It no longer calls setSprinting(true) directly,
+        // which ran AFTER SuperKnockback's SprintTap had forced sprint OFF for its one tick — so
+        // the tap was eaten essentially every time. (The header comment below claims there is "no
+        // cross-module conflict"; this was one, and it was the family's hardest pair.)
+        EventBridge.claimSprint(name, true)
     }
 
     override fun onEnable() {

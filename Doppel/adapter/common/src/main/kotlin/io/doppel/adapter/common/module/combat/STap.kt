@@ -71,6 +71,15 @@ object STap : Module("STap", Category.COMBAT) {
     private var hitCounter: Int = 0
     private var hitThreshold: Int = 1
 
+    /**
+     * Claim S with OWNED semantics — same reasoning as WTap: the tap works by the physical S being
+     * ignored, and the arbiter is what keeps it from fighting the Velocity Sprint brace's additive
+     * claim on the same tick.
+     */
+    private fun ownS(value: Boolean) = EventBridge.claimBack(
+        name, value, EventBridge.KeyClaimMode.OWNED, EventBridge.KEY_PRIORITY_TAP
+    )
+
     // ========== Tick Listener ==========
     private val tickListener: (PlayerState, TargetState?) -> Unit = { p, _ ->
         if (enabled) onTick(p, EventBridge.crosshairTarget)
@@ -81,7 +90,7 @@ object STap : Module("STap", Category.COMBAT) {
 
         // ---- State machine events ----
         when (machine.tick(now)) {
-            TapStateMachine.Event.END_TAP -> EventBridge.syntheticBack = false
+            TapStateMachine.Event.END_TAP -> ownS(false)
             TapStateMachine.Event.SHOULD_START_TAP -> startTap(now)
             TapStateMachine.Event.NONE -> {}
         }
@@ -92,7 +101,7 @@ object STap : Module("STap", Category.COMBAT) {
         // override doesn't block the player from voluntarily walking backward (S). STap only
         // presses S for its own tap. isKeyBackDown is rewritten by the override (self-loop);
         // physicalBackDown is the raw physical key, unaffected.
-        EventBridge.syntheticBack = EventBridge.physicalBackDown
+        ownS(EventBridge.physicalBackDown)
 
         // Guard: W must be physically held (Raven: Keyboard.isKeyDown(keyBindForward)).
         // Use the TRUE physical key state (LWJGL), not isMovingForward (velocity lag) and
@@ -170,7 +179,7 @@ object STap : Module("STap", Category.COMBAT) {
     // Execution
     // ================================================================
     private fun startTap(nowNs: Long) {
-        EventBridge.syntheticBack = true  // press S for the tap
+        ownS(true)                         // press S for the tap
         markWorked()                      // HUD work flash — the module just acted
         val ms = when (combatVersion) {
             "1.8" -> Random.nextInt(actionMin18, actionMax18 + 1)
@@ -188,14 +197,13 @@ object STap : Module("STap", Category.COMBAT) {
             "1.9+" -> Random.nextInt(onceEvery19Min, onceEvery19Max + 1).coerceAtLeast(1)
             else -> 1
         }
-        EventBridge.syntheticBackOverride = true
+        ownS(EventBridge.physicalBackDown)
         EventBridge.registerTickListener(tickListener)
     }
 
     override fun onDisable() {
         EventBridge.unregisterTickListener(tickListener)
-        EventBridge.syntheticBack = false
-        EventBridge.syntheticBackOverride = false
+        EventBridge.releaseBack(name)
         machine.reset()
         hitCounter = 0
     }

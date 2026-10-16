@@ -1,5 +1,6 @@
 package io.doppel.adapter.common.module
 
+import io.doppel.adapter.common.api.EventBridge
 import io.doppel.adapter.common.option.ConfigManager
 import io.doppel.adapter.common.option.OptionMeta
 import io.doppel.adapter.common.option.OptionType
@@ -110,6 +111,10 @@ abstract class Module(
         enabled = false
         io.doppel.core.logging.CoreLogger.info("[Module] DISABLE $name (${category.name})")
         onDisable()
+        // Return every synthetic-key claim this module holds. Done here, not in each onDisable(),
+        // so a module cannot forget: a stale OWNED claim would keep winning the key arbitration
+        // while the module is switched off. The claim source is this module's name.
+        EventBridge.releaseAllClaims(name)
     }
 
     fun toggle() {

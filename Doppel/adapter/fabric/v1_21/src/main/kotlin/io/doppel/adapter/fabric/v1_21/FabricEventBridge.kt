@@ -84,11 +84,14 @@ object FabricEventBridge : IEventBridge {
                             player, net.minecraft.network.packet.c2s.play.ClientCommandC2SPacket.Mode.STOP_SPRINTING
                         )
                     )
+                    // Report the mirror where the packet actually goes out (see EventBridge).
+                    EventBridge.reportServerSprintState(false)
                     network.sendPacket(
                         net.minecraft.network.packet.c2s.play.ClientCommandC2SPacket(
                             player, net.minecraft.network.packet.c2s.play.ClientCommandC2SPacket.Mode.START_SPRINTING
                         )
                     )
+                    EventBridge.reportServerSprintState(true)
                 }
                 "Silent" -> {
                     network.sendPacket(

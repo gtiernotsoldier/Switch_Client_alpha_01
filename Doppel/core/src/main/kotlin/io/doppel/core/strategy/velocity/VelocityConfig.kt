@@ -44,8 +44,13 @@ data class VelocityConfig(
  *
  * LEGIT  — scale the motion vector by a random factor in [min, max].
  * CLICK  — instead of modifying velocity, issue a click burst on the target.
+ * SPRINT — never touch the packet at all; manipulate movement input + the
+ *          server-side sprint mirror instead. The one mode whose result is
+ *          computed by the server rather than overwritten on the way in
+ *          (see the Velocity module KDoc).
  */
 enum class VelocityMode {
     LEGIT,
-    CLICK
+    CLICK,
+    SPRINT
 }

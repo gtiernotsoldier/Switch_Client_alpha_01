@@ -8,6 +8,7 @@ import io.doppel.adapter.common.module.Module
 import io.doppel.adapter.common.module.Category
 import io.doppel.adapter.common.option.boolean
 import io.doppel.adapter.common.option.choices
+import io.doppel.adapter.common.option.float
 import io.doppel.adapter.common.option.int
 import io.doppel.adapter.common.option.triggerOptions
 import kotlin.random.Random
@@ -35,6 +36,18 @@ object SuperKnockback : Module("SuperKnockback", Category.COMBAT) {
     private val mode by choices("Mode", arrayOf("SprintTap", "Old", "SneakPacket"))
     private val chance by int("Chance", 100, 0..100, "%")
     private val delay by int("Delay", 0, 0..500, "ms")
+
+    /** Fire once every N fresh hits (1 = every hit). Same shape as SprintReset's HitCount. */
+    private val hitCount by int("HitCount", 1, 1..20, "hits")
+
+    /**
+     * Distance window, the same shape as WTap/STap's Range options. Replaces a hardcoded
+     * `target.distance > 3.0f` upper bound. Note this is evaluated on the frame a hit lands, when
+     * the crosshair target is already inside reach, so raising RangeMax has little practical
+     * effect; lowering RangeMin is what would matter, since a min above reach disables the module.
+     */
+    private val rangeMin by float("RangeMin", 0.0f, 0.0f..6.0f, "blocks")
+    private val rangeMax by float("RangeMax", 6.0f, 0.0f..6.0f, "blocks")
 
     // ========== Trigger Mode (two detection styles, both preserved) ==========
     //   RisingEdge: reliable 20Hz "just got hit" (hurtTime 0 -> >0). Never misses.
@@ -75,6 +88,10 @@ object SuperKnockback : Module("SuperKnockback", Category.COMBAT) {
 
     /** One-tick offset countdown when coordinated with SprintReset. */
     private var coordOffsetTicks = 0
+
+    /** Hit-count throttle, per target — same shape as SprintReset's. */
+    private var hitCounter: Int = 0
+    private var lastTargetId: Int = -1
 
     /**
      * OWNED sprint claim — SprintTap works by the sprint state being *forced*, not merely
@@ -138,6 +155,12 @@ object SuperKnockback : Module("SuperKnockback", Category.COMBAT) {
         // ---- Trigger evaluation (both trigger styles preserved) ----
         val t = EventBridge.crosshairTarget ?: return
 
+        // The hit counter is per target, like SprintReset's: switching targets restarts the cycle.
+        if (lastTargetId != t.entityId) {
+            lastTargetId = t.entityId
+            hitCounter = 0
+        }
+
         when (triggerMode) {
             "RisingEdge" -> {
                 // Fire on the fresh-hit rising edge (set by the attack listener).
@@ -152,6 +175,12 @@ object SuperKnockback : Module("SuperKnockback", Category.COMBAT) {
         }
 
         if (!canTrigger(player, t)) return
+
+        // Hit-count throttle: fire once every `hitCount` hits.
+        hitCounter++
+        if (hitCounter < hitCount) return
+        hitCounter = 0
+
         if (chance < 100 && Random.nextInt(100) >= chance) return
 
         // When SprintReset is also active it acts this tick; we offset one tick so our sprint
@@ -176,7 +205,7 @@ object SuperKnockback : Module("SuperKnockback", Category.COMBAT) {
 
     /** Trigger gates: range, unified conditions. */
     private fun canTrigger(player: PlayerState, target: TargetState): Boolean {
-        if (target.distance > 3.0f) return false
+        if (target.distance < rangeMin || target.distance > rangeMax) return false
         return ConditionChecker.check(triggerOptions, player, target)
     }
 
@@ -220,6 +249,8 @@ object SuperKnockback : Module("SuperKnockback", Category.COMBAT) {
         sprintTicks = 0
         forceSprintState = 0
         coordOffsetTicks = 0
+        hitCounter = 0
+        lastTargetId = -1
     }
 
     override fun onDisable() {
@@ -234,5 +265,7 @@ object SuperKnockback : Module("SuperKnockback", Category.COMBAT) {
         sprintTicks = 0
         forceSprintState = 0
         coordOffsetTicks = 0
+        hitCounter = 0
+        lastTargetId = -1
     }
 }

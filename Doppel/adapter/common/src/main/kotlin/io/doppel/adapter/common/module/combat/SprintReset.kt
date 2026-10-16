@@ -8,6 +8,7 @@ import io.doppel.adapter.common.module.Module
 import io.doppel.adapter.common.module.Category
 import io.doppel.adapter.common.option.boolean
 import io.doppel.adapter.common.option.choices
+import io.doppel.adapter.common.option.float
 import io.doppel.adapter.common.option.int
 import io.doppel.adapter.common.option.triggerOptions
 import kotlin.random.Random
@@ -29,6 +30,15 @@ object SprintReset : Module("SprintReset", Category.COMBAT) {
     private val chance by int("Chance", 100, 0..100, "%")
     private val delay by int("Delay", 0, 0..500, "ms")
     private val hitCount by int("HitCount", 1, 1..20, "hits")
+
+    /**
+     * Distance window, the same shape as WTap/STap's Range options. Replaces a hardcoded
+     * `target.distance > 3.0f` upper bound. Note this is evaluated on the frame a hit lands, when
+     * the crosshair target is already inside reach, so raising RangeMax has little practical
+     * effect; lowering RangeMin is what would matter, since a min above reach disables the module.
+     */
+    private val rangeMin by float("RangeMin", 0.0f, 0.0f..6.0f, "blocks")
+    private val rangeMax by float("RangeMax", 6.0f, 0.0f..6.0f, "blocks")
 
     // ========== Conditions (Unified Engine) ==========
     private val onlyGround by boolean("OnlyGround", true)
@@ -89,8 +99,8 @@ object SprintReset : Module("SprintReset", Category.COMBAT) {
             hitCounter = 0
         }
 
-        // Built-in 3-block range
-        if (target.distance > 3.0f) return
+        // Distance window (was a hardcoded 3-block upper bound).
+        if (target.distance < rangeMin || target.distance > rangeMax) return
 
         // Condition check
         if (!ConditionChecker.check(triggerOptions, player, target)) return

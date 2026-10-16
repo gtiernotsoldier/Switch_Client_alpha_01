@@ -26,11 +26,6 @@ import kotlin.random.Random
  * **Normal**: While AutoClicker is working (or the player physically left-clicks), press
  * right-click to block for [delayMs], then release — re-engages each hit.
  *
- * **Switch**: AutoBlock maintains the block. On each fresh left-click attack (physical left
- * OR AutoClick) it briefly cancels the block (so the hit lands), waits [delayMs], then
- * re-blocks — the block-hit / anti-knockback rhythm. SwitchOnRightHold gates that cancel on
- * the player physically holding right-click.
- *
  * Conditions (unified engine):
  * - OnlyPlane / OnlyTargeting / OnlyMove / OnlyMoveForward / OnlyWhenTargetGoesBack.
  * - Plus AutoBlock's own distance range and probability.
@@ -43,10 +38,8 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
     // ========== Mode ==========
     // Normal = click-style: while AutoClicker / physical left-click is working, block for
     //          [delayMs] then release (re-engages each hit).
-    // Switch = AutoBlock maintains the block; each fresh left-click attack (physical or
-    //          AutoClick) briefly cancels the block, then re-blocks after [delayMs].
     // Srg    = hold-style: block continuously while the player keeps attacking.
-    private val mode by choices("Mode", arrayOf("Normal", "Switch", "Sag", "Predict", "Lag"))
+    private val mode by choices("Mode", arrayOf("Normal", "Sag", "Predict", "Lag"))
 
     // ========== Distance Range ==========
     private val maxDistance by float("MaxDistance", 3.0f, 0.0f..6.0f, "blocks")
@@ -62,12 +55,12 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
     private val probability by int("Chance", 100, 0..100, "%")
 
     // ========== Timing ==========
-    private val delayMs by int("Delay", 50, 1..500, "ms", modes = arrayOf("Normal", "Switch"))
+    private val delayMs by int("Delay", 50, 1..500, "ms", modes = arrayOf("Normal"))
 
     // ========== Conditions (Unified Engine — shared with BlockHit/WTap/AimAssist/etc.) ==========
     // Defaults are all OFF so the base block behavior is unchanged (block wherever you attack).
     // OnlyPlane (onlyGround) is off by default: 1.8 PvP keeps the player airborne most of the
-    // time (jump-reset / knockback), so gating blocking on ground by default broke Srg/Switch.
+    // time (jump-reset / knockback), so gating blocking on ground by default broke Sag.
     private val onlyPlane by boolean("OnlyPlane", false)
     private val onlyTargeting by boolean("OnlyTargeting", false)
     private val onlyMove by boolean("OnlyMove", false)
@@ -110,9 +103,6 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
     /** Block immediately after an attack was let through (Raven's Block again immediately). */
     private val lagBlockAgain by boolean("LagBlockAgain", true, modes = arrayOf("Lag"))
 
-    /** [Switch] mode only: only perform the block-hit switch while the player holds right-click. */
-    private val switchOnRightHold by boolean("SwitchOnRightHold", true, modes = arrayOf("Switch"))
-
     // ========== Internal State ==========
 
     /** Whether AutoBlock pressed the right-click (not the player). */
@@ -123,12 +113,6 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
 
     /** nanoTime when blocking started (Normal mode countdown). */
     private var blockStartNano: Long = 0L
-
-    /** Whether we are in the Switch-mode "wait before re-blocking" phase. */
-    private var reblockPending: Boolean = false
-
-    /** nanoTime when Switch release happened; re-block after [delayMs]. */
-    private var reblockStartNano: Long = 0L
 
     /** Last nanoTime an attack was detected (Srg debounce). */
     private var lastAttackNano: Long = 0L
@@ -164,28 +148,12 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
         // holding so the block cannot stick while the player browses a container.
         if (EventBridge.isGuiOpen) {
             releaseBlock()
-            reblockPending = false
             lastAttackNano = 0L
             return
         }
 
         // 1.8 exclusive: only SWORD matters (1.9+ has shields, no sword block)
         if (player.weaponType != WeaponType.SWORD) return
-
-        // Switch-mode re-block timer: if we're waiting to re-block, finish it now.
-        if (reblockPending) {
-            if (elapsedNs(reblockStartNano) >= delayMs * 1_000_000L) {
-                EventBridge.syntheticUse = true
-                // Every call below is a *transition* (a block starting, or a re-block), never the
-                // steady hold, so the HUD row flashes when the module does something instead of
-                // glowing red for as long as a target stands nearby.
-                markWorked()
-                blockHeld = true
-                reblockPending = false
-            }
-            // While waiting to re-block, don't process new attack logic.
-            return
-        }
 
         // ---------- Attack detection (AutoClick working + physical click) ----------
         // Effective attack: AutoClicker running (mouseButton0 reflects its cadence pulses on
@@ -218,7 +186,7 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
                 "cond=$conditionsMet (Plane=$onlyPlane Target=$onlyTargeting Move=$onlyMove " +
                 "MoveF=$onlyMoveForward GoesBack=$onlyWhenTargetGoesBack) " +
                 "inRange=$inRange rangeMode=$rangeMode prob=$probPass blockHeld=$blockHeld " +
-                "reblock=$reblockPending rightHeld=${EventBridge.isRightMousePhysicallyDown} " +
+                "rightHeld=${EventBridge.isRightMousePhysicallyDown} " +
                 "target=${target?.distance ?: "null"}")
         }
 
@@ -244,43 +212,6 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
                         releaseBlock()
                     }
                 } else if (blockHeld && elapsedNs(lastAttackNano) >= 250_000_000L) {
-                    releaseBlock()
-                }
-            }
-
-            // ── Switch: block-hit style. AutoBlock maintains the block while a target is in
-            // range. While the player is actively attacking (long-pressing left-click OR
-            // AutoClicker working), the block is CANCELLED so attacks land; when they stop
-            // attacking it re-blocks. SwitchOnRightHold: the cancel additionally requires the
-            // player to be holding (long-pressing) right-click. Uses a debounced attack state
-            // (not a rising edge) so both long-press left and AutoClick are detected reliably.
-            "Switch" -> {
-                // SwitchOnRightHold: with it on, the mode runs ONLY while the player holds right-click —
-                // and holding right-click is the player blocking manually, so we step aside entirely
-                // rather than maintaining a block nobody asked for. It used to gate only the cancel,
-                // so the block was maintained anyway and the option looked broken because it was.
-                if (switchOnRightHold && !EventBridge.isRightMousePhysicallyDown) {
-                    if (blockHeld) releaseBlock()
-                    lastAttackNano = 0L
-                    return
-                }
-                val cancelAllowed = !switchOnRightHold || EventBridge.isRightMousePhysicallyDown
-                val baseBlock = conditionsMet && inRange && probPass
-                if (isAttacking) lastAttackNano = nowNs
-                // "Actively attacking" within a ~200ms window (absorbs AutoClick pulse gaps).
-                val attackingActive = elapsedNs(lastAttackNano) < 200_000_000L
-
-                if (baseBlock && attackingActive && cancelAllowed) {
-                    // Attacking → cancel the block so the hit lands.
-                    if (blockHeld) releaseBlock()
-                } else if (baseBlock) {
-                    // Not attacking, or cancel not allowed → maintain the block.
-                    if (!blockHeld) {
-                        EventBridge.syntheticUse = true
-                        markWorked() // block starting — a transition, not the steady hold
-                        blockHeld = true
-                    }
-                } else if (blockHeld) {
                     releaseBlock()
                 }
             }
@@ -405,7 +336,6 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
         EventBridge.unregisterTickListener(tickListener)
         releaseBlock()
         EventBridge.syntheticUse = false
-        reblockPending = false
         lastAttackNano = 0L
         rangeGateState.reset()
     }

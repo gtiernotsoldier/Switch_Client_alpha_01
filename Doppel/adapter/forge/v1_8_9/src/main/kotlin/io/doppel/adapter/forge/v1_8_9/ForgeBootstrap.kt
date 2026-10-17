@@ -125,7 +125,7 @@ object ForgeBootstrap {
             ADTap, AimAssist, AutoBlock, AutoClicker, BlockHit, ClickAssist,
             DelayRemover, HitSelect, JumpReset, KeepSprint, KnockbackDelay, KnockbackDisplace, Reach,
             SprintReset, STap, SuperKnockback, TriggerBot, Velocity, WTap,
-            NoJumpDelay, NoKeyboardFix, NoMouseFix, Sprint, Strafe, StrafeFix, InvMove,
+            NoJumpDelay, NoKeyboardFix, NoMouseFix, Sprint, Strafe, StrafeAssist, StrafeFix, InvMove,
             AntiBot, AutoTool, BridgeAssist, Eagle, FakeLag, Teams, TargetFilter,
             Backtrack, LagRange, Freelook, Fullbright, HUD, NoHurtCam, Keystrokes, Speedometer, VelocityDisplay, JumpStatus,
             JumpTiming, KnockbackDisplay,

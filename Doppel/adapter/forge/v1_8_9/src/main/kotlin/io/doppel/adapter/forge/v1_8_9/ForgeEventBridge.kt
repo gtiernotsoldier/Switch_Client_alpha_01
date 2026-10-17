@@ -1292,16 +1292,14 @@ object ForgeEventBridge : IEventBridge {
             if (keyBindForward != null) {
                 keybindingPressedField?.setBoolean(
                     keyBindForward,
-                    if (EventBridge.syntheticForwardOverride) EventBridge.syntheticForward
-                    else EventBridge.syntheticForward || physicalKeyDown("forge:gs_keyBindForward")
+                    EventBridge.resolveKeyState(EventBridge.syntheticForwardOverride, EventBridge.syntheticForward, EventBridge.syntheticForwardSuppress, physicalKeyDown("forge:gs_keyBindForward"))
                 )
             }
             val keyBindBack = MappingContext.getFieldValue(gs, "forge:gs_keyBindBack")
             if (keyBindBack != null) {
                 keybindingPressedField?.setBoolean(
                     keyBindBack,
-                    if (EventBridge.syntheticBackOverride) EventBridge.syntheticBack
-                    else EventBridge.syntheticBack || physicalKeyDown("forge:gs_keyBindBack")
+                    EventBridge.resolveKeyState(EventBridge.syntheticBackOverride, EventBridge.syntheticBack, EventBridge.syntheticBackSuppress, physicalKeyDown("forge:gs_keyBindBack"))
                 )
             }
             // Strafe keys (ADTap) — keyboard only, always OR-ed with the physical key
@@ -1310,14 +1308,14 @@ object ForgeEventBridge : IEventBridge {
             if (keyBindLeft != null) {
                 keybindingPressedField?.setBoolean(
                     keyBindLeft,
-                    EventBridge.syntheticLeft || physicalKeyDown("forge:gs_keyBindLeft")
+                    EventBridge.resolveKeyState(false, EventBridge.syntheticLeft, EventBridge.syntheticLeftSuppress, physicalKeyDown("forge:gs_keyBindLeft"))
                 )
             }
             val keyBindRight = MappingContext.getFieldValue(gs, "forge:gs_keyBindRight")
             if (keyBindRight != null) {
                 keybindingPressedField?.setBoolean(
                     keyBindRight,
-                    EventBridge.syntheticRight || physicalKeyDown("forge:gs_keyBindRight")
+                    EventBridge.resolveKeyState(false, EventBridge.syntheticRight, EventBridge.syntheticRightSuppress, physicalKeyDown("forge:gs_keyBindRight"))
                 )
             }
             val keyBindUse = MappingContext.getFieldValue(gs, "forge:gs_keyBindUseItem") ?: return

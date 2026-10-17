@@ -609,6 +609,18 @@ object EventBridge {
     @Volatile var syntheticLeft: Boolean = false
     @Volatile var syntheticRight: Boolean = false
 
+    /**
+     * Resolved SUPPRESS state — "the player's key is being corrected off this frame".
+     *
+     * Separate from [syntheticForward] because the platform needs to tell three cases apart:
+     * pressed by a module, released by a module, and "no module opinion, use the physical key".
+     * Writers are the claim arbiter only.
+     */
+    @Volatile var syntheticForwardSuppress: Boolean = false
+    @Volatile var syntheticBackSuppress: Boolean = false
+    @Volatile var syntheticLeftSuppress: Boolean = false
+    @Volatile var syntheticRightSuppress: Boolean = false
+
     // ========== Synthetic key arbitration ==========
     //
     // The four fields above are the RESOLVED output — the platform reads them exactly as before
@@ -633,7 +645,25 @@ object EventBridge {
     // next tick — the same serialisation SuperKnockback already uses to avoid firing its C0B burst
     // in the same tick as SprintReset.
 
-    enum class KeyClaimMode { ADDITIVE, OWNED }
+    enum class KeyClaimMode {
+        ADDITIVE,
+        OWNED,
+
+        /**
+         * "The player's hand should not be on this key right now" — release it, but do not take
+         * the key over.
+         *
+         * The missing third option. ADDITIVE can only add ("also hold W") and OWNED can only
+         * replace ("the game sees only my value"), so a module that wants to CORRECT the player's
+         * input — a strafe assist damping a key the player should not be holding — had to use
+         * OWNED and thereby silence every other module's intent for that key.
+         *
+         * Resolution order makes the intent explicit: OWNED > ADDITIVE > SUPPRESS > physical.
+         * Another module saying "press this" outranks one module saying "the player should let
+         * go", because a module's own intent is stronger evidence than a correction heuristic.
+         */
+        SUPPRESS
+    }
 
     /** A tap must beat a brace when both want the key on the same tick. */
     const val KEY_PRIORITY_TAP = 10
@@ -677,6 +707,17 @@ object EventBridge {
     fun releaseBack(source: String) = drop(backClaims, source)
     fun releaseLeft(source: String) = drop(leftClaims, source)
     fun releaseRight(source: String) = drop(rightClaims, source)
+
+    /**
+     * Correct the player's key off for this frame without taking ownership.
+     *
+     * The `value` on a SUPPRESS claim is only an activation flag; the resolved effect is always
+     * "released". A release target is [releaseForward] etc., like every other claim.
+     */
+    fun suppressForward(source: String) = claimForward(source, true, KeyClaimMode.SUPPRESS)
+    fun suppressBack(source: String) = claimBack(source, true, KeyClaimMode.SUPPRESS)
+    fun suppressLeft(source: String) = claimLeft(source, true, KeyClaimMode.SUPPRESS)
+    fun suppressRight(source: String) = claimRight(source, true, KeyClaimMode.SUPPRESS)
 
     /**
      * Drop every claim a source holds, on every key **and on the sprint flag**.
@@ -819,8 +860,19 @@ object EventBridge {
         if (claims.remove(source) != null) resolveKeys()
     }
 
-    /** (value, ownsKey) for one key. Owned beats additive; ties broken by source name. */
-    private fun resolveOne(claims: Map<String, KeyClaim>): Pair<Boolean, Boolean> {
+    /** What one key should do this frame. */
+    private data class KeyResolution(val value: Boolean, val owns: Boolean, val suppress: Boolean)
+
+    /**
+     * Resolve one key: OWNED > ADDITIVE > SUPPRESS > physical.
+     *
+     * SUPPRESS is checked after ADDITIVE on purpose. Two modules can disagree — one wants W held
+     * (a brace), one wants the player's W corrected off (a strafe assist) — and the one asking for
+     * a press is expressing its own intent, while the suppress is a heuristic about the player's
+     * hand. Letting the press win keeps a correction module from silently disabling another
+     * module, which is the same failure the ownership model was built to stop.
+     */
+    private fun resolveOne(claims: Map<String, KeyClaim>): KeyResolution {
         var best: KeyClaim? = null
         for (c in claims.values) {
             if (c.mode != KeyClaimMode.OWNED) continue
@@ -831,19 +883,32 @@ object EventBridge {
                 best = c
             }
         }
-        best?.let { return it.value to true }
-        return claims.values.any { it.value } to false
+        best?.let { return KeyResolution(it.value, owns = true, suppress = false) }
+
+        if (claims.values.any { it.mode == KeyClaimMode.ADDITIVE && it.value }) {
+            return KeyResolution(true, owns = false, suppress = false)
+        }
+        if (claims.values.any { it.mode == KeyClaimMode.SUPPRESS && it.value }) {
+            return KeyResolution(false, owns = false, suppress = true)
+        }
+        return KeyResolution(false, owns = false, suppress = false)
     }
 
     private fun resolveKeys() {
         val f = resolveOne(forwardClaims)
-        syntheticForward = f.first
-        syntheticForwardOverride = f.second
+        syntheticForward = f.value
+        syntheticForwardOverride = f.owns
+        syntheticForwardSuppress = f.suppress
         val b = resolveOne(backClaims)
-        syntheticBack = b.first
-        syntheticBackOverride = b.second
-        syntheticLeft = resolveOne(leftClaims).first
-        syntheticRight = resolveOne(rightClaims).first
+        syntheticBack = b.value
+        syntheticBackOverride = b.owns
+        syntheticBackSuppress = b.suppress
+        val l = resolveOne(leftClaims)
+        syntheticLeft = l.value
+        syntheticLeftSuppress = l.suppress
+        val r = resolveOne(rightClaims)
+        syntheticRight = r.value
+        syntheticRightSuppress = r.suppress
     }
 
 
@@ -1029,21 +1094,38 @@ object EventBridge {
     // what a W-tap is. A/D have no override by design (ADTap never hijacks the player's strafing),
     // so they are always OR-ed with the physical key.
 
-    /** Effective W: what the game sees this frame — physical OR WTap's synthetic hold/release. */
+    /**
+     * The four-way key resolution, in one place.
+     *
+     * Both platform adapters and the effective-key getters below call this, so the rule cannot
+     * drift between "what the HUD shows" and "what the game actually receives" — a class of bug
+     * this file has produced before (the server mirror, the override flag).
+     */
+    fun resolveKeyState(owns: Boolean, value: Boolean, suppress: Boolean, physical: Boolean): Boolean =
+        when {
+            owns -> value
+            value -> true
+            suppress -> false
+            else -> physical
+        }
+
+    /** Effective W: owned value, else a module press, else a correction, else the physical key. */
     val isKeyForwardActive: Boolean
-        get() = if (syntheticForwardOverride) syntheticForward else syntheticForward || isKeyForwardDown
+        get() = resolveKeyState(
+            syntheticForwardOverride, syntheticForward, syntheticForwardSuppress, isKeyForwardDown)
 
-    /** Effective S: physical OR STap's S-tap. */
+    /** Effective S. */
     val isKeyBackActive: Boolean
-        get() = if (syntheticBackOverride) syntheticBack else syntheticBack || isKeyBackDown
+        get() = resolveKeyState(
+            syntheticBackOverride, syntheticBack, syntheticBackSuppress, isKeyBackDown)
 
-    /** Effective A: physical OR ADTap's strafe tap. */
+    /** Effective A. */
     val isKeyLeftActive: Boolean
-        get() = syntheticLeft || isKeyLeftDown
+        get() = resolveKeyState(false, syntheticLeft, syntheticLeftSuppress, isKeyLeftDown)
 
-    /** Effective D: physical OR ADTap's strafe tap. */
+    /** Effective D. */
     val isKeyRightActive: Boolean
-        get() = syntheticRight || isKeyRightDown
+        get() = resolveKeyState(false, syntheticRight, syntheticRightSuppress, isKeyRightDown)
 
     /** Effective space: physical OR a live JumpReset pulse. */
     val isKeyJumpActive: Boolean

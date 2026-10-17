@@ -44,6 +44,7 @@ object AgentBridge {
         "NoMouseFix" to "movement",
         "Sprint" to "movement",
         "Strafe" to "movement",
+        "StrafeAssist" to "movement",
         "StrafeFix" to "movement",
         "InvMove" to "movement",
         // Player

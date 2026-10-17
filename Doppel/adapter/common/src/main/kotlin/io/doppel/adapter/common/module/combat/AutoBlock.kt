@@ -6,6 +6,7 @@ import io.doppel.core.model.PlayerState
 import io.doppel.core.model.TargetState
 import io.doppel.core.strategy.autoblock.RangeGate
 import io.doppel.core.strategy.click.WeaponType
+import io.doppel.core.strategy.combat.BlockArbiter
 import io.doppel.core.strategy.combat.BlockPredictor
 import io.doppel.adapter.common.api.EventBridge
 import io.doppel.adapter.common.module.Module
@@ -42,8 +43,10 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
     // Predict = lock-style: hold the guard while the target's damage lock is up, and swing the
     //           moment it lifts; also holds ahead of the opponent's own estimated attack.
     //           The algorithm lives in [BlockPredictor].
-    // Lag     = no block at all: hold the packet stream back instead.
-    private val mode by choices("Mode", arrayOf("Normal", "Sag", "Predict", "Lag"))
+    // Lag      = no block at all: hold the packet stream back instead.
+    // Adaptive = the three above combined: four signals, weighted by how much each one actually
+    //            knows, plus a duty-cycle budget. See [BlockArbiter].
+    private val mode by choices("Mode", arrayOf("Normal", "Sag", "Predict", "Adaptive", "Lag"))
 
     // ========== Distance Range ==========
     private val maxDistance by float("MaxDistance", 3.0f, 0.0f..6.0f, "blocks")
@@ -128,6 +131,33 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
     private val predictChance by int(
         "PredictChance", BlockPredictor.DEFAULT_PREDICT_CHANCE, 0..100, "%", modes = arrayOf("Predict"))
 
+    // ========== Adaptive (see BlockArbiter) ==========
+    // One weight per signal. With the arbiter's defaults, lock/threat/sustain each hold on their own
+    // — so Adaptive is never weaker than the single mode it replaces — and only reflex needs
+    // company. Setting a weight to 0 tunes that mode's contribution out, which is how "Sag but not
+    // Normal" is expressed here.
+    /** [Adaptive]: weight of the damage-lock signal — arithmetic, so it is trusted most. */
+    private val sigLock by float("SigLock", BlockArbiter.DEFAULT_LOCK.toFloat(), 0f..1f, modes = arrayOf("Adaptive"))
+
+    /** [Adaptive]: weight of the predicted-attack signal (an estimate). */
+    private val sigThreat by float("SigThreat", BlockArbiter.DEFAULT_THREAT.toFloat(), 0f..1f, modes = arrayOf("Adaptive"))
+
+    /** [Adaptive]: weight of "I have been attacking" — Sag's signal. */
+    private val sigSustain by float("SigSustain", BlockArbiter.DEFAULT_SUSTAIN.toFloat(), 0f..1f, modes = arrayOf("Adaptive"))
+
+    /** [Adaptive]: weight of "I just swung" — Normal's signal. */
+    private val sigReflex by float("SigReflex", BlockArbiter.DEFAULT_REFLEX.toFloat(), 0f..1f, modes = arrayOf("Adaptive"))
+
+    /** [Adaptive]: how much combined weight is needed to hold the guard. */
+    private val sigThreshold by float("SigThreshold", BlockArbiter.DEFAULT_THRESHOLD.toFloat(), 0f..1f, modes = arrayOf("Adaptive"))
+
+    /**
+     * [Adaptive]: ceiling on how much of the time the guard may be up, in %. Above it only the
+     * lock signal may still hold — "my hit cannot land" is not behaviour that needs rationing,
+     * "I am probably attacking" is. 100 disables the gate.
+     */
+    private val sigMaxDuty by int("SigMaxDuty", 100, 0..100, "%", modes = arrayOf("Adaptive"))
+
     // ========== Lag (packet lag instead of a block) ==========
     /** Chance that a lag window starts at all (Raven's Lag Chance). */
     private val lagChance by int("LagChance", 100, 0..100, "%", modes = arrayOf("Lag"))
@@ -155,6 +185,9 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
 
     /** [Predict]: the opponent-attack clock and its layer-B estimate (algorithm state, in core). */
     private val predictState = BlockPredictor.State()
+
+    /** [Adaptive]: rolling duty-cycle window (algorithm state, in core). */
+    private val arbiterState = BlockArbiter.State()
 
     /** [Predict]: previous tick's own i-frame counter, for the "we were just hit" rising edge. */
     private var lastSelfHurt: Int = 0
@@ -243,6 +276,14 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
 
         val nowNs = System.nanoTime()
 
+        // Attack recency — "the last time an attack actually counted". Recorded once here rather
+        // than inside a mode branch so Sag's release debounce and the Adaptive mode's sustain/reflex
+        // signals read the same value. Note the probability roll is deliberately NOT part of this
+        // condition: the roll decides whether to *act*, not whether the attack happened. It used to
+        // be inside Sag's branch, which meant a failed roll also skipped the timestamp and the 250 ms
+        // debounce could expire while the player was still attacking.
+        if (isAttacking && conditionsMet && inRange) lastAttackNano = nowNs
+
         when (mode) {
             // ── Sag: hold-style — block continuously while the player is attacking.
             // Long-hold left-click (or AutoClicker working) keeps the block up. Debounced:
@@ -251,7 +292,6 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
             // attack state true/false → the block drops mid-combat (the "blockhit" the user saw).
             "Sag" -> {
                 if (isAttacking && conditionsMet && inRange && probPass) {
-                    lastAttackNano = nowNs
                     if (!blockHeld) {
                         EventBridge.syntheticUse = true
                         markWorked() // block starting — a transition, not the steady hold
@@ -307,6 +347,60 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
             // ── Lag: do not block at all — hold the outgoing packets instead. Raven's Lag mode: the
             // server keeps seeing the last state it had (the block) while nothing new arrives, and the
             // held traffic goes out the moment the module stops asking or an attack must land.
+            // ── Adaptive: Normal + Sag + Predict, combined.
+            //
+            // The three modes differ in what they KNOW, not in what they want, so they are four
+            // signals rather than alternatives: Predict supplies `locked` (arithmetic) and `threat`
+            // (an estimate), Sag supplies `sustain` (attacking lately), Normal supplies `reflex`
+            // (just swung). [BlockArbiter] weighs them by how much each one knows and applies a
+            // duty-cycle budget on top.
+            "Adaptive" -> {
+                val decision = BlockPredictor.evaluate(
+                    targetHurtResistantTime = target?.hurtResistantTime,
+                    currentTick = tickCounter,
+                    opponentJustHit = selfJustHit,
+                    state = predictState,
+                    config = predictConfig(),
+                    rng = Random
+                )
+                // Sag's signal, including Sag's own release debounce: a fast AutoClick cadence
+                // sampled at 20 Hz flickers the raw attack state, so the block would drop mid-fight.
+                val sustain = isAttacking || elapsedNs(lastAttackNano) < 250_000_000L
+                // Normal's signal: inside the short window Normal would hold after a swing.
+                val reflex = elapsedNs(lastAttackNano) < delayMs * 1_000_000L
+
+                val verdict = BlockArbiter.evaluate(
+                    locked = decision.locked,
+                    threat = decision.threat,
+                    sustain = sustain,
+                    reflex = reflex,
+                    weights = arbiterWeights(),
+                    threshold = sigThreshold.toDouble(),
+                    duty = arbiterState.duty(),
+                    maxDuty = sigMaxDuty / 100.0
+                )
+
+                if (verdict.block && conditionsMet && inRange && probPass) {
+                    if (!blockHeld) {
+                        EventBridge.syntheticUse = true
+                        markWorked() // block starting — a transition, not the steady hold
+                        blockHeld = true
+                    }
+                } else {
+                    releaseBlock()
+                }
+                arbiterState.record(verdict.block)
+
+                if (diagCount % 40 == 0) {
+                    CoreLogger.info(
+                        "[AutoBlock] adaptive score=${"%.2f".format(verdict.score)} " +
+                        "firing=${verdict.firing} held=$blockHeld " +
+                        "duty=${"%.2f".format(arbiterState.duty())}" +
+                        (if (verdict.throttled) " THROTTLED" else "")
+                    )
+                }
+            }
+
             "Lag" -> {
                 val want = conditionsMet && inRange && probPass && isAttacking
                 val lagging = lagStartNano != 0L
@@ -383,6 +477,14 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
      * `PredictHurtTime` option hardcoded 10 as the window's *upper bound* — 10 is the half-way
      * value, so the window it selected was the wrong half of the countdown.
      */
+    /** [Adaptive]: assemble the arbiter's weights from the signal options. */
+    private fun arbiterWeights() = BlockArbiter.Weights(
+        lock = sigLock.toDouble(),
+        threat = sigThreat.toDouble(),
+        sustain = sigSustain.toDouble(),
+        reflex = sigReflex.toDouble()
+    )
+
     private fun predictConfig() = BlockPredictor.Config(
         maxHurtResistantTime = if (lastKnownMaxHurt > 0) lastKnownMaxHurt else BlockPredictor.DEFAULT_MAX_HURT,
         rttTicks = predictRtt,
@@ -401,6 +503,7 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
         lastAttackNano = 0L
         rangeGateState.reset()
         predictState.reset()
+        arbiterState.reset()
         lastSelfHurt = 0
         tickCounter = 0
         EventBridge.registerTickListener(tickListener)
@@ -413,6 +516,7 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
         lastAttackNano = 0L
         rangeGateState.reset()
         predictState.reset()
+        arbiterState.reset()
         lastSelfHurt = 0
     }
 }

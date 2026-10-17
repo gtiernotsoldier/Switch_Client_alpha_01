@@ -79,7 +79,11 @@ object BlockPredictor {
          * compared. Reported so a HUD or a log can show *why* the decision came out this way
          * instead of only what it was.
          */
-        val effectiveHurt: Int
+        val effectiveHurt: Int,
+        /** Layer A alone: the target is damage-locked, so a hit cannot land. */
+        val locked: Boolean = false,
+        /** Layer B alone: the opponent's next attack is due within the prediction window. */
+        val threat: Boolean = false
     )
 
     /** Per-module mutable state: the opponent's estimated attack rhythm. */
@@ -152,19 +156,27 @@ object BlockPredictor {
 
         // A — arithmetic. Inside the lock our hit is discarded whatever we do, and the target can
         // still hit us, so holding is strictly better than swinging.
-        if (effective > lockThreshold(config.maxHurtResistantTime) + config.leadTicks) {
-            return Decision(true, Reason.LOCKED, effective)
-        }
+        val locked = effective > lockThreshold(config.maxHurtResistantTime) + config.leadTicks
 
         // B — an estimate. Outside the lock we would rather swing, unless one is coming back.
-        if (config.predictAttacks &&
+        // Reported as its own flag rather than folded into the verdict: Adaptive mode weighs the two
+        // layers separately, because they do not deserve equal trust (see [BlockArbiter]).
+        val threat = !locked &&
+            config.predictAttacks &&
             attackDue(currentTick, state, config) &&
             (config.predictChance >= 100 || rng.nextInt(100) < config.predictChance)
-        ) {
-            return Decision(true, Reason.PREDICTED_ATTACK, effective)
-        }
 
-        return Decision(false, Reason.OPEN, effective)
+        return Decision(
+            block = locked || threat,
+            reason = when {
+                locked -> Reason.LOCKED
+                threat -> Reason.PREDICTED_ATTACK
+                else -> Reason.OPEN
+            },
+            effectiveHurt = effective,
+            locked = locked,
+            threat = threat
+        )
     }
 
     /** Record a hit we took and fold the gap since the previous one into the interval estimate. */

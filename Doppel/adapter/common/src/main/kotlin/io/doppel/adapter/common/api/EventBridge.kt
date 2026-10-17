@@ -432,14 +432,6 @@ object EventBridge {
         sprintSetter = setter
     }
 
-    /**
-     * Server-side sprint state mirror (LiquidBounce's `serverSprintState`). Tracks what the
-     * server believes about the player's sprint state, kept in sync via the C0B entity-action
-     * packets (STOP_SPRINTING / START_SPRINTING). Modules like SuperKnockback (SprintTap) rely
-     * on this to decide whether a stop/start actually toggles anything.
-     */
-    @Volatile var serverSprintState: Boolean = false
-
     // ========== Sprint Reset Packets (SprintReset — 1.8 exclusive) ==========
     private var sprintResetHandler: ((String) -> Unit)? = null
 

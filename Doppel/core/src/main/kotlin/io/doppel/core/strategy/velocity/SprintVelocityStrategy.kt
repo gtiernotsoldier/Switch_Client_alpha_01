@@ -75,7 +75,7 @@ class SprintVelocityStrategy : VelocityStrategy {
         return SprintBrace.keysFor(
             yawDegrees,
             BraceSource(state.braceSourceX, state.braceSourceZ),
-            config.sprintSector
+            config.sprintSector.toDouble()
         )
     }
 }

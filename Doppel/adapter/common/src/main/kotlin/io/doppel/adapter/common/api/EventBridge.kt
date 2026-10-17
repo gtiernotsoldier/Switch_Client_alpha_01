@@ -29,11 +29,16 @@ object EventBridge {
     }
 
     fun onStartTick(player: PlayerState, target: TargetState?) {
-        // Snapshot the sprint flag BEFORE this tick's input runs. Render-frame modules
-        // (KeepSprint) cannot read the live field reliably: vanilla clears it inside the attack
-        // and re-asserts it from the held key before the tick ends, so a read taken after the
-        // click is a coin flip. The START-phase value is the state the player attacked *from*.
+        // Sample the sprint flag once per dispatch, from the START phase.
+        //
+        // Where this lands depends on the platform, and the difference matters: fabric calls it
+        // from START_CLIENT_TICK (main thread, genuinely before input), while forge drives the
+        // whole dispatch from a 20 Hz background thread whose phase relative to the game tick is
+        // arbitrary. So a sample can fall either side of an attack — which is why modules that
+        // need "was sprinting just before the hit" latch over a short window instead of trusting
+        // one sample (see KeepSprint).
         if (player !== PlayerState.EMPTY) localSprinting = player.isSprinting
+        startTickHookSeen = true
         // Iterate a copy: modules enable/disable (and thus register/unregister listeners) from
         // other threads; iterating the live list here could throw ConcurrentModificationException.
         startTickListeners.toList().forEach { it(player, target) }
@@ -63,10 +68,12 @@ object EventBridge {
 
     fun onTick(player: PlayerState, target: TargetState?) {
         tickCounter++
-        // Fallback for platforms that do not call onStartTick (and for the very first tick):
-        // the START-phase sample above is the one KeepSprint reasons about, but a missing hook
-        // must not leave the snapshot permanently false.
-        if (player !== PlayerState.EMPTY) localSprinting = player.isSprinting
+        // Fallback ONLY when the platform never calls onStartTick. Once it does, this must not
+        // overwrite the START sample: on forge both calls happen back-to-back inside one 20 Hz
+        // dispatch, and the second extraction is taken *after* the tick's input — overwriting here
+        // would replace the pre-attack value with the post-attack one, which is the exact read the
+        // START sample exists to avoid.
+        if (!startTickHookSeen && player !== PlayerState.EMPTY) localSprinting = player.isSprinting
         // Throttled dispatch heartbeat — tells us whether module tick dispatch actually runs
         // on the user's machine and whether the player failed to extract (EMPTY).
         if (++tickDiagCount % 60 == 0) {
@@ -117,6 +124,7 @@ object EventBridge {
         serverSprintState = false
         lastSprintSyncNanos = 0L
         localSprinting = false
+        startTickHookSeen = false
         resetClickDelayHandler = null
         resetJumpDelayHandler = null
         reachSetter = null
@@ -1196,14 +1204,19 @@ object EventBridge {
     @Volatile var foodLevel: Int = 20
 
     /**
-     * The player's own sprint flag, sampled at the START of each tick.
+     * The player's own sprint flag, sampled once per tick dispatch.
      *
-     * Distinct from [serverSprintState]: this is what the client believes, that is what the
-     * server believes, and MC-69459 exists precisely because the two diverge. Modules that act on
-     * a render frame (KeepSprint) read this instead of the live field — see [onStartTick] for why
-     * the live read is a coin flip during an attack.
+     * Distinct from [serverSprintState]: this is what the client believes, that is what the server
+     * believes, and MC-69459 exists precisely because the two diverge.
+     *
+     * It is a SAMPLE, not a fact about the current instant — see [onStartTick] for why the phase is
+     * platform-dependent. Anything that needs "was sprinting just before the hit" should look at a
+     * short latch of this value rather than at a single read.
      */
     @Volatile var localSprinting: Boolean = false
+
+    /** Whether the platform has ever called [onStartTick] since [reset] — see [onTick]. */
+    private var startTickHookSeen: Boolean = false
 
     // ========== 4. Motion & Actions ==========
 

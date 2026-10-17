@@ -41,6 +41,8 @@ class KeepSprintTest {
         // The module only preserves a sprint the player already had; the snapshot is normally
         // taken in onStartTick. Tests drive it directly.
         EventBridge.localSprinting = true
+        // A sprint implies forward input, and the hold ends the moment the player stops pushing.
+        EventBridge.isKeyForwardDown = true
     }
 
     @AfterEach
@@ -50,6 +52,7 @@ class KeepSprintTest {
         EventBridge.isLeftMousePhysicallyDown = false
         EventBridge.syntheticAttack = false
         EventBridge.localSprinting = false
+        EventBridge.isKeyForwardDown = false
         EventBridge.reset()
         sent.clear()
     }
@@ -127,10 +130,40 @@ class KeepSprintTest {
         KeepSprint.enable()
         EventBridge.reportServerSprintState(false)
         EventBridge.localSprinting = false
+        KeepSprint.reset() // drop the latch left by the previous frames
 
         frame(attacking = true, target = target())
 
         assertTrue(sent.isEmpty(), "there was no sprint to keep")
+        assertFalse(EventBridge.hasSprintClaim(KeepSprint.name))
+    }
+
+    @Test
+    fun `a sample taken after the hit still counts as sprinting`() {
+        // Forge drives the whole dispatch from a 20 Hz background thread, so the sample can land
+        // after vanilla cleared the flag. The module latches instead of trusting one read.
+        KeepSprint.enable()
+        EventBridge.reportServerSprintState(false)
+
+        frame(attacking = false)                 // this frame sees localSprinting = true
+        EventBridge.localSprinting = false       // next sample lands post-attack
+        frame(attacking = true, target = target())
+
+        assertEquals(listOf("START_SPRINTING"), sent)
+    }
+
+    @Test
+    fun `the hold ends when the player stops pushing forward`() {
+        KeepSprint.enable()
+        EventBridge.reportServerSprintState(false)
+        frame(attacking = true, target = target())
+        assertTrue(EventBridge.hasSprintClaim(KeepSprint.name))
+
+        // Releasing W is the player ending the sprint themselves — a preserved flag would render
+        // sprint particles for someone who is standing still.
+        EventBridge.isKeyForwardDown = false
+        frame()
+
         assertFalse(EventBridge.hasSprintClaim(KeepSprint.name))
     }
 

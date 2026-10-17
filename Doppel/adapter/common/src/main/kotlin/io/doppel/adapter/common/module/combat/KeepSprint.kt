@@ -68,7 +68,8 @@ import io.doppel.adapter.common.api.EventBridge
  *
  * **The local hold spans a tick, not a frame.** `onRenderFrame` runs 60+ times a second against 20
  * ticks, so releasing on the next frame means releasing before any tick ever saw the claim — the
- * hold did nothing. It is held until two tick boundaries have passed instead, which also means a
+ * hold did nothing. It is held until two tick boundaries have passed instead (or until the player
+ * lets go of forward, or a wall-clock backstop expires, whichever comes first), which also means a
  * module that claims sprint in the meantime cannot stomp it.
  */
 object KeepSprint : Module("KeepSprint", Category.COMBAT) {
@@ -91,8 +92,21 @@ object KeepSprint : Module("KeepSprint", Category.COMBAT) {
     /** Last tick an attack was handled on — one assertion per tick, not one per render frame. */
     @Volatile private var lastHandledTick: Int = -1
 
+    /**
+     * Last time the tick sample reported "sprinting".
+     *
+     * `EventBridge.localSprinting` is a sample, and on forge the sampler is a 20 Hz background
+     * thread whose phase against the game tick is arbitrary — it can land after the attack, when
+     * vanilla has already cleared the flag. A single read would then say "not sprinting" about a
+     * player who demonstrably was. Latching for a bit over one sample interval makes the answer
+     * independent of where the sample fell.
+     */
+    @Volatile private var lastSprintSeenNanos: Long = 0L
+    private const val SPRINT_MEMORY_NANOS = 120_000_000L
+
     fun reset() {
         lastHandledTick = -1
+        lastSprintSeenNanos = 0L
         releaseHold()
     }
 
@@ -129,8 +143,15 @@ object KeepSprint : Module("KeepSprint", Category.COMBAT) {
             }
 
             val tick = EventBridge.getCurrentTick()
+            val now = System.nanoTime()
+            if (EventBridge.localSprinting) lastSprintSeenNanos = now
+
+            // A hold that outlives its reason is a stuck sprint. Three ways to end it: the tick
+            // window (2 dispatches), the wall clock (tick source stalled), or the player letting go
+            // of forward — the last one also keeps the flag from rendering sprint particles for a
+            // player who has stopped moving.
             if (holdUntilTick >= 0 &&
-                (tick > holdUntilTick || System.nanoTime() > holdDeadlineNanos)
+                (tick > holdUntilTick || now > holdDeadlineNanos || !EventBridge.isKeyForwardActive)
             ) {
                 releaseHold()
             }
@@ -147,12 +168,18 @@ object KeepSprint : Module("KeepSprint", Category.COMBAT) {
             val target = EventBridge.crosshairTarget ?: return
             if (target.health <= 0f) return
 
-            // Preserve a sprint, never create one. The sample is taken at the START of this tick
-            // (EventBridge.onStartTick), i.e. the state the player attacked *from* — the live field
-            // is unreliable here because vanilla clears and re-asserts it inside the same tick.
-            // Without this gate a player standing still and clicking would be put into sprint,
-            // complete with sprint particles and a flag the server did not expect.
-            if (!EventBridge.localSprinting) return
+            // Preserve a sprint, never create one. The sample can fall on either side of the
+            // attack (see [lastSprintSeenNanos]), so the gate is "the sample said sprinting, or it
+            // said so within the last ~2 dispatches". Without this a player standing still and
+            // clicking would be put into sprint, complete with sprint particles and a flag the
+            // server did not expect.
+            val sprintWasOn = EventBridge.localSprinting ||
+                (lastSprintSeenNanos != 0L && now - lastSprintSeenNanos <= SPRINT_MEMORY_NANOS)
+            if (!sprintWasOn) return
+
+            // Sprint is fed by forward input; with W released the flag is on its way out anyway and
+            // claiming it would only delay vanilla's own decision.
+            if (!EventBridge.isKeyForwardActive) return
 
             // A tap module currently owns W: it is resetting sprint on purpose, and the whole point
             // of a W-tap is the tick of walking knockback. Re-asserting here would undo the reset it

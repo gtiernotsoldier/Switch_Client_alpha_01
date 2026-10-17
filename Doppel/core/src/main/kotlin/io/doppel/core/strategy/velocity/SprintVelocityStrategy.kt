@@ -46,13 +46,17 @@ class SprintVelocityStrategy : VelocityStrategy {
         ctx: VelocityContext
     ): Boolean {
         if (!ConditionChecker.check(config.triggerOptions, ctx.player, ctx.target)) return false
+
+        // Direction first, dice second. A hit with no horizontal component is not a brace decision
+        // at all, so it must not consume a roll — otherwise `braceLastPassed` records "chose to
+        // brace" for a hit that could never be braced, and the next hit's gate uses the wrong state.
+        val source = SprintBrace.sourceFrom(ctx.originalMotion) ?: return false
+
         val passed = SprintBrace.gateRoll(
             Random, state.braceLastPassed, config.sprintGateBraced, config.sprintGateIdle
         )
         state.braceLastPassed = passed
         if (!passed) return false
-
-        val source = SprintBrace.sourceFrom(ctx.originalMotion) ?: return false
 
         // Publish the whole window as one reference — arm() runs on the packet thread.
         state.braceWindow = VelocityStrategy.State.BraceWindow(

@@ -24,6 +24,15 @@ import kotlin.math.sqrt
  *
  * Each source shows 4 values: X, Y, Z (the knockback vector) and D (distance).
  *
+ * A fifth line shows the ratio between the two horizontal impulses: OUT / IN(effective). Above
+ * 1.0 means we deal more than we take, below 1.0 means the opposite. "Effective" means the IN
+ * impulse after our own Velocity cut, so the number answers the question a player actually asks
+ * ("what did I eat versus what did he eat"), not "what did the server's formula produce". The
+ * OUT side is the raw S12 the server sent for the target — if the opponent also runs Velocity,
+ * his real displacement is smaller than this, and the ratio is correspondingly optimistic.
+ * The line reads "--" unless both halves are live, because a ratio between an IN from three
+ * seconds ago and an OUT from now is not an exchange.
+ *
  * Rendering: 4 lines, draggable while a GUI is open, plain text with shadow, no background box.
  */
 object KnockbackDisplay : Module("KnockbackDisplay", Category.VISUAL) {
@@ -240,7 +249,47 @@ object KnockbackDisplay : Module("KnockbackDisplay", Category.VISUAL) {
         }
         val outVec = "OUT %.2f %.2f %.2f".format(outMotionX, outMotionY, outMotionZ)
         val outD = "D %.2f".format(outDistance)
-        return listOf(inVec, cutText, outVec, outD)
+        return listOf(inVec, cutText, outVec, outD, ratioText())
+    }
+
+    /**
+     * OUT / IN(effective) horizontal impulse, or -1 when there is nothing to compare.
+     *
+     * The IN impulse is reduced by our own Velocity factor first, so the number is "what he ate
+     * versus what I ate" rather than "two raw packets". The factor is only applied when the packet
+     * that produced [inMotionX] is the same one `recordKnockback` saw — otherwise the fields belong
+     * to different hits and their ratio would be invented. With Velocity off, or on a pass-through
+     * mode, the factor is 1 and the line is the plain formula comparison.
+     */
+    private fun ratioValue(): Double {
+        if (inKbNano == 0L || outKbNano == 0L) return -1.0
+        val inH = sqrt(inMotionX * inMotionX + inMotionZ * inMotionZ)
+        val outH = sqrt(outMotionX * outMotionX + outMotionZ * outMotionZ)
+        if (inH < 0.001 || outH < 0.001) return -1.0
+
+        val samePacket = EventBridge.lastKnockbackNano != 0L &&
+            kotlin.math.abs(EventBridge.lastKnockbackNano - inKbNano) < 50_000_000L
+        val retain = if (samePacket && EventBridge.lastKbOriginalSpeed > 0.001) {
+            (EventBridge.lastKbModifiedSpeed / EventBridge.lastKbOriginalSpeed).coerceIn(0.0, 1.0)
+        } else 1.0
+
+        val effectiveIn = inH * retain
+        if (effectiveIn < 0.001) return -1.0
+        return outH / effectiveIn
+    }
+
+    private fun ratioText(): String {
+        val r = ratioValue()
+        return if (r < 0.0) "R --" else "R %.2fx".format(r)
+    }
+
+    private fun ratioColor(): Int {
+        val r = ratioValue()
+        return when {
+            r < 0.0 -> 0xC0C0C0
+            r >= 1.0 -> 0xFF22D3EE.toInt()   // we deal more than we take
+            else -> 0xFFFF3B30.toInt()       // we take more than we deal
+        }
     }
 
     private fun widgetWidth(ctx: RenderContext): Int {
@@ -250,7 +299,7 @@ object KnockbackDisplay : Module("KnockbackDisplay", Category.VISUAL) {
     }
 
     private fun widgetHeight(ctx: RenderContext): Int {
-        return ((ctx.fontRenderer.fontHeight * 4 + 4) * scale).toInt()
+        return ((ctx.fontRenderer.fontHeight * 5 + 5) * scale).toInt()
     }
 
     private fun draw(ctx: RenderContext) {
@@ -270,6 +319,7 @@ object KnockbackDisplay : Module("KnockbackDisplay", Category.VISUAL) {
         f.drawStringWithShadow(ls[1], x, y + lineH, 0xC0C0C0)
         f.drawStringWithShadow(ls[2], x, y + lineH * 2, 0xFFFFFF)
         f.drawStringWithShadow(ls[3], x, y + lineH * 3, 0xC0C0C0)
+        f.drawStringWithShadow(ls[4], x, y + lineH * 4, ratioColor())
         g.glPopMatrix()
     }
 

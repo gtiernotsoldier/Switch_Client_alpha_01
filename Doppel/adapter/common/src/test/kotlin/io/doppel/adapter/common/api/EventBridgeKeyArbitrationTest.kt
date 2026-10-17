@@ -152,12 +152,14 @@ class EventBridgeKeyArbitrationTest {
     fun `disabling a module releases every claim it holds`() {
         // The safety net: a module that forgets to release would leave a stale OWNED claim behind,
         // and a stale OWNED claim keeps winning the arbitration *while the module is off*.
+        // The player must be holding W, or suppression and release both read the same: false.
+        EventBridge.isKeyForwardDown = true
         ArbTestModule.enable()
         EventBridge.claimForward(
             ArbTestModule.name, false, EventBridge.KeyClaimMode.OWNED, EventBridge.KEY_PRIORITY_TAP
         )
         EventBridge.claimLeft(ArbTestModule.name, true)
-        assertFalse(EventBridge.isKeyForwardActive)
+        assertFalse(EventBridge.isKeyForwardActive, "the owned claim suppresses the player's own key")
         assertTrue(EventBridge.isKeyLeftActive)
 
         ArbTestModule.disable()

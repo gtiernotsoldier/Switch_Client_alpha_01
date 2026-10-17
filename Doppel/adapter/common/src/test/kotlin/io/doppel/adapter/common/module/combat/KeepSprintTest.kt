@@ -3,9 +3,11 @@ package io.doppel.adapter.common.module.combat
 import io.doppel.adapter.common.api.EventBridge
 import io.doppel.adapter.common.option.ConfigManager
 import io.doppel.core.model.Hitbox
+import io.doppel.core.model.PlayerState
 import io.doppel.core.model.TargetState
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
@@ -19,6 +21,10 @@ import org.junit.jupiter.api.Test
  * it: the sprint flag survives a landed swing and the server is told about it, because MC-69459
  * leaves the server believing the player is walking from the second hit onward. Nothing here writes
  * motion.
+ *
+ * The timing tests exist because both halves of that are easy to get subtly wrong: detection has to
+ * be per tick (a held button attacks every tick in 1.8), and the local hold has to outlive a tick
+ * boundary (the render frame runs 3-5 times per tick).
  */
 class KeepSprintTest {
 
@@ -32,6 +38,9 @@ class KeepSprintTest {
         EventBridge.crosshairTarget = null
         EventBridge.isLeftMousePhysicallyDown = false
         EventBridge.syntheticAttack = false
+        // The module only preserves a sprint the player already had; the snapshot is normally
+        // taken in onStartTick. Tests drive it directly.
+        EventBridge.localSprinting = true
     }
 
     @AfterEach
@@ -40,6 +49,7 @@ class KeepSprintTest {
         EventBridge.crosshairTarget = null
         EventBridge.isLeftMousePhysicallyDown = false
         EventBridge.syntheticAttack = false
+        EventBridge.localSprinting = false
         EventBridge.reset()
         sent.clear()
     }
@@ -62,6 +72,11 @@ class KeepSprintTest {
         KeepSprint.onRenderFrame(Unit)
     }
 
+    /** Advance one client tick without touching the sprint snapshot. */
+    private fun tick() {
+        EventBridge.onTick(PlayerState.EMPTY, null)
+    }
+
     @Test
     fun `a landed swing tells a server that thinks we stopped sprinting`() {
         KeepSprint.enable()
@@ -74,13 +89,17 @@ class KeepSprintTest {
     }
 
     @Test
-    fun `no packet when the server already believes we are sprinting`() {
+    fun `the mirror reading sprinting is not a reason to stay silent`() {
+        // The regression this replaced asserted the opposite. serverSprintState is reported from the
+        // platform's sprint setter, so it tracks the LOCAL flag — and in MC-69459 the local flag is
+        // still true while the server holds false. Trusting the mirror means trusting our own
+        // optimism and never sending the one packet that resyncs it.
         KeepSprint.enable()
         EventBridge.reportServerSprintState(true)
 
         frame(attacking = true, target = target())
 
-        assertTrue(sent.isEmpty(), "the mirror is already correct — there is nothing to report")
+        assertEquals(listOf("START_SPRINTING"), sent)
     }
 
     @Test
@@ -104,14 +123,60 @@ class KeepSprintTest {
     }
 
     @Test
-    fun `holding the button sends one packet, not one per frame`() {
+    fun `a player who is not sprinting gets no sprint forced on them`() {
+        KeepSprint.enable()
+        EventBridge.reportServerSprintState(false)
+        EventBridge.localSprinting = false
+
+        frame(attacking = true, target = target())
+
+        assertTrue(sent.isEmpty(), "there was no sprint to keep")
+        assertFalse(EventBridge.hasSprintClaim(KeepSprint.name))
+    }
+
+    @Test
+    fun `holding the button sends one packet per tick, not one per frame`() {
         KeepSprint.enable()
         EventBridge.reportServerSprintState(false)
         val dummy = target()
 
         repeat(10) { frame(attacking = true, target = dummy) }
+        assertEquals(1, sent.size, "10 frames inside one tick are still one attack")
 
-        assertEquals(1, sent.size, "only the rising edge of the swing counts")
+        // 1.8 polls the attack key every tick, so a held button really is a new attack next tick —
+        // and the server really does clear its flag again. An edge detector would miss this.
+        tick()
+        frame(attacking = true, target = dummy)
+        assertEquals(2, sent.size)
+    }
+
+    @Test
+    fun `the local hold is released after a tick, not left claimed`() {
+        KeepSprint.enable()
+        EventBridge.reportServerSprintState(false)
+
+        frame(attacking = true, target = target())
+        assertTrue(EventBridge.hasSprintClaim(KeepSprint.name))
+
+        tick()
+        frame()
+        assertTrue(EventBridge.hasSprintClaim(KeepSprint.name), "must survive a tick boundary")
+
+        tick()
+        frame()
+        assertFalse(EventBridge.hasSprintClaim(KeepSprint.name), "no opinion again — vanilla decides")
+    }
+
+    @Test
+    fun `disabling mid-hold gives the claim back`() {
+        KeepSprint.enable()
+        EventBridge.reportServerSprintState(false)
+        frame(attacking = true, target = target())
+        assertTrue(EventBridge.hasSprintClaim(KeepSprint.name))
+
+        KeepSprint.disable()
+
+        assertFalse(EventBridge.hasSprintClaim(KeepSprint.name))
     }
 
     @Test

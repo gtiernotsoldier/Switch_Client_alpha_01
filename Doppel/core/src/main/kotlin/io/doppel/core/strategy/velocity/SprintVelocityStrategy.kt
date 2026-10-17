@@ -54,9 +54,10 @@ class SprintVelocityStrategy : VelocityStrategy {
 
         val source = SprintBrace.sourceFrom(ctx.originalMotion) ?: return false
 
-        state.braceSourceX = source.x
-        state.braceSourceZ = source.z
-        state.braceTicksLeft = config.sprintHoldTicks
+        // Publish the whole window as one reference — arm() runs on the packet thread.
+        state.braceWindow = VelocityStrategy.State.BraceWindow(
+            source.x, source.z, config.sprintHoldTicks
+        )
         return true
     }
 
@@ -64,17 +65,25 @@ class SprintVelocityStrategy : VelocityStrategy {
      * One tick of the brace: consume a tick from the armed window and resolve the keys for the
      * player's *current* facing. Returns null when the window is closed (the adapter then releases
      * whatever it was holding).
+     *
+     * A new window is adopted by identity, so any tick that sees a fresh [State.braceWindow] starts
+     * the countdown from that window's own length instead of inheriting a stale remainder.
      */
     fun braceKeys(
         config: VelocityConfig,
         state: VelocityStrategy.State,
         yawDegrees: Float
     ): BraceKeys? {
+        val window = state.braceWindow ?: return null
+        if (window !== state.braceAdopted) {
+            state.braceAdopted = window
+            state.braceTicksLeft = window.ticks
+        }
         if (state.braceTicksLeft <= 0) return null
         state.braceTicksLeft--
         return SprintBrace.keysFor(
             yawDegrees,
-            BraceSource(state.braceSourceX, state.braceSourceZ),
+            BraceSource(window.sourceX, window.sourceZ),
             config.sprintSector.toDouble()
         )
     }

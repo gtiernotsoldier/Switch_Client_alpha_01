@@ -51,11 +51,25 @@ interface VelocityStrategy : Strategy<VelocityConfig, VelocityStrategy.State, Ve
         var reduceLastPassed: Boolean = false
 
         // ── SPRINT mode (SprintVelocityStrategy) ──
-        /** Ticks left in the armed brace window; 0 = not bracing. */
+        /**
+         * One armed brace window.
+         *
+         * Immutable and published as a single reference: [arm] runs on the packet (Netty) thread
+         * while [SprintVelocityStrategy.braceKeys] runs on the tick thread, and three separate
+         * plain fields let the tick thread read a new sourceX next to a stale sourceZ — a brace
+         * pointing 90° off for one tick, which is worse than not bracing at all.
+         */
+        class BraceWindow(val sourceX: Double, val sourceZ: Double, val ticks: Int)
+
+        /** The window the packet thread last armed; null = idle. */
+        @Volatile var braceWindow: BraceWindow? = null
+
+        /** Ticks left in the current window. Tick thread only. */
         var braceTicksLeft: Int = 0
-        /** Knocked-back source direction the window was armed with. */
-        var braceSourceX: Double = 0.0
-        var braceSourceZ: Double = 0.0
+
+        /** Which [braceWindow] object [braceTicksLeft] belongs to. Tick thread only. */
+        internal var braceAdopted: BraceWindow? = null
+
         /** Gate state carried across hits: did the previous hit brace? */
         var braceLastPassed: Boolean = false
 
@@ -63,9 +77,9 @@ interface VelocityStrategy : Strategy<VelocityConfig, VelocityStrategy.State, Ve
             delayQueue.clear()
             tickCounter = 0
             reduceLastPassed = false
+            braceWindow = null
             braceTicksLeft = 0
-            braceSourceX = 0.0
-            braceSourceZ = 0.0
+            braceAdopted = null
             braceLastPassed = false
         }
     }

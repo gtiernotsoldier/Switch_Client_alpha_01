@@ -29,6 +29,11 @@ object EventBridge {
     }
 
     fun onStartTick(player: PlayerState, target: TargetState?) {
+        // Snapshot the sprint flag BEFORE this tick's input runs. Render-frame modules
+        // (KeepSprint) cannot read the live field reliably: vanilla clears it inside the attack
+        // and re-asserts it from the held key before the tick ends, so a read taken after the
+        // click is a coin flip. The START-phase value is the state the player attacked *from*.
+        if (player !== PlayerState.EMPTY) localSprinting = player.isSprinting
         // Iterate a copy: modules enable/disable (and thus register/unregister listeners) from
         // other threads; iterating the live list here could throw ConcurrentModificationException.
         startTickListeners.toList().forEach { it(player, target) }
@@ -58,6 +63,10 @@ object EventBridge {
 
     fun onTick(player: PlayerState, target: TargetState?) {
         tickCounter++
+        // Fallback for platforms that do not call onStartTick (and for the very first tick):
+        // the START-phase sample above is the one KeepSprint reasons about, but a missing hook
+        // must not leave the snapshot permanently false.
+        if (player !== PlayerState.EMPTY) localSprinting = player.isSprinting
         // Throttled dispatch heartbeat — tells us whether module tick dispatch actually runs
         // on the user's machine and whether the player failed to extract (EMPTY).
         if (++tickDiagCount % 60 == 0) {
@@ -107,6 +116,7 @@ object EventBridge {
         sendEntityActionHandler = null
         serverSprintState = false
         lastSprintSyncNanos = 0L
+        localSprinting = false
         resetClickDelayHandler = null
         resetJumpDelayHandler = null
         reachSetter = null
@@ -769,6 +779,15 @@ object EventBridge {
         if (sprintClaims.remove(source) != null) applySprintClaims()
     }
 
+    /**
+     * Whether [source] currently holds a sprint claim.
+     *
+     * Exists for tests and diagnostics: "the hold was released" is otherwise unobservable, and an
+     * unreleased claim is exactly the stuck-state bug the claim model was introduced to prevent.
+     */
+    @Synchronized
+    fun hasSprintClaim(source: String): Boolean = sprintClaims.containsKey(source)
+
     private fun SprintClaimMode.toKeyMode() = when (this) {
         SprintClaimMode.ADDITIVE -> KeyClaimMode.ADDITIVE
         SprintClaimMode.OWNED -> KeyClaimMode.OWNED
@@ -1175,6 +1194,16 @@ object EventBridge {
 
     /** Player's food level (0-20). Vanilla sprint cancels at <= 6. */
     @Volatile var foodLevel: Int = 20
+
+    /**
+     * The player's own sprint flag, sampled at the START of each tick.
+     *
+     * Distinct from [serverSprintState]: this is what the client believes, that is what the
+     * server believes, and MC-69459 exists precisely because the two diverge. Modules that act on
+     * a render frame (KeepSprint) read this instead of the live field — see [onStartTick] for why
+     * the live read is a coin flip during an attack.
+     */
+    @Volatile var localSprinting: Boolean = false
 
     // ========== 4. Motion & Actions ==========
 

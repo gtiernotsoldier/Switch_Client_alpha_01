@@ -171,6 +171,17 @@ object Velocity : Module("Velocity", Category.COMBAT), HudLineProvider {
     // bookkeeping of "am I currently holding keys" stays here.
     @Volatile private var braceKeysHeld = false
 
+    /**
+     * Wall-clock expiry of the current brace window.
+     *
+     * The window is counted in ticks, and a tick counter only advances when ticks actually run. If
+     * the tick source stalls — world change, disconnect, a lag spike that skips the client tick —
+     * a purely tick-based window resumes afterwards and keeps the keys held for its full length in
+     * a world that may not even be the same one. This deadline makes the window expire in real
+     * time instead, so a stall costs at most one tick of held keys rather than `SprintHoldTicks`.
+     */
+    @Volatile private var braceDeadlineNanos = 0L
+
     // ========== Config Builder ==========
     private fun buildConfig(): VelocityConfig = VelocityConfig(
         mode = when (mode) {
@@ -230,7 +241,12 @@ object Velocity : Module("Velocity", Category.COMBAT), HudLineProvider {
      * the whole mode: it contributes nothing to the packet stream.
      */
     private fun onSprintKnockback(ctx: VelocityContext): PlatformCommand {
-        if (sprintStrategy.arm(cachedConfig { buildConfig() }, strategyState, ctx)) markWorked()
+        if (sprintStrategy.arm(cachedConfig { buildConfig() }, strategyState, ctx)) {
+            // Two ticks of slack past the window so a normal hiccup does not cut the brace short;
+            // the point is only that it cannot outlive the world it was armed in.
+            braceDeadlineNanos = System.nanoTime() + (sprintHoldTicks + 2) * 50_000_000L
+            markWorked()
+        }
         return PlatformCommand.Pass(ctx.originalMotion)
     }
 
@@ -240,29 +256,50 @@ object Velocity : Module("Velocity", Category.COMBAT), HudLineProvider {
      * only moves the result onto EventBridge.
      */
     private fun sprintTick(player: PlayerState) {
-        val keys = sprintStrategy.braceKeys(
-            cachedConfig { buildConfig() }, strategyState, player.rotation.yaw
-        )
-        if (keys == null) {
+        // No local player (world change, disconnect, title screen): the yaw and the knockback
+        // source belong to the old world. Release instead of resolving keys against yaw 0.
+        if (player === PlayerState.EMPTY) {
             releaseBraceKeys()
-        } else {
-            // ADDITIVE claims, not direct writes: WTap/STap OWN W/S while a tap is live and beat us
-            // on a shared tick (a trade), after which we resume. Writing the fields directly was
-            // what let the tap and the brace silently cancel each other.
-            EventBridge.claimForward(name, keys.forward)
-            EventBridge.claimBack(name, keys.back)
-            EventBridge.claimRight(name, keys.right)
-            EventBridge.claimLeft(name, keys.left)
-            braceKeysHeld = true
+            return
         }
 
+        val expired = System.nanoTime() > braceDeadlineNanos
+        val keys = if (expired) {
+            strategyState.braceTicksLeft = 0
+            null
+        } else {
+            sprintStrategy.braceKeys(
+                cachedConfig { buildConfig() }, strategyState, player.rotation.yaw
+            )
+        }
+        if (keys == null) {
+            releaseBraceKeys()
+            return
+        }
+
+        // ADDITIVE claims, not direct writes: WTap/STap OWN W/S while a tap is live and beat us
+        // on a shared tick (a trade), after which we resume. Writing the fields directly was
+        // what let the tap and the brace silently cancel each other.
+        EventBridge.claimForward(name, keys.forward)
+        EventBridge.claimBack(name, keys.back)
+        EventBridge.claimRight(name, keys.right)
+        EventBridge.claimLeft(name, keys.left)
+        braceKeysHeld = true
+
         if (sprintSyncServerSprint) {
+            // Snapshot BEFORE claiming. claimSprint goes through the platform's sprint setter,
+            // which reports into the mirror, so reading serverSprintState afterwards would read
+            // our own claim back and the C0B below would never be sent.
+            val serverKnewSprint = EventBridge.serverSprintState
             // ADDITIVE claim, asserted only when the game has actually cleared sprint — the same
-            // condition the direct call used. Released when the brace window ends.
+            // condition the direct call used. Released as soon as the game agrees, so the claim
+            // never outlives the reason it was made.
             if (!player.isSprinting) {
                 EventBridge.claimSprint(name, true)
+            } else {
+                EventBridge.releaseSprint(name)
             }
-            if (!EventBridge.serverSprintState) {
+            if (!serverKnewSprint) {
                 EventBridge.sendEntityAction("START_SPRINTING")
             }
         }
@@ -271,6 +308,10 @@ object Velocity : Module("Velocity", Category.COMBAT), HudLineProvider {
     private fun releaseBraceKeys() {
         // Released before the early return: SprintSync can be on while Mode = SprintSync (no keys).
         EventBridge.releaseSprint(name)
+        // Drop the window itself, not just the keys: a mode change or a stalled tick must not leave
+        // a remainder that resumes (and re-presses) the next time Sprint mode is selected.
+        strategyState.braceTicksLeft = 0
+        braceDeadlineNanos = 0L
         if (!braceKeysHeld) return
         EventBridge.releaseForward(name)
         EventBridge.releaseBack(name)
@@ -320,20 +361,31 @@ object Velocity : Module("Velocity", Category.COMBAT), HudLineProvider {
 
     // ========== Lifecycle ==========
 
+    /**
+     * Named reference, not an inline lambda.
+     *
+     * `unregisterTickListener(this::onTick)` cannot remove an anonymous `{ ... }` registered
+     * earlier — a Kotlin function reference is a new object every time, and the listener list
+     * matches by identity. The previous code therefore leaked one `onTick` per enable/disable
+     * cycle: `pumpDelayed` ran N times per tick after N toggles.
+     */
+    private val tickListenerRef: (Int) -> Unit = { currentTick ->
+        if (enabled) onTick(currentTick)
+    }
+
     override fun onEnable() {
         // The gate's chain state and the Sprint brace window both live in strategyState and are
         // cleared by strategyState.reset() in onDisable.
         braceKeysHeld = false
-        EventBridge.registerTickListener { currentTick ->
-            if (enabled) onTick(currentTick)
-        }
+        braceDeadlineNanos = 0L
+        EventBridge.registerTickListener(tickListenerRef)
         EventBridge.registerTickListener(sprintTickListenerRef)
         EventBridge.registerVelocityListener(velocityListenerRef, EventBridge.VELOCITY_PRIORITY_REDUCE)
     }
 
     override fun onDisable() {
         EventBridge.unregisterVelocityListener(velocityListenerRef)
-        EventBridge.unregisterTickListener(this::onTick)
+        EventBridge.unregisterTickListener(tickListenerRef)
         EventBridge.unregisterTickListener(sprintTickListenerRef)
         strategyState.reset()
         releaseBraceKeys()
@@ -360,8 +412,18 @@ object Velocity : Module("Velocity", Category.COMBAT), HudLineProvider {
      * Separate tick listener for Sprint mode: it needs the [PlayerState] (for the yaw
      * the brace direction is resolved against), which the `(Int) -> Unit` overload of
      * `registerTickListener` does not carry.
+     *
+     * The else branch is the anti-stuck-key path. `sprintTick` is the only place that consumes the
+     * window and releases the keys, and it stops being called the moment the Mode option leaves
+     * "Sprint" — an option change does not disable the module, so `onDisable` never runs. Without
+     * this branch, switching modes mid-window (four ticks, but a real window: the GUI is usually
+     * opened right after a hit) left W/A/S/D claimed until the module was toggled off.
      */
     private val sprintTickListenerRef: (PlayerState, TargetState?) -> Unit = { p, _ ->
-        if (enabled && mode == "Sprint") sprintTick(p)
+        if (enabled && mode == "Sprint") {
+            sprintTick(p)
+        } else if (braceKeysHeld || strategyState.braceTicksLeft > 0 || braceDeadlineNanos != 0L) {
+            releaseBraceKeys()
+        }
     }
 }

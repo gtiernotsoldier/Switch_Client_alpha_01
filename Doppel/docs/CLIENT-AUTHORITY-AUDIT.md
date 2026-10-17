@@ -67,6 +67,12 @@ Note what class A actually contains — it is wider than "state flags":
 The second half is why Reach/FastPlace/DelayRemover/NoJumpDelay are all legal. The server does not
 have the concept, so there is nothing to contradict.
 
+**A fifth class, for completeness: perception.** Not everything valuable changes what you *do*; some
+changes only what you *know*. ESP and entity tracking do not fit the four classes above because they
+are invisible at the protocol level in a stronger sense than class B — the data is **already being
+sent to you**. The server replicates nearby entities so the client can render them, walls or not; an
+ESP draws what you were given. Its counter-measures are therefore somewhere else entirely (§5.4).
+
 ---
 
 ## 4. The search template
@@ -123,6 +129,24 @@ client's.
 | Inventory | Server-authoritative windows. |
 | Flight / abilities | Gated on server-side game mode. |
 | **Displacement direction vs. yaw** | The server can model it: vanilla's own turning is an inertia blend (`v_old × 0.546` against `a × 0.13`), so a client whose direction snaps exactly to its input is *more* correct than vanilla and therefore distinguishable. This is the whole of StrafeFix's problem. |
+
+### 5.4 A fifth face: perception
+
+| | |
+|---|---|
+| Changes | what you **know**, not what you do |
+| Carrier | **none** — no packet is involved |
+| Server-side visibility | **none at the protocol level**, because the data was already sent |
+| Where it is detectable | the **client** (memory / screenshot / plugin scan), or the **behaviour** (reacting to what you should not have seen) |
+
+This is why ESP has outlived every class-D technique: there is no model for the server to compare
+against, because nothing about the connection changes. It also means the counter-measures live in a
+different place — shrinking entity tracking distance is a **server config**, and client scanning is a
+**client-side** anti-cheat. Neither is the kind of validation §5.3 is about.
+
+Note the asymmetry this creates: class D is *provable* on the server, class E is *invisible* to it, and
+the behaviour layer is the only place both can be caught. A reaction that is too fast for what you
+could have seen is the same kind of evidence as a displacement that is too large for your input.
 
 ---
 

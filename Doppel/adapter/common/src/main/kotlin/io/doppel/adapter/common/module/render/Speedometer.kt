@@ -11,10 +11,17 @@ import kotlin.math.sqrt
  * Speedometer — a lightweight plain-number HUD showing:
  *   - current player horizontal speed (blocks/second)
  *   - speed retention rate (%) vs a sprint baseline
+ *   - the sprint flag twice: ours (`p.isSprinting`) and the server's belief
+ *     (`serverSprintState`)
+ *   - how long those two have disagreed, or "sync"
  *
  * Purpose: visually confirm whether KeepSprint (or vanilla attack slowdown) is actually
  * holding player speed during rapid attacks. Vanilla MC drops horizontal speed to ~60% while
  * attacking; with KeepSprint the retention should read much higher.
+ *
+ * The two sprint flags are shown together because one of them alone is misleading: the local
+ * flag reads "Sprint" in exactly the state MC-69459 describes, where the server has already
+ * cleared its copy and is computing walking knockback. The DESYNC timer is that window's length.
  *
  * Rendered exactly like the Keystrokes HUD: draggable while a GUI is open, plain text with
  * shadow, NO background box — just numbers.
@@ -43,6 +50,10 @@ object Speedometer : Module("Speedometer", Category.VISUAL) {
     @Volatile private var speedBps: Float = 0f
     @Volatile private var retentionPct: Float = 0f
     @Volatile private var sprinting = false
+    /** What the server believes — the other half of the flag, and the half MC-69459 is about. */
+    @Volatile private var serverSprinting = false
+    /** nanoTime when the two flags started to disagree; 0 = in sync. */
+    @Volatile private var desyncSinceNanos = 0L
 
     // Previous-tick position tracking for displacement-based speed measurement.
     private var prevPosX = 0.0
@@ -77,6 +88,15 @@ object Speedometer : Module("Speedometer", Category.VISUAL) {
             prevPosZ = p.position.z
             prevPosTick = t
             sprinting = p.isSprinting
+            serverSprinting = EventBridge.serverSprintState
+            // MC-69459 is exactly this inequality, so time it instead of only displaying it: the
+            // span is the window in which the server is still paying the walking knockback while
+            // the client believes it is sprinting.
+            if (sprinting != serverSprinting) {
+                if (desyncSinceNanos == 0L) desyncSinceNanos = System.nanoTime()
+            } else {
+                desyncSinceNanos = 0L
+            }
         }
     }
 
@@ -131,17 +151,38 @@ object Speedometer : Module("Speedometer", Category.VISUAL) {
 
     private fun widgetWidth(ctx: RenderContext): Int {
         val f = ctx.fontRenderer
-        val maxLine = listOf(speedText(), retentionText(), sprintText()).maxByOrNull { f.getStringWidth(it) }?.let { f.getStringWidth(it) } ?: 60
+        val maxLine = listOf(speedText(), retentionText(), syncText(), statusText())
+            .maxByOrNull { f.getStringWidth(it) }?.let { f.getStringWidth(it) } ?: 60
         return (maxLine * scale).toInt() + 2
     }
 
     private fun widgetHeight(ctx: RenderContext): Int {
-        return ((ctx.fontRenderer.fontHeight * 3 + 4) * scale).toInt()
+        // 4 lines with a 2px gap between them.
+        return ((ctx.fontRenderer.fontHeight * 4 + 6) * scale).toInt()
     }
 
     private fun speedText(): String = "Speed %.2f b/s".format(speedBps)
     private fun retentionText(): String = "Retain %.1f%%".format(retentionPct)
-    private fun sprintText(): String = if (sprinting) "Sprint" else "Walk"
+
+    /**
+     * The two sprint flags side by side: the client's own (`p.isSprinting`) and the server's belief
+     * (`EventBridge.serverSprintState`).
+     *
+     * Splitting them is the point. The old line showed the local flag alone, so it read "Sprint"
+     * in exactly the state MC-69459 is about — the client sprinting while the server has already
+     * cleared it and is computing walking knockback.
+     */
+    private fun syncText(): String =
+        (if (sprinting) "L Sprint" else "L Walk") + "  " +
+            (if (serverSprinting) "S Sprint" else "S Walk")
+
+    /** How long the two have disagreed; "sync" when they agree. */
+    private fun statusText(): String {
+        val since = desyncSinceNanos
+        if (since == 0L) return "sync"
+        val ms = (System.nanoTime() - since) / 1_000_000
+        return "DESYNC %.1fs".format(ms / 1000.0)
+    }
 
     private fun draw(ctx: RenderContext) {
         val f = ctx.fontRenderer
@@ -149,6 +190,15 @@ object Speedometer : Module("Speedometer", Category.VISUAL) {
         val lineH = f.fontHeight + 2
 
         val color = if (sprinting) 0xFF22D3EE.toInt() else 0xFFFFFF
+        // The sync line is coloured by *disagreement*, not by sprint state: that is the only case
+        // that carries information. Red = the server still thinks we walk while we sprint, which is
+        // the walking-knockback window itself. Amber = the reverse, usually a lost or delayed C0B.
+        val syncColor = when {
+            sprinting && !serverSprinting -> 0xFFFF3B30.toInt()
+            !sprinting && serverSprinting -> 0xFFFFD600.toInt()
+            sprinting -> 0xFF22D3EE.toInt()
+            else -> 0xC0C0C0
+        }
 
         // Apply the Scale option for real: scale the modelview, draw at posX/scale so the text
         // lands at posX..posX+width*scale (matching the drag hitbox).
@@ -158,7 +208,8 @@ object Speedometer : Module("Speedometer", Category.VISUAL) {
         val y = (posY / scale).toInt()
         f.drawStringWithShadow(speedText(), x, y, color)
         f.drawStringWithShadow(retentionText(), x, y + lineH, color)
-        f.drawStringWithShadow(sprintText(), x, y + lineH * 2, 0xC0C0C0)
+        f.drawStringWithShadow(syncText(), x, y + lineH * 2, syncColor)
+        f.drawStringWithShadow(statusText(), x, y + lineH * 3, syncColor)
         g.glPopMatrix()
     }
 
@@ -166,6 +217,7 @@ object Speedometer : Module("Speedometer", Category.VISUAL) {
     override fun onEnable() {
         prevPosTick = -1L
         smoothedSpeed = 0f
+        desyncSinceNanos = 0L
         EventBridge.registerTickListener(tickListener)
     }
 
@@ -174,6 +226,8 @@ object Speedometer : Module("Speedometer", Category.VISUAL) {
         speedBps = 0f
         retentionPct = 0f
         sprinting = false
+        serverSprinting = false
+        desyncSinceNanos = 0L
         prevPosTick = -1L
         smoothedSpeed = 0f
     }

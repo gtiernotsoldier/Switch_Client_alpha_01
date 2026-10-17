@@ -106,6 +106,7 @@ object EventBridge {
         sprintResetHandler = null
         sendEntityActionHandler = null
         serverSprintState = false
+        lastSprintSyncNanos = 0L
         resetClickDelayHandler = null
         resetJumpDelayHandler = null
         reachSetter = null
@@ -770,9 +771,23 @@ object EventBridge {
     @Volatile var serverSprintState: Boolean = false
         private set
 
+    /**
+     * nanoTime when the mirror last moved, or 0 before the first report.
+     *
+     * Exists so "has anything told the server about my sprint state recently?" is answerable on
+     * screen instead of by reading a packet log. Read it as a mirror-refresh time, not strictly a
+     * packet-send time: the platform's local sprint setter reports here too, because in vanilla a
+     * local setSprinting makes the client emit its own C0B (the approximation documented on the
+     * setter). A stale value with the two flags disagreeing is the interesting case — that is
+     * MC-69459 with nothing correcting it.
+     */
+    @Volatile var lastSprintSyncNanos: Long = 0L
+        private set
+
     /** Called by the platform's entity-action / sprint-reset senders after a successful send. */
     fun reportServerSprintState(sprinting: Boolean) {
         serverSprintState = sprinting
+        lastSprintSyncNanos = System.nanoTime()
     }
 
 

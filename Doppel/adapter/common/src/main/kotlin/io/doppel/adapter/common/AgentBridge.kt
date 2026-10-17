@@ -45,6 +45,8 @@ object AgentBridge {
         "Sprint" to "movement",
         "Strafe" to "movement",
         "StrafeAssist" to "movement",
+        "NullMove" to "movement",
+        "InstantStop" to "movement",
         "StrafeFix" to "movement",
         "InvMove" to "movement",
         // Player

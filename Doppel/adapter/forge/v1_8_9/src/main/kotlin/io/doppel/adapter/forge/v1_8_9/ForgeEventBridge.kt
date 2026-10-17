@@ -93,10 +93,14 @@ object ForgeEventBridge : IEventBridge {
      * `Blocks.air`, or null when it cannot be resolved.
      *
      * `net.minecraft.init.Blocks` keeps its deobfuscated class name at runtime, but its **fields are
-     * SRG**: AIR is `field_150340_c`. The old `getField("AIR")` therefore threw
-     * NoSuchFieldException, the lazy initialiser handed it to the edge detector's catch, and every
-     * edge test answered "not on an edge" — the second, independent reason Eagle never pressed
-     * sneak (the first was the inverted comparison).
+     * SRG**: `air` is `field_150350_a`. The old `getField("AIR")` therefore threw
+     * NoSuchFieldException — the field is lowercase `air` — the lazy initialiser handed it to the
+     * edge detector's catch, and every edge test answered "not on an edge": the second, independent
+     * reason Eagle never pressed sneak (the first was the inverted comparison).
+     *
+     * `field_150340_c`, the name this fallback used to carry, is not a member of 1.8.9 at all, so
+     * the fallback stayed dead even after the mapping entry was added. `scripts/verify_mappings.mjs`
+     * now fails on exactly that class of mistake, which is why both names are corrected here.
      *
      * Null is a usable answer: the caller treats "cannot tell" as "not on an edge", so a mapping
      * change can only make the module quiet, never make it sneak at the wrong moment.
@@ -104,9 +108,9 @@ object ForgeEventBridge : IEventBridge {
     private val blocksAirValue: Any? by lazy {
         val viaMapping = try { MappingContext.getField("forge:blocks_air")?.get(null) } catch (_: Exception) { null }
         viaMapping ?: try {
-            blocksClass.getField("field_150340_c").get(null)
+            blocksClass.getField("field_150350_a").get(null)
         } catch (_: Exception) {
-            try { blocksClass.getField("AIR").get(null) } catch (_: Exception) { null }
+            try { blocksClass.getField("air").get(null) } catch (_: Exception) { null }
         }
     }
     private val movingObjectTypeClass by lazy { Class.forName("net.minecraft.util.MovingObjectPosition\$MovingObjectType") }

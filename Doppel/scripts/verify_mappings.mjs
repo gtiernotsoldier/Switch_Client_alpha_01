@@ -68,6 +68,7 @@ if (fs.existsSync(dfferencesPath)) {
 
 const invalid = [];
 const mismatched = [];
+const fromCsvFallback = [];
 let checked = 0;
 
 for (const [key, entry] of Object.entries(mapping)) {
@@ -82,8 +83,16 @@ for (const [key, entry] of Object.entries(mapping)) {
 
   // 1. the name must exist in 1.8.9
   if (!members.has(member)) {
-    invalid.push(`${key}: ${cls}/${member} — no such member in the 1.8.9 SRG`);
-    continue;
+    // The member list was extracted from joined.srg and is incomplete for some classes —
+    // Minecraft.renderViewEntity (field_71451_h) is absent from it while fields.csv lists it.
+    // Fall back to the MCP tables: a name those tables know is a real 1.8.9 member even when the
+    // extraction missed it. A name neither source knows is still a failure.
+    const knownByName = entry.method ? methods.has(member) : fields.has(member);
+    if (!knownByName) {
+      invalid.push(`${key}: ${cls}/${member} — no such member in the 1.8.9 SRG`);
+      continue;
+    }
+    fromCsvFallback.push(`${key}: ${cls}/${member}`);
   }
 
   // 2. where the MCP tables know this SRG name, the readable name must agree
@@ -99,6 +108,10 @@ console.log(`mapping entries checked : ${checked}`);
 console.log(`SRG names valid         : ${ok}`);
 console.log(`SRG names INVALID       : ${invalid.length}`);
 console.log(`mcp/SRG disagreements   : ${mismatched.length}`);
+console.log(`confirmed via MCP tables: ${fromCsvFallback.length} (absent from the member list)`);
+if (fromCsvFallback.length) {
+  for (const line of fromCsvFallback) console.log(`  ${line}`);
+}
 
 if (invalid.length) {
   console.log('\ninvalid entries:');

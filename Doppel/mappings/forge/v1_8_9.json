@@ -1281,11 +1281,11 @@
   },
   "forge:blocks_air": {
     "class": "net.minecraft.init.Blocks",
-    "field": "field_150340_c",
+    "field": "field_150350_a",
     "aliases": [
       "blocks_air"
     ],
-    "mcp": "AIR"
+    "mcp": "air"
   },
   "forge:world_getEntityByID": {
     "class": "net.minecraft.world.World",

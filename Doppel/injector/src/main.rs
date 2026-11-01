@@ -22,6 +22,7 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 mod flow;
+mod icons;
 mod inject;
 mod log;
 mod panel;

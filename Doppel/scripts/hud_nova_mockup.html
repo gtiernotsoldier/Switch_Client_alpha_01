@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Doppel HUD — Nova mockup (ink &amp; ember)</title>
+<style>
+  /* ── the two faces the Rust overlay really ships (hud/assets) ────────── */
+  @font-face { font-family: "Play";       src: url("../hud/assets/Play-Regular.ttf"); font-weight: 400; }
+  @font-face { font-family: "Play";       src: url("../hud/assets/Play-Bold.ttf");    font-weight: 700; }
+
+  :root {
+    /* the constants the Rust port will carry — same numbers here and there */
+    --ink-fill:   rgba(10, 11, 16, 0.80);   /* argb(10,11,16,205)  capsule fill  */
+    --name:       #F5F6F9;                  /* argb(245,246,249,255) bold names   */
+    --muted:      #949AA6;                  /* argb(148,154,166,255) values       */
+    --divider:    rgba(255, 255, 255, 0.14);
+    --shadow:     1px 1px 0 rgba(0, 0, 0, 0.47);
+    --row-h:      24px;   --row-r: 12px;  --row-gap: 5px;
+    --list-right: 10px;   --top-y: 4px;
+    --pad-left:   14px;   --pad-right: 10px;  --tick-left: 5px;  --tag-gap: 8px;
+    /* the ember pair — the mode's own accent */
+    --ember-a: rgb(255, 92, 86);
+    --ember-b: rgb(255, 170, 72);
+  }
+
+  html, body { margin: 0; padding: 0; width: 1920px; height: 1080px; overflow: hidden; }
+  body {
+    font-family: "Play", sans-serif;
+    -webkit-font-smoothing: antialiased;
+    background-color: #101216;
+    /* the backdrop itself is set from ?bg= in the script below; zoomed so the
+       reference shots' own baked-in HUDs fall outside the frame */
+    background-size: 185% auto;
+    background-position: 52% 62%;
+    background-repeat: no-repeat;
+  }
+
+  /* ── the ink capsule, one shape for both the watermark and every row ── */
+  .capsule {
+    position: absolute;
+    height: var(--row-h);
+    border-radius: var(--row-r);
+    background: var(--ink-fill);
+    display: flex;
+    align-items: center;
+    box-sizing: border-box;
+    color: var(--name);
+    font-size: 16px;
+    line-height: 16px;
+    text-shadow: var(--shadow);
+  }
+
+  /* ── watermark: the toolbar pill, top-left (the overlay's default slot) */
+  #wm {
+    left: 10px;
+    top: var(--top-y);
+    padding: 0 var(--pad-right) 0 var(--pad-right);
+  }
+  #wm .dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: linear-gradient(90deg, var(--ember-a), var(--ember-b));
+    margin-right: 7px;
+    flex: none;
+  }
+  #wm .title { font-weight: 700; letter-spacing: 0.4px; }
+  #wm .sep {
+    width: 1px; height: 12px; background: var(--divider);
+    margin: 0 8px; flex: none;
+  }
+  #wm .mid { color: var(--muted); }
+
+  /* ── the list: one ink capsule per module, stacked down the right edge */
+  .row {
+    right: var(--list-right);
+    padding: 0 var(--pad-right) 0 var(--pad-left);
+    white-space: nowrap;
+  }
+  .row .tick {
+    position: absolute;
+    left: var(--tick-left);
+    top: 7px;
+    width: 3px; height: 10px;
+    border-radius: 1.5px;
+    flex: none;
+  }
+  .row .name { font-weight: 700; }
+  .row .val  { margin-left: var(--tag-gap); }
+  .row .val.hl { color: var(--ember); }        /* per-row ember, set inline */
+  .row .val.dim { color: var(--muted); }
+</style>
+</head>
+<body>
+
+<!-- watermark: dot + DOPPEL | nickname | FPS -->
+<div id="wm" class="capsule">
+  <div class="dot"></div>
+  <span class="title">DOPPEL</span>
+  <span class="sep"></span><span class="mid">XTSawyer</span>
+  <span class="sep"></span><span class="mid">240 FPS</span>
+</div>
+
+<!-- the list, wedge-sorted, resting state. Ember phases walk 0.15 + 0.11*i -->
+<script>
+  // ── the same cosine blend the Rust accent uses, frozen for the mockup ──
+  const EMBER_A = [255, 92, 86], EMBER_B = [255, 170, 72];
+  const blend = t => 0.5 - 0.5 * Math.cos(2 * Math.PI * t);
+  const mix = (a, b, t) => Math.round(a + (b - a) * t);
+  const ember = t => {
+    const k = blend(t);
+    return `rgb(${mix(EMBER_A[0], EMBER_B[0], k)},${mix(EMBER_A[1], EMBER_B[1], k)},${mix(EMBER_A[2], EMBER_B[2], k)})`;
+  };
+
+  // representative module table — the mix the real HUD shows
+  const rows = [
+    { name: "Right Clicker", val: "27 CPS",   hl: true  },
+    { name: "Lag Range",     val: "299 ms",   hl: true  },
+    { name: "Auto Clicker",  val: "20 CPS",   hl: true  },
+    { name: "Backtrack",     val: "75 ms",    hl: true  },
+    { name: "Bridge Assist"                             },
+    { name: "Aim Assist"                                },
+    { name: "Player ESP"                                },
+    { name: "Velocity",      val: "Legit",    hl: true  },
+    { name: "AntiBot"                                   },
+    { name: "Sprint"                                    },
+  ];
+
+  const T0 = 0.15, PHASE = 0.11;
+  const topY = 4, pitch = 29;  // top-y + row-h + gap
+
+  rows.forEach((r, i) => {
+    const el = document.createElement("div");
+    el.className = "capsule row";
+    el.style.top = (topY + i * pitch) + "px";
+    const c = ember(T0 + PHASE * i);
+    el.innerHTML =
+      `<span class="tick" style="background:${c}"></span>` +
+      `<span class="name">${r.name}</span>` +
+      (r.val ? `<span class="val ${r.hl ? "hl" : "dim"}" ${r.hl ? `style="color:${c}"` : ""}>${r.val}</span>` : "");
+    document.body.appendChild(el);
+  });
+
+  // backdrop from ?bg= (defaults to the sky BedWars frame); absolute file URI
+  const bg = new URLSearchParams(location.search).get("bg");
+  document.body.style.backgroundImage =
+    `url("${bg || "file:///home/z/my-project/upload/Screenshot_20261101_191343.jpg"}")`;
+</script>
+</body>
+</html>

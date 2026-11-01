@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Doppel HUD — Atlas mockup (the corrected human formula)</title>
+<style>
+  /* ── the two faces the Rust overlay really ships (hud/assets) ────────── */
+  @font-face { font-family: "Play"; src: url("../hud/assets/Play-Regular.ttf"); font-weight: 400; }
+  @font-face { font-family: "Play"; src: url("../hud/assets/Play-Bold.ttf");    font-weight: 700; }
+
+  :root {
+    /* ── the constants the Rust port will carry ───────────────────────── */
+    --panel:   rgba(8, 8, 12, 0.87);   /* near-opaque black — Drip/Loyalty  */
+    --r:       4px;                    /* inner corners only                */
+    --row-h:   21px;                   /* rows stack FLUSH — zero gap       */
+    --strip-w: 4px;                    /* the edge strip, screen-edge side  */
+    --pad-l:   10px;  --pad-r: 8px;    --tag-gap: 8px;
+    --white:   #F2F3F5;                /* the VALUE colour — humans: white  */
+    --dim:     rgba(255, 255, 255, 0.70);
+    --divider: rgba(255, 255, 255, 0.15);
+    --shadow:  1px 1px 0 rgba(0, 0, 0, 0.47);
+  }
+
+  html, body { margin: 0; padding: 0; width: 1920px; height: 1080px; overflow: hidden; }
+  body {
+    font-family: "Play", sans-serif;
+    -webkit-font-smoothing: antialiased;
+    background-color: #101216;
+    background-size: 185% auto;
+    background-position: 52% 62%;
+    background-repeat: no-repeat;
+  }
+
+  /* ── the list: flush-stacked wedge sheet hugging the right screen edge ── */
+  .row {
+    position: absolute;
+    height: var(--row-h);
+    background: var(--panel);
+    display: flex;
+    align-items: center;
+    box-sizing: border-box;
+    padding: 0 calc(var(--pad-r) + var(--strip-w)) 0 var(--pad-l);
+    border-radius: var(--r) 0 0 var(--r);  /* round toward the screen interior */
+    color: var(--white);
+    font-size: 16px;
+    line-height: 16px;
+    text-shadow: var(--shadow);
+    white-space: nowrap;
+  }
+  .row .strip {
+    position: absolute;
+    right: 0; top: 0; bottom: 0;           /* flush with the screen edge */
+    width: var(--strip-w);
+    flex: none;
+  }
+  .row .name { font-weight: 700; }
+  .row .val  { margin-left: var(--tag-gap); font-weight: 400; color: var(--white); }
+
+  /* ── the watermark: black pill, brand-coloured title (Loyalty's move) ── */
+  #wm {
+    position: absolute;
+    left: 10px; top: 6px;
+    height: var(--row-h);
+    background: var(--panel);
+    border-radius: var(--r);
+    display: flex; align-items: center;
+    padding: 0 9px;
+    color: var(--white);
+    font-size: 16px; line-height: 16px;
+    text-shadow: var(--shadow);
+  }
+  #wm .mark { width: 7px; height: 7px; border-radius: 2px; margin-right: 7px; flex: none; }
+  #wm .title { font-weight: 700; letter-spacing: 0.4px; }
+  #wm .sep { width: 1px; height: 10px; background: var(--divider); margin: 0 8px; flex: none; }
+  #wm .mid-dim { color: var(--dim); }
+</style>
+</head>
+<body>
+
+<div id="wm">
+  <div class="mark" id="wm-mark"></div>
+  <span class="title" id="wm-title">DOPPEL</span>
+  <span class="sep"></span><span>XTSawyer</span>
+  <span class="sep"></span><span class="mid-dim">240 FPS</span>
+</div>
+
+<script>
+  // ── ONE brand hue with a gentle walk down the list ─────────────────────
+  // magenta-violet 300° like Drip(280)/Loyalty(310); each row +4° so the
+  // edge strip reads as one continuous bar flowing through the band —
+  // never green, never yellow, never a clown rainbow.
+  const H0 = 300, WALK = 4, T0 = 0;
+  const hue = i => (H0 + WALK * i) % 360;
+  const accent = i => `hsl(${hue(i)}, 100%, 66%)`;
+  const strip  = i => `linear-gradient(180deg, hsl(${hue(i)}, 100%, 70%), hsl(${hue(i)}, 100%, 56%))`;
+
+  const rows = [
+    { name: "Right Clicker", val: "27 CPS" },
+    { name: "Lag Range",     val: "299 ms" },
+    { name: "Auto Clicker",  val: "20 CPS" },
+    { name: "Backtrack",     val: "75 ms"  },
+    { name: "Bridge Assist"                },
+    { name: "Aim Assist"                   },
+    { name: "Player ESP",    val: "2D"     },
+    { name: "Velocity",      val: "Legit"  },
+    { name: "AntiBot"                      },
+    { name: "Sprint"                       },
+  ];
+
+  const topY = 6;
+
+  rows.forEach((r, i) => {
+    const el = document.createElement("div");
+    el.className = "row";
+    el.style.top = (topY + i * 21) + "px";  // flush: pitch == row height
+    el.style.right = "0";                    // hug the screen edge, strip at x=W
+    el.innerHTML =
+      `<span class="strip" style="background:${strip(i)}"></span>` +
+      `<span class="name" style="color:${accent(i)}">${r.name}</span>` +
+      (r.val ? `<span class="val">${r.val}</span>` : "");
+    document.body.appendChild(el);
+  });
+
+  document.getElementById("wm-mark").style.background = accent(0);
+  document.getElementById("wm-title").style.color = accent(0);
+
+  const bg = new URLSearchParams(location.search).get("bg");
+  document.body.style.backgroundImage =
+    `url("${bg || "file:///home/z/my-project/upload/Screenshot_20261101_191343.jpg"}")`;
+</script>
+</body>
+</html>

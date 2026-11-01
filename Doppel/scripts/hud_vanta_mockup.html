@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Doppel HUD — Vanta mockup (pro black)</title>
+<style>
+  /* ── the two faces the Rust overlay really ships (hud/assets) ────────── */
+  @font-face { font-family: "Play"; src: url("../hud/assets/Play-Regular.ttf"); font-weight: 400; }
+  @font-face { font-family: "Play"; src: url("../hud/assets/Play-Bold.ttf");    font-weight: 700; }
+
+  :root {
+    /* ── the constants the Rust port will carry ───────────────────────── */
+    --panel:   rgba(8, 8, 12, 0.90);   /* true black, near opaque — Loyalty */
+    --r:       3px;                    /* tight corner, not a capsule       */
+    --row-h:   22px;   --row-gap: 4px; --list-right: 8px;  --top-y: 6px;
+    --pad-l:   12px;   --pad-r: 9px;   --bar-w: 4px;       --tag-gap: 9px;
+    --white:   #FFFFFF;
+    --dim:     rgba(255, 255, 255, 0.70);
+    --divider: rgba(255, 255, 255, 0.15);
+    --shadow:  1px 1px 0 rgba(0, 0, 0, 0.47);
+  }
+
+  html, body { margin: 0; padding: 0; width: 1920px; height: 1080px; overflow: hidden; }
+  body {
+    font-family: "Play", sans-serif;
+    -webkit-font-smoothing: antialiased;
+    background-color: #101216;
+    /* backdrop from ?bg=; zoomed so the reference shots' own HUDs fall away */
+    background-size: 185% auto;
+    background-position: 52% 62%;
+    background-repeat: no-repeat;
+  }
+
+  .panel {
+    position: absolute;
+    height: var(--row-h);
+    border-radius: var(--r);
+    background: var(--panel);
+    display: flex;
+    align-items: center;
+    box-sizing: border-box;
+    color: var(--white);
+    font-size: 16px;
+    line-height: 16px;
+    text-shadow: var(--shadow);
+    overflow: hidden;
+  }
+
+  /* ── watermark: the toolbar, top-left (the overlay's default slot) ──── */
+  #wm { left: 10px; top: var(--top-y); padding: 0 9px; }
+  #wm .mark {
+    width: 8px; height: 8px; border-radius: 2px;
+    flex: none; margin-right: 8px;
+  }
+  #wm .title { font-weight: 700; letter-spacing: 0.4px; }
+  #wm .sep {
+    width: 1px; height: 10px; background: var(--divider);
+    margin: 0 8px; flex: none;
+  }
+  #wm .mid { color: var(--dim); }
+
+  /* ── the list: one sharp black panel per module, flush accent bar ──── */
+  .row { right: var(--list-right); padding: 0 var(--pad-r) 0 var(--pad-l); white-space: nowrap; }
+  .row .bar {
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: var(--bar-w);
+    border-radius: var(--r) 0 0 var(--r);  /* flush, full height, structural */
+    flex: none;
+  }
+  .row .name { font-weight: 700; }
+  .row .val  { margin-left: var(--tag-gap); font-weight: 400; }
+</style>
+</head>
+<body>
+
+<!-- watermark: mark + DOPPEL | nickname | FPS -->
+<div id="wm" class="panel">
+  <div class="mark" id="wm-mark"></div>
+  <span class="title">DOPPEL</span>
+  <span class="sep"></span><span class="mid">XTSawyer</span>
+  <span class="sep"></span><span class="mid">240 FPS</span>
+</div>
+
+<script>
+  // ── the accent: a RESTRICTED hue band flowing down the list ────────────
+  // hue oscillates 200°(cyan-blue) .. 330°(magenta) on a slow sine — the
+  // premium client family's signature, never green/yellow, never neon.
+  const H0 = 265, AMP = 65, T = 22, ROW_STEP = 0.07, T0 = 0.13;
+  // FULL saturation — the punch the human clients have; a pastel accent is
+  // exactly the washed-out look that reads as machine-made.
+  const accent = i => {
+    const h = (H0 + AMP * Math.sin(2 * Math.PI * (T0 + i * ROW_STEP))) % 360;
+    return `hsl(${(h + 360) % 360}, 100%, 62%)`;
+  };
+  // the bar itself carries a vertical gradient — top lighter, bottom deeper:
+  // the Astolfo/Rise-family signature that makes a 4px strip read as glass.
+  const bar = i => {
+    const h = (H0 + AMP * Math.sin(2 * Math.PI * (T0 + i * ROW_STEP))) % 360;
+    return `linear-gradient(180deg, hsl(${h}, 100%, 68%), hsl(${h}, 100%, 50%))`;
+  };
+
+  // representative module table — the mix the real HUD shows
+  const rows = [
+    { name: "Right Clicker", val: "27 CPS" },
+    { name: "Lag Range",     val: "299 ms" },
+    { name: "Auto Clicker",  val: "20 CPS" },
+    { name: "Backtrack",     val: "75 ms"  },
+    { name: "Bridge Assist"                },
+    { name: "Aim Assist"                   },
+    { name: "Player ESP"                   },
+    { name: "Velocity",      val: "Legit"  },
+    { name: "AntiBot"                      },
+    { name: "Sprint"                       },
+  ];
+
+  const topY = 6, pitch = 26;  // row-h + gap
+
+  rows.forEach((r, i) => {
+    const el = document.createElement("div");
+    el.className = "panel row";
+    el.style.top = (topY + i * pitch) + "px";
+    const c = accent(i);
+    el.innerHTML =
+      `<span class="bar" style="background:${bar(i)}"></span>` +
+      `<span class="name">${r.name}</span>` +
+      (r.val ? `<span class="val" style="color:${accent(i)}">${r.val}</span>` : "");
+    document.body.appendChild(el);
+  });
+
+  document.getElementById("wm-mark").style.background = accent(0);
+
+  const bg = new URLSearchParams(location.search).get("bg");
+  document.body.style.backgroundImage =
+    `url("${bg || "file:///home/z/my-project/upload/Screenshot_20261101_191343.jpg"}")`;
+</script>
+</body>
+</html>

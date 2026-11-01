@@ -3,6 +3,8 @@
 // monospace so only geometry/colour assertions are meaningful under it.
 // NOT compiled into the Windows binary (main.rs keeps `mod text;` → text.rs).
 pub const FONT_PX: f32 = 16.0;
+/// The Aurora mode's font size — mirrors text.rs's own constant.
+pub const SPINE_FONT_PX: f32 = 11.0;
 pub const MIN_SCALE: f32 = 0.5;
 pub const MAX_SCALE: f32 = 4.0;
 
@@ -10,6 +12,9 @@ pub const MAX_SCALE: f32 = 4.0;
 pub enum FontId {
     Name,
     Body,
+    SpineName,
+    SpineBody,
+    SpineTag,
 }
 
 pub struct TextEngine;

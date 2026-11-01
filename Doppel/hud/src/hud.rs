@@ -11,10 +11,13 @@
 //
 // **Modern** and **Aurora** are the two exceptions. Modern is the port's own
 // fifth mode, added by the user's request alongside contract v3's three-bit mode
-// field; Aurora is the sixth — the visual reset the user asked for after living
-// with the four ports, the WebUI's own glass-card language carried into the
-// game. Neither has a source line: their numbers are marked `MODERN_*` /
-// `AURORA_*` and explained where they are declared, so nothing here can be
+// field; Aurora is the sixth — and since the user handed over their own hand-
+// tuned HUD design (the "Spine" mockup, `scripts/hud_spine_mockup.html`, ported
+// from their html-preview.html), it is **theirs**: Material You glass cards
+// left-rounded and flush against a continuous 3 px spine line on the column's
+// right edge, 1 px between rows, a top-down cascade on entrance, and a status
+// pill whose tile vectorizes the WebUI's `ᗡD` rail-mark. The mode's constants
+// are marked `SPINE_*` and cite the mockup's CSS, so nothing here can be
 // mistaken for something HUD.cpp does.
 //
 // ── what is drawn ────────────────────────────────────────────────────────────
@@ -106,7 +109,7 @@ use std::time::{Duration, Instant};
 
 use crate::draw::{argb, lerp_rgb, Canvas};
 use crate::state::Entry;
-use crate::text::{FontId, TextEngine, FONT_PX, MAX_SCALE, MIN_SCALE};
+use crate::text::{FontId, TextEngine, FONT_PX, MAX_SCALE, MIN_SCALE, SPINE_FONT_PX};
 
 // ── the five modes (HUD.cpp:463-468, ArrayList.h:14) ────────────────────────
 
@@ -165,11 +168,12 @@ impl Mode {
 
     /// The face a module name is drawn in: the source uses its bold face in
     /// Default mode and the regular one everywhere else (HUD.cpp:468). Aurora
-    /// joins Default in the bold face — its own choice, no source line: bold
-    /// near-white names against muted values are the mode's type hierarchy.
+    /// draws its names in the Spine design's own 500-weight Roboto — the mockup
+    /// sets `font-weight: 500` at 11 px for `.module-name`.
     pub fn name_font(self) -> FontId {
         match self {
-            Mode::Default | Mode::Aurora => FontId::Name,
+            Mode::Default => FontId::Name,
+            Mode::Aurora => FontId::SpineName,
             _ => FontId::Body,
         }
     }
@@ -263,72 +267,102 @@ pub const MODERN_MARGIN_RIGHT: f32 = 6.0;
 /// other four already are.
 pub const MODERN_SWEEP_MS: f32 = 4200.0;
 
-// ── Aurora (this port's own mode, contract v3) ──────────────────────────
+// ── Aurora — the user's own Spine design (contract v3, mode 5) ───────────
 //
-// The visual reset the user asked for after the four ports and Modern: the
-// WebUI's own look carried into the game. The card is a glass panel — a
-// near-black navy fill inside a 1 px light border, with a 1 px highlight along
-// its top edge — rounded on all four corners, and the accent lives in a small
-// **gradient spine** floating inside the card's left edge instead of a bar
-// glued to its right one. The name is bold near-white, the value muted grey
-// unless the entry carries `highlight`, and the accent itself is the header's
-// two colours on a slow cosine — the mode's own cyan/violet pair while the
-// user has not picked any (see `aurora_stops`).
-//
-// None of these numbers has a source line; they are the design, tuned on the
-// mockup the user reviewed first (`scripts/hud_aurora_mockup.html` reads the
-// same constants).
+// The user handed over their hand-tuned HUD (html-preview.html, reviewed as
+// `scripts/hud_spine_mockup.html`) and asked for it verbatim; this block is
+// that file's constants, at `--scale 1` equal to its CSS pixel for pixel.
+// The cards are Material You glass — `rgba(18,18,20,.5)` fills, rounded only
+// on their **left** corners, flush square against a continuous 3 px **spine
+// line** that runs the full height of the column's right edge — 1 px apart,
+// entered by a top-down cascade, each carrying a slow violet breathing wash.
+// The values sit in small dark chips (`#EFB8C8` on `rgba(0,0,0,.25)`), the
+// names in the design's own 11 px Roboto Medium, and the watermark is a
+// **status pill**: the WebUI rail-mark's `ᗡD` vectorized into a cyan-violet
+// tile, then DOPPEL, the version, and the header's segments — the accent is
+// the design's Material You violet `#D0BCFF` throughout.
 
-/// The glass card's fill: deep navy, translucent like the WebUI's cards.
-pub const AURORA_BACKGROUND: u32 = argb(13, 17, 26, 208);
-/// The card's 1 px border: the slate the WebUI draws around its cards.
-pub const AURORA_BORDER: u32 = argb(148, 163, 184, 56);
-/// The module name, bold. Near-white rather than the accent: the accent lives
-/// in the spine, and a name that fights it would read as noise.
-pub const AURORA_TEXT: u32 = argb(236, 242, 248, 255);
-/// The value tag and the watermark's middle segments.
-pub const AURORA_MUTED: u32 = argb(152, 164, 184, 255);
-/// The 1 px highlight along a card's top edge — the glass rim.
-pub const AURORA_TOP_HIGHLIGHT: u32 = argb(255, 255, 255, 18);
-/// The card's corner radius, all four corners.
-pub const AURORA_CARD_RADIUS: f32 = 7.0;
-/// `itemHeight`'s extra over the line height: taller than Modern's +6, so the
-/// glass card has room for the floating spine.
-pub const AURORA_ITEM_EXTRA: f32 = 8.0;
-/// The gap between two cards.
-pub const AURORA_MODULE_SPACING: f32 = 4.0;
-/// The right margin the list is flushed to.
-pub const AURORA_MARGIN_RIGHT: f32 = 8.0;
-/// The card's inner padding: the name starts this far in (the spine's zone
-/// plus breathing room), and the value ends this far from the other edge.
-pub const AURORA_PAD_LEFT: f32 = 11.0;
-pub const AURORA_PAD_RIGHT: f32 = 9.0;
-/// The text's vertical inset inside a 24 px card: (24 − 16) / 2.
-pub const AURORA_PAD_Y: f32 = 4.0;
-/// The spine floats this far in from the card's left edge, and its height is
-/// the card minus twice the vertical inset, so it never touches the border.
-pub const AURORA_SPINE_INSET_X: f32 = 3.0;
-pub const AURORA_SPINE_W: f32 = 3.0;
-pub const AURORA_SPINE_INSET_Y: f32 = 4.0;
-/// The gap between a row's name and its value.
-pub const AURORA_TAG_GAP: f32 = 9.0;
-/// The watermark pill's leading zone — pad, gradient dot, gap — before the
-/// title (`aurora_wm_lead`), and the pill's right pad.
-pub const AURORA_WM_PAD_X: f32 = 8.0;
-pub const AURORA_DOT: f32 = 6.0;
-pub const AURORA_DOT_GAP: f32 = 7.0;
-/// One full sweep of the accent, ms — slower than Modern's 4.2 s: the mode's
-/// whole point is that nothing hurries.
-pub const AURORA_SWEEP_MS: f32 = 6000.0;
-/// Each row's phase offset along the sweep, in cycles.
-pub const AURORA_ROW_PHASE: f32 = 0.13;
-/// The spine's bottom stop is this far down the same sweep as its top one, so
-/// the gradient visibly flows downward instead of sitting still.
-pub const AURORA_SPINE_OFFSET_MS: f64 = 450.0;
-/// The mode's own pair, used while the header still carries the reference's
-/// wave defaults (see `aurora_stops`): the WebUI's cyan and violet.
-pub const AURORA_COLD: [f32; 3] = [77.0 / 255.0, 199.0 / 255.0, 255.0 / 255.0];
-pub const AURORA_WARM: [f32; 3] = [179.0 / 255.0, 112.0 / 255.0, 255.0 / 255.0];
+/// The card and pill fill: `.module-card`'s `--md-surface`.
+pub const SPINE_SURFACE: u32 = argb(18, 18, 20, 128);
+/// The module name and the pill's bright runs: `--md-on-surface`.
+pub const SPINE_TEXT: u32 = argb(230, 225, 229, 255);
+/// The accent — the spine line, the highlight lift and the FPS number:
+/// `--spine-color` / `--card-flow-color`.
+pub const SPINE_ACCENT: u32 = argb(208, 188, 255, 255);
+pub const SPINE_ACCENT_RGB: [f32; 3] = [208.0 / 255.0, 188.0 / 255.0, 255.0 / 255.0];
+/// The value chip's text: `--md-tertiary`.
+pub const SPINE_TERTIARY: u32 = argb(239, 184, 200, 255);
+/// The version text and every dimmed run: `--disabled-text`.
+pub const SPINE_MUTED: u32 = argb(102, 102, 102, 255);
+/// The value chip's fill: `.module-info`'s `rgba(0,0,0,.25)`.
+pub const SPINE_CHIP_BG: u32 = argb(0, 0, 0, 64);
+/// A card's 1 px shadow line in the gap below it — `.module-card`'s
+/// `box-shadow: 0 1px 3px rgba(0,0,0,.2)` at its narrowest.
+pub const SPINE_SHADOW_LINE: u32 = argb(0, 0, 0, 51);
+/// The status tile: the WebUI `.rail-mark`'s wash, rim and the ` | ` runs.
+pub const SPINE_TILE_A: u32 = argb(34, 211, 238, 56);
+pub const SPINE_TILE_B: u32 = argb(167, 139, 250, 56);
+pub const SPINE_TILE_RIM: u32 = argb(34, 211, 238, 89);
+/// The spine line's base track: `.spine-line`'s `rgba(255,255,255,.05)`.
+pub const SPINE_SPINE_BASE: u32 = argb(255, 255, 255, 13);
+/// The pill's ` | ` separators: the mockup's `.bar`, a quarter white.
+pub const SPINE_SEP: u32 = argb(255, 255, 255, 64);
+
+/// The card's corner radius, left corners only — the right edge sits square
+/// against the spine line.
+pub const SPINE_CARD_RADIUS: f32 = 4.0;
+/// The status tile's corner radius and the pill's own.
+pub const SPINE_PILL_TILE_RADIUS: f32 = 4.0;
+pub const SPINE_PILL_RADIUS: f32 = 10.0;
+/// The value chip's corner radius and horizontal padding.
+pub const SPINE_CHIP_RADIUS: f32 = 2.0;
+pub const SPINE_CHIP_PAD: f32 = 3.0;
+/// `itemHeight`'s extra over the line height: the card's `padding: 3px 8px`.
+pub const SPINE_ITEM_EXTRA: f32 = 6.0;
+/// The gap between two cards: `gap: 1px` — the near-merged column.
+pub const SPINE_MODULE_SPACING: f32 = 1.0;
+/// The right margin the list is flushed to: the design's 20 px plus the 3 px
+/// the spine line occupies, so the cards' right edge lands on the spine's
+/// left edge exactly.
+pub const SPINE_MARGIN_RIGHT: f32 = 23.0;
+/// The pill's inset from the edge it hangs off, and the list's top line: the
+/// design's `top: 24px`.
+pub const SPINE_MARGIN_X: f32 = 24.0;
+pub const SPINE_TOP_Y: f32 = 24.0;
+/// The card's inner padding: `padding: 3px 8px`.
+pub const SPINE_PAD_X: f32 = 8.0;
+pub const SPINE_PAD_Y: f32 = 3.0;
+/// The width of the spine line itself: `.spine-line`'s 3 px.
+pub const SPINE_W: f32 = 3.0;
+/// The gap between a row's name and its value chip: the chip's `margin-left`.
+pub const SPINE_TAG_GAP: f32 = 6.0;
+/// The status pill's leading zone — pad, tile, gap — before the title
+/// (`spine_wm_lead`), and the pill's right pad.
+pub const SPINE_WM_PAD_X: f32 = 10.0;
+pub const SPINE_TILE: f32 = 14.0;
+pub const SPINE_TILE_GAP: f32 = 6.0;
+/// The breathing wash: `.module-card::after`'s 4 s cycle, its 0.12 ceiling,
+/// and the phase each row sits at along it.
+pub const SPINE_FLOW_MS: f64 = 4000.0;
+pub const SPINE_FLOW_MAX: f32 = 0.12;
+pub const SPINE_FLOW_ROW_PHASE: f64 = 0.13;
+/// The spine line's energy pulse: `.spine-line::after`'s 1.5 s `flowUp`, a
+/// 30%-tall segment whose top edge travels from 90% of the column down at 0
+/// to −45% at 1 (the keyframes' `translateY(300%) → translateY(-150%)`
+/// solved for the segment's top edge), drawn white-headed and violet-tailed.
+pub const SPINE_PULSE_MS: f64 = 1500.0;
+pub const SPINE_PULSE_H: f32 = 0.30;
+pub const SPINE_PULSE_FROM: f32 = 0.90;
+pub const SPINE_PULSE_TRAVEL: f32 = 1.35;
+pub const SPINE_PULSE_ALPHA: f32 = 0.90;
+/// The entrance cascade: the design's `cardIn` — 10 px down, 350 ms, each row
+/// 45 ms behind the one above it. `SPINE_SLIDE_RATE` is `progress += dt·rate`
+/// for one 350 ms drop; the stagger is that 45 ms in progress units.
+pub const SPINE_CASCADE_DROP: f32 = 10.0;
+pub const SPINE_SLIDE_RATE: f32 = 1.0 / 0.35;
+pub const SPINE_STAGGER: f32 = 0.045 * (1.0 / 0.35);
+/// The version run in the status pill, off the crate's own version.
+pub const VERSION: &str = concat!("v", env!("CARGO_PKG_VERSION"));
 
 /// The Default mode's wave colours, as `ModuleConfig.h:65-66` (and
 /// `ArrayList.h:18-19`) spells them: `78,86,107` → `120,146,214`.
@@ -427,19 +461,17 @@ pub struct Metrics {
     pub modern_rect_w: f32,
     pub modern_pad_x: f32,
     pub modern_pad_y: f32,
-    /// Aurora's own numbers, none of them sourced: the glass card's radius and
-    /// padding, the floating spine, the tag gap, and the watermark's leading
-    /// zone (pad, dot, gap).
-    pub aurora_card_radius: f32,
-    pub aurora_pad_left: f32,
-    pub aurora_pad_right: f32,
-    pub aurora_spine_w: f32,
-    pub aurora_spine_inset_x: f32,
-    pub aurora_spine_inset_y: f32,
-    pub aurora_tag_gap: f32,
-    pub aurora_wm_pad_x: f32,
-    pub aurora_dot: f32,
-    pub aurora_dot_gap: f32,
+    /// Aurora's own numbers — the user's Spine design's, none of them sourced:
+    /// the left-rounded card's radius and padding, the spine line's width, the
+    /// value chip's gap, and the status pill's leading zone (pad, tile, gap).
+    pub spine_card_radius: f32,
+    pub spine_pad_x: f32,
+    pub spine_pad_y: f32,
+    pub spine_w: f32,
+    pub spine_tag_gap: f32,
+    pub spine_wm_pad_x: f32,
+    pub spine_tile: f32,
+    pub spine_tile_gap: f32,
     /// The mode's right margin (HUD.cpp:610).
     pub right_margin: f32,
     /// The watermark run's inset from the edge it hangs off (HUD.cpp:537).
@@ -473,9 +505,10 @@ impl Metrics {
         let modern = mode == Mode::Modern;
         let aurora = mode == Mode::Aurora;
 
-        let font_px = FONT_PX * s;
+        let font_px = if aurora { SPINE_FONT_PX * s } else { FONT_PX * s };
         // `lineHeight = max(tagSize, nameSize)` (HUD.cpp:472). Both faces are
-        // created at the source's single `fontSize`, so this is that size.
+        // created at the source's single `fontSize`, so this is that size —
+        // Aurora's faces are all created at the design's own 11 px instead.
         let line_height = font_px;
         let item_height = if rise_like {
             line_height + RISE_ITEM_EXTRA * s
@@ -484,7 +517,7 @@ impl Metrics {
         } else if modern {
             line_height + MODERN_ITEM_EXTRA * s
         } else if aurora {
-            line_height + AURORA_ITEM_EXTRA * s
+            line_height + SPINE_ITEM_EXTRA * s
         } else {
             line_height + DEFAULT_ITEM_EXTRA * s
         };
@@ -494,13 +527,13 @@ impl Metrics {
             scale: s,
             font_px,
             line_height,
-            top_y: TOP_Y * s,
+            top_y: if aurora { SPINE_TOP_Y * s } else { TOP_Y * s },
             module_spacing: if rise_like {
                 0.0
             } else if modern {
                 MODERN_MODULE_SPACING * s
             } else if aurora {
-                AURORA_MODULE_SPACING * s
+                SPINE_MODULE_SPACING * s
             } else {
                 MODULE_SPACING * s
             },
@@ -518,16 +551,14 @@ impl Metrics {
             modern_rect_w: MODERN_RECT_WIDTH * s,
             modern_pad_x: MODERN_PAD_X * s,
             modern_pad_y: MODERN_PAD_Y * s,
-            aurora_card_radius: AURORA_CARD_RADIUS * s,
-            aurora_pad_left: AURORA_PAD_LEFT * s,
-            aurora_pad_right: AURORA_PAD_RIGHT * s,
-            aurora_spine_w: AURORA_SPINE_W * s,
-            aurora_spine_inset_x: AURORA_SPINE_INSET_X * s,
-            aurora_spine_inset_y: AURORA_SPINE_INSET_Y * s,
-            aurora_tag_gap: AURORA_TAG_GAP * s,
-            aurora_wm_pad_x: AURORA_WM_PAD_X * s,
-            aurora_dot: AURORA_DOT * s,
-            aurora_dot_gap: AURORA_DOT_GAP * s,
+            spine_card_radius: SPINE_CARD_RADIUS * s,
+            spine_pad_x: SPINE_PAD_X * s,
+            spine_pad_y: SPINE_PAD_Y * s,
+            spine_w: SPINE_W * s,
+            spine_tag_gap: SPINE_TAG_GAP * s,
+            spine_wm_pad_x: SPINE_WM_PAD_X * s,
+            spine_tile: SPINE_TILE * s,
+            spine_tile_gap: SPINE_TILE_GAP * s,
             right_margin: if rise_like {
                 RISE_MARGIN_RIGHT * s
             } else if tesseract {
@@ -535,11 +566,11 @@ impl Metrics {
             } else if modern {
                 MODERN_MARGIN_RIGHT * s
             } else if aurora {
-                AURORA_MARGIN_RIGHT * s
+                SPINE_MARGIN_RIGHT * s
             } else {
                 DEFAULT_MARGIN_RIGHT * s
             },
-            watermark_x: WATERMARK_X * s,
+            watermark_x: if aurora { SPINE_MARGIN_X * s } else { WATERMARK_X * s },
             watermark_y: if rise_like {
                 TOP_Y * s + RISE_PAD_Y * s
             } else if tesseract {
@@ -549,13 +580,21 @@ impl Metrics {
                 // its panel: the card starts at `topY`, the text one pad lower.
                 TOP_Y * s + MODERN_PAD_Y * s
             } else if aurora {
-                // The same rule as Modern: the pill starts at `topY`, its text
-                // one vertical pad lower, centred in the 24 px card.
-                TOP_Y * s + AURORA_PAD_Y * s
+                // The same rule as Modern: the pill starts at `topY` — the
+                // design's 24 px line — its text one vertical pad lower.
+                SPINE_TOP_Y * s + SPINE_PAD_Y * s
             } else {
                 TOP_Y * s
             },
-            base_y: if tesseract { TESSERACT_BASE_Y * s } else { TOP_Y * s },
+            base_y: if tesseract {
+                TESSERACT_BASE_Y * s
+            } else if aurora {
+                // The design hangs the column and the pill off the same
+                // `top: 24px` line.
+                SPINE_TOP_Y * s
+            } else {
+                TOP_Y * s
+            },
             text_inset_x: if rise_like {
                 RISE_PAD_X * s
             } else if tesseract {
@@ -563,9 +602,9 @@ impl Metrics {
             } else if modern {
                 MODERN_PAD_X * s
             } else if aurora {
-                // A row's text clears the floating spine plus breathing room;
-                // the watermark title starts further in (see `aurora_wm_lead`).
-                AURORA_PAD_LEFT * s
+                // A row's text sits inside the card's `padding: 3px 8px`; the
+                // pill's title starts further in (see `spine_wm_lead`).
+                SPINE_PAD_X * s
             } else {
                 0.0
             },
@@ -576,7 +615,7 @@ impl Metrics {
             } else if modern {
                 MODERN_PAD_Y * s
             } else if aurora {
-                AURORA_PAD_Y * s
+                SPINE_PAD_Y * s
             } else {
                 0.0
             },
@@ -618,23 +657,26 @@ pub fn chip_corners(m: &Metrics) -> [f32; 4] {
         Mode::Vape => [m.vape_left_rounding, 0.0, 0.0, m.vape_left_rounding],
         Mode::Tesseract => [m.tesseract_chip_radius, 0.0, 0.0, m.tesseract_chip_radius],
         Mode::Modern => [m.modern_card_radius; 4],
-        Mode::Aurora => [m.aurora_card_radius; 4],
+        // Aurora's Spine cards are left-rounded too — their right edge sits
+        // square against the spine line, exactly as the design's
+        // `border-radius: 4px 0 0 4px` spells it.
+        Mode::Aurora => [m.spine_card_radius, 0.0, 0.0, m.spine_card_radius],
         _ => [0.0; 4],
     }
 }
 
 /// The chip the row sits on: Rise/VapeV4 `rgba(0,0,0,88)` over the whole row,
-/// Tesseract `rgba(25,25,30,240)`, Modern its own dark card, Aurora its glass
-/// card, Default none (`Option::None`). Aurora's chip is drawn by
-/// `paint_glass_card` — border, fill and top highlight — rather than by this
-/// colour alone; the value here is what `describe` reports and what a test
-/// can check.
+/// Tesseract `rgba(25,25,30,240)`, Modern its own dark card, Aurora its Spine
+/// card, Default none (`Option::None`). Aurora's card is drawn by
+/// `paint_spine_card` — the glass fill and its shadow line — rather than by
+/// this colour alone; the value here is what `describe` reports and what a
+/// test can check.
 pub fn chip_colour(m: &Metrics) -> Option<u32> {
     match m.mode {
         Mode::Rise | Mode::Vape => Some(RISE_BACKGROUND),
         Mode::Tesseract => Some(TESSERACT_BACKGROUND),
         Mode::Modern => Some(MODERN_BACKGROUND),
-        Mode::Aurora => Some(AURORA_BACKGROUND),
+        Mode::Aurora => Some(SPINE_SURFACE),
         Mode::Default => None,
     }
 }
@@ -669,9 +711,9 @@ pub fn tag_gap(m: &Metrics, space_w: f32) -> f32 {
     if m.mode == Mode::Tesseract {
         m.tesseract_gap
     } else if m.mode == Mode::Aurora {
-        // The mode's own 9 px — a space glyph is too tight between a bold name
-        // and a value for the glass card to read cleanly.
-        m.aurora_tag_gap
+        // The design's own 6 px — the value chip's `margin-left`, wider than
+        // a space glyph between a medium name and a pink chip.
+        m.spine_tag_gap
     } else {
         space_w
     }
@@ -689,9 +731,9 @@ pub fn box_width(m: &Metrics, layout_w: f32) -> f32 {
         // source quirk of the Rise panel rather than a rule.
         layout_w + m.modern_pad_x * 2.0 + m.modern_rect_w
     } else if m.mode == Mode::Aurora {
-        // The glass card's padding on both sides; the spine floats inside the
-        // left padding rather than adding to the box.
-        layout_w + m.aurora_pad_left + m.aurora_pad_right
+        // The card's `padding: 3px 8px` on both sides; the spine line is
+        // outside the card, inside the mode's right margin.
+        layout_w + m.spine_pad_x * 2.0
     } else {
         layout_w
     }
@@ -704,17 +746,60 @@ pub fn modern_panel_width(m: &Metrics, run_w: f32) -> f32 {
     run_w + m.modern_pad_x * 2.0 + m.modern_rect_w
 }
 
-/// The distance from an Aurora pill's left edge to its title, and the
-/// title-to-run anchor the painter and `describe` share: the pad, the gradient
-/// dot and the gap between them.
-pub fn aurora_wm_lead(m: &Metrics) -> f32 {
-    m.aurora_wm_pad_x + m.aurora_dot + m.aurora_dot_gap
+/// The distance from the status pill's left edge to its title, and the
+/// title-to-run anchor the painter and `describe` share: the pad, the 14 px
+/// tile and the gap between them.
+pub fn spine_wm_lead(m: &Metrics) -> f32 {
+    m.spine_wm_pad_x + m.spine_tile + m.spine_tile_gap
 }
 
-/// Aurora's watermark pill: the leading zone plus the run plus the right pad.
-/// No accent bar — the pill's accent is its dot.
-pub fn aurora_panel_width(m: &Metrics, run_w: f32) -> f32 {
-    aurora_wm_lead(m) + run_w + m.aurora_pad_right
+/// Aurora's status pill: the leading zone plus the run plus the right pad.
+/// No accent bar — the pill's accent is its tile.
+pub fn spine_pill_width(m: &Metrics, run_w: f32) -> f32 {
+    spine_wm_lead(m) + run_w + m.spine_wm_pad_x
+}
+
+/// The status pill's runs after the title, each with its face and colour: the
+/// version, then the nickname and the FPS count — the mockup's
+/// `DOPPEL v0.1-alpha | PING 14 | FPS 240` shape, with the header's own
+/// segments standing in for the PING the state does not carry yet. A segment
+/// with nothing to say is dropped, the same rule the other modes' watermark
+/// follows.
+pub fn spine_pill_runs(nickname: &str, fps: u32) -> Vec<(String, FontId, u32)> {
+    let mut runs = vec![(format!("{VERSION}"), FontId::SpineBody, SPINE_MUTED)];
+    if !nickname.is_empty() {
+        runs.push((SEGMENT_SEP.to_string(), FontId::SpineName, SPINE_SEP));
+        runs.push((nickname.to_string(), FontId::SpineName, SPINE_TEXT));
+    }
+    if fps != 0 {
+        runs.push((SEGMENT_SEP.to_string(), FontId::SpineName, SPINE_SEP));
+        runs.push((fps.to_string(), FontId::SpineTag, SPINE_ACCENT));
+        runs.push((" FPS".to_string(), FontId::SpineName, SPINE_TEXT));
+    }
+    runs
+}
+
+/// The pixel width of `spine_pill_runs` — the run the pill's width and the
+/// painter's cursor are both built from, so they cannot drift.
+pub fn spine_pill_run_w(text: &TextEngine, nickname: &str, fps: u32) -> f32 {
+    spine_pill_runs(nickname, fps)
+        .iter()
+        .map(|(segment, id, _)| text.measure(*id, segment) as f32)
+        .sum()
+}
+
+/// The watermark run's width in the caller's mode: Aurora's status pill
+/// measures its own run (version + segments in the chip faces), every other
+/// mode the source's `DOPPEL | nick | FPS` run in the mode's faces. The dump
+/// and the live window both anchor off this, so the printed numbers and the
+/// drawn frame cannot disagree.
+pub fn watermark_run_width(text: &TextEngine, cfg: &Config) -> f32 {
+    if cfg.mode == Mode::Aurora {
+        spine_pill_run_w(text, &cfg.nickname, cfg.fps)
+    } else {
+        let (_, _, run_w) = measure_watermark(text, cfg.mode.name_font(), &cfg.nickname, cfg.fps);
+        run_w
+    }
 }
 
 /// The Rise-like watermark panel's width (HUD.cpp:544). The source computes
@@ -1017,41 +1102,6 @@ pub fn modern_rgb(millis: f64, index: f32) -> [f32; 3] {
     ]
 }
 
-/// The two colours an Aurora frame actually sweeps between. The header's
-/// primary/secondary are the user's choice — but they arrive holding the
-/// reference's muted wave defaults bit-for-bit when the user has never touched
-/// them, and an Aurora built on `78,86,107 → 120,146,214` would be a grey-blue
-/// mode with no aurora in it. So the untouched defaults are treated as "no
-/// opinion" and the mode's own cold/warm pair is used instead; the moment the
-/// user picks their own colours in the WebUI they are honoured exactly.
-pub fn aurora_stops(primary: [f32; 3], secondary: [f32; 3]) -> ([f32; 3], [f32; 3]) {
-    let same = |a: [f32; 3], b: [f32; 3]| {
-        a.iter().zip(b.iter()).all(|(x, y)| (x - y).abs() < 0.5 / 255.0)
-    };
-    if same(primary, DEFAULT_PRIMARY) && same(secondary, DEFAULT_SECONDARY) {
-        (AURORA_COLD, AURORA_WARM)
-    } else {
-        (primary, secondary)
-    }
-}
-
-/// Aurora's accent: the two stops on a 6 s cosine, walked down the rows so the
-/// column reads as one gradient drifting along itself. Pure in `millis`, like
-/// every accent in this file — the review dump stays reproducible.
-pub fn aurora_rgb(millis: f64, index: f32, primary: [f32; 3], secondary: [f32; 3]) -> [f32; 3] {
-    let (cold, warm) = aurora_stops(primary, secondary);
-    let phase = 0.5
-        - 0.5 * ((millis / AURORA_SWEEP_MS as f64 + index as f64 * AURORA_ROW_PHASE as f64)
-            * std::f64::consts::TAU)
-            .cos();
-    let t = phase as f32;
-    [
-        cold[0] + (warm[0] - cold[0]) * t,
-        cold[1] + (warm[1] - cold[1]) * t,
-        cold[2] + (warm[2] - cold[2]) * t,
-    ]
-}
-
 // ── per-frame inputs ────────────────────────────────────────────────────────
 
 /// Everything the HUD needs that is not the published state: which mode, how big,
@@ -1122,13 +1172,18 @@ impl Default for Config {
 }
 
 /// The accent colour of row `index`.
+///
+/// Aurora's Spine design has no sweep: its names are fixed `#E6E1E5`, its
+/// values pink chips, and the one accent — the design's violet `#D0BCFF` — is
+/// a constant. The clock still drives the mode (the spine's pulse and the
+/// cards' breathing wash), just not through here.
 pub fn accent(cfg: &Config, stamp: Stamp, index: usize) -> [f32; 3] {
     match cfg.mode {
         Mode::Rise => rise_rgb(stamp.seconds, index as f32),
         Mode::Vape => vape_rgb(stamp.seconds, index as f32),
         Mode::Tesseract => tesseract_rgb(stamp.millis, index as f32),
         Mode::Modern => modern_rgb(stamp.millis, index as f32),
-        Mode::Aurora => aurora_rgb(stamp.millis, index as f32, cfg.primary, cfg.secondary),
+        Mode::Aurora => SPINE_ACCENT_RGB,
         Mode::Default => {
             if cfg.wave {
                 wave_rgb(
@@ -1383,9 +1438,15 @@ impl Anim {
     /// frame's step, exactly as the source's `m_SlideProgress[mod.name]` does, and
     /// nothing here fades opacity — the entrance is the source's slide, unchanged.
     pub fn progress(&mut self, name: &str, dt: f32) -> f32 {
+        self.progress_at(name, dt, SLIDE_RATE)
+    }
+
+    /// The same walk at a caller's rate — Aurora's cascade is the design's own
+    /// 350 ms drop, not the source's `dt * 6`.
+    pub fn progress_at(&mut self, name: &str, dt: f32, rate: f32) -> f32 {
         let progress = self.slide.entry(name.to_string()).or_insert(0.0);
         if *progress < 1.0 {
-            *progress = (*progress + dt * SLIDE_RATE).min(1.0);
+            *progress = (*progress + dt * rate).min(1.0);
         }
         *progress
     }
@@ -1455,6 +1516,9 @@ fn measure_rows(
 ) -> Vec<Row> {
     let name_font = cfg.mode.name_font();
     let space_w = text.measure(FontId::Body, " ") as f32;
+    // Aurora draws its values in the design's bold Roboto chip face; every
+    // other mode measures and draws its tags in the body face.
+    let tag_font = if cfg.mode == Mode::Aurora { FontId::SpineTag } else { FontId::Body };
     let mut rows: Vec<Row> = Vec::new();
 
     for (index, entry) in entries.iter().enumerate() {
@@ -1463,7 +1527,7 @@ fn measure_rows(
         }
         let name = if cfg.spaced { spaced_name(&entry.name) } else { entry.name.clone() };
         let name_w = text.measure(name_font, &name) as f32;
-        let tag_w = text.measure(FontId::Body, &entry.value) as f32;
+        let tag_w = text.measure(tag_font, &entry.value) as f32;
         let has_tag = !entry.value.is_empty();
         // The source measures the sort key with the space glyph for every mode and
         // only then re-measures Tesseract's layout with its own 4 px gap
@@ -1472,9 +1536,9 @@ fn measure_rows(
         let layout_w = if cfg.mode == Mode::Tesseract {
             name_w + if has_tag { m.tesseract_gap + tag_w } else { 0.0 }
         } else if cfg.mode == Mode::Aurora {
-            // Aurora measures with its own 9 px gap for the box it will draw;
-            // the wedge sort stays on the space glyph like every other mode.
-            name_w + if has_tag { m.aurora_tag_gap + tag_w } else { 0.0 }
+            // Aurora measures with its own 6 px chip gap for the box it will
+            // draw; the wedge sort stays on the space glyph like every other mode.
+            name_w + if has_tag { m.spine_tag_gap + tag_w } else { 0.0 }
         } else {
             sort_w
         };
@@ -1603,8 +1667,14 @@ fn paint_watermark(
 ) {
     let m = frame.m;
     let name_font = frame.cfg.mode.name_font();
-    let (title_w, middle_w, run_w) =
+    let (title_w, middle_w, mut run_w) =
         measure_watermark(text, name_font, &frame.cfg.nickname, frame.cfg.fps);
+    // Aurora's status pill carries a different run — version, nickname, FPS,
+    // each in its own face — so its width is measured from those runs.
+    let aurora = m.mode == Mode::Aurora;
+    if aurora {
+        run_w = spine_pill_run_w(text, &frame.cfg.nickname, frame.cfg.fps);
+    }
 
     let accent = watermark_accent(frame.cfg, frame.stamp);
     // The canvas is surface-local while the anchoring helpers are in screen
@@ -1619,7 +1689,6 @@ fn paint_watermark(
     let text_y = watermark_y(rect, m) - rect.y;
     let rise_like = m.mode.is_rise_like();
     let modern = m.mode == Mode::Modern;
-    let aurora = m.mode == Mode::Aurora;
 
     // The panel behind the run: the source's rectangular one for Rise/VapeV4, or
     // Modern's card, rounded on all four corners like its rows. Both are the same
@@ -1628,7 +1697,7 @@ fn paint_watermark(
     let panel_w = if modern {
         Some(modern_panel_width(m, run_w))
     } else if aurora {
-        Some(aurora_panel_width(m, run_w))
+        Some(spine_pill_width(m, run_w))
     } else if rise_like {
         Some(watermark_panel_width(m, title_w, middle_w))
     } else {
@@ -1637,31 +1706,59 @@ fn paint_watermark(
     if let Some(panel_w) = panel_w {
         let item_h = m.item_height.round().max(1.0) as u32;
         if aurora {
-            // The glass pill, and its brand mark: one small gradient dot, the
-            // only fixed shape in the run. Its two stops are the mode's pair.
-            paint_glass_card(
-                canvas,
+            // The status pill: the design's glass card at the pill's own 10 px
+            // radius, all four corners this time — nothing flushes against it.
+            canvas.fill_rounded_rect_corners(
                 box_x,
                 panel_y,
                 panel_w.round().max(1.0) as u32,
                 item_h,
-                m.aurora_card_radius,
-                frame.background,
+                [SPINE_PILL_RADIUS * m.scale; 4],
+                with_alpha(SPINE_SURFACE, frame.background),
             );
-            let dot = m.aurora_dot.round().max(1.0) as u32;
-            let dot_x = (box_x as f32 + m.aurora_wm_pad_x).round() as i32;
-            let dot_y = panel_y + ((item_h as f32 - dot as f32) / 2.0).round() as i32;
-            let (cold, warm) = aurora_stops(frame.cfg.primary, frame.cfg.secondary);
-            canvas.fill_rounded_rect_gradient(
-                dot_x,
-                dot_y,
-                dot,
-                dot,
-                [dot as f32 / 2.0; 4],
-                pack(cold, 1.0),
-                pack(warm, 1.0),
-                true,
+            // The brand tile: the WebUI `.rail-mark` — a cyan-violet wash
+            // inside a 1 px cyan rim — carrying the `ᗡD` mark vectorized:
+            // two geometric D's, the first mirrored (see `fill_letter_d`).
+            let tile = m.spine_tile.round().max(2.0) as u32;
+            let tile_x = box_x + m.spine_wm_pad_x.round() as i32;
+            let tile_y = panel_y + ((item_h as f32 - tile as f32) / 2.0).round() as i32;
+            let rim = (SPINE_PILL_TILE_RADIUS * m.scale).min(tile as f32 / 2.0);
+            canvas.fill_rounded_rect_corners(
+                tile_x,
+                tile_y,
+                tile,
+                tile,
+                [rim; 4],
+                with_alpha(SPINE_TILE_RIM, frame.background),
             );
+            if tile > 2 {
+                canvas.fill_rounded_rect_gradient(
+                    tile_x + 1,
+                    tile_y + 1,
+                    tile - 2,
+                    tile - 2,
+                    [(rim - 1.0).max(0.0); 4],
+                    with_alpha(SPINE_TILE_A, frame.background),
+                    with_alpha(SPINE_TILE_B, frame.background),
+                    true,
+                );
+                // The mark's proportions come from the mockup's 26×24 viewBox:
+                // two 8 px-radius D's filling an 11×10 zone inside the tile.
+                let d_h = (tile as f32 * 10.0 / 14.0).round().max(2.0) as u32;
+                let d_w = (tile as f32 * 5.0 / 14.0).round().max(1.0) as u32;
+                let pair_w = 2 * d_w as f32 + m.scale;
+                let gx = tile_x as f32 + (tile as f32 - pair_w) / 2.0;
+                let gy = tile_y as f32 + (tile as f32 - d_h as f32) / 2.0;
+                canvas.fill_letter_d(gx.round() as i32, gy.round() as i32, d_w, d_h, 0xFFFF_FFFF, true);
+                canvas.fill_letter_d(
+                    (gx + d_w as f32 + m.scale).round() as i32,
+                    gy.round() as i32,
+                    d_w,
+                    d_h,
+                    0xFFFF_FFFF,
+                    false,
+                );
+            }
         } else {
             let panel_colour = if modern { MODERN_BACKGROUND } else { RISE_BACKGROUND };
             canvas.fill_rounded_rect_corners(
@@ -1696,28 +1793,36 @@ fn paint_watermark(
         + if rise_like || modern {
             m.text_inset_x
         } else if aurora {
-            // The title clears the pad + dot + gap, not the row inset: the
-            // leading zone is wider than a row's spine zone.
-            aurora_wm_lead(m)
+            // The title clears the pad + tile + gap, not the row inset: the
+            // leading zone is wider than a row's card pad.
+            spine_wm_lead(m)
         } else {
             0.0
         })
         .round() as i32;
+    if aurora {
+        // The pill's runs, each in its own face and colour: the bold title,
+        // the grey version, then the header's segments (see
+        // `spine_pill_runs`) — the design's
+        // `DOPPEL v0.1-alpha | PING 14 | FPS 240` shape.
+        draw_shadowed(text, canvas, FontId::SpineTag, PRODUCT, text_x, text_y, SPINE_TEXT, frame.global);
+        let mut cursor = text_x as f32 + text.measure(FontId::SpineTag, PRODUCT) as f32;
+        for (segment, id, colour) in spine_pill_runs(&frame.cfg.nickname, frame.cfg.fps) {
+            draw_shadowed(text, canvas, id, &segment, cursor.round() as i32, text_y, colour, frame.global);
+            cursor += text.measure(id, &segment) as f32;
+        }
+        return;
+    }
     // Rise paints its title in `riseWatermarkTextColor` and leaves the accent to
     // the panel's bar (HUD.cpp:556); every other mode — Modern included — paints
-    // it in the accent. Aurora paints it near-white: the accent lives in the dot
-    // and the rows' spines, and a gradient title would fight them.
+    // it in the accent.
     let title_colour = if m.mode == Mode::Rise {
         RISE_WATERMARK_TEXT
-    } else if aurora {
-        AURORA_TEXT
     } else {
         pack(accent, 1.0)
     };
     let secondary = if rise_like {
         RISE_SECONDARY_TEXT
-    } else if aurora {
-        AURORA_MUTED
     } else {
         SECONDARY_TEXT
     };
@@ -1756,25 +1861,97 @@ fn paint_rows(
 ) -> bool {
     let m = frame.m;
     let mut moving = paint_exits(canvas, text, anim, frame, rect);
+    let aurora = m.mode == Mode::Aurora;
+
+    // The spine line: one continuous track down the column's right edge, the
+    // cards flush against it — the design's `.spine-line`, painted once per
+    // frame rather than per row. Its base is a 5% white track with a faint
+    // violet ambient, and the energy pulse rides it: a white-headed segment
+    // traveling bottom → top over 1.5 s, clipped to the column.
+    if aurora && !rows.is_empty() {
+        let spine_w = m.spine_w.round().max(1.0) as u32;
+        let flush = list_flush_x(rect, frame.cfg.position, m);
+        let spine_x = match frame.cfg.position {
+            Position::Right => flush,
+            Position::Left => flush - spine_w as i32,
+        };
+        let corners = match frame.cfg.position {
+            Position::Right => [0.0, m.spine_card_radius, m.spine_card_radius, 0.0],
+            Position::Left => [m.spine_card_radius, 0.0, 0.0, m.spine_card_radius],
+        };
+        let y0 = row_y(rect, m, 0) - rect.y;
+        let total =
+            ((rows.len() - 1) as f32 * row_pitch(m) + m.item_height).round().max(spine_w as f32);
+        canvas.fill_rounded_rect_corners(
+            spine_x,
+            y0,
+            spine_w,
+            total as u32,
+            corners,
+            with_alpha(SPINE_SPINE_BASE, frame.background),
+        );
+        canvas.fill_rounded_rect_corners(
+            spine_x,
+            y0,
+            spine_w,
+            total as u32,
+            corners,
+            with_alpha(pack(SPINE_ACCENT_RGB, 1.0), frame.background * 0.10),
+        );
+        let seg_h = (total * SPINE_PULSE_H).max(spine_w as f32);
+        let p = ((frame.stamp.millis / SPINE_PULSE_MS) % 1.0) as f32;
+        let top = total * (SPINE_PULSE_FROM - SPINE_PULSE_TRAVEL * p);
+        let c_top = top.max(0.0);
+        let c_bot = (top + seg_h).min(total);
+        if c_bot > c_top {
+            let alpha = frame.background * SPINE_PULSE_ALPHA;
+            canvas.fill_rounded_rect_gradient(
+                spine_x,
+                y0 + c_top.round() as i32,
+                spine_w,
+                (c_bot - c_top).round().max(1.0) as u32,
+                [spine_w as f32 / 2.0; 4],
+                with_alpha(0xFFFF_FFFF, alpha),
+                with_alpha(pack(SPINE_ACCENT_RGB, 1.0), alpha),
+                false,
+            );
+        }
+    }
 
     for (index, row) in rows.iter().enumerate() {
         // The source advances every listed row's progress every frame
         // (HUD.cpp:590-596); the first frame a row exists it takes one step in
         // from the edge, so it is never drawn at an unstepped position.
-        let progress = anim.progress(&row.key, frame.dt);
+        // Aurora's cascade walks at the design's own 350 ms rate, each row 45 ms
+        // behind the one above it — the offset is read-time, so the stored
+        // progress still reaches 1 and the row settles for good.
+        let progress = if aurora {
+            (anim.progress_at(&row.key, frame.dt, SPINE_SLIDE_RATE)
+                - index as f32 * SPINE_STAGGER)
+                .clamp(0.0, 1.0)
+        } else {
+            anim.progress(&row.key, frame.dt)
+        };
         if progress < 1.0 {
             moving = true;
         }
         // `eased = 1 - pow(1 - progress, 3)` (HUD.cpp:598).
         let eased = 1.0 - (1.0 - progress).powi(3);
         let target = row_target_x(rect, frame.cfg.position, m, row.box_w);
-        let origin = row_slide_origin(rect, frame.cfg.position, row.box_w);
+        // Aurora drops its rows from 10 px above their resting line — the
+        // design's `cardIn` — instead of sliding them in from the screen's edge.
+        let origin = if aurora { target } else { row_slide_origin(rect, frame.cfg.position, row.box_w) };
         let current = origin + (target - origin) * eased;
 
         // One rounding for the whole row, so the chip, its text and its bar cannot
         // disagree by a pixel about where the row is.
         let box_x = current.round() as i32 - rect.x;
-        let y = row_y(rect, m, index) - rect.y;
+        let y = row_y(rect, m, index) - rect.y
+            - if aurora {
+                (SPINE_CASCADE_DROP * m.scale * (1.0 - eased)).round() as i32
+            } else {
+                0
+            };
         let accent = pack(accent(frame.cfg, frame.stamp, index), 1.0);
 
         // The geometry `remember` just stored for this row: the same struct an
@@ -1815,23 +1992,39 @@ fn paint_exits(
         // reads as the reverse of the entrance's ease-out.
         let eased_out = t * t;
         let target = row_target_x(rect, frame.cfg.position, m, exit.shape.box_w);
-        let origin = row_slide_origin(rect, frame.cfg.position, exit.shape.box_w);
-        let current = origin + (target - origin) * eased_in * (1.0 - eased_out);
+        // Aurora's exit is the cascade in reverse: the row rises back up the
+        // 10 px it dropped in from while it fades.
+        let current = if m.mode == Mode::Aurora {
+            target
+        } else {
+            let origin = row_slide_origin(rect, frame.cfg.position, exit.shape.box_w);
+            origin + (target - origin) * eased_in * (1.0 - eased_out)
+        };
         let box_x = current.round() as i32 - rect.x;
-        let y = row_y(rect, m, exit.shape.slot) - rect.y;
+        // The exit is the cascade in reverse: the row rises back up the 10 px
+        // it dropped in from — `origin + (target − origin) · eased_in ·
+        // (1 − eased_out)` solved for the offset from the resting line, which
+        // is `drop · (1 − eased_in · (1 − eased_out))`: it starts exactly where
+        // the entrance left the row and ends at the origin, 10 px up.
+        let y = row_y(rect, m, exit.shape.slot) - rect.y
+            - if m.mode == Mode::Aurora {
+                (SPINE_CASCADE_DROP * m.scale * (1.0 - eased_in * (1.0 - eased_out))).round() as i32
+            } else {
+                0
+            };
         let accent = pack(accent(frame.cfg, frame.stamp, exit.shape.slot), 1.0);
         paint_row(canvas, text, frame, &exit.shape, box_x, y, 1.0 - t, accent);
     }
     true
 }
 
-/// One Aurora card — row or watermark pill, the same three draws so the two
-/// cannot drift: the 1 px slate border, the glass fill inset inside it, and the
-/// 1 px highlight along the fill's top edge. `alpha` is the background
-/// multiplier the frame carries (the overlay's fade times the configured
-/// opacity); the border, fill and highlight share it, and the text is never
-/// dimmed by it.
-fn paint_glass_card(
+/// One Aurora Spine card: the glass fill rounded on its left corners only —
+/// the right edge sits square against the spine line — plus the 1 px shadow
+/// line in the gap below it, the design's `box-shadow: 0 1px 3px` at the
+/// width a 1 px gap leaves it. `alpha` is the background multiplier the frame
+/// carries (the overlay's fade times the configured opacity); the fill and
+/// the shadow share it, and the text is never dimmed by it.
+fn paint_spine_card(
     canvas: &mut Canvas,
     x: i32,
     y: i32,
@@ -1840,19 +2033,9 @@ fn paint_glass_card(
     radius: f32,
     alpha: f32,
 ) {
-    canvas.fill_rounded_rect_corners(x, y, w, h, [radius; 4], with_alpha(AURORA_BORDER, alpha));
-    let inner_w = w.saturating_sub(2);
-    let inner_h = h.saturating_sub(2);
-    canvas.fill_rounded_rect_corners(
-        x + 1,
-        y + 1,
-        inner_w,
-        inner_h,
-        [(radius - 1.0).max(0.0); 4],
-        with_alpha(AURORA_BACKGROUND, alpha),
-    );
-    if inner_w > 0 {
-        canvas.fill_rect(x + 1, y + 1, inner_w, 1, with_alpha(AURORA_TOP_HIGHLIGHT, alpha));
+    canvas.fill_rounded_rect_corners(x, y, w, h, [radius, 0.0, 0.0, radius], with_alpha(SPINE_SURFACE, alpha));
+    if h > 2 {
+        canvas.fill_rect(x, y + h as i32, w, 1, with_alpha(SPINE_SHADOW_LINE, alpha));
     }
 }
 
@@ -1882,52 +2065,42 @@ fn paint_row(
     // row reads as its labels going red and a decaying `flash` walks them back.
     // Nothing is filled for it — no wash above the card, the accent bar or the
     // glyphs' shadow, and no change to the row's geometry or background.
-    // Aurora's name base is the near-white constant instead of the accent: the
-    // accent lives in the spine, and a name that fights it would read as noise.
-    let name_base = if m.mode == Mode::Aurora { AURORA_TEXT } else { accent };
+    // Aurora's name base is the design's fixed on-surface colour instead of
+    // the accent: the accent lives in the spine line and the chips, and a name
+    // that fights them would read as noise.
+    let name_base = if m.mode == Mode::Aurora { SPINE_TEXT } else { accent };
     let name_colour = flash_tint(name_base, strength);
 
     // The chip: Rise/VapeV4 fill the whole row, Tesseract its own dark one,
-    // Modern its rounded card, Aurora its glass card, Default nothing at all
+    // Modern its rounded card, Aurora its Spine card, Default nothing at all
     // (HUD.cpp:619-634).
     if m.mode == Mode::Aurora {
-        paint_glass_card(
+        // The Spine card: left-rounded glass flush against the column's spine
+        // line (painted once per frame in `paint_rows`), plus the breathing
+        // wash — the design's `flowTopBottom` read as a per-card pulse, each
+        // row a step out of phase over the 4 s cycle.
+        paint_spine_card(
             canvas,
             box_x,
             y,
             box_w,
             item_h,
-            m.aurora_card_radius,
+            m.spine_card_radius,
             frame.background * fade,
         );
-        // The spine: the row's gradient accent. Its top stop is the row's live
-        // accent and its bottom one `AURORA_SPINE_OFFSET_MS` further down the
-        // same sweep, so the gradient visibly flows downward. It floats inside
-        // the card's padding and never touches the border.
-        let spine_w = m.aurora_spine_w.round().max(1.0) as u32;
-        let spine_x = (box_x as f32 + m.aurora_spine_inset_x).round() as i32;
-        let spine_y = y + m.aurora_spine_inset_y.round() as i32;
-        let spine_h =
-            (m.item_height - 2.0 * m.aurora_spine_inset_y).round().max(spine_w as f32) as u32;
-        let bottom = pack(
-            aurora_rgb(
-                frame.stamp.millis + AURORA_SPINE_OFFSET_MS,
-                shape.slot as f32,
-                frame.cfg.primary,
-                frame.cfg.secondary,
-            ),
-            1.0,
-        );
-        canvas.fill_rounded_rect_gradient(
-            spine_x,
-            spine_y,
-            spine_w,
-            spine_h,
-            [spine_w as f32 / 2.0; 4],
-            accent,
-            bottom,
-            false,
-        );
+        let phase = frame.stamp.millis / SPINE_FLOW_MS + shape.slot as f64 * SPINE_FLOW_ROW_PHASE;
+        let flow = 0.5 - 0.5 * (phase * std::f64::consts::TAU).cos();
+        let wash = SPINE_FLOW_MAX * flow as f32;
+        if wash > 0.004 {
+            canvas.fill_rounded_rect_corners(
+                box_x,
+                y,
+                box_w,
+                item_h,
+                chip_corners(m),
+                with_alpha(pack(SPINE_ACCENT_RGB, 1.0), frame.background * fade * wash),
+            );
+        }
     } else {
         if let Some(colour) = chip_colour(m) {
             canvas.fill_rounded_rect_corners(
@@ -1970,6 +2143,21 @@ fn paint_row(
     if shape.tag_w > 0.0 {
         let space_w = text.measure(FontId::Body, " ") as f32;
         let tag_x = (text_x as f32 + shape.name_w + tag_gap(m, space_w)).round() as i32;
+        // Aurora's value sits in the design's dark chip: a 2 px-rounded
+        // lozenge one line tall, a chip pad wider than the run on each side.
+        if m.mode == Mode::Aurora {
+            let chip_pad = (SPINE_CHIP_PAD * m.scale).round() as i32;
+            let chip_w = shape.tag_w.round() as u32 + 2 * chip_pad as u32;
+            let chip_h = m.line_height.round().max(1.0) as u32;
+            canvas.fill_rounded_rect_corners(
+                tag_x - chip_pad,
+                text_y,
+                chip_w,
+                chip_h,
+                [SPINE_CHIP_RADIUS * m.scale; 4],
+                with_alpha(SPINE_CHIP_BG, frame.background * fade),
+            );
+        }
         // The value is tinted by the same strength as the name, from the colour
         // this mode gives that row's tag — so "the labels go red" is one rule, not
         // two, and the two runs cannot disagree about how far into the pulse the
@@ -1979,13 +2167,14 @@ fn paint_row(
             if shape.highlight {
                 accent
             } else {
-                AURORA_MUTED
+                SPINE_TERTIARY
             }
         } else {
             tag_colour(m, shape.flash != 0, accent)
         };
         let tag = flash_tint(tag_base, strength);
-        draw_shadowed(text, canvas, FontId::Body, &shape.value, tag_x, text_y, tag, text_alpha);
+        let tag_font = if m.mode == Mode::Aurora { FontId::SpineTag } else { FontId::Body };
+        draw_shadowed(text, canvas, tag_font, &shape.value, tag_x, text_y, tag, text_alpha);
     }
 }
 
@@ -2050,7 +2239,13 @@ pub fn describe(text: &TextEngine, entries: &[Entry], cfg: &Config, canvas_w: u3
         m.rise_pad_x,
         m.rise_pad_y,
         hex(SHADOW),
-        if m.mode.is_rise_like() { hex(RISE_SECONDARY_TEXT) } else { hex(SECONDARY_TEXT) },
+        if m.mode.is_rise_like() {
+            hex(RISE_SECONDARY_TEXT)
+        } else if m.mode == Mode::Aurora {
+            hex(SPINE_MUTED)
+        } else {
+            hex(SECONDARY_TEXT)
+        },
     ));
     out.push_str(&format!(
         "  background opacity {:.0}% of the fills only (text at 100%) | rows {} | work pulse {} \
@@ -2076,8 +2271,13 @@ pub fn describe(text: &TextEngine, entries: &[Entry], cfg: &Config, canvas_w: u3
 
     if cfg.watermark {
         let name_font = cfg.mode.name_font();
-        let (title_w, middle_w, run_w) =
+        let (title_w, middle_w, mut run_w) =
             measure_watermark(text, name_font, &cfg.nickname, cfg.fps);
+        // Aurora's status pill measures its own run (version + segments in the
+        // chip faces); the standard measure is the other modes'.
+        if m.mode == Mode::Aurora {
+            run_w = spine_pill_run_w(text, &cfg.nickname, cfg.fps);
+        }
         let box_x = watermark_x(rect, cfg.position, &m, run_w);
         out.push_str(&format!(
             "  watermark \"{}\" — {PRODUCT} {:.0}px + segments {:.0}px = {:.0}px at ({}, {}){}",
@@ -2090,7 +2290,7 @@ pub fn describe(text: &TextEngine, entries: &[Entry], cfg: &Config, canvas_w: u3
             if m.mode == Mode::Rise {
                 " title #E8E8E8 (riseWatermarkTextColor)"
             } else if m.mode == Mode::Aurora {
-                " title #ECF2F8 (AURORA_TEXT)"
+                " title in SPINE_TEXT, version in SPINE_MUTED, the FPS number in the accent"
             } else {
                 " title in the accent"
             },
@@ -2124,17 +2324,17 @@ pub fn describe(text: &TextEngine, entries: &[Entry], cfg: &Config, canvas_w: u3
             ));
         } else if m.mode == Mode::Aurora {
             out.push_str(&format!(
-                ", glass pill {:.0}x{:.0} at ({}, {}) {} radius {:.0} on all four corners, dot \
+                ", status pill {:.0}x{:.0} at ({}, {}) {} radius {:.0} on all four corners, tile \
                  {:.0}px at +{:.0}, lead {:.0}px, no bar",
-                aurora_panel_width(&m, run_w),
+                spine_pill_width(&m, run_w),
                 m.item_height,
                 box_x,
                 (rect.y as f32 + m.top_y).round() as i32,
-                hex(AURORA_BACKGROUND),
-                m.aurora_card_radius,
-                m.aurora_dot,
-                m.aurora_wm_pad_x,
-                aurora_wm_lead(&m),
+                hex(SPINE_SURFACE),
+                SPINE_PILL_RADIUS * m.scale,
+                m.spine_tile,
+                m.spine_wm_pad_x,
+                spine_wm_lead(&m),
             ));
         }
         out.push('\n');
@@ -2181,7 +2381,7 @@ pub fn describe(text: &TextEngine, entries: &[Entry], cfg: &Config, canvas_w: u3
                     if entry.highlight {
                         accent_now
                     } else {
-                        AURORA_MUTED
+                        SPINE_TERTIARY
                     }
                 } else {
                     tag_colour(&m, entry.flash != 0, accent_now)
@@ -2346,8 +2546,8 @@ mod tests {
         assert_eq!(chip_corners(&Metrics::new(Mode::Vape, 2.0)), [12.0, 0.0, 0.0, 12.0]);
         assert_eq!(
             chip_corners(&Metrics::new(Mode::Aurora, 1.0)),
-            [7.0; 4],
-            "Aurora rounds all four corners like Modern"
+            [4.0, 0.0, 0.0, 4.0],
+            "Aurora's Spine cards are left-rounded; the right edge is flush against the spine"
         );
 
         // The chip fills: the source's own background colours, and none in Default.
@@ -2355,7 +2555,7 @@ mod tests {
         assert_eq!(chip_colour(&Metrics::new(Mode::Rise, 1.0)), Some(RISE_BACKGROUND));
         assert_eq!(chip_colour(&Metrics::new(Mode::Vape, 1.0)), Some(RISE_BACKGROUND));
         assert_eq!(chip_colour(&Metrics::new(Mode::Tesseract, 1.0)), Some(TESSERACT_BACKGROUND));
-        assert_eq!(chip_colour(&Metrics::new(Mode::Aurora, 1.0)), Some(AURORA_BACKGROUND));
+        assert_eq!(chip_colour(&Metrics::new(Mode::Aurora, 1.0)), Some(SPINE_SURFACE));
         assert_eq!(TESSERACT_BACKGROUND >> 24, 240);
     }
 
@@ -2369,17 +2569,17 @@ mod tests {
         assert_eq!(box_width(&Metrics::new(Mode::Tesseract, 1.0), 100.0), 100.0 + 6.0 + 4.0 + 3.0);
         assert_eq!(
             box_width(&Metrics::new(Mode::Aurora, 1.0), 100.0),
-            100.0 + 11.0 + 9.0,
-            "Aurora's card padding, the spine floating inside it"
+            100.0 + 16.0,
+            "Aurora's `padding: 3px 8px` on both sides; the spine is outside the card"
         );
 
         // The panel the watermark sits in: the run plus the same padding and bar,
         // and no FPS term (this overlay has no frame counter).
         assert_eq!(watermark_panel_width(&Metrics::new(Mode::Rise, 1.0), 74.0, 33.0), 74.0 + 33.0 + 11.0);
         assert_eq!(
-            aurora_panel_width(&Metrics::new(Mode::Aurora, 1.0), 74.0),
-            8.0 + 6.0 + 7.0 + 74.0 + 9.0,
-            "pad + dot + gap before the run, then the right pad"
+            spine_pill_width(&Metrics::new(Mode::Aurora, 1.0), 74.0),
+            10.0 + 14.0 + 6.0 + 74.0 + 10.0,
+            "pad + tile + gap before the run, then the right pad"
         );
     }
 
@@ -2395,8 +2595,8 @@ mod tests {
         assert_eq!(tag_gap(&Metrics::new(Mode::Tesseract, 2.0), 4.0), 8.0, "and it scales");
         assert_eq!(
             tag_gap(&Metrics::new(Mode::Aurora, 1.0), space),
-            AURORA_TAG_GAP,
-            "Aurora's own 9 px, not the space glyph"
+            SPINE_TAG_GAP,
+            "Aurora's own 6 px chip gap, not the space glyph"
         );
     }
 
@@ -2997,86 +3197,80 @@ mod tests {
 
     // ── the exit animation (contract v3) ────────────────────────────────────
 
-    // ── Aurora (this port's own sixth mode) ──────────────────────────────
+    // ── Aurora — the user's own Spine design ─────────────────────────────
 
-    /// Aurora's numbers are its own, and they all scale together: a 24 px glass
-    /// card at pitch 28, the spine zone as the text inset, the pill's text one
-    /// pad below the top line.
+    /// Aurora's numbers are the design's, and they all scale together: an 11 px
+    /// face in a 17 px card at pitch 18, the card pad as the text inset, the
+    /// pill's text one pad below the design's 24 px top line.
     #[test]
     fn aurora_is_its_own_glass_geometry() {
         let m = Metrics::new(Mode::Aurora, 1.0);
-        assert_eq!(m.item_height, 16.0 + 8.0, "the tallest card yet");
-        assert_eq!(row_pitch(&m), 24.0 + 4.0);
-        assert_eq!(m.right_margin, 8.0);
-        assert_eq!(m.text_inset_x, 11.0, "the spine zone plus breathing room");
-        assert_eq!(m.text_inset_y, 4.0, "centred in the 24 px card");
-        assert_eq!(m.watermark_y, 4.0 + 4.0, "the pill's text, one pad in");
-        assert_eq!(m.aurora_card_radius, 7.0);
-        assert_eq!(m.aurora_tag_gap, 9.0);
-        assert_eq!(m.aurora_spine_w, 3.0);
+        assert_eq!(m.font_px, 11.0, "the design's own 11 px");
+        assert_eq!(m.top_y, 24.0, "the design's `top: 24px`");
+        assert_eq!(m.item_height, 11.0 + 6.0, "the card's `padding: 3px 8px` vertically");
+        assert_eq!(row_pitch(&m), 17.0 + 1.0, "1 px between the near-merged cards");
+        assert_eq!(m.right_margin, 23.0, "the design's 20 px + the spine's 3 px");
+        assert_eq!(m.text_inset_x, 8.0, "the card's horizontal pad");
+        assert_eq!(m.text_inset_y, 3.0, "the card's vertical pad");
+        assert_eq!(m.watermark_y, 24.0 + 3.0, "the pill's text, one pad in");
+        assert_eq!(m.watermark_x, 24.0, "the pill hangs 24 px off its edge");
+        assert_eq!(m.spine_card_radius, 4.0);
+        assert_eq!(m.spine_tag_gap, 6.0);
+        assert_eq!(m.spine_w, 3.0);
+        assert_eq!(m.spine_tile, 14.0);
 
         // And it all scales, like every other mode's numbers.
         let big = Metrics::new(Mode::Aurora, 2.0);
-        assert_eq!(big.item_height, 48.0);
-        assert_eq!(big.aurora_card_radius, 14.0);
-        assert_eq!(big.aurora_tag_gap, 18.0);
+        assert_eq!(big.item_height, 34.0);
+        assert_eq!(big.spine_card_radius, 8.0);
+        assert_eq!(big.spine_tag_gap, 12.0);
+        assert_eq!(big.spine_tile, 28.0);
     }
 
-    /// Aurora reads the bold face like Default, sweeps whatever the wave switch
+    /// Aurora reads the design's 500-weight face, is animated by its own
+    /// clock (the spine pulse and the breathing wash) whatever the wave switch
     /// says, and parses and prints like the other five.
     #[test]
-    fn aurora_names_are_bold_and_always_animated() {
-        assert!(matches!(Mode::Aurora.name_font(), FontId::Name), "bold names, like Default");
+    fn aurora_names_are_the_design_face_and_always_animated() {
+        assert!(matches!(Mode::Aurora.name_font(), FontId::SpineName), "Roboto Medium 11 px");
         let mut cfg = Config::default();
         cfg.mode = Mode::Aurora;
         cfg.wave = false;
-        assert!(accent_is_animated(&cfg), "the 6 s sweep runs regardless of the wave switch");
+        assert!(accent_is_animated(&cfg), "the pulse and the wash run regardless of the wave switch");
         assert_eq!(Mode::parse("aurora"), Ok(Mode::Aurora));
         assert_eq!(Mode::Aurora.label(), "aurora");
     }
 
-    /// The sweep: the mode's own pair while the header still carries the
-    /// reference defaults, the user's pair the moment they pick one, phase 0 on
-    /// the cold stop, half a cycle later on the warm one, and each row a step
-    /// along the way.
+    /// The Spine design has no sweep: the accent is the design's violet
+    /// constant, the same on every row at every clock reading.
     #[test]
-    fn aurora_sweeps_the_stops_over_six_seconds() {
+    fn aurora_accent_is_the_design_violet() {
         let mut cfg = Config::default();
         cfg.mode = Mode::Aurora;
-        let cold = accent(&cfg, Stamp { seconds: 0.0, millis: 0.0 }, 0);
-        let warm = accent(&cfg, Stamp { seconds: 3.0, millis: 3000.0 }, 0);
-        for i in 0..3 {
-            assert!(
-                (cold[i] - AURORA_COLD[i]).abs() < 1.0 / 255.0,
-                "phase 0 is the cold stop: {cold:?}"
-            );
-            assert!(
-                (warm[i] - AURORA_WARM[i]).abs() < 1.0 / 255.0,
-                "half a cycle later is the warm one: {warm:?}"
-            );
+        for stamp in [
+            Stamp { seconds: 0.0, millis: 0.0 },
+            Stamp { seconds: 3.0, millis: 3000.0 },
+        ] {
+            for index in [0, 1, 5] {
+                let got = accent(&cfg, stamp, index);
+                for i in 0..3 {
+                    assert!(
+                        (got[i] - SPINE_ACCENT_RGB[i]).abs() < 1.0 / 255.0,
+                        "row {index} at {stamp:?}: {got:?}"
+                    );
+                }
+            }
         }
-
-        // The per-row phase walks the sweep, so the column reads as a gradient.
-        let a = accent(&cfg, Stamp { seconds: 0.0, millis: 0.0 }, 0);
-        let b = accent(&cfg, Stamp { seconds: 0.0, millis: 0.0 }, 1);
-        assert!(a != b, "row 1 sits elsewhere on the sweep than row 0");
-
-        // A user's own colours are honoured over the built-in pair.
-        let mine = [0.1, 0.2, 0.3];
-        let theirs = [0.9, 0.8, 0.7];
-        let stops = aurora_stops(mine, theirs);
-        assert_eq!(stops.0, mine);
-        assert_eq!(stops.1, theirs);
     }
 
     /// The work pulse reaches Aurora like every other mode — it tints the row's
     /// text towards the mode red, from whatever colour the run would have used,
-    /// the white name included.
+    /// the fixed on-surface name included.
     #[test]
-    fn aurora_work_pulse_tints_the_white_name_towards_red() {
-        assert_eq!(flash_tint(AURORA_TEXT, 0.0), AURORA_TEXT, "no flash, no tint");
+    fn aurora_work_pulse_tints_the_name_towards_red() {
+        assert_eq!(flash_tint(SPINE_TEXT, 0.0), SPINE_TEXT, "no flash, no tint");
         assert_eq!(
-            flash_tint(AURORA_TEXT, 1.0) & 0x00FF_FFFF,
+            flash_tint(SPINE_TEXT, 1.0) & 0x00FF_FFFF,
             FLASH_TINT & 0x00FF_FFFF,
             "a full pulse is the mode red, whatever the base was"
         );

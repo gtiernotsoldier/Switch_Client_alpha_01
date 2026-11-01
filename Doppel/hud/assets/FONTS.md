@@ -74,3 +74,31 @@ Recovered from `E:\swl\OpenCommunity\deps\imgui\fonts\play_bold_font.h`.
 
 **Family / style the Rust side must use with `CreateFontW`:** `Play` / `Bold`
 
+## The Aurora mode's faces are Google's Roboto, Apache License 2.0
+
+The user handed over their own HUD design (the "Spine" mockup,
+`../scripts/hud_spine_mockup.html`) and its `@font-face` set is Roboto
+400/500/700, so those three faces travel in the binary the same way Play does.
+Roboto is **not** an OFL face: it is licensed under the **Apache License,
+Version 2.0** (Copyright 2011 Google, Inc. / Luke Roberts), with the licence
+and NOTICE carried in the upstream distribution
+(<https://github.com/googlefonts/roboto-classic>,
+<https://fonts.google.com/specimen/Roboto>). Apache-2.0 permits
+redistribution and embedding in a binary; if this overlay is ever distributed
+on its own, add the upstream `LICENSE.txt` beside this file.
+
+Downloaded from Google Fonts' specimen endpoint (the static TTFs behind
+`fonts.google.com`), 2026-11. The files are unmodified.
+
+| file | bytes | sha256 | used for |
+| ---- | ----- | ------ | -------- |
+| `Roboto-Regular.ttf` | 123720 | `dece7c71bbe61710787f0839c722c65e87355dd2eb4a823e6b5488121ff81e4b` | Aurora: the version run and every ordinary run (400) |
+| `Roboto-Medium.ttf` | 123904 | `4d984240cefb093a74300bcae4b5dbd49f700e0af501eaaa079c56aa64142d2f` | Aurora: module names and pill labels (500) |
+| `Roboto-Bold.ttf` | 124292 | `35757eaa996b3359022f47f164a67ee9eac04971af24c5b8fbd4b89e844ff190` | Aurora: value chips and the pill's bold runs (700) |
+
+**Family the Rust side must use with `CreateFontW`:** `Roboto` for the 400 and
+700 roles — and **`Roboto Medium`** for the 500 role, because that file's
+legacy `nameID 1` is the two-word family and GDI enumerates by it (asking
+`Roboto` for weight 500 would silently hand back the 400 face). All three are
+created at the design's own 11 px, not Play's 16.
+

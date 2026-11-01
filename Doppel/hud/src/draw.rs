@@ -240,6 +240,70 @@ impl Canvas {
         }
     }
 
+    /// Fill one glyph of the Aurora mode's brand mark — the WebUI rail-mark's
+    /// `ᗡD`: two letter D's, the first mirrored. A "D" here is a geometric
+    /// construction, not a font glyph: a stem bar on one side and a half-ellipse
+    /// bowl hinged against it, united per pixel by the nearer of the two
+    /// distances. `mirrored` flips the sampling coordinate, turning the left
+    /// glyph's bowl around. The mark is a dozen pixels tall at scale 1, so the
+    /// radial approximation of the ellipse distance is far below the glyph's
+    /// resolving power — the tiles it draws into are 14 px at scale 1.
+    pub fn fill_letter_d(&mut self, x: i32, y: i32, w: u32, h: u32, colour: u32, mirrored: bool) {
+        if w == 0 || h == 0 {
+            return;
+        }
+        let fw = w as f32;
+        let fh = h as f32;
+        // The stem: the left ~30% of the glyph, full height. The bowl: a half
+        // ellipse of radii (fw - stem, fh/2) centred on the stem's right edge
+        // at mid-height, existing only to the right of that edge.
+        let stem = (fw * 0.30).max(1.0);
+        let rx = (fw - stem).max(0.5);
+        let ry = fh / 2.0;
+
+        // One pixel past the box on every side, like the flat fill: the
+        // antialiased rim reaches into the neighbouring pixels.
+        let x0 = (x - 1).max(0);
+        let y0 = (y - 1).max(0);
+        let x1 = (x + w as i32 + 1).min(self.w as i32);
+        let y1 = (y + h as i32 + 1).min(self.h as i32);
+        if x0 >= x1 || y0 >= y1 {
+            return;
+        }
+
+        for py in y0..y1 {
+            for px in x0..x1 {
+                // Sample coordinate: a mirrored glyph is the same shape read
+                // right-to-left, so its u runs the other way.
+                let u = px as f32 + 0.5 - x as f32;
+                let u = if mirrored { fw - u } else { u };
+                let v = py as f32 + 0.5 - y as f32;
+
+                // Stem distance: a plain box SDF.
+                let du = (u - stem).max(-u).max(0.0);
+                let dv = (v - fh).max(-v).max(0.0);
+                let d_stem = (du * du + dv * dv).sqrt();
+
+                // Bowl distance: the radial approximation of the ellipse SDF —
+                // exact on the axes, a hair optimistic between them, invisible
+                // at this size. Left of the stem's edge the bowl does not exist.
+                let bu = u - stem;
+                let bv = v - ry;
+                let d_bowl = if bu >= 0.0 {
+                    let q = (bu / rx).powi(2) + (bv / ry).powi(2);
+                    (q.sqrt() - 1.0) * rx.min(ry)
+                } else {
+                    f32::INFINITY
+                };
+
+                let coverage = (0.5 - d_stem.min(d_bowl)).max(0.0).min(1.0);
+                if coverage > 0.0 {
+                    self.blend_pixel(px, py, colour, coverage);
+                }
+            }
+        }
+    }
+
     /// Source-over blend of one pixel with an explicit coverage. Both the source
     /// we build here and the destination already in the buffer are premultiplied,
     /// so the whole composite reduces to `src + dst * (1 - src_alpha)` on every

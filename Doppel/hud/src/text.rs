@@ -42,6 +42,20 @@
 // no notification path, so its ~670 KB of glyphs would ship for nothing. See
 // `assets/FONTS.md` for the licence each bundled face declares.
 //
+// **Roboto** — the Aurora mode's own family — travels the same way: the user
+// handed over their own HUD design (the "Spine" mockup) and it is drawn in
+// Roboto 400/500/700 at the design's 11 px, not in Play at the source's 16 px.
+// The three faces are Google's Roboto (Apache License 2.0, see `FONTS.md`) and
+// serve the Aurora roles only: module names and pill labels at weight 500,
+// everything ordinary at 400, the value chips and the pill's bold runs at 700.
+// One GDI trap the embedding must respect: the Medium face's `nameID 1` is
+// "Roboto Medium", not "Roboto" — the legacy naming model is what GDI
+// enumerates by, so the 500-weight role asks for that family directly. Asking
+// "Roboto" for weight 500 would hand back the 400 face and still pass a family
+// check. If the family cannot be registered or resolved, the three Aurora
+// roles fall back to Segoe UI at the same three weights, together, and the
+// log says so — the Play pair is untouched by any of it.
+//
 // Registration is `AddFontMemResourceEx`, then `CreateFontW` by family name — the
 // one Win32 path that uses a font without a file on disk and without a
 // third-party rasteriser. If either call fails, or if GDI resolves the request to
@@ -93,6 +107,32 @@ const PLAY_FAMILY: &str = "Play";
 /// closest a stock Windows install gets to Play's regular/bold pair.
 const UI_FACE: &str = "Segoe UI";
 
+/// The Aurora mode's own faces — the user's Spine design ships Roboto
+/// 400/500/700 (the mockup's `@font-face` set), embedded like Play. All three
+/// serve the Aurora roles only; the five ported modes never touch them.
+const ROBOTO_REGULAR_TTF: &[u8] = include_bytes!("../assets/Roboto-Regular.ttf");
+const ROBOTO_MEDIUM_TTF: &[u8] = include_bytes!("../assets/Roboto-Medium.ttf");
+const ROBOTO_BOLD_TTF: &[u8] = include_bytes!("../assets/Roboto-Bold.ttf");
+
+/// What the Regular and Bold files call themselves in their `name` table
+/// (`nameID 1`) — the string `CreateFontW` is matched against.
+const ROBOTO_FAMILY: &str = "Roboto";
+
+/// The Medium face's own family name. Google ships Roboto Medium with
+/// `nameID 1 = "Roboto Medium"` — the legacy model GDI enumerates by — so the
+/// 500-weight role must ask for that family directly (see the header note).
+const ROBOTO_MEDIUM_FAMILY: &str = "Roboto Medium";
+
+/// The Aurora mode's font size — the design's own 11 px, against the ported
+/// source's 16. `hud.rs` reads this as the Aurora mode's `lineHeight`, exactly
+/// as it reads `FONT_PX` for the other five modes.
+pub const SPINE_FONT_PX: f32 = 11.0;
+
+/// Roboto's middle weight, `CreateFontW`'s `FW_MEDIUM`: the weight the Spine
+/// design names its module names and pill labels (`font-weight: 500`). win.rs
+/// declares the weights the ported modes use; this one is Aurora's alone.
+const FW_MEDIUM: i32 = 500;
+
 /// The largest scale `--scale` accepts; the scratch above is sized for it.
 pub const MAX_SCALE: f32 = 4.0;
 /// The smallest scale `--scale` accepts.
@@ -107,6 +147,12 @@ pub enum FontId {
     Name,
     /// Tags, the watermark and every non-Default name — the source's regular Play.
     Body,
+    /// Aurora's module names and pill labels — Roboto Medium 11 px (500).
+    SpineName,
+    /// Aurora's ordinary runs — Roboto Regular 11 px (400).
+    SpineBody,
+    /// Aurora's value chips and the pill's bold runs — Roboto Bold 11 px (700).
+    SpineTag,
 }
 
 impl FontId {
@@ -115,6 +161,9 @@ impl FontId {
         match self {
             FontId::Name => 0,
             FontId::Body => 1,
+            FontId::SpineName => 2,
+            FontId::SpineBody => 3,
+            FontId::SpineTag => 4,
         }
     }
 }
@@ -126,24 +175,36 @@ pub struct FontSetup {
     /// True when the embedded Play faces registered *and* GDI resolved the two
     /// roles to that family.
     pub play: bool,
-    /// Faces `AddFontMemResourceEx` reported adding, summed over the two calls
-    /// (2 when both went in; 0 when the API is unavailable).
+    /// True when the embedded Roboto faces registered *and* GDI resolved the
+    /// three Aurora roles to their families. The three fall back together,
+    /// never one by one: a design drawn in Roboto gains nothing from a
+    /// substitution that only caught two of its weights.
+    pub roboto: bool,
+    /// Faces `AddFontMemResourceEx` reported adding, summed over the five calls
+    /// (5 when all went in; 0 when the API is unavailable).
     pub registered_faces: u32,
-    /// The family the two roles were created from: `Play`, or the substitute.
+    /// The family the two Play roles were created from: `Play`, or the substitute.
     pub family: &'static str,
-    /// The face name GDI selected for each role, `[Name, Body]`.
-    pub resolved: [String; 2],
+    /// The family the three Aurora roles were created from: `Roboto` (with the
+    /// 500 role from `Roboto Medium`), or the substitute.
+    pub spine_family: &'static str,
+    /// The face name GDI selected for each role,
+    /// `[Name, Body, SpineName, SpineBody, SpineTag]`.
+    pub resolved: [String; 5],
 }
 
 impl FontSetup {
     /// The one-line form both the log and `--dump` use.
     pub fn summary(&self) -> String {
         format!(
-            "{} ({} face(s) registered, family {}{})",
+            "{} ({} face(s) registered, family {}{}) — Aurora: {} (family {}{})",
             if self.play { "embedded Play" } else { "substitute Segoe UI" },
             self.registered_faces,
             self.family,
-            if self.play { "" } else { " — embedded faces unusable, fell back" }
+            if self.play { "" } else { " — embedded faces unusable, fell back" },
+            if self.roboto { "embedded Roboto" } else { "substitute Segoe UI" },
+            self.spine_family,
+            if self.roboto { "" } else { " — embedded faces unusable, fell back" }
         )
     }
 }
@@ -170,6 +231,9 @@ pub struct TextEngine {
     bits: *mut u8,
     name: Font,
     body: Font,
+    spine_name: Font,
+    spine_body: Font,
+    spine_tag: Font,
     /// The `AddFontMemResourceEx` handles. Never freed before the faces that were
     /// created from them: GDI keeps reading the registered bytes.
     memory_fonts: Vec<*mut c_void>,
@@ -232,7 +296,6 @@ impl TextEngine {
             // `AddFontMemResourceEx` requires of the buffer it is handed.
             let regular = register_memory_font(PLAY_REGULAR_TTF);
             let bold = register_memory_font(PLAY_BOLD_TTF);
-            let registered_faces = regular.1 + bold.1;
             let mut memory_fonts = vec![regular.0, bold.0];
             let usable = !regular.0.is_null() && !bold.0.is_null();
 
@@ -269,14 +332,82 @@ impl TextEngine {
                 }
             }
 
+            // The Aurora mode's three Roboto roles: registered and resolved as
+            // one family, and falling back as one family — a design drawn in
+            // Roboto gains nothing from a substitution that caught only two of
+            // its weights, so the trio stands or falls together. The 500 role
+            // asks for `Roboto Medium` by name (see the header note); the 400
+            // and 700 roles are the `Roboto` family at their weights.
+            let r_reg = register_memory_font(ROBOTO_REGULAR_TTF);
+            let r_med = register_memory_font(ROBOTO_MEDIUM_TTF);
+            let r_bold = register_memory_font(ROBOTO_BOLD_TTF);
+            let roboto_usable =
+                !r_reg.0.is_null() && !r_med.0.is_null() && !r_bold.0.is_null();
+            let spine_em = SPINE_FONT_PX * scale;
+            let spine_height = -(spine_em.round() as i32).max(1);
+            let mut spine_family = ROBOTO_FAMILY;
+            let mut roboto = roboto_usable;
+            let mut spine_name =
+                load_font(dc, ROBOTO_MEDIUM_FAMILY, spine_height, FW_MEDIUM, UI_PITCH_FAMILY, spine_em);
+            let mut spine_body =
+                load_font(dc, spine_family, spine_height, FW_NORMAL, UI_PITCH_FAMILY, spine_em);
+            let mut spine_tag =
+                load_font(dc, spine_family, spine_height, FW_BOLD, UI_PITCH_FAMILY, spine_em);
+            if roboto_usable
+                && !(exact_family(&spine_name.resolved, ROBOTO_MEDIUM_FAMILY)
+                    && exact_family(&spine_body.resolved, ROBOTO_FAMILY)
+                    && exact_family(&spine_tag.resolved, ROBOTO_FAMILY))
+            {
+                DeleteObject(spine_name.handle);
+                DeleteObject(spine_body.handle);
+                DeleteObject(spine_tag.handle);
+                spine_family = UI_FACE;
+                spine_name =
+                    load_font(dc, spine_family, spine_height, FW_SEMIBOLD, UI_PITCH_FAMILY, spine_em);
+                spine_body =
+                    load_font(dc, spine_family, spine_height, FW_NORMAL, UI_PITCH_FAMILY, spine_em);
+                spine_tag =
+                    load_font(dc, spine_family, spine_height, FW_BOLD, UI_PITCH_FAMILY, spine_em);
+                roboto = false;
+            }
+            if roboto {
+                memory_fonts.extend([r_reg.0, r_med.0, r_bold.0]);
+            } else {
+                for handle in [r_reg.0, r_med.0, r_bold.0] {
+                    if !handle.is_null() {
+                        RemoveFontMemResourceEx(handle);
+                    }
+                }
+            }
+
             let setup = FontSetup {
                 play,
-                registered_faces,
+                roboto,
+                registered_faces: regular.1 + bold.1 + r_reg.1 + r_med.1 + r_bold.1,
                 family,
-                resolved: [name.resolved.clone(), body.resolved.clone()],
+                spine_family,
+                resolved: [
+                    name.resolved.clone(),
+                    body.resolved.clone(),
+                    spine_name.resolved.clone(),
+                    spine_body.resolved.clone(),
+                    spine_tag.resolved.clone(),
+                ],
             };
 
-            Ok(TextEngine { dc, dib, prev, bits: bits as *mut u8, name, body, memory_fonts, setup })
+            Ok(TextEngine {
+                dc,
+                dib,
+                prev,
+                bits: bits as *mut u8,
+                name,
+                body,
+                spine_name,
+                spine_body,
+                spine_tag,
+                memory_fonts,
+                setup,
+            })
         }
     }
 
@@ -294,6 +425,9 @@ impl TextEngine {
         match id {
             FontId::Name => &self.name,
             FontId::Body => &self.body,
+            FontId::SpineName => &self.spine_name,
+            FontId::SpineBody => &self.spine_body,
+            FontId::SpineTag => &self.spine_tag,
         }
     }
 
@@ -456,7 +590,7 @@ impl Drop for TextEngine {
         unsafe {
             SelectObject(self.dc, GetStockObject(DEFAULT_GUI_FONT));
             SelectObject(self.dc, self.prev);
-            for font in [&self.name, &self.body] {
+            for font in [&self.name, &self.body, &self.spine_name, &self.spine_body, &self.spine_tag] {
                 if font.owned && !font.handle.is_null() {
                     DeleteObject(font.handle);
                 }
@@ -654,15 +788,50 @@ mod tests {
         assert_eq!(PLAY_FAMILY, "Play");
     }
 
-    /// Size budget: exactly two faces travel in the executable, and they are the
-    /// two the HUD draws with. Inter (~670 KB for the pair) belongs to the
-    /// reference's notification path, which this overlay does not have, and
-    /// embedding it would be the single biggest thing in the binary.
+    /// Size budget: five faces travel in the executable — the two the five
+    /// ported modes draw with and the three the Aurora mode draws with. Inter
+    /// (~670 KB for the pair) still does not belong here: the reference's
+    /// notification path is not this overlay's.
     #[test]
-    fn only_the_two_play_faces_are_embedded() {
-        let total = PLAY_REGULAR_TTF.len() + PLAY_BOLD_TTF.len();
-        assert_eq!(total, 171_084 + 170_232, "unexpected embedded font bytes: {total}");
-        assert!(total < 512 * 1024, "the embedded faces outgrew their budget: {total} bytes");
+    fn only_the_five_hud_faces_are_embedded() {
+        let play = PLAY_REGULAR_TTF.len() + PLAY_BOLD_TTF.len();
+        assert_eq!(play, 171_084 + 170_232, "unexpected embedded font bytes: {play}");
+        let roboto =
+            ROBOTO_REGULAR_TTF.len() + ROBOTO_MEDIUM_TTF.len() + ROBOTO_BOLD_TTF.len();
+        assert!(roboto > 300_000, "the Roboto faces look truncated: {roboto} bytes");
+        let total = play + roboto;
+        assert!(total < 1024 * 1024, "the embedded faces outgrew their budget: {total} bytes");
+    }
+
+    /// The three `include_bytes!` Roboto assets really are Roboto: a TrueType
+    /// sfnt whose name table carries the family each role asks for — and the
+    /// Medium file's legacy family is `Roboto Medium`, which is the string the
+    /// 500-weight role must match (see the header note).
+    #[test]
+    fn the_embedded_roboto_faces_are_roboto() {
+        const ROBOTO_UTF16BE: &[u8] =
+            &[0x00, 0x52, 0x00, 0x6F, 0x00, 0x62, 0x00, 0x6F, 0x00, 0x74, 0x00, 0x6F];
+        const ROBOTO_MEDIUM_UTF16BE: &[u8] = &[0x00, 0x52, 0x00, 0x6F, 0x00, 0x62, 0x00, 0x6F, 0x00, 0x74, 0x00, 0x6F, 0x00, 0x20, 0x00, 0x4D, 0x00, 0x65, 0x00, 0x64, 0x00, 0x69, 0x00, 0x75, 0x00, 0x6D];
+
+        for (label, bytes, family) in [
+            ("regular", ROBOTO_REGULAR_TTF, ROBOTO_UTF16BE),
+            ("medium", ROBOTO_MEDIUM_TTF, ROBOTO_MEDIUM_UTF16BE),
+            ("bold", ROBOTO_BOLD_TTF, ROBOTO_UTF16BE),
+        ] {
+            assert!(bytes.len() > 100_000, "the {label} face looks truncated");
+            assert_eq!(
+                &bytes[..4],
+                &[0x00, 0x01, 0x00, 0x00],
+                "the {label} face is not a TrueType sfnt"
+            );
+            assert!(
+                bytes.windows(family.len()).any(|w| w == family),
+                "the {label} face's name table does not carry its family"
+            );
+        }
+        assert_ne!(ROBOTO_REGULAR_TTF, ROBOTO_BOLD_TTF, "both weights are the same file");
+        assert_eq!(ROBOTO_FAMILY, "Roboto");
+        assert_eq!(ROBOTO_MEDIUM_FAMILY, "Roboto Medium");
     }
 
     /// The role → (family, weight) mapping the reference uses: bold for the module

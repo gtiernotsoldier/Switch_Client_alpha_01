@@ -1864,8 +1864,9 @@ fn run_dump(path: &str, args: &Args, runtime: Rect, source: RectSource) -> Resul
     // can be checked without running the windowed path. The position is the
     // *effective* one (`config.position`: `--position` or the header's bit), so the
     // printed anchors are the ones the dump above actually drew with.
-    let name_font = config.mode.name_font();
-    let (_, _, run_w) = hud::measure_watermark(&text, name_font, &config.nickname, config.fps);
+    // Aurora's status pill measures a run of its own (version + segments in
+    // the chip faces); every other mode the source's run in the mode's faces.
+    let mut run_w = hud::watermark_run_width(&text, &config);
     println!(
         "runtime window: {}x{} at ({}, {}) [{}] — the live layered window covers that rect, so the \
          watermark run ({}px) starts at ({}, {}) and the first row is flushed to the {} edge, \

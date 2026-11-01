@@ -102,6 +102,15 @@ pub const MARKUPS: &[(&str, &str)] = &[
     ("JumpStatus", r##"<path d="M4 20h16"/><path d="M7 20v-6M12 20V9M17 20v-9"/><path d="M12 4.5v4M9.9 6.6L12 4.5l2.1 2.1"/>"##),
     /* ---- UTILITY ---- */
     ("FastPlace", r##"<rect x="8.5" y="8.5" width="9" height="9" rx="1.5"/><path d="M16.5 5h4M18.5 3v4"/><path d="M3 9h3.5M3 13h3M3 17h3.5"/>"##),
+    /* ---- UI chrome (nav bar / settings header / row menu — not modules) ---- */
+    ("UI:home", r##"<path d="M4.5 10.5L12 4l7.5 6.5"/><path d="M6.5 9.3V20h11V9.3"/>"##),
+    ("UI:back", r##"<path d="M14.5 5L7.5 12l7 7"/>"##),
+    ("UI:refresh", r##"<path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3"/><path d="M19.8 3.6v4h-4"/>"##),
+    ("UI:web", r##"<rect x="3.5" y="5" width="17" height="14" rx="2.5"/><path d="M3.5 9.2h17"/><circle cx="6.4" cy="7.1" r="0.6"/><circle cx="8.8" cy="7.1" r="0.6"/>"##),
+    ("UI:hide", r##"<path d="M4.5 4.5l15 15"/><path d="M3.5 12c2.5-3.8 5.3-5.7 8.5-5.7s6 1.9 8.5 5.7c-2.5 3.8-5.3 5.7-8.5 5.7s-6-1.9-8.5-5.7z"/><circle cx="12" cy="12" r="1.1"/>"##),
+    ("UI:star", r##"<path d="M12 3.6l2.6 5.3 5.9 0.9-4.3 4.1 1 5.9-5.2-2.8-5.2 2.8 1-5.9-4.3-4.1 5.9-0.9z"/>"##),
+    ("UI:kebab", r##"<circle cx="12" cy="5.2" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="12" cy="18.8" r="1.2"/>"##),
+    ("UI:key", r##"<circle cx="8" cy="12" r="3.6"/><path d="M11.6 12H20.5M17.5 12v3.2M14.5 12v2.4"/>"##),
 ];
 
 /// Category glyphs (index.html `CAT_NAV`) plus the "All" tile.

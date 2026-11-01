@@ -422,31 +422,60 @@ const INJECT_RECT: Rect = Rect { left: CLIENT_W - PAD - BTN_W, top: BTN_Y, right
 const HINT_Y: i32 = BTN_Y + BTN_H + 14;
 const FOOTER_Y: i32 = HINT_Y + 26;
 
-// ── panel screen (the in-window GUI) layout ──
+// ── panel screen (the in-window GUI) layout — VAPE-style centre window ──────
+//
+// One nav row under the caption (‹ back · Home pill · sync · refresh/web/hide),
+// a text-only category rail with an active underline, one rounded CARD per
+// module (icon tile · name · inline summary · kebab · switch), and — when a
+// module is picked — a right-hand settings pane that pushes the list narrower
+// inside the same window (the reference's centre-window behaviour).
 
-const PANEL_HEAD_Y: i32 = 58;
-const PANEL_BACK_RECT: Rect = Rect { left: PAD, top: PANEL_HEAD_Y, right: PAD + 96, bottom: PANEL_HEAD_Y + 34 };
-const RAIL_W: i32 = 170;
-const PANEL_TOP: i32 = 104;
-const PANEL_BOTTOM: i32 = 474;
+const NAV_Y: i32 = TITLE_H + 8;
+const NAV_H: i32 = 30;
+const NAV_BACK_RECT: Rect = Rect { left: PAD, top: NAV_Y, right: PAD + 34, bottom: NAV_Y + NAV_H };
+const NAV_HOME_RECT: Rect =
+    Rect { left: NAV_BACK_RECT.right + 8, top: NAV_Y, right: NAV_BACK_RECT.right + 100, bottom: NAV_Y + NAV_H };
+// right-aligned cluster: [dot + status text] [refresh] [web] [Hide]
+const NAV_HIDE_RECT: Rect = Rect { left: CLIENT_W - PAD - 58, top: NAV_Y, right: CLIENT_W - PAD, bottom: NAV_Y + NAV_H };
+const NAV_WEB_RECT: Rect =
+    Rect { left: NAV_HIDE_RECT.left - 40, top: NAV_Y, right: NAV_HIDE_RECT.left - 6, bottom: NAV_Y + NAV_H };
+const NAV_REFRESH_RECT: Rect =
+    Rect { left: NAV_WEB_RECT.left - 40, top: NAV_Y, right: NAV_WEB_RECT.left - 6, bottom: NAV_Y + NAV_H };
+/// Right edge of the "synced Ns ago" status text.
+const NAV_STATUS_RIGHT: i32 = NAV_REFRESH_RECT.left - 10;
+
+const PANEL_TOP: i32 = NAV_Y + NAV_H + 12;
+const PANEL_BOTTOM: i32 = CLIENT_H - 30;
+
+const RAIL_W: i32 = 108;
 const RAIL_RECT: Rect = Rect { left: PAD, top: PANEL_TOP, right: PAD + RAIL_W, bottom: PANEL_BOTTOM };
-const MODS_RECT: Rect = Rect { left: PAD + RAIL_W + 12, top: PANEL_TOP, right: CLIENT_W - PAD, bottom: PANEL_BOTTOM };
 
-// One module card: a 40 px header — icon tile · name · mode chip · keybind
-// chip · chevron · switch — plus, when expanded, a drawer with one row per
-// option (the web panel's `.setting-item` / `.sub-options`, in GDI form).
-const PANEL_HDR_H: i32 = 40;
-const DRAWER_ROW_H: i32 = 30;
-const DRAWER_SLIDER_H: i32 = 48;
-const DRAWER_PAD: i32 = 8;
+const SETTINGS_W: i32 = 244;
+const SETTINGS_RECT: Rect =
+    Rect { left: CLIENT_W - PAD - SETTINGS_W, top: PANEL_TOP, right: CLIENT_W - PAD, bottom: PANEL_BOTTOM };
 
-// Rail footer: the web handoff and the hide button (the game is in front).
-const RAIL_WEB_RECT: Rect = Rect { left: PAD + 12, top: PANEL_BOTTOM - 76, right: PAD + RAIL_W - 12, bottom: PANEL_BOTTOM - 46 };
-const RAIL_HIDE_RECT: Rect = Rect { left: PAD + 12, top: PANEL_BOTTOM - 40, right: PAD + RAIL_W - 12, bottom: PANEL_BOTTOM - 10 };
+const LIST_LEFT: i32 = PAD + RAIL_W + 16;
+const LIST_RECT_SHUT: Rect =
+    Rect { left: LIST_LEFT, top: PANEL_TOP, right: CLIENT_W - PAD, bottom: PANEL_BOTTOM };
+const LIST_RECT_OPEN: Rect =
+    Rect { left: LIST_LEFT, top: PANEL_TOP, right: SETTINGS_RECT.left - 14, bottom: PANEL_BOTTOM };
 
-/// The expanded header sits on a slightly raised panel so an open card reads
-/// as open even before the drawer appears.
-const C_PANEL_EXP: u32 = theme::colorref(theme::mix(theme::BACKGROUND, theme::PANEL_ACTIVE, 40, 100));
+// One module card — 52 px tall with a 6 px gap between cards.
+const CARD_H: i32 = 52;
+const CARD_GAP: i32 = 6;
+// One settings-pane row: numeric options carry a slider track, choices a
+// full-width dropdown box, everything else a label + control line.
+const OPT_ROW_H: i32 = 30;
+const OPT_CHOICE_H: i32 = 34;
+const OPT_SLIDER_H: i32 = 48;
+const OPT_PAD: i32 = 10;
+/// Settings-pane content offset: header + keybind row + separator.
+const SET_ROWS_OFF: i32 = 88;
+
+/// Rail categories; index == PANEL_CAT value. "!FAV" is the local Favorites
+/// view (starred modules of any category); "" is every module.
+const RAIL_CATS: [&str; 8] = ["!FAV", "", "COMBAT", "PLAYER", "MOVEMENT", "VISUAL", "UTILITY", "MISC"];
+const RAIL_LABELS: [&str; 8] = ["Favorites", "All", "Combat", "Player", "Movement", "Visual", "Utility", "Misc"];
 
 // ── running / done layout ──
 
@@ -461,10 +490,6 @@ const CLOSE_RECT: Rect = Rect { left: CLIENT_W - PAD - BTN_W, top: ROW_BTN_Y, ri
 
 const STEP_Y0: i32 = 116;
 const STEP_DY: i32 = 32;
-
-/// Rail categories, index == PANEL_CAT value; index 0 = "All".
-const RAIL_CATS: [&str; 7] = ["", "COMBAT", "PLAYER", "MOVEMENT", "VISUAL", "UTILITY", "MISC"];
-const RAIL_LABELS: [&str; 7] = ["All", "Combat", "Player", "Movement", "Visual", "Utility", "Misc"];
 
 // ── intro / fade timeline (milliseconds) ────────────────────────────────────
 //
@@ -643,13 +668,20 @@ struct Row {
     tag: String,
 }
 
-/// Rail selection (index into RAIL_CATS) + pixel scroll of the module list
-/// (pixels, because expanded cards make rows uneven).
-static PANEL_CAT: AtomicU32 = AtomicU32::new(0);
+/// Rail selection (index into RAIL_CATS; 1 = All) + pixel scroll of the
+/// module list (pixels, because the cards scroll as one column).
+static PANEL_CAT: AtomicU32 = AtomicU32::new(1);
 static PANEL_SCROLL: AtomicI32 = AtomicI32::new(0);
 
-/// Which module card is expanded (the drawer with its options).
-static PANEL_EXPANDED: Mutex<Vec<String>> = Mutex::new(Vec::new());
+/// The module whose settings pane is open (its name), if any.
+static PANEL_SELECTED: Mutex<Option<String>> = Mutex::new(None);
+/// Pixel scroll of the settings pane's option list.
+static OPT_SCROLL: AtomicI32 = AtomicI32::new(0);
+/// Modules starred locally (the Favorites rail view). Client-side only —
+/// the agent has no say in these, they die with the process.
+static FAVORITES: Mutex<Vec<String>> = Mutex::new(Vec::new());
+/// The row kebab menu currently open, with its item rects.
+static POPUP: Mutex<Option<Popup>> = Mutex::new(None);
 /// The module waiting for the next keypress, if a keybind chip was clicked.
 static KB_CAPTURE: Mutex<Option<String>> = Mutex::new(None);
 /// Freshly-confirmed binds: (module, keyName, valid-until). One fence entry
@@ -689,6 +721,18 @@ struct Drag {
     vmax: f64,
     track: Rect,
     last_post: Instant,
+}
+
+/// The ⋮ menu of one module card: quick keybind + favorite, VAPE's kebab.
+/// Rects are client-space and baked at open time; any click outside closes it.
+#[derive(Clone)]
+struct Popup {
+    module: String,
+    key_label: String,
+    fav: bool,
+    rect: Rect,
+    bind: Rect,
+    star: Rect,
 }
 
 struct Shared {
@@ -888,12 +932,38 @@ fn spawn_scanner() {
 
 // ── in-window GUI (panel) workers ───────────────────────────────────────
 
+/// One immediate poll (nav-row refresh button): the same body as a poller
+/// tick, so the list never diverges from what the agent says.
+fn spawn_poll_now() {
+    let (url, token) = panel_url_token();
+    if url.is_empty() {
+        return;
+    }
+    std::thread::spawn(move || {
+        let ps = panel::state();
+        match panel::fetch_modules(&url, &token) {
+            Ok(mut list) => {
+                apply_keybind_fence(&mut list);
+                if !interacting() {
+                    panel::publish(list);
+                    *panel::lock(&ps.last_ok) = Some(Instant::now());
+                    panel::lock(&ps.last_err).clear();
+                }
+            }
+            Err(e) => *panel::lock(&ps.last_err) = e,
+        }
+        repaint();
+    });
+}
+
 /// Poll GET /api/modules while the panel screen is up, so the native list
 /// tracks what the game (or the web GUI) does to the modules. One thread for
 /// the whole process life; it idles whenever the panel is not on screen.
 /// While the user is mid-edit (slider drag, capture, a click) the answer is
 /// dropped instead of published — the same "hands off while interacting" rule
 /// the web panel applies, so a 1.5 s poll can never repaint an edit.
+/// A poll that arrives after the selected module vanished also closes the
+/// settings pane, so the pane can never show a module the game has unloaded.
 fn spawn_panel_poller() {
     static STARTED: AtomicBool = AtomicBool::new(false);
     if STARTED.swap(true, Ordering::SeqCst) {
@@ -913,6 +983,12 @@ fn spawn_panel_poller() {
                         apply_keybind_fence(&mut list);
                         if !interacting() {
                             panel::publish(list);
+                            // a vanished module closes its settings pane
+                            if let Some(sel) = lock(&PANEL_SELECTED).clone() {
+                                if !panel::lock(&ps.modules).iter().any(|m| m.name == sel) {
+                                    *lock(&PANEL_SELECTED) = None;
+                                }
+                            }
                             *panel::lock(&ps.last_ok) = Some(Instant::now());
                             panel::lock(&ps.last_err).clear();
                         }
@@ -1295,8 +1371,8 @@ unsafe fn draw_title_bar(hdc: Hdc) {
 }
 
 fn rail_item_rect(i: usize) -> Rect {
-    let y = RAIL_RECT.top + 12 + (i as i32) * 34;
-    Rect { left: RAIL_RECT.left + 8, top: y, right: RAIL_RECT.right - 8, bottom: y + 28 }
+    let y = RAIL_RECT.top + 8 + (i as i32) * 34;
+    Rect { left: RAIL_RECT.left, top: y, right: RAIL_RECT.right, bottom: y + 28 }
 }
 
 fn point_in(p: Point, r: Rect) -> bool {
@@ -1687,41 +1763,62 @@ fn option_views(m: &panel::PanelModule) -> Vec<OptView> {
     out
 }
 
-fn opt_row_height(o: &panel::PanelOption) -> i32 {
+/// Height of one settings-pane row for an option.
+fn set_row_h(o: &panel::PanelOption) -> i32 {
     if o.is_numeric() {
-        DRAWER_SLIDER_H
+        OPT_SLIDER_H
+    } else if matches!(o.type_name.as_str(), "CHOICES" | "ENUM") {
+        OPT_CHOICE_H
     } else {
-        DRAWER_ROW_H
+        OPT_ROW_H
     }
 }
 
-/// The mode chip some modules show next to their name (web panel's modeChipOf).
-fn mode_chip_of(m: &panel::PanelModule) -> String {
-    for probe in ["Mode", "CooldownMode", "ClickMode", "CombatVersion"] {
-        if let Some(o) = m.options.iter().find(|x| x.name == probe) {
-            let v = o.value_label();
-            if !v.is_empty() {
-                return v;
+/// The inline summary a card shows after its name — the first few notable
+/// settings, VAPE-style: "17~20 CPS, Extra, Hold to click +2 more".
+fn summary_of(m: &panel::PanelModule) -> String {
+    let views = option_views(m);
+    let mut parts: Vec<String> = Vec::new();
+    for v in &views {
+        if parts.len() == 3 {
+            break;
+        }
+        match v {
+            OptView::Dual { min_i, max_i, .. } => {
+                let (mn, mx) = (&m.options[*min_i], &m.options[*max_i]);
+                let unit = if mn.unit.is_empty() { String::new() } else { format!(" {}", mn.unit) };
+                parts.push(format!(
+                    "{}~{}{}",
+                    fmt_opt_value(mn, mn.value_num().clamp(mn.min, mn.max)),
+                    fmt_opt_value(mx, mx.value_num().clamp(mx.min, mx.max)),
+                    unit
+                ));
+            }
+            OptView::Single(i) => {
+                let o = &m.options[*i];
+                match o.type_name.as_str() {
+                    "BOOLEAN" if o.value_bool() => parts.push(o.name.clone()),
+                    "CHOICES" | "ENUM" => {
+                        let v = o.value_label();
+                        if !v.is_empty() {
+                            parts.push(v);
+                        }
+                    }
+                    _ if o.is_numeric() => parts.push(fmt_opt_value(o, o.value_num().clamp(o.min, o.max))),
+                    _ => {}
+                }
             }
         }
     }
-    String::new()
-}
-
-fn drawer_height(m: &panel::PanelModule) -> i32 {
-    let views = option_views(m);
-    DRAWER_PAD * 2
-        + if views.is_empty() {
-            DRAWER_ROW_H // the "no tunable options" line
-        } else {
-            views
-                .iter()
-                .map(|v| match v {
-                    OptView::Single(i) => opt_row_height(&m.options[*i]),
-                    OptView::Dual { .. } => DRAWER_SLIDER_H,
-                })
-                .sum::<i32>()
+    let rest = views.len().saturating_sub(parts.len());
+    let mut s = parts.join(", ");
+    if rest > 0 {
+        if !s.is_empty() {
+            s.push_str(", ");
         }
+        s.push_str(&format!("+{rest} more"));
+    }
+    s
 }
 
 // ── the layout: one walk that paint and hit-testing share ──
@@ -1730,21 +1827,41 @@ fn drawer_height(m: &panel::PanelModule) -> i32 {
 /// list, so a click can never land a pixel away from what was drawn.
 struct PanelRow {
     m: panel::PanelModule,
-    views: Vec<OptView>,
-    header: Rect,
+    summary: String,
+    card: Rect,
     icon: Rect,
-    mode: Rect,
-    kb: Rect,
-    chevron: Rect,
-    switch: Rect,
-    drawer: Option<Rect>,
+    name_r: Rect,
+    summary_r: Rect,
+    toggle: Rect,
+    kebab: Rect,
+    selected: bool,
+}
+
+/// The right-hand settings pane of the picked module (None = closed). Built
+/// from the snapshot directly, so it stays open while the user browses any
+/// rail category — exactly like the reference's centre window.
+struct SetPane {
+    name: String,
+    key_label: String,
+    capturing: bool,
+    fav: bool,
+    pane: Rect,
+    back: Rect,
+    star: Rect,
+    kb_chip: Rect,
+    views: Vec<OptView>,
+    opts: Vec<panel::PanelOption>,
     /// (hit rect, index into views)
     hits: Vec<(Rect, usize)>,
-    expanded: bool,
+    view_h: i32,
+    total_h: i32,
+    max_scroll: i32,
 }
 
 struct PanelLayout {
     rows: Vec<PanelRow>,
+    list: Rect,
+    settings: Option<SetPane>,
     view_h: i32,
     total_h: i32,
     max_scroll: i32,
@@ -1754,99 +1871,238 @@ fn panel_layout() -> PanelLayout {
     let ps = panel::state();
     let mods = panel::lock(&ps.modules);
     let cat = PANEL_CAT.load(Ordering::Relaxed) as usize;
-    let list: Vec<&panel::PanelModule> = if RAIL_CATS[cat].is_empty() {
-        mods.iter().collect()
-    } else {
-        mods.iter().filter(|m| m.category == RAIL_CATS[cat]).collect()
-    };
-    let expanded = lock(&PANEL_EXPANDED);
-    let is_exp = |name: &str| expanded.iter().any(|n| n == name);
+    let sel = lock(&PANEL_SELECTED).clone();
+    let favs = lock(&FAVORITES).clone();
 
-    // Pass 1 — heights, so the scroll clamp is stable before rects are built.
-    let heights: Vec<i32> = list
-        .iter()
-        .map(|m| PANEL_HDR_H + if is_exp(&m.name) { drawer_height(m) + 6 } else { 0 })
-        .collect();
-    let view_h = (MODS_RECT.bottom - MODS_RECT.top - 20).max(PANEL_HDR_H);
-    let total_h: i32 = heights.iter().sum();
-    let max_scroll = (total_h - view_h).max(0);
+    // The settings pane pushes the list narrower while it is open.
+    let settings_open = sel
+        .as_ref()
+        .map(|name| mods.iter().any(|m| &m.name == name))
+        .unwrap_or(false);
+    let list = if settings_open { LIST_RECT_OPEN } else { LIST_RECT_SHUT };
+
+    // ── settings pane (independent of the rail filter) ──
+    let settings = sel.clone().and_then(|name| {
+        mods.iter()
+            .find(|m| m.name == name)
+            .map(|m| {
+                let capturing = lock(&KB_CAPTURE).as_deref() == Some(m.name.as_str());
+                let key_label =
+                    if capturing { "[press a key…]".to_string() } else { m.key_name.trim().to_string() };
+                let views = option_views(m);
+                let mut total = SET_ROWS_OFF + OPT_PAD;
+                for v in &views {
+                    total += match v {
+                        OptView::Single(i) => set_row_h(&m.options[*i]),
+                        OptView::Dual { .. } => OPT_SLIDER_H,
+                    };
+                }
+                if views.is_empty() {
+                    total += OPT_ROW_H; // the "no tunable options" line
+                }
+                total += OPT_PAD;
+                let view_h = SETTINGS_RECT.bottom - SETTINGS_RECT.top;
+                let max_scroll = (total - view_h).max(0);
+                let scroll = OPT_SCROLL.load(Ordering::Relaxed).clamp(0, max_scroll);
+                if scroll != OPT_SCROLL.load(Ordering::Relaxed) {
+                    OPT_SCROLL.store(scroll, Ordering::Relaxed);
+                }
+                let mut hits = Vec::new();
+                let mut y = SETTINGS_RECT.top + SET_ROWS_OFF - scroll;
+                for (vi, v) in views.iter().enumerate() {
+                    let h = match v {
+                        OptView::Single(i) => set_row_h(&m.options[*i]),
+                        OptView::Dual { .. } => OPT_SLIDER_H,
+                    };
+                    hits.push((
+                        Rect {
+                            left: SETTINGS_RECT.left + OPT_PAD,
+                            top: y,
+                            right: SETTINGS_RECT.right - OPT_PAD,
+                            bottom: y + h,
+                        },
+                        vi,
+                    ));
+                    y += h;
+                }
+                let kb_w = (18 + key_label.len() as i32 * 8).max(48);
+                SetPane {
+                    name: m.name.clone(),
+                    key_label,
+                    capturing,
+                    fav: favs.iter().any(|f| f == &m.name),
+                    pane: SETTINGS_RECT,
+                    back: Rect {
+                        left: SETTINGS_RECT.left + OPT_PAD,
+                        top: SETTINGS_RECT.top + 8,
+                        right: SETTINGS_RECT.left + OPT_PAD + 22,
+                        bottom: SETTINGS_RECT.top + 32,
+                    },
+                    star: Rect {
+                        left: SETTINGS_RECT.right - OPT_PAD - 20,
+                        top: SETTINGS_RECT.top + 10,
+                        right: SETTINGS_RECT.right - OPT_PAD,
+                        bottom: SETTINGS_RECT.top + 30,
+                    },
+                    kb_chip: Rect {
+                        left: SETTINGS_RECT.right - OPT_PAD - kb_w,
+                        top: SETTINGS_RECT.top + 44,
+                        right: SETTINGS_RECT.right - OPT_PAD,
+                        bottom: SETTINGS_RECT.top + 66,
+                    },
+                    views,
+                    opts: m.options.clone(),
+                    hits,
+                    view_h,
+                    total_h: total,
+                    max_scroll,
+                }
+            })
+    });
+
+    // ── module cards ──
+    let rail_key = RAIL_CATS.get(cat).copied().unwrap_or("");
+    let shown: Vec<&panel::PanelModule> = match rail_key {
+        "!FAV" => mods.iter().filter(|m| favs.iter().any(|f| f == &m.name)).collect(),
+        "" => mods.iter().collect(),
+        c => mods.iter().filter(|m| m.category == *c).collect(),
+    };
+    let view_h = list.bottom - list.top;
+    let total_h = if shown.is_empty() { 0 } else { shown.len() as i32 * (CARD_H + CARD_GAP) - CARD_GAP };
+    let max_scroll = (total_h + 16 - view_h).max(0);
     let scroll = PANEL_SCROLL.load(Ordering::Relaxed).clamp(0, max_scroll);
     if scroll != PANEL_SCROLL.load(Ordering::Relaxed) {
         PANEL_SCROLL.store(scroll, Ordering::Relaxed);
     }
 
-    // Pass 2 — screen-space rects.
-    let capturing = lock(&KB_CAPTURE).clone();
-    let mut rows = Vec::with_capacity(list.len());
-    let mut y = MODS_RECT.top + 10 - scroll;
-    for (ri, m) in list.iter().enumerate() {
-        let exp = is_exp(&m.name);
-        let header = Rect { left: MODS_RECT.left + 8, top: y, right: MODS_RECT.right - 10, bottom: y + PANEL_HDR_H };
-        let icon = Rect { left: header.left + 10, top: y + 7, right: header.left + 36, bottom: y + 33 };
-        let switch = Rect { left: header.right - 62, top: y + 11, right: header.right - 20, bottom: y + 29 };
-        let chevron = Rect { left: switch.left - 28, top: y, right: switch.left - 2, bottom: header.bottom };
-        let capturing_this = capturing.as_deref() == Some(m.name.as_str());
-        let key_label = if capturing_this { "[press a key…]".to_string() } else { m.key_name.trim().to_string() };
-        let kb_w = (16 + key_label.len() as i32 * 7).max(38);
-        let kb = Rect { left: chevron.left - 8 - kb_w, top: y + 10, right: chevron.left - 8, bottom: y + 30 };
-        let mode_label = mode_chip_of(m);
-        let mode = if mode_label.is_empty() {
-            Rect::default()
-        } else {
-            let w = 12 + mode_label.len() as i32 * 7;
-            Rect { left: kb.left - 8 - w, top: y + 10, right: kb.left - 8, bottom: y + 30 }
+    let mut rows = Vec::with_capacity(shown.len());
+    let mut y = list.top + 8 - scroll;
+    for m in shown {
+        let card = Rect { left: list.left + 8, top: y, right: list.right - 10, bottom: y + CARD_H };
+        let icon = Rect { left: card.left + 10, top: y + 10, right: card.left + 42, bottom: y + 42 };
+        let kebab = Rect { left: card.right - 30, top: y + 16, right: card.right - 10, bottom: y + 36 };
+        let toggle = Rect { left: card.right - 76, top: y + 17, right: card.right - 40, bottom: y + 35 };
+        let name_w = (m.name.len() as i32 * 9).max(28);
+        let name_r = Rect {
+            left: icon.right + 12,
+            top: y + 8,
+            right: (icon.right + 12 + name_w).min(toggle.left - 8),
+            bottom: y + 28,
         };
-
-        let mut drawer = None;
-        let mut hits = Vec::new();
-        let mut views = Vec::new();
-        if exp {
-            views = option_views(m);
-            let d = Rect {
-                left: header.left + 34,
-                top: y + PANEL_HDR_H + 2,
-                right: header.right - 16,
-                bottom: y + PANEL_HDR_H + 2 + drawer_height(m),
-            };
-            let mut iy = d.top + DRAWER_PAD;
-            for (vi, v) in views.iter().enumerate() {
-                let h = match v {
-                    OptView::Single(i) => opt_row_height(&m.options[*i]),
-                    OptView::Dual { .. } => DRAWER_SLIDER_H,
-                };
-                hits.push((Rect { left: d.left + 10, top: iy, right: d.right - 10, bottom: iy + h }, vi));
-                iy += h;
-            }
-            if views.is_empty() {
-                hits.push((Rect { left: d.left + 10, top: d.top + DRAWER_PAD, right: d.right - 10, bottom: d.top + DRAWER_PAD + DRAWER_ROW_H }, usize::MAX));
-            }
-            drawer = Some(d);
-        }
+        let summary = summary_of(m);
+        let summary_r = Rect {
+            left: name_r.right + 8,
+            top: y + 8,
+            right: toggle.left - 10,
+            bottom: y + 28,
+        };
         rows.push(PanelRow {
             m: (*m).clone(),
-            views,
-            header,
+            summary,
+            card,
             icon,
-            mode,
-            kb,
-            chevron,
-            switch,
-            drawer,
-            hits,
-            expanded: exp,
+            name_r,
+            summary_r,
+            toggle,
+            kebab,
+            selected: sel.as_deref() == Some(m.name.as_str()),
         });
-        y += heights[ri];
+        y += CARD_H + CARD_GAP;
     }
-    PanelLayout { rows, view_h, total_h, max_scroll }
+    PanelLayout { rows, list, settings, view_h, total_h, max_scroll }
+}
+
+/// Star/unstar a module in the local Favorites list (client-side only).
+fn toggle_favorite(name: &str) {
+    {
+        let mut favs = lock(&FAVORITES);
+        if let Some(pos) = favs.iter().position(|f| f == name) {
+            favs.remove(pos);
+        } else {
+            favs.push(name.to_string());
+        }
+    }
+    poke_interact();
+    repaint();
+}
+
+/// Open a card's ⋮ menu: quick keybind + favorite (VAPE's kebab).
+fn open_popup(m: &panel::PanelModule, kebab: Rect) {
+    let w = 176;
+    let item_h = 30;
+    let left = (kebab.right - w).max(PAD);
+    let top = (kebab.bottom + 4).min(CLIENT_H - 2 * item_h - 14);
+    let rect = Rect { left, top, right: left + w, bottom: top + item_h * 2 + 12 };
+    let bind = Rect { left: left + 6, top: top + 6, right: left + w - 6, bottom: top + 6 + item_h };
+    let star = Rect { left: left + 6, top: bind.bottom + 4, right: left + w - 6, bottom: bind.bottom + 4 + item_h };
+    let fav = lock(&FAVORITES).iter().any(|f| f == &m.name);
+    *lock(&POPUP) = Some(Popup {
+        module: m.name.clone(),
+        key_label: m.key_name.trim().to_string(),
+        fav,
+        rect,
+        bind,
+        star,
+    });
+    poke_interact();
 }
 
 // ── panel drawing helpers ──
 
-/// The on/off switch a module header (and BOOLEAN options) use.
+/// The on/off switch a module card (and BOOLEAN options) use. The knob scales
+/// with the pill, so the same helper draws both sizes.
 unsafe fn draw_switch(hdc: Hdc, r: Rect, on: bool) {
-    round_rect_ringed(hdc, r, (r.bottom - r.top) / 2, C_CARD_BORDER, if on { C_LINK } else { C_BTN_ACTIVE });
-    let kx = if on { r.right - 8 } else { r.left + 8 };
-    draw_dot(hdc, kx, (r.top + r.bottom) / 2, 12, if on { C_STRONG } else { C_DIM });
+    let h = r.bottom - r.top;
+    round_rect_ringed(hdc, r, h / 2, C_CARD_BORDER, if on { C_LINK } else { C_BTN_ACTIVE });
+    let d = (h - 6).max(8);
+    let kx = if on { r.right - d / 2 - 3 } else { r.left + d / 2 + 3 };
+    draw_dot(hdc, kx, (r.top + r.bottom) / 2, d, if on { C_STRONG } else { C_DIM });
+}
+
+/// A ghost icon button for the nav row: faint rounded tile on hover, glyph
+/// centred (the glyph names live in icons.rs's UI: set).
+unsafe fn draw_icon_btn(hdc: Hdc, r: Rect, glyph: &str, hovered: bool) {
+    if hovered {
+        round_rect_ringed(hdc, r, 8, C_CARD_BORDER, C_BTN_HOVER);
+    }
+    let tint = if hovered { theme::STRONG_TEXT } else { theme::SECONDARY_TEXT };
+    let size = 16;
+    icons::draw(
+        hdc,
+        glyph,
+        "",
+        r.left + (r.right - r.left - size) / 2,
+        r.top + (r.bottom - r.top - size) / 2,
+        size,
+        tint,
+    );
+}
+
+/// The Home pill of the nav row: back to every module (All), VAPE-style.
+unsafe fn draw_home_pill(hdc: Hdc, font: Hfont, r: Rect, active: bool, hovered: bool) {
+    let body = if active {
+        C_PILL_SEL
+    } else if hovered {
+        C_BTN_HOVER
+    } else {
+        C_CARD
+    };
+    let ring = if active {
+        theme::colorref(theme::mix(theme::BACKGROUND, theme::LINK, 45, 100))
+    } else {
+        C_CARD_BORDER
+    };
+    round_rect_ringed(hdc, r, 9, ring, body);
+    let tint = if active { theme::LINK } else { theme::SECONDARY_TEXT };
+    icons::draw(hdc, "UI:home", "", r.left + 10, (r.top + r.bottom) / 2 - 8, 16, tint);
+    text_in(
+        hdc,
+        font,
+        if active { C_STRONG } else { C_SECOND },
+        "Home",
+        Rect { left: r.left + 32, top: r.top, right: r.right - 8, bottom: r.bottom },
+        DT_LEFT | DT_SINGLELINE | DT_VCENTER,
+    );
 }
 
 /// The keybind chip: click → capture the next key. Capturing glows amber,
@@ -1913,9 +2169,9 @@ fn fmt_opt_value(o: &panel::PanelOption, v: f64) -> String {
 
 // ── option clicks + slider drags ──
 
-/// A click on one drawer row (non-drag controls act immediately).
-fn option_click(m: &panel::PanelModule, i: usize) {
-    let o = &m.options[i];
+/// A click on one settings-pane row (non-drag controls act immediately).
+fn option_click(opts: &[panel::PanelOption], i: usize) {
+    let o = &opts[i];
     match o.type_name.as_str() {
         "BOOLEAN" => {
             let now = !o.value_bool();
@@ -1943,8 +2199,8 @@ fn option_click(m: &panel::PanelModule, i: usize) {
 
 /// Begin dragging a single-value slider: seed the Drag, capture the mouse, and
 /// treat this click as the first drag_move (the web panel does the same).
-unsafe fn drag_start_single(m: &panel::PanelModule, i: usize, hr: Rect, p: Point) {
-    let o = &m.options[i];
+unsafe fn drag_start_single(opts: &[panel::PanelOption], i: usize, hr: Rect, p: Point) {
+    let o = &opts[i];
     let track = Rect { left: hr.left + 2, top: hr.top + 28, right: hr.right - 2, bottom: hr.top + 34 };
     let v = o.value_num().clamp(o.min, o.max);
     *lock(&DRAG) = Some(Drag {
@@ -1969,9 +2225,17 @@ unsafe fn drag_start_single(m: &panel::PanelModule, i: usize, hr: Rect, p: Point
 }
 
 /// Same for a dual Min~Max track: grab whichever thumb is nearer.
-unsafe fn drag_start_dual(m: &panel::PanelModule, min_i: usize, max_i: usize, lo: f64, hi: f64, hr: Rect, p: Point) {
-    let mn = &m.options[min_i];
-    let mx = &m.options[max_i];
+unsafe fn drag_start_dual(
+    opts: &[panel::PanelOption],
+    min_i: usize,
+    max_i: usize,
+    lo: f64,
+    hi: f64,
+    hr: Rect,
+    p: Point,
+) {
+    let mn = &opts[min_i];
+    let mx = &opts[max_i];
     let track = Rect { left: hr.left + 2, top: hr.top + 28, right: hr.right - 2, bottom: hr.top + 34 };
     let (vmin, vmax) = (mn.value_num().clamp(lo, hi), mx.value_num().clamp(lo, hi));
     let span = (track.right - track.left - 12).max(1) as f64;
@@ -2466,25 +2730,13 @@ unsafe fn draw_main(hdc: Hdc) {
             let ps = panel::state();
             let synced = panel::lock(&ps.last_ok).map(|t| t.elapsed().as_secs()).unwrap_or(u64::MAX);
             let last_err = panel::lock(&ps.last_err).clone();
-            let mods = panel::lock(&ps.modules);
+            let _mods = panel::lock(&ps.modules);
+            let layout = panel_layout();
 
-            // ── header row: back · title · sync health ──
-            draw_button(
-                hdc,
-                f.body,
-                PANEL_BACK_RECT,
-                "‹ Back",
-                Btn::Secondary,
-                BtnState { enabled: true, hovered: point_in(hover, PANEL_BACK_RECT), pressed: pressed == Some(PANEL_BACK_RECT) },
-            );
-            text_in(
-                hdc,
-                f.bold,
-                C_STRONG,
-                "Module panel",
-                Rect { left: PAD + 120, top: PANEL_HEAD_Y, right: CLIENT_W / 2, bottom: PANEL_HEAD_Y + 34 },
-                DT_LEFT | DT_SINGLELINE | DT_VCENTER,
-            );
+            // ── nav row: ‹ back · Home · sync health · refresh / web / hide ──
+            draw_icon_btn(hdc, NAV_BACK_RECT, "UI:back", point_in(hover, NAV_BACK_RECT));
+            let home_active = PANEL_CAT.load(Ordering::Relaxed) as usize == 1;
+            draw_home_pill(hdc, f.body, NAV_HOME_RECT, home_active, point_in(hover, NAV_HOME_RECT));
             let (st_rgb, st_text) = if last_err.is_empty() && synced < 60 {
                 (theme::SUCCESS, format!("synced {synced}s ago"))
             } else if last_err.is_empty() {
@@ -2492,254 +2744,144 @@ unsafe fn draw_main(hdc: Hdc) {
             } else {
                 (theme::DANGER, "offline — retrying…".to_string())
             };
-            draw_dot(hdc, CLIENT_W - PAD - 128, PANEL_HEAD_Y + 17, 10, theme::colorref(st_rgb));
+            draw_dot(hdc, NAV_STATUS_RIGHT - 226, NAV_Y + NAV_H / 2, 10, theme::colorref(st_rgb));
             text_in(
                 hdc,
                 f.small,
                 theme::colorref(st_rgb),
                 &st_text,
-                Rect { left: CLIENT_W - PAD - 116, top: PANEL_HEAD_Y, right: CLIENT_W - PAD, bottom: PANEL_HEAD_Y + 34 },
-                DT_LEFT | DT_SINGLELINE | DT_VCENTER,
+                Rect { left: NAV_STATUS_RIGHT - 216, top: NAV_Y, right: NAV_STATUS_RIGHT, bottom: NAV_Y + NAV_H },
+                DT_RIGHT | DT_SINGLELINE | DT_VCENTER,
             );
-            if !last_err.is_empty() {
-                text_in(
-                    hdc,
-                    f.small,
-                    C_DIM,
-                    &last_err,
-                    Rect { left: CLIENT_W / 2 + 60, top: PANEL_HEAD_Y, right: CLIENT_W - PAD - 130, bottom: PANEL_HEAD_Y + 34 },
-                    DT_RIGHT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS,
-                );
-            }
-            fill(hdc, C_SEPARATOR, Rect { left: PAD, top: 96, right: CLIENT_W - PAD, bottom: 97 });
+            draw_icon_btn(hdc, NAV_REFRESH_RECT, "UI:refresh", point_in(hover, NAV_REFRESH_RECT));
+            draw_icon_btn(hdc, NAV_WEB_RECT, "UI:web", point_in(hover, NAV_WEB_RECT));
+            draw_button(
+                hdc,
+                f.body,
+                NAV_HIDE_RECT,
+                "Hide",
+                Btn::Secondary,
+                BtnState { enabled: true, hovered: point_in(hover, NAV_HIDE_RECT), pressed: pressed == Some(NAV_HIDE_RECT) },
+            );
+            fill(hdc, C_SEPARATOR, Rect { left: PAD, top: PANEL_TOP - 8, right: CLIENT_W - PAD, bottom: PANEL_TOP - 7 });
 
-            // ── category rail: icon · label · count, Web UI + Hide at the bottom ──
-            draw_card(hdc, RAIL_RECT, metrics::CARD_ROUNDING);
+            // ── category rail: text + active underline (VAPE style) ──
             let cat_sel = PANEL_CAT.load(Ordering::Relaxed) as usize;
             for (i, label) in RAIL_LABELS.iter().enumerate() {
                 let rr = rail_item_rect(i);
                 let is_sel = i == cat_sel;
-                if is_sel {
-                    round_rect_ringed(hdc, rr, 9, C_CARD_BORDER, C_ROW_SELECTED);
-                    fill(hdc, C_LINK, Rect { left: rr.left + 1, top: rr.top + 4, right: rr.left + 4, bottom: rr.bottom - 4 });
-                } else if point_in(hover, rr) {
-                    round_rect_ringed(hdc, rr, 9, C_CARD_BORDER, C_BTN_HOVER);
-                }
-                let cat_key = if RAIL_CATS[i].is_empty() { "ALL" } else { RAIL_CATS[i] };
-                let n = if RAIL_CATS[i].is_empty() {
-                    mods.len()
+                let key = RAIL_CATS[i];
+                let tint = if key == "!FAV" {
+                    theme::WARNING
+                } else if key.is_empty() {
+                    theme::LINK
                 } else {
-                    mods.iter().filter(|m| m.category == RAIL_CATS[i]).count()
+                    icons::cat_color(key)
                 };
-                let tint = if is_sel {
-                    icons::cat_color(cat_key)
-                } else {
-                    theme::mix(icons::cat_color(cat_key), theme::PANEL, 35, 100)
-                };
-                icons::draw(hdc, "", cat_key, rr.left + 12, (rr.top + rr.bottom) / 2 - 7, 14, tint);
                 text_in(
                     hdc,
                     if is_sel { f.bold } else { f.body },
-                    if is_sel { C_STRONG } else { C_SECOND },
+                    if is_sel {
+                        C_STRONG
+                    } else if point_in(hover, rr) {
+                        C_TEXT
+                    } else {
+                        C_SECOND
+                    },
                     label,
-                    Rect { left: rr.left + 32, top: rr.top, right: rr.right - 44, bottom: rr.bottom },
+                    Rect { left: rr.left + 4, top: rr.top, right: rr.right - 4, bottom: rr.bottom - 3 },
                     DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS,
                 );
-                text_in(
-                    hdc,
-                    f.small,
-                    if is_sel { C_ALT } else { C_DIM },
-                    &format!("{n}"),
-                    Rect { left: rr.right - 40, top: rr.top, right: rr.right - 12, bottom: rr.bottom },
-                    DT_RIGHT | DT_SINGLELINE | DT_VCENTER,
-                );
+                if is_sel {
+                    let w = (14 + label.len() as i32 * 8).min(rr.right - rr.left - 8);
+                    fill(
+                        hdc,
+                        theme::colorref(tint),
+                        Rect { left: rr.left + 5, top: rr.bottom - 5, right: rr.left + 5 + w, bottom: rr.bottom - 3 },
+                    );
+                }
             }
-            draw_button(
-                hdc,
-                f.body,
-                RAIL_WEB_RECT,
-                "Web UI",
-                Btn::Secondary,
-                BtnState { enabled: true, hovered: point_in(hover, RAIL_WEB_RECT), pressed: pressed == Some(RAIL_WEB_RECT) },
-            );
-            draw_button(
-                hdc,
-                f.body,
-                RAIL_HIDE_RECT,
-                "Hide",
-                Btn::Secondary,
-                BtnState { enabled: true, hovered: point_in(hover, RAIL_HIDE_RECT), pressed: pressed == Some(RAIL_HIDE_RECT) },
-            );
 
-            // ── module cards: icon tile · name · chips · chevron · switch (+ drawer) ──
-            draw_card(hdc, MODS_RECT, metrics::CARD_ROUNDING);
-            let layout = panel_layout();
+            // ── module cards: icon tile · name · summary · kebab · switch ──
+            let list = layout.list;
             if layout.rows.is_empty() {
-                text_in(
-                    hdc,
-                    f.body,
-                    C_DIM,
-                    if last_err.is_empty() {
-                        "loading modules from the agent…"
+                let msg = if last_err.is_empty() {
+                    if RAIL_CATS.get(cat_sel).copied().unwrap_or("") == "!FAV" {
+                        "No favorites yet — open a module and tap the ★."
                     } else {
-                        "no modules — is the game still running?"
-                    },
-                    Rect { left: MODS_RECT.left, top: MODS_RECT.top, right: MODS_RECT.right, bottom: MODS_RECT.bottom },
-                    DT_CENTER | DT_VCENTER | DT_SINGLELINE,
-                );
+                        "loading modules from the agent…"
+                    }
+                } else {
+                    "no modules — is the game still running?"
+                };
+                text_in(hdc, f.body, C_DIM, msg, list, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
             } else {
                 let saved = SaveDC(hdc);
-                IntersectClipRect(hdc, MODS_RECT.left + 2, MODS_RECT.top + 2, MODS_RECT.right - 2, MODS_RECT.bottom - 2);
+                IntersectClipRect(hdc, list.left + 2, list.top + 2, list.right - 2, list.bottom - 2);
                 for row in &layout.rows {
-                    if row.header.bottom < MODS_RECT.top || row.header.top >= MODS_RECT.bottom {
+                    if row.card.bottom < list.top || row.card.top >= list.bottom {
                         continue;
                     }
-                    // header background: hover tint, raised panel when open
-                    if point_in(hover, row.header) {
-                        fill(hdc, C_BTN_HOVER, row.header);
-                    } else if row.expanded {
-                        fill(hdc, C_PANEL_EXP, row.header);
-                    }
-                    // icon tile: the module's own glyph, tinted by category
                     let cat_rgb = icons::cat_color(&row.m.category);
-                    let tile_fill = theme::mix(theme::CARD_ON_BG, cat_rgb, 10, 100);
-                    let tile_ring = theme::mix(theme::CARD_ON_BG, cat_rgb, 30, 100);
-                    round_rect_ringed(hdc, row.icon, 7, theme::colorref(tile_ring), theme::colorref(tile_fill));
-                    let ink = if row.m.enabled { cat_rgb } else { theme::mix(cat_rgb, theme::PANEL, 55, 100) };
-                    icons::draw(hdc, &row.m.name, &row.m.category, row.icon.left + 3, row.icon.top + 3, 20, ink);
-
-                    // name
-                    let name_right = if row.mode.right > 0 { row.mode.left - 8 } else { row.kb.left - 8 };
+                    let body = if row.selected {
+                        theme::mix(theme::CARD_ON_BG, cat_rgb, 7, 100)
+                    } else if point_in(hover, row.card) {
+                        theme::mix(theme::CARD_ON_BG, theme::PANEL_ACTIVE, 50, 100)
+                    } else {
+                        theme::CARD_ON_BG
+                    };
+                    let ring = if row.selected {
+                        theme::mix(theme::CARD_ON_BG, cat_rgb, 35, 100)
+                    } else {
+                        theme::CARD_BORDER
+                    };
+                    round_rect_ringed(hdc, row.card, 12, theme::colorref(ring), theme::colorref(body));
+                    // icon tile: solid category tint when enabled, grey otherwise
+                    let (tile_fill, tile_ring, ink) = if row.m.enabled {
+                        (cat_rgb, theme::mix(cat_rgb, theme::PANEL, 55, 100), theme::BACKGROUND)
+                    } else {
+                        (
+                            theme::BTN_ACTIVE,
+                            theme::CARD_BORDER,
+                            theme::mix(cat_rgb, theme::PANEL, 55, 100),
+                        )
+                    };
+                    round_rect_ringed(hdc, row.icon, 9, theme::colorref(tile_ring), theme::colorref(tile_fill));
+                    icons::draw(hdc, &row.m.name, &row.m.category, row.icon.left + 6, row.icon.top + 6, 20, ink);
+                    // name + inline summary (VAPE's one-line row)
                     text_in(
                         hdc,
-                        f.body,
-                        if row.m.enabled { C_STRONG } else { C_TEXT },
+                        f.bold,
+                        if row.m.enabled { C_STRONG } else { C_SECOND },
                         &row.m.name,
-                        Rect { left: row.icon.right + 10, top: row.header.top, right: name_right, bottom: row.header.bottom },
+                        row.name_r,
                         DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS,
                     );
-                    // mode chip — what the module is currently set to do
-                    if row.mode.right > 0 {
-                        let mode_label = mode_chip_of(&row.m);
-                        draw_chip(hdc, f.small, row.mode, &mode_label, theme::SECONDARY_TEXT);
+                    if !row.summary.is_empty() {
+                        text_in(
+                            hdc,
+                            f.small,
+                            C_DIM,
+                            &row.summary,
+                            row.summary_r,
+                            DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS,
+                        );
                     }
-                    // keybind chip — click, then press any key (Esc clears)
-                    let capturing_this = lock(&KB_CAPTURE).as_deref() == Some(row.m.name.as_str());
-                    let key_label = if capturing_this {
-                        "[press a key…]".to_string()
-                    } else {
-                        row.m.key_name.trim().to_string()
-                    };
-                    draw_kb_chip(hdc, f.mono, row.kb, &key_label, capturing_this, point_in(hover, row.kb));
-                    draw_chevron(hdc, row.chevron, row.expanded, point_in(hover, row.chevron));
-                    draw_switch(hdc, row.switch, row.m.enabled);
-
-                    // the drawer: one row per visible option
-                    if let Some(d) = row.drawer {
-                        round_rect_ringed(hdc, d, 10, C_CARD_BORDER, C_LIST_FILL);
-                        if row.views.is_empty() {
-                            text_in(
-                                hdc,
-                                f.small,
-                                C_DIM,
-                                "No tunable options — edit this one in the Web UI",
-                                Rect { left: d.left + 10, top: d.top + DRAWER_PAD, right: d.right - 10, bottom: d.top + DRAWER_PAD + DRAWER_ROW_H },
-                                DT_LEFT | DT_VCENTER | DT_SINGLELINE,
-                            );
-                        }
-                        let dragging = lock(&DRAG).clone();
-                        for (hr, vi) in &row.hits {
-                            if *vi == usize::MAX {
-                                continue;
-                            }
-                            match &row.views[*vi] {
-                                OptView::Single(i) => {
-                                    let o = &row.m.options[*i];
-                                    match o.type_name.as_str() {
-                                        "BOOLEAN" => {
-                                            text_in(hdc, f.small, C_ALT, &o.name,
-                                                Rect { left: hr.left, top: hr.top, right: hr.left + 260, bottom: hr.bottom },
-                                                DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-                                            draw_switch(hdc,
-                                                Rect { left: hr.right - 54, top: hr.top + 7, right: hr.right - 20, bottom: hr.top + 23 },
-                                                o.value_bool());
-                                        }
-                                        "FLOAT" | "INT" | "PROBABILITY" => {
-                                            text_in(hdc, f.small, C_ALT, &o.name,
-                                                Rect { left: hr.left, top: hr.top, right: hr.left + 300, bottom: hr.top + 20 },
-                                                DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-                                            let v = dragging.as_ref()
-                                                .and_then(|dg| if dg.key_min == o.key { Some(dg.vmin) } else { None })
-                                                .unwrap_or_else(|| o.value_num().clamp(o.min, o.max));
-                                            text_in(hdc, f.mono, C_LINK, &fmt_opt_value(o, v),
-                                                Rect { left: hr.right - 170, top: hr.top + 1, right: hr.right, bottom: hr.top + 19 },
-                                                DT_RIGHT | DT_SINGLELINE | DT_VCENTER);
-                                            let track = Rect { left: hr.left + 2, top: hr.top + 28, right: hr.right - 2, bottom: hr.top + 34 };
-                                            draw_slider(hdc, track, o.min, o.max, o.min, v, &[v]);
-                                        }
-                                        "CHOICES" | "ENUM" => {
-                                            text_in(hdc, f.small, C_ALT, &o.name,
-                                                Rect { left: hr.left, top: hr.top, right: hr.left + 300, bottom: hr.bottom },
-                                                DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-                                            let label = o.value_label();
-                                            let w = (24 + label.len() as i32 * 7).max(60);
-                                            let chip = Rect { left: hr.right - w, top: hr.top + 6, right: hr.right, bottom: hr.top + 24 };
-                                            let hov = point_in(hover, chip);
-                                            round_rect_ringed(hdc, chip, 9, C_CARD_BORDER, if hov { C_BTN_HOVER } else { C_BTN_ACTIVE });
-                                            text_in(hdc, f.small, if hov { C_STRONG } else { C_TEXT }, &format!("{label}  ›"), chip,
-                                                DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-                                        }
-                                        "COLOR" => {
-                                            text_in(hdc, f.small, C_ALT, &o.name,
-                                                Rect { left: hr.left, top: hr.top, right: hr.left + 300, bottom: hr.bottom },
-                                                DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-                                            let v = o.value_num() as i64 & 0xFF_FFFF;
-                                            let sw = theme::colorref([(v >> 16) as u8, (v >> 8) as u8, v as u8]);
-                                            round_rect_ringed(hdc,
-                                                Rect { left: hr.right - 150, top: hr.top + 7, right: hr.right - 134, bottom: hr.top + 23 },
-                                                4, C_CARD_BORDER, sw);
-                                            text_in(hdc, f.mono, C_ALT, &o.value_label(),
-                                                Rect { left: hr.right - 128, top: hr.top, right: hr.right, bottom: hr.bottom },
-                                                DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-                                        }
-                                        _ => {
-                                            text_in(hdc, f.small, C_ALT, &o.name,
-                                                Rect { left: hr.left, top: hr.top, right: hr.left + 300, bottom: hr.bottom },
-                                                DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-                                            text_in(hdc, f.mono, C_DIM, &o.value_label(),
-                                                Rect { left: hr.right - 220, top: hr.top, right: hr.right, bottom: hr.bottom },
-                                                DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-                                        }
-                                    }
-                                }
-                                OptView::Dual { min_i, max_i, base, lo, hi } => {
-                                    let mn = &row.m.options[*min_i];
-                                    let mx = &row.m.options[*max_i];
-                                    let vm = dragging.as_ref()
-                                        .and_then(|dg| if dg.key_min == mn.key { Some(dg.vmin) } else { None })
-                                        .unwrap_or_else(|| mn.value_num().clamp(*lo, *hi));
-                                    let vx = dragging.as_ref()
-                                        .and_then(|dg| if dg.key_max.as_deref() == Some(mx.key.as_str()) { Some(dg.vmax) } else { None })
-                                        .unwrap_or_else(|| mx.value_num().clamp(*lo, *hi));
-                                    text_in(hdc, f.small, C_ALT, base,
-                                        Rect { left: hr.left, top: hr.top, right: hr.left + 300, bottom: hr.top + 20 },
-                                        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-                                    text_in(hdc, f.mono, C_LINK,
-                                        &format!("{} ~ {}", fmt_opt_value(mn, vm), fmt_opt_value(mx, vx)),
-                                        Rect { left: hr.right - 260, top: hr.top + 1, right: hr.right, bottom: hr.top + 19 },
-                                        DT_RIGHT | DT_SINGLELINE | DT_VCENTER);
-                                    let track = Rect { left: hr.left + 2, top: hr.top + 28, right: hr.right - 2, bottom: hr.top + 34 };
-                                    draw_slider(hdc, track, *lo, *hi, vm, vx, &[vm, vx]);
-                                }
-                            }
-                        }
-                    }
+                    // kebab + switch
+                    let k = if point_in(hover, row.kebab) { theme::STRONG_TEXT } else { theme::SECONDARY_TEXT };
+                    icons::draw(hdc, "UI:kebab", "", row.kebab.left + 5, row.kebab.top + 4, 12, k);
+                    draw_switch(hdc, row.toggle, row.m.enabled);
                 }
                 RestoreDC(hdc, saved);
 
                 // scrollbar, proportional to the real content height
                 if layout.max_scroll > 0 {
-                    let track = Rect { left: MODS_RECT.right - 7, top: MODS_RECT.top + 12, right: MODS_RECT.right - 5, bottom: MODS_RECT.bottom - 12 };
+                    let track = Rect {
+                        left: list.right - 7,
+                        top: list.top + 12,
+                        right: list.right - 5,
+                        bottom: list.bottom - 12,
+                    };
                     fill(hdc, C_SEPARATOR, track);
                     let track_h = track.bottom - track.top;
                     let th = ((track_h as f32) * (layout.view_h as f32 / layout.total_h.max(1) as f32)).max(24.0) as i32;
@@ -2749,13 +2891,239 @@ unsafe fn draw_main(hdc: Hdc) {
                 }
             }
 
+            // ── settings pane: ‹ name · ★ · keybind · one row per option ──
+            if let Some(sp) = &layout.settings {
+                round_rect_ringed(
+                    hdc,
+                    sp.pane,
+                    12,
+                    C_CARD_BORDER,
+                    theme::colorref(theme::mix(theme::BACKGROUND, theme::PANEL, 50, 100)),
+                );
+                let hov_back = point_in(hover, sp.back);
+                let b_tint = if hov_back { theme::STRONG_TEXT } else { theme::SECONDARY_TEXT };
+                icons::draw(hdc, "UI:back", "", sp.back.left + 3, sp.back.top + 3, 16, b_tint);
+                text_in(
+                    hdc,
+                    f.bold,
+                    C_STRONG,
+                    &sp.name,
+                    Rect { left: sp.back.right + 8, top: sp.pane.top + 6, right: sp.star.left - 8, bottom: sp.pane.top + 34 },
+                    DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS,
+                );
+                let hov_star = point_in(hover, sp.star);
+                let s_tint = if sp.fav {
+                    theme::WARNING
+                } else if hov_star {
+                    theme::SECONDARY_TEXT
+                } else {
+                    theme::MUTED_TEXT
+                };
+                icons::draw(hdc, "UI:star", "", sp.star.left + 2, sp.star.top + 2, 16, s_tint);
+                text_in(
+                    hdc,
+                    f.small,
+                    C_ALT,
+                    "Keybind",
+                    Rect { left: sp.pane.left + OPT_PAD, top: sp.pane.top + 44, right: sp.kb_chip.left - 10, bottom: sp.pane.top + 66 },
+                    DT_LEFT | DT_SINGLELINE | DT_VCENTER,
+                );
+                draw_kb_chip(hdc, f.mono, sp.kb_chip, &sp.key_label, sp.capturing, point_in(hover, sp.kb_chip));
+                fill(
+                    hdc,
+                    C_SEPARATOR,
+                    Rect { left: sp.pane.left + OPT_PAD, top: sp.pane.top + 76, right: sp.pane.right - OPT_PAD, bottom: sp.pane.top + 77 },
+                );
+
+                let saved = SaveDC(hdc);
+                IntersectClipRect(hdc, sp.pane.left + 2, sp.pane.top + 2, sp.pane.right - 2, sp.pane.bottom - 2);
+                if sp.views.is_empty() {
+                    text_in(
+                        hdc,
+                        f.small,
+                        C_DIM,
+                        "No tunable options — edit this one in the Web UI",
+                        Rect {
+                            left: sp.pane.left + OPT_PAD,
+                            top: sp.pane.top + SET_ROWS_OFF,
+                            right: sp.pane.right - OPT_PAD,
+                            bottom: sp.pane.top + SET_ROWS_OFF + OPT_ROW_H,
+                        },
+                        DT_LEFT | DT_SINGLELINE,
+                    );
+                }
+                let dragging = lock(&DRAG).clone();
+                for (hr, vi) in &sp.hits {
+                    if *vi >= sp.views.len() {
+                        continue;
+                    }
+                    match &sp.views[*vi] {
+                        OptView::Single(i) => {
+                            let o = &sp.opts[*i];
+                            match o.type_name.as_str() {
+                                "BOOLEAN" => {
+                                    text_in(
+                                        hdc, f.small, C_ALT, &o.name,
+                                        Rect { left: hr.left, top: hr.top, right: hr.right - 50, bottom: hr.bottom },
+                                        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS,
+                                    );
+                                    draw_switch(
+                                        hdc,
+                                        Rect { left: hr.right - 40, top: hr.top + 7, right: hr.right, bottom: hr.top + 23 },
+                                        o.value_bool(),
+                                    );
+                                }
+                                "FLOAT" | "INT" | "PROBABILITY" => {
+                                    text_in(
+                                        hdc, f.small, C_ALT, &o.name,
+                                        Rect { left: hr.left, top: hr.top, right: hr.right - 120, bottom: hr.top + 20 },
+                                        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS,
+                                    );
+                                    let v = dragging
+                                        .as_ref()
+                                        .and_then(|dg| if dg.key_min == o.key { Some(dg.vmin) } else { None })
+                                        .unwrap_or_else(|| o.value_num().clamp(o.min, o.max));
+                                    text_in(
+                                        hdc, f.mono, C_LINK, &fmt_opt_value(o, v),
+                                        Rect { left: hr.right - 110, top: hr.top + 1, right: hr.right, bottom: hr.top + 19 },
+                                        DT_RIGHT | DT_SINGLELINE | DT_VCENTER,
+                                    );
+                                    let track = Rect { left: hr.left + 2, top: hr.top + 28, right: hr.right - 2, bottom: hr.top + 34 };
+                                    draw_slider(hdc, track, o.min, o.max, o.min, v, &[v]);
+                                }
+                                "CHOICES" | "ENUM" => {
+                                    // VAPE's dropdown look: one full-width box.
+                                    let label = o.value_label();
+                                    let box_r = Rect { left: hr.left, top: hr.top + 2, right: hr.right, bottom: hr.top + 32 };
+                                    let hov = point_in(hover, box_r);
+                                    round_rect_ringed(hdc, box_r, 8, C_CARD_BORDER, if hov { C_BTN_HOVER } else { C_BTN_ACTIVE });
+                                    text_in(
+                                        hdc, f.small, if hov { C_STRONG } else { C_TEXT },
+                                        &format!("{} · {}", o.name, label),
+                                        Rect { left: box_r.left + 10, top: box_r.top, right: box_r.right - 24, bottom: box_r.bottom },
+                                        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS,
+                                    );
+                                    draw_chevron(
+                                        hdc,
+                                        Rect { left: box_r.right - 20, top: box_r.top, right: box_r.right - 4, bottom: box_r.bottom },
+                                        false,
+                                        false,
+                                    );
+                                }
+                                "COLOR" => {
+                                    text_in(
+                                        hdc, f.small, C_ALT, &o.name,
+                                        Rect { left: hr.left, top: hr.top, right: hr.right - 120, bottom: hr.bottom },
+                                        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS,
+                                    );
+                                    let v = o.value_num() as i64 & 0xFF_FFFF;
+                                    let sw = theme::colorref([(v >> 16) as u8, (v >> 8) as u8, v as u8]);
+                                    round_rect_ringed(
+                                        hdc,
+                                        Rect { left: hr.right - 110, top: hr.top + 7, right: hr.right - 94, bottom: hr.top + 23 },
+                                        4, C_CARD_BORDER, sw,
+                                    );
+                                    text_in(
+                                        hdc, f.mono, C_ALT, &o.value_label(),
+                                        Rect { left: hr.right - 86, top: hr.top, right: hr.right, bottom: hr.bottom },
+                                        DT_LEFT | DT_VCENTER | DT_SINGLELINE,
+                                    );
+                                }
+                                _ => {
+                                    text_in(
+                                        hdc, f.small, C_ALT, &o.name,
+                                        Rect { left: hr.left, top: hr.top, right: hr.right - 150, bottom: hr.bottom },
+                                        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS,
+                                    );
+                                    text_in(
+                                        hdc, f.mono, C_DIM, &o.value_label(),
+                                        Rect { left: hr.right - 140, top: hr.top, right: hr.right, bottom: hr.bottom },
+                                        DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS,
+                                    );
+                                }
+                            }
+                        }
+                        OptView::Dual { min_i, max_i, base, lo, hi } => {
+                            let mn = &sp.opts[*min_i];
+                            let mx = &sp.opts[*max_i];
+                            let vm = dragging
+                                .as_ref()
+                                .and_then(|dg| if dg.key_min == mn.key { Some(dg.vmin) } else { None })
+                                .unwrap_or_else(|| mn.value_num().clamp(*lo, *hi));
+                            let vx = dragging
+                                .as_ref()
+                                .and_then(|dg| if dg.key_max.as_deref() == Some(mx.key.as_str()) { Some(dg.vmax) } else { None })
+                                .unwrap_or_else(|| mx.value_num().clamp(*lo, *hi));
+                            text_in(
+                                hdc, f.small, C_ALT, base,
+                                Rect { left: hr.left, top: hr.top, right: hr.right - 170, bottom: hr.top + 20 },
+                                DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS,
+                            );
+                            text_in(
+                                hdc, f.mono, C_LINK,
+                                &format!("{} ~ {}", fmt_opt_value(mn, vm), fmt_opt_value(mx, vx)),
+                                Rect { left: hr.right - 160, top: hr.top + 1, right: hr.right, bottom: hr.top + 19 },
+                                DT_RIGHT | DT_SINGLELINE | DT_VCENTER,
+                            );
+                            let track = Rect { left: hr.left + 2, top: hr.top + 28, right: hr.right - 2, bottom: hr.top + 34 };
+                            draw_slider(hdc, track, *lo, *hi, vm, vx, &[vm, vx]);
+                        }
+                    }
+                }
+                RestoreDC(hdc, saved);
+
+                // settings scrollbar
+                if sp.max_scroll > 0 {
+                    let track = Rect {
+                        left: sp.pane.right - 7,
+                        top: sp.pane.top + 12,
+                        right: sp.pane.right - 5,
+                        bottom: sp.pane.bottom - 12,
+                    };
+                    fill(hdc, C_SEPARATOR, track);
+                    let track_h = track.bottom - track.top;
+                    let th = ((track_h as f32) * (sp.view_h as f32 / sp.total_h.max(1) as f32)).max(24.0) as i32;
+                    let scroll = OPT_SCROLL.load(Ordering::Relaxed).clamp(0, sp.max_scroll);
+                    let off = ((track_h - th) as f32 * (scroll as f32 / sp.max_scroll as f32)) as i32;
+                    fill(hdc, C_DIM, Rect { left: track.left, top: track.top + off, right: track.right, bottom: track.top + off + th });
+                }
+            }
+
+            // ── the open ⋮ menu, on top of everything ──
+            let pop = lock(&POPUP).clone();
+            if let Some(pop) = &pop {
+                round_rect_ringed(hdc, pop.rect, 10, theme::colorref(theme::mix(theme::BACKGROUND, theme::LINK, 35, 100)), C_LIST_FILL);
+                let hov1 = point_in(hover, pop.bind);
+                if hov1 {
+                    round_rect_ringed(hdc, pop.bind, 7, C_CARD_BORDER, C_BTN_HOVER);
+                }
+                icons::draw(hdc, "UI:key", "", pop.bind.left + 10, pop.bind.top + 8, 14, theme::SECONDARY_TEXT);
+                text_in(
+                    hdc, f.small, if hov1 { C_STRONG } else { C_TEXT },
+                    &format!("Keybind · {}", pop.key_label),
+                    Rect { left: pop.bind.left + 32, top: pop.bind.top, right: pop.bind.right - 6, bottom: pop.bind.bottom },
+                    DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS,
+                );
+                let hov2 = point_in(hover, pop.star);
+                if hov2 {
+                    round_rect_ringed(hdc, pop.star, 7, C_CARD_BORDER, C_BTN_HOVER);
+                }
+                let st_tint = if pop.fav { theme::WARNING } else if hov2 { theme::SECONDARY_TEXT } else { theme::MUTED_TEXT };
+                icons::draw(hdc, "UI:star", "", pop.star.left + 10, pop.star.top + 8, 14, st_tint);
+                text_in(
+                    hdc, f.small, if hov2 { C_STRONG } else { C_TEXT }, "Favorite",
+                    Rect { left: pop.star.left + 32, top: pop.star.top, right: pop.star.right - 6, bottom: pop.star.bottom },
+                    DT_LEFT | DT_VCENTER | DT_SINGLELINE,
+                );
+            }
+
             // ── footer: panel address + target summary ──
             text_in(
                 hdc,
                 f.mono,
                 C_DIM,
                 &state.panel_url,
-                Rect { left: PAD, top: PANEL_BOTTOM + 10, right: CLIENT_W / 2 - 20, bottom: PANEL_BOTTOM + 34 },
+                Rect { left: PAD, top: PANEL_BOTTOM + 10, right: CLIENT_W / 2 - 20, bottom: PANEL_BOTTOM + 28 },
                 DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS,
             );
             let info = format!(
@@ -2769,7 +3137,7 @@ unsafe fn draw_main(hdc: Hdc) {
                 f.small,
                 C_DIM,
                 &info,
-                Rect { left: CLIENT_W / 2, top: PANEL_BOTTOM + 10, right: CLIENT_W - PAD, bottom: PANEL_BOTTOM + 34 },
+                Rect { left: CLIENT_W / 2, top: PANEL_BOTTOM + 10, right: CLIENT_W - PAD, bottom: PANEL_BOTTOM + 28 },
                 DT_RIGHT | DT_SINGLELINE | DT_END_ELLIPSIS,
             );
         }
@@ -3120,7 +3488,21 @@ unsafe extern "system" fn wnd_proc(hwnd: Hwnd, msg: u32, wp: Wparam, lp: Lparam)
         WM_MOUSEWHEEL => {
             if lock(&shared().state).app == App::Panel {
                 let delta = ((wp >> 16) as u16) as i16 as i32;
-                PANEL_SCROLL.fetch_sub(delta / 120 * 48, Ordering::Relaxed);
+                *lock(&POPUP) = None;
+                // route by the last known hover: over the settings pane the
+                // wheel scrolls the pane's options, otherwise the card list
+                let layout = panel_layout();
+                let h = *lock(&shared().hover);
+                let over_settings = layout
+                    .settings
+                    .as_ref()
+                    .map(|sp| point_in(h, sp.pane))
+                    .unwrap_or(false);
+                if over_settings {
+                    OPT_SCROLL.fetch_sub(delta / 120 * 44, Ordering::Relaxed);
+                } else {
+                    PANEL_SCROLL.fetch_sub(delta / 120 * (CARD_H + CARD_GAP), Ordering::Relaxed);
+                }
                 repaint();
             }
             0
@@ -3232,26 +3614,50 @@ unsafe extern "system" fn wnd_proc(hwnd: Hwnd, msg: u32, wp: Wparam, lp: Lparam)
                 App::Running => {}
                 App::Panel => {
                     let layout = panel_layout();
-                    // Any click that is not the captured chip itself disarms a
+                    // Any click that is not the armed chip itself disarms a
                     // pending keybind capture (web panel's cancelCapture).
-                    let capturing_now = lock(&KB_CAPTURE).clone();
-                    if let Some(cname) = capturing_now {
+                    if let Some(cname) = lock(&KB_CAPTURE).clone() {
                         let armed = layout
-                            .rows
-                            .iter()
-                            .any(|row| row.m.name == cname && point_in(p, row.kb));
+                            .settings
+                            .as_ref()
+                            .map(|sp| sp.name == cname && point_in(p, sp.kb_chip))
+                            .unwrap_or(false);
                         if !armed {
                             *lock(&KB_CAPTURE) = None;
                         }
                     }
-                    if point_in(p, PANEL_BACK_RECT) {
+                    // The open ⋮ menu owns this click: its items act, anything
+                    // else just closes it.
+                    let pop = lock(&POPUP).clone();
+                    if let Some(pop) = pop {
+                        if point_in(p, pop.bind) {
+                            // quick bind: arm capture AND surface the settings
+                            // pane, so "[press a key…]" is visible while typing
+                            *lock(&PANEL_SELECTED) = Some(pop.module.clone());
+                            OPT_SCROLL.store(0, Ordering::Relaxed);
+                            *lock(&KB_CAPTURE) = Some(pop.module.clone());
+                            poke_interact();
+                        } else if point_in(p, pop.star) {
+                            toggle_favorite(&pop.module);
+                        }
+                        *lock(&POPUP) = None;
+                    } else if point_in(p, NAV_BACK_RECT) {
                         *lock(&KB_CAPTURE) = None;
+                        *lock(&POPUP) = None;
                         lock(&shared().state).app = App::Chooser;
                         *lock(&shared().shown_sig) = String::new();
-                    } else if point_in(p, RAIL_WEB_RECT) {
+                    } else if point_in(p, NAV_HOME_RECT) {
+                        // Home: every module, list rewound, settings closed.
+                        PANEL_CAT.store(1, Ordering::Relaxed);
+                        PANEL_SCROLL.store(0, Ordering::Relaxed);
+                        *lock(&PANEL_SELECTED) = None;
+                        *lock(&POPUP) = None;
+                    } else if point_in(p, NAV_REFRESH_RECT) {
+                        spawn_poll_now();
+                    } else if point_in(p, NAV_WEB_RECT) {
                         let url = lock(&shared().state).panel_url.clone();
                         open_url(&url);
-                    } else if point_in(p, RAIL_HIDE_RECT) {
+                    } else if point_in(p, NAV_HIDE_RECT) {
                         hide_launcher();
                         return 0;
                     } else {
@@ -3260,57 +3666,75 @@ unsafe extern "system" fn wnd_proc(hwnd: Hwnd, msg: u32, wp: Wparam, lp: Lparam)
                             if point_in(p, rail_item_rect(i)) {
                                 PANEL_CAT.store(i as u32, Ordering::Relaxed);
                                 PANEL_SCROLL.store(0, Ordering::Relaxed);
+                                *lock(&PANEL_SELECTED) = None;
+                                *lock(&POPUP) = None;
                                 rail_hit = true;
                                 break;
                             }
                         }
                         if !rail_hit {
-                            let hit_row = layout.rows.iter().find(|row| {
-                                point_in(p, row.header) || row.drawer.map(|d| point_in(p, d)).unwrap_or(false)
-                            });
-                            if let Some(row) = hit_row {
-                                let name = row.m.name.clone();
-                                if point_in(p, row.switch) {
-                                    panel_toggle(&name);
-                                } else if point_in(p, row.kb) {
-                                    // (re)arm capture: the next keypress binds
-                                    *lock(&KB_CAPTURE) = Some(name);
-                                    poke_interact();
-                                } else if point_in(p, row.header) {
-                                    // header / chevron: push-the-table drawer
-                                    let mut exp = lock(&PANEL_EXPANDED);
-                                    if let Some(pos) = exp.iter().position(|n| *n == name) {
-                                        exp.remove(pos);
-                                    } else {
-                                        exp.push(name.clone());
-                                    }
-                                    drop(exp);
-                                    poke_interact();
-                                } else {
-                                    // inside the drawer: the option rows
-                                    for (hr, vi) in &row.hits {
-                                        if !point_in(p, *hr) {
-                                            continue;
-                                        }
+                            // the settings pane first (its rows live there)
+                            let mut set_hit = false;
+                            if let Some(sp) = &layout.settings {
+                                if point_in(p, sp.pane) {
+                                    set_hit = true;
+                                    if point_in(p, sp.back) {
+                                        *lock(&PANEL_SELECTED) = None;
+                                        OPT_SCROLL.store(0, Ordering::Relaxed);
+                                    } else if point_in(p, sp.star) {
+                                        toggle_favorite(&sp.name);
+                                    } else if point_in(p, sp.kb_chip) {
+                                        // (re)arm capture: the next keypress binds
+                                        *lock(&KB_CAPTURE) = Some(sp.name.clone());
                                         poke_interact();
-                                        match &row.views[*vi] {
-                                            OptView::Single(i) => {
-                                                let o = &row.m.options[*i];
-                                                if o.is_numeric() {
-                                                    unsafe { drag_start_single(&row.m, *i, *hr, p) };
-                                                } else if o.type_name == "BOOLEAN"
-                                                    || o.type_name == "CHOICES"
-                                                    || o.type_name == "ENUM"
-                                                {
-                                                    option_click(&row.m, *i);
+                                    } else {
+                                        for (hr, vi) in &sp.hits {
+                                            if !point_in(p, *hr) {
+                                                continue;
+                                            }
+                                            poke_interact();
+                                            match &sp.views[*vi] {
+                                                OptView::Single(i) => {
+                                                    let o = &sp.opts[*i];
+                                                    if o.is_numeric() {
+                                                        unsafe { drag_start_single(&sp.opts, *i, *hr, p) };
+                                                    } else if matches!(
+                                                        o.type_name.as_str(),
+                                                        "BOOLEAN" | "CHOICES" | "ENUM"
+                                                    ) {
+                                                        option_click(&sp.opts, *i);
+                                                    }
+                                                    // COLOR / STRING: display-only here
                                                 }
-                                                // COLOR / STRING: display-only here
+                                                OptView::Dual { min_i, max_i, lo, hi, .. } => {
+                                                    unsafe {
+                                                        drag_start_dual(&sp.opts, *min_i, *max_i, *lo, *hi, *hr, p)
+                                                    };
+                                                }
                                             }
-                                            OptView::Dual { min_i, max_i, lo, hi, .. } => {
-                                                unsafe { drag_start_dual(&row.m, *min_i, *max_i, *lo, *hi, *hr, p) };
-                                            }
+                                            break;
                                         }
-                                        break;
+                                    }
+                                }
+                            }
+                            if !set_hit {
+                                // a module card: switch toggles, kebab opens the
+                                // menu, everything else opens the settings pane
+                                if let Some(row) = layout.rows.iter().find(|row| point_in(p, row.card)) {
+                                    if point_in(p, row.toggle) {
+                                        panel_toggle(&row.m.name);
+                                    } else if point_in(p, row.kebab) {
+                                        open_popup(&row.m, row.kebab);
+                                    } else {
+                                        let name = row.m.name.clone();
+                                        let mut sel = lock(&PANEL_SELECTED);
+                                        if sel.as_deref() != Some(name.as_str()) {
+                                            OPT_SCROLL.store(0, Ordering::Relaxed);
+                                        }
+                                        *sel = Some(name);
+                                        drop(sel);
+                                        *lock(&POPUP) = None;
+                                        poke_interact();
                                     }
                                 }
                             }

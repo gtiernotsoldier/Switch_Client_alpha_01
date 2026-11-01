@@ -1746,7 +1746,7 @@ fn paint_watermark(
                 // two 8 px-radius D's filling an 11×10 zone inside the tile.
                 let d_h = (tile as f32 * 10.0 / 14.0).round().max(2.0) as u32;
                 let d_w = (tile as f32 * 5.0 / 14.0).round().max(1.0) as u32;
-                let pair_w = 2 * d_w as f32 + m.scale;
+                let pair_w = 2.0 * d_w as f32 + m.scale;
                 let gx = tile_x as f32 + (tile as f32 - pair_w) / 2.0;
                 let gy = tile_y as f32 + (tile as f32 - d_h as f32) / 2.0;
                 canvas.fill_letter_d(gx.round() as i32, gy.round() as i32, d_w, d_h, 0xFFFF_FFFF, true);
@@ -3091,6 +3091,9 @@ mod tests {
     /// regression that put the watermark at `rect.x + 10` *canvas-local*, which is
     /// a different place on every window position and no place at all (off the
     /// surface) for a rect with a negative origin.
+    /// Glyph-pixel test: the Linux stub draws no glyphs, so it can only answer
+    /// on the real engine.
+    #[cfg(windows)]
     #[test]
     fn the_frame_lands_on_the_same_pixels_whatever_origin_the_canvas_has() {
         let entries = vec![entry(1, "Velocity", "82%", false), entry(2, "Reach", "3.1-3.3", false)];
@@ -3427,6 +3430,9 @@ mod tests {
     /// background pixel of the card behind them is byte-for-byte what it was at 0.
     /// Measured on the pixels, because "the name goes red, no red block appears" is
     /// the requirement and `flash_tint` alone cannot prove the painter uses it.
+    /// Glyph-pixel test: the Linux stub draws no glyphs, so it can only answer
+    /// on the real engine.
+    #[cfg(windows)]
     #[test]
     fn a_full_flash_tints_the_text_and_leaves_the_card_alone() {
         let mut text = TextEngine::new(1.0).expect("GDI text engine");

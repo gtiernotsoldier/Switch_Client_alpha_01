@@ -21,6 +21,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+#[cfg(windows)]
 use crate::win::{GetLocalTime, SystemTimeW};
 
 /// Truncate on start above this: ~70 KB is roughly a thousand start/exit pairs,
@@ -85,6 +86,7 @@ pub fn default_path() -> PathBuf {
 
 /// `YYYY-MM-DD HH:MM:SS.mmm` in the machine's local time zone. All zeros if the
 /// system will not say — a line with a useless timestamp still beats no line.
+#[cfg(windows)]
 pub fn local_timestamp() -> String {
     let mut time: SystemTimeW = unsafe { std::mem::zeroed() };
     unsafe {
@@ -94,6 +96,30 @@ pub fn local_timestamp() -> String {
         "{:04}-{:02}-{:02} {:02}:{:02}:{:02}.{:03}",
         time.year, time.month, time.day, time.hour, time.minute, time.second, time.milliseconds
     )
+}
+
+/// Off Windows there is no `GetLocalTime`: the review build logs UTC with the
+/// same 23-character format (the year is the only coarse field).
+#[cfg(not(windows))]
+pub fn local_timestamp() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    match SystemTime::now().duration_since(UNIX_EPOCH) {
+        Ok(d) => {
+            let secs = d.as_secs();
+            let (hh, mm, ss) = ((secs / 3600) % 24, (secs / 60) % 60, secs % 60);
+            format!(
+                "{:04}-{:02}-{:02} {:02}:{:02}:{:02}.{:03}",
+                1970 + (secs / 31_556_952) as u64,
+                1,
+                1,
+                hh,
+                mm,
+                ss,
+                d.subsec_millis()
+            )
+        }
+        Err(_) => "0000-00-00 00:00:00.000".to_string(),
+    }
 }
 
 #[cfg(test)]

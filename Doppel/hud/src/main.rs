@@ -55,12 +55,24 @@
 // what could not be reproduced.
 
 mod draw;
+#[cfg(windows)]
 mod follow;
 mod hud;
 mod log;
 mod preview;
 mod state;
+#[cfg(windows)]
+#[path = "text.rs"]
 mod text;
+// The Linux review build stands in the same-surface stub instead: geometry and
+// colour stay meaningful under it, glyphs do not (see text_stub.rs).
+#[cfg(not(windows))]
+#[path = "text_stub.rs"]
+mod text;
+// Win32 is the overlay's only platform; everything else (the `--dump` review
+// path, `--hide`, the parser and the tests) compiles and runs without it, so
+// the module is gated instead of linked-in and left to die at the linker.
+#[cfg(windows)]
 mod win;
 
 use std::ffi::c_void;
@@ -71,6 +83,7 @@ use draw::{argb, Canvas};
 use hud::{Anim, Config, Mode, Position, Rect};
 use state::Entry;
 use text::TextEngine;
+#[cfg(windows)]
 use win::*;
 
 /// Neutral class name and an empty caption: nothing that greps for the product's
@@ -795,6 +808,7 @@ impl RectSource {
 /// origin is (0, 0) by definition — Win32 has no `SM_XSCREEN`/`SM_YSCREEN`, only
 /// the virtual screen has an origin. A machine that answers 0 (no display
 /// attached to this session) gets the fallback instead of a 0x0 window.
+#[cfg(windows)]
 fn monitor_rect() -> (Rect, bool) {
     let (cx, cy) = unsafe { (GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN)) };
     if cx > 0 && cy > 0 {
@@ -802,6 +816,14 @@ fn monitor_rect() -> (Rect, bool) {
     } else {
         (Rect::new(0, 0, FALLBACK_W, FALLBACK_H), true)
     }
+}
+
+/// No `GetSystemMetrics` off Windows: the review path gets the same fallback the
+/// display-less Windows session gets, and `--rect`/`--x/--y/--w/--h` override it
+/// anyway, so a dump's printed runtime line stays meaningful on any machine.
+#[cfg(not(windows))]
+fn monitor_rect() -> (Rect, bool) {
+    (Rect::new(0, 0, FALLBACK_W, FALLBACK_H), true)
 }
 
 /// The rect the overlay will actually cover: `--rect` when given, the primary
@@ -847,6 +869,7 @@ fn wide(s: &str) -> Vec<u16> {
 /// the ABI the class was registered with, and every argument arrives as a raw
 /// Win32 value. It runs on the thread that owns the window, which is the thread
 /// that runs the frame loop below.
+#[cfg(windows)]
 unsafe extern "system" fn wnd_proc(hwnd: Hwnd, msg: u32, wp: Wparam, lp: Lparam) -> Lresult {
     match msg {
         // WS_EX_TRANSPARENT already keeps the mouse away; answering like this as
@@ -1038,6 +1061,14 @@ fn liveness_rule(pid: Option<u32>) -> String {
     }
 }
 
+// The poll cadence the rules text names. Windows reads `follow::POLL_MS` so
+// the help text cannot drift from the loop; Linux compiles no follow module,
+// so it pins the same literal (the `visibility_rule` test asserts the number).
+#[cfg(windows)]
+const RULE_POLL_MS: u64 = follow::POLL_MS;
+#[cfg(not(windows))]
+const RULE_POLL_MS: u64 = 1_000;
+
 /// Which visibility rule this run is under, for the startup line.
 ///
 /// The exit line says *that* the overlay stopped drawing, and "the HUD was not on
@@ -1050,7 +1081,7 @@ fn visibility_rule(pid: Option<u32>) -> String {
         Some(pid) => format!(
             "pid-gated (shown only while a window of pid {pid} is the foreground window and not \
              minimised, re-checked every {POLL_MS} ms; hidden — not exited — otherwise)",
-            POLL_MS = follow::POLL_MS
+            POLL_MS = RULE_POLL_MS
         ),
         None => "always shown (no --follow-pid: without a pid there is no way to tell which \
                  window is the game)"
@@ -1067,6 +1098,7 @@ fn visibility_rule(pid: Option<u32>) -> String {
 /// the game window can change the overlay's size at any moment (a fullscreen switch changes
 /// it drastically), and a leaked DC/DIB per switch would be a slow resource leak in a
 /// process that is meant to live as long as the game does.
+#[cfg(windows)]
 struct Surface {
     dc: Hdc,
     dib: *mut c_void,
@@ -1078,6 +1110,7 @@ struct Surface {
     size: Size,
 }
 
+#[cfg(windows)]
 impl Surface {
     /// Create a `w`x`h` surface. `Err` carries the reason for the log.
     ///
@@ -1115,6 +1148,7 @@ impl Surface {
     }
 }
 
+#[cfg(windows)]
 impl Drop for Surface {
     fn drop(&mut self) {
         unsafe {
@@ -1132,6 +1166,7 @@ impl Drop for Surface {
 /// The log is opened first and closed last: it is the only record of a run that
 /// draws nothing on screen, and every write through it is best-effort, so it can
 /// never be the reason the overlay fails.
+#[cfg(windows)]
 fn run(args: &Args) -> Result<(), String> {
     let mut log = log::Log::open();
     let state_path = state::default_path();
@@ -1795,6 +1830,13 @@ fn run(args: &Args) -> Result<(), String> {
     outcome
 }
 
+/// Off Windows there is no layered window to run: the live path refuses instead
+/// of linking user32, and `--dump` stays the review path that works anywhere.
+#[cfg(not(windows))]
+fn run(_args: &Args) -> Result<(), String> {
+    Err("the live overlay is Windows-only; use --dump for the review path".to_string())
+}
+
 /// `--dump`: render one representative frame to a BMP and print the ASCII
 /// preview. No window class is registered and no window is created — the text
 /// engine only needs a memory DC, so this works on a session with no desktop.
@@ -1866,7 +1908,7 @@ fn run_dump(path: &str, args: &Args, runtime: Rect, source: RectSource) -> Resul
     // printed anchors are the ones the dump above actually drew with.
     // Aurora's status pill measures a run of its own (version + segments in
     // the chip faces); every other mode the source's run in the mode's faces.
-    let mut run_w = hud::watermark_run_width(&text, &config);
+    let run_w = hud::watermark_run_width(&text, &config);
     println!(
         "runtime window: {}x{} at ({}, {}) [{}] — the live layered window covers that rect, so the \
          watermark run ({}px) starts at ({}, {}) and the first row is flushed to the {} edge, \
@@ -1974,6 +2016,7 @@ fn run_dump(path: &str, args: &Args, runtime: Rect, source: RectSource) -> Resul
 fn main() {
     // Must happen before any window is created: on a scaled display this is what keeps one canvas
     // pixel equal to one screen pixel instead of letting Windows stretch the HUD.
+    #[cfg(windows)]
     win::enable_dpi_awareness();
 
     let argv: Vec<String> = std::env::args().skip(1).collect();

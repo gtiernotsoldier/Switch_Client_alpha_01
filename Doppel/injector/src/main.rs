@@ -24,6 +24,7 @@
 mod flow;
 mod inject;
 mod log;
+mod panel;
 mod process;
 mod resource;
 mod theme;

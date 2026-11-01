@@ -27,14 +27,16 @@
 // is done, so it can never block the message loop or steal focus.
 
 use std::ffi::c_void;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering};
 use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, Instant};
 
 use crate::flow::{self, FlowError, Reporter, STEPS};
+use crate::panel;
 use crate::process::ProcessInfo;
 use crate::theme::{self, metrics};
 use crate::ui;
+use crate::version;
 
 // ── Win32 types ─────────────────────────────────────────────────────────────
 
@@ -171,7 +173,7 @@ extern "system" {
     fn LoadCursorW(instance: Hinstance, name: *const u16) -> Hcursor;
     fn SetCursor(cursor: Hcursor) -> Hcursor;
     fn MessageBeep(kind: u32) -> i32;
-    fn AdjustWindowRect(rect: *mut Rect, style: u32, menu: i32) -> i32;
+    fn ScreenToClient(hwnd: Hwnd, pt: *mut Point) -> i32;
     fn GetSystemMetrics(index: i32) -> i32;
     fn SystemParametersInfoW(action: u32, param: u32, data: *mut c_void, win_ini: u32) -> i32;
     fn GetDC(hwnd: Hwnd) -> Hdc;
@@ -312,6 +314,16 @@ const ODS_SELECTED: u32 = 0x0001;
 const AC_SRC_OVER: u8 = 0x00;
 const DWMWA_USE_IMMERSIVE_DARK_MODE: u32 = 20;
 const DWMWA_USE_IMMERSIVE_DARK_MODE_OLD: u32 = 19;
+const DWMWA_BORDER_COLOR: u32 = 34;
+const DWMWA_CAPTION_COLOR: u32 = 35;
+const DWMWA_TEXT_COLOR: u32 = 36;
+
+// Frame removal + the custom caption strip.
+const WM_NCCALCSIZE: u32 = 0x0083;
+const WM_NCHITTEST: u32 = 0x0084;
+const WM_MOUSEWHEEL: u32 = 0x020A;
+const HTCLIENT: Lresult = 1;
+const HTCAPTION: Lresult = 2;
 
 // ── palette ─────────────────────────────────────────────────────────────────
 //
@@ -340,18 +352,42 @@ const C_LIST_FILL: u32 = theme::colorref(theme::LIST_FILL);
 const C_ROW_SELECTED: u32 = theme::colorref(theme::ROW_SELECTED);
 const C_ON_LINK: u32 = theme::colorref(theme::ON_LINK_TEXT);
 const C_TOPO: u32 = theme::colorref(theme::TOPO_LINE_ON_BG);
+/// A selected pill's tinted body: LINK at 14 % over the background.
+const C_PILL_SEL: u32 = theme::colorref(theme::mix(theme::BACKGROUND, theme::LINK, 14, 100));
 
 // ── layout (logical client area, fixed size — the window is not resizable) ───
 
 const CLIENT_W: i32 = metrics::WINDOW_W;
 const CLIENT_H: i32 = metrics::WINDOW_H;
 const PAD: i32 = metrics::PAD_WINDOW;
-const HEADER_H: i32 = 76;
+
+// ── custom title bar ──
+// The OS frame is removed (WM_NCCALCSIZE collapses the client onto the whole
+// window) and this strip is drawn + hit-tested by hand, so the caption can
+// never come back in the white system style the old build showed.
+
+const TITLE_H: i32 = 44;
+const CAP_BTN_W: i32 = 44;
+const CAP_MIN_RECT: Rect = Rect { left: CLIENT_W - CAP_BTN_W * 2, top: 0, right: CLIENT_W - CAP_BTN_W, bottom: TITLE_H };
+const CAP_CLOSE_RECT: Rect = Rect { left: CLIENT_W - CAP_BTN_W, top: 0, right: CLIENT_W, bottom: TITLE_H };
+
+// ── chooser layout ──
+
+const PILL_W: i32 = 300;
+const PILL_H: i32 = 48;
+const PILL_GAP: i32 = 12;
+const VERSION_Y: i32 = 96;
+const IFACE_Y: i32 = VERSION_Y + PILL_H + 10;
+
+const FORGE_RECT: Rect = Rect { left: PAD, top: VERSION_Y, right: PAD + PILL_W, bottom: VERSION_Y + PILL_H };
+const FABRIC_RECT: Rect = Rect { left: PAD + PILL_W + PILL_GAP, top: VERSION_Y, right: PAD + PILL_W * 2 + PILL_GAP, bottom: VERSION_Y + PILL_H };
+const INWIN_RECT: Rect = Rect { left: PAD, top: IFACE_Y, right: PAD + PILL_W, bottom: IFACE_Y + PILL_H };
+const WEBGUI_RECT: Rect = Rect { left: PAD + PILL_W + PILL_GAP, top: IFACE_Y, right: PAD + PILL_W * 2 + PILL_GAP, bottom: IFACE_Y + PILL_H };
 
 const LIST_X: i32 = PAD;
-const LIST_Y: i32 = 116;
+const LIST_Y: i32 = IFACE_Y + PILL_H + 40;
 const LIST_W: i32 = CLIENT_W - PAD * 2;
-const LIST_H: i32 = 280;
+const LIST_H: i32 = 160;
 
 // The stock list box is inset so the card's rounded corners stay visible.
 const LISTBOX_X: i32 = LIST_X + metrics::ITEM_INNER_Y;
@@ -361,15 +397,29 @@ const LISTBOX_H: i32 = LIST_H - metrics::ITEM_INNER_Y * 2;
 
 const BTN_W: i32 = metrics::BTN_LARGE_W;
 const BTN_H: i32 = metrics::BTN_LARGE_H;
-const BTN_Y: i32 = LIST_Y + LIST_H + 22;
+const BTN_Y: i32 = LIST_Y + LIST_H + 14;
 
 const REFRESH_RECT: Rect = Rect { left: PAD, top: BTN_Y, right: PAD + BTN_W, bottom: BTN_Y + BTN_H };
 const INJECT_RECT: Rect = Rect { left: CLIENT_W - PAD - BTN_W, top: BTN_Y, right: CLIENT_W - PAD, bottom: BTN_Y + BTN_H };
 const HINT_Y: i32 = BTN_Y + BTN_H + 14;
 const FOOTER_Y: i32 = HINT_Y + 26;
 
-const STEPS_CARD: Rect = Rect { left: PAD, top: 126, right: CLIENT_W - PAD, bottom: 272 };
-const RESULT_CARD: Rect = Rect { left: PAD, top: 286, right: CLIENT_W - PAD, bottom: 452 };
+// ── panel screen (the in-window GUI) layout ──
+
+const PANEL_HEAD_Y: i32 = 58;
+const PANEL_BACK_RECT: Rect = Rect { left: PAD, top: PANEL_HEAD_Y, right: PAD + 96, bottom: PANEL_HEAD_Y + 34 };
+const RAIL_W: i32 = 170;
+const PANEL_TOP: i32 = 104;
+const PANEL_BOTTOM: i32 = 474;
+const RAIL_RECT: Rect = Rect { left: PAD, top: PANEL_TOP, right: PAD + RAIL_W, bottom: PANEL_BOTTOM };
+const MODS_RECT: Rect = Rect { left: PAD + RAIL_W + 12, top: PANEL_TOP, right: CLIENT_W - PAD, bottom: PANEL_BOTTOM };
+const PANEL_ROW_H: i32 = 34;
+const RAIL_OPEN_RECT: Rect = Rect { left: PAD + 12, top: PANEL_BOTTOM - 44, right: PAD + RAIL_W - 12, bottom: PANEL_BOTTOM - 10 };
+
+// ── running / done layout ──
+
+const STEPS_CARD: Rect = Rect { left: PAD, top: 100, right: CLIENT_W - PAD, bottom: 246 };
+const RESULT_CARD: Rect = Rect { left: PAD, top: 260, right: CLIENT_W - PAD, bottom: 426 };
 
 const ROW_BTN_Y: i32 = CLIENT_H - PAD - BTN_H;
 const BACK_RECT: Rect = Rect { left: PAD, top: ROW_BTN_Y, right: PAD + BTN_W, bottom: ROW_BTN_Y + BTN_H };
@@ -377,8 +427,12 @@ const OPEN_RECT: Rect = Rect { left: PAD + BTN_W + 12, top: ROW_BTN_Y, right: PA
 const HIDE_RECT: Rect = Rect { left: PAD + BTN_W * 2 + 24, top: ROW_BTN_Y, right: PAD + BTN_W * 3 + 24, bottom: ROW_BTN_Y + BTN_H };
 const CLOSE_RECT: Rect = Rect { left: CLIENT_W - PAD - BTN_W, top: ROW_BTN_Y, right: CLIENT_W - PAD, bottom: ROW_BTN_Y + BTN_H };
 
-const STEP_Y0: i32 = 142;
-const STEP_DY: i32 = 34;
+const STEP_Y0: i32 = 116;
+const STEP_DY: i32 = 32;
+
+/// Rail categories, index == PANEL_CAT value; index 0 = "All".
+const RAIL_CATS: [&str; 6] = ["", "COMBAT", "PLAYER", "MOVEMENT", "VISUAL", "UTILITY"];
+const RAIL_LABELS: [&str; 6] = ["All", "Combat", "Player", "Movement", "Visual", "Utility"];
 
 // ── intro / fade timeline (milliseconds) ────────────────────────────────────
 //
@@ -464,6 +518,31 @@ enum App {
     Running,
     Done,
     Failed,
+    /// The in-window GUI: a native module panel talking to the agent's API.
+    Panel,
+}
+
+/// The pill choice for which Minecraft flavour is about to be injected.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Target {
+    Forge,
+    Fabric,
+}
+
+impl Target {
+    fn key(self) -> &'static str {
+        match self {
+            Target::Forge => "forge",
+            Target::Fabric => "fabric",
+        }
+    }
+}
+
+/// Where the modules are controlled after the agent lands.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Gui {
+    InWindow,
+    Web,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -496,6 +575,12 @@ struct UiState {
     detail: String,
     steps: Vec<StepInfo>,
     events: Vec<(String, String)>,
+    /// Version pill choice (default: 1.8.9 · Forge).
+    target: Target,
+    /// GUI pill choice (default: the in-window panel).
+    gui: Gui,
+    /// "1.8.9 · forge" for the picked process, detected in the background.
+    detected: String,
 }
 
 impl Default for UiState {
@@ -509,6 +594,9 @@ impl Default for UiState {
             detail: String::new(),
             steps: (0..STEPS.len()).map(|_| StepInfo::default()).collect(),
             events: Vec::new(),
+            target: Target::Forge,
+            gui: Gui::InWindow,
+            detected: String::new(),
         }
     }
 }
@@ -520,8 +608,12 @@ struct Row {
     pid: u32,
     exe: String,
     title: String,
-    tag: &'static str,
+    tag: String,
 }
+
+/// Rail selection (index into RAIL_CATS) + scroll offset of the module list.
+static PANEL_CAT: AtomicU32 = AtomicU32::new(0);
+static PANEL_SCROLL: AtomicI32 = AtomicI32::new(0);
 
 struct Shared {
     state: Mutex<UiState>,
@@ -718,6 +810,96 @@ fn spawn_scanner() {
     });
 }
 
+// ── in-window GUI (panel) workers ───────────────────────────────────────
+
+/// Poll GET /api/modules while the panel screen is up, so the native list
+/// tracks what the game (or the web GUI) does to the modules. One thread for
+/// the whole process life; it idles whenever the panel is not on screen.
+fn spawn_panel_poller() {
+    static STARTED: AtomicBool = AtomicBool::new(false);
+    if STARTED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    std::thread::spawn(|| loop {
+        let active = lock(&shared().state).app == App::Panel;
+        if active {
+            let (url, token) = {
+                let st = lock(&shared().state);
+                (st.panel_url.clone(), st.panel_token.clone())
+            };
+            if !url.is_empty() {
+                let ps = panel::state();
+                match panel::fetch_modules(&url, &token) {
+                    Ok(list) => {
+                        panel::publish(list);
+                        *panel::lock(&ps.last_ok) = Some(Instant::now());
+                        panel::lock(&ps.last_err).clear();
+                    }
+                    Err(e) => *panel::lock(&ps.last_err) = e,
+                }
+            }
+        }
+        std::thread::sleep(Duration::from_millis(if active { 1500 } else { 500 }));
+    });
+}
+
+/// Flip a module optimistically, then let the agent's answer settle the value
+/// (and the next poll keep it honest — the in-game HUD can toggle too).
+fn panel_toggle(name: &str) {
+    let (url, token) = {
+        let st = lock(&shared().state);
+        (st.panel_url.clone(), st.panel_token.clone())
+    };
+    if url.is_empty() {
+        return;
+    }
+    {
+        let ps = panel::state();
+        let mut mods = panel::lock(&ps.modules);
+        if let Some(m) = mods.iter_mut().find(|m| m.name == name) {
+            m.enabled = !m.enabled;
+        }
+    }
+    repaint();
+    let name = name.to_string();
+    std::thread::spawn(move || {
+        let ps = panel::state();
+        match panel::post_toggle(&url, &token, &name) {
+            Ok(now) => {
+                let mut mods = panel::lock(&ps.modules);
+                if let Some(m) = mods.iter_mut().find(|m| m.name == name) {
+                    m.enabled = now;
+                }
+            }
+            Err(e) => *panel::lock(&ps.last_err) = e,
+        }
+        repaint();
+    });
+}
+
+/// Cheap string-only flavour guess for the list chips — NO filesystem access,
+/// it runs on every list refresh. The real detection still happens in
+/// version.rs (flow step 2); this only tints the rows and the auto-pick.
+fn platform_hint(p: &ProcessInfo) -> &'static str {
+    let hay = format!(
+        "{} {} {} {}",
+        p.cmdline,
+        p.path,
+        p.window_title,
+        p.cmdline_hint()
+    )
+    .to_ascii_lowercase();
+    if hay.contains("fabric") {
+        "fabric"
+    } else if hay.contains("forge") || hay.contains("fml") || hay.contains("1.8.9") {
+        "forge"
+    } else if hay.contains("1.21") {
+        "fabric"
+    } else {
+        ""
+    }
+}
+
 fn run_injection(pid: u32) {
     crate::log::append(&format!("=== injection start · target PID {} ===", pid));
     let rep = WindowReporter::new();
@@ -726,6 +908,7 @@ fn run_injection(pid: u32) {
     let s = shared();
     match result {
         Ok(outcome) => {
+            let gui = lock(&s.state).gui;
             {
                 let mut st = lock(&s.state);
                 st.app = App::Done;
@@ -739,13 +922,20 @@ fn run_injection(pid: u32) {
             crate::log::append("=== injection OK · agent loaded ===");
             unsafe { MessageBeep(0) };
 
-            // Same finish as OpenCommunity's launcher: the game is running and
-            // the in-game panel is the thing the user actually wants, so open it
-            // and get the launcher out of the way.
-            if !outcome.panel_url.as_deref().unwrap_or("").is_empty() {
-                open_url(outcome.panel_url.as_deref().unwrap_or(""));
+            if gui == Gui::InWindow && !outcome.panel_url.as_deref().unwrap_or("").is_empty() {
+                // The user picked the in-window GUI: the launcher does not get
+                // out of the way — it becomes the panel (same API, native UI).
+                push_event("info", "switching to the in-window panel".to_string());
+                lock(&s.state).app = App::Panel;
+                spawn_panel_poller();
+            } else {
+                // Web GUI — the old handoff: open the browser tab, get out of
+                // the way; the agent keeps running inside the game either way.
+                if !outcome.panel_url.as_deref().unwrap_or("").is_empty() {
+                    open_url(outcome.panel_url.as_deref().unwrap_or(""));
+                }
+                hide_launcher();
             }
-            hide_launcher();
         }
         Err(e) => {
             {
@@ -910,6 +1100,109 @@ unsafe fn draw_dot(hdc: Hdc, cx: i32, cy: i32, d: i32, color: u32) {
     SelectObject(hdc, old_brush);
     SelectObject(hdc, old_pen);
     DeleteObject(brush);
+}
+
+/// A selectable pill card on the chooser: version / interface choices. Selected
+/// pills get the LINK ring + tinted body + accent dot, like the reference's
+/// selected rows; unselected ones are plain glass cards.
+unsafe fn draw_pill(hdc: Hdc, r: Rect, main: &str, chip_label: &str, chip_color: [u8; 3], selected: bool, hovered: bool) {
+    let f = fonts();
+    if selected {
+        round_rect_ringed(hdc, r, metrics::BUTTON_ROUNDING, C_LINK, C_PILL_SEL);
+        draw_dot(hdc, r.left + 16, (r.top + r.bottom) / 2, 8, C_LINK);
+    } else {
+        let body = if hovered { C_BTN_HOVER } else { C_CARD };
+        round_rect_ringed(hdc, r, metrics::BUTTON_ROUNDING, C_CARD_BORDER, body);
+    }
+    let tx = if selected { r.left + 30 } else { r.left + 16 };
+    text_in(
+        hdc,
+        f.med,
+        if selected { C_STRONG } else { C_TEXT },
+        main,
+        Rect { left: tx, top: r.top, right: r.right - 96, bottom: r.bottom },
+        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS,
+    );
+    if !chip_label.is_empty() {
+        let cw = 20 + chip_label.len() as i32 * 8;
+        let chip = Rect {
+            left: r.right - cw - 12,
+            top: (r.top + r.bottom) / 2 - 11,
+            right: r.right - 12,
+            bottom: (r.top + r.bottom) / 2 + 11,
+        };
+        draw_chip(hdc, f.small, chip, chip_label, chip_color);
+    }
+}
+
+/// One 1 px caption-glyph line (min dash / close ×).
+unsafe fn caption_line(hdc: Hdc, x0: i32, y0: i32, x1: i32, y1: i32, color: u32) {
+    let pen = CreatePen(PS_SOLID, 1, fade(color));
+    let old = SelectObject(hdc, pen);
+    MoveToEx(hdc, x0, y0, std::ptr::null_mut());
+    LineTo(hdc, x1, y1);
+    SelectObject(hdc, old);
+    DeleteObject(pen);
+}
+
+/// The custom caption strip: brand on the left, version tag + min/close glyphs
+/// on the right. Drawn last so it sits above every screen (intro included).
+unsafe fn draw_title_bar(hdc: Hdc) {
+    let f = fonts();
+    let hover = *lock(&shared().hover);
+
+    text_in(
+        hdc,
+        f.title,
+        C_STRONG,
+        "DOPPEL",
+        Rect { left: PAD, top: 0, right: PAD + 140, bottom: TITLE_H },
+        DT_LEFT | DT_VCENTER | DT_SINGLELINE,
+    );
+    text_in(
+        hdc,
+        f.small,
+        C_LINK,
+        "injector",
+        Rect { left: PAD + 126, top: 0, right: PAD + 240, bottom: TITLE_H },
+        DT_LEFT | DT_VCENTER | DT_SINGLELINE,
+    );
+    let tag = format!("v{}  ·  native launcher", env!("CARGO_PKG_VERSION"));
+    text_in(
+        hdc,
+        f.small,
+        C_DIM,
+        &tag,
+        Rect { left: CAP_MIN_RECT.left - 340, top: 0, right: CAP_MIN_RECT.left - 14, bottom: TITLE_H },
+        DT_RIGHT | DT_VCENTER | DT_SINGLELINE,
+    );
+    fill(hdc, C_SEPARATOR, Rect { left: 0, top: TITLE_H - 1, right: CLIENT_W, bottom: TITLE_H });
+
+    // minimize — a dash; hover fills like a panel button.
+    let min_hov = point_in(hover, CAP_MIN_RECT);
+    if min_hov {
+        fill(hdc, C_BTN_HOVER, CAP_MIN_RECT);
+    }
+    let mcx = (CAP_MIN_RECT.left + CAP_MIN_RECT.right) / 2;
+    let my = TITLE_H / 2 + 2;
+    let min_ink = if min_hov { C_STRONG } else { C_TEXT };
+    caption_line(hdc, mcx - 6, my, mcx + 6, my, min_ink);
+
+    // close — an ×; hover turns the tile red, like the native caption.
+    let close_hov = point_in(hover, CAP_CLOSE_RECT);
+    if close_hov {
+        fill(hdc, C_DANGER, CAP_CLOSE_RECT);
+    }
+    let ccx = (CAP_CLOSE_RECT.left + CAP_CLOSE_RECT.right) / 2;
+    let ccy = TITLE_H / 2;
+    let close_ink = if close_hov { C_STRONG } else { C_TEXT };
+    caption_line(hdc, ccx - 5, ccy - 5, ccx + 5, ccy + 5, close_ink);
+    caption_line(hdc, ccx + 5, ccy - 5, ccx - 5, ccy + 5, close_ink);
+}
+
+fn rail_item_rect(i: usize) -> Rect {
+    let y = RAIL_RECT.top + 12 + (i as i32) * 34;
+    Rect { left: RAIL_RECT.left + 8, top: y, right: RAIL_RECT.right - 8, bottom: y + 28 }
 }
 
 fn point_in(p: Point, r: Rect) -> bool {
@@ -1114,6 +1407,7 @@ unsafe fn paint(hdc: Hdc) {
         set_fade(content_alpha(t));
         draw_main(hdc);
     }
+    draw_title_bar(hdc);
     set_fade(1.0);
 }
 
@@ -1161,34 +1455,6 @@ unsafe fn draw_splash(hdc: Hdc, t: f32) {
 unsafe fn draw_main(hdc: Hdc) {
     let f = fonts();
 
-    // ── header ──
-    text_in(
-        hdc,
-        f.title,
-        C_STRONG,
-        "DOPPEL",
-        Rect { left: PAD, top: 10, right: PAD + 200, bottom: 62 },
-        DT_LEFT | DT_SINGLELINE | DT_VCENTER,
-    );
-    text_in(
-        hdc,
-        f.small,
-        C_LINK,
-        "injector",
-        Rect { left: PAD + 172, top: 28, right: PAD + 280, bottom: 56 },
-        DT_LEFT | DT_SINGLELINE | DT_VCENTER,
-    );
-    let tag = format!("v{}  ·  native launcher", env!("CARGO_PKG_VERSION"));
-    text_in(
-        hdc,
-        f.small,
-        C_DIM,
-        &tag,
-        Rect { left: CLIENT_W - PAD - 300, top: 28, right: CLIENT_W - PAD, bottom: 56 },
-        DT_RIGHT | DT_SINGLELINE | DT_VCENTER,
-    );
-    fill(hdc, C_SEPARATOR, Rect { left: PAD, top: HEADER_H - 8, right: CLIENT_W - PAD, bottom: HEADER_H - 7 });
-
     let hover = *lock(&shared().hover);
     let pressed = *lock(&PRESSED);
     let state = lock(&shared().state);
@@ -1196,30 +1462,62 @@ unsafe fn draw_main(hdc: Hdc) {
     match state.app {
         App::Intro => {}
         App::Chooser => {
+            let count = lock(&shared().procs).len();
             text_in(
                 hdc,
                 f.bold,
                 C_STRONG,
-                "Java processes",
-                Rect { left: PAD, top: 86, right: PAD + 300, bottom: 112 },
+                "Choose a target",
+                Rect { left: PAD, top: 58, right: PAD + 400, bottom: 86 },
                 DT_LEFT | DT_SINGLELINE | DT_VCENTER,
             );
-            let count = lock(&shared().procs).len();
             let sub = if count == 0 {
-                "scanning…".to_string()
+                "scanning for java processes…".to_string()
             } else {
-                format!("{count} found · refreshes by itself")
+                format!("{count} java processes · refreshes by itself")
             };
             text_in(
                 hdc,
                 f.small,
                 C_SECOND,
                 &sub,
-                Rect { left: CLIENT_W - PAD - 320, top: 88, right: CLIENT_W - PAD, bottom: 110 },
+                Rect { left: CLIENT_W - PAD - 380, top: 58, right: CLIENT_W - PAD, bottom: 86 },
                 DT_RIGHT | DT_SINGLELINE | DT_VCENTER,
             );
 
-            // the card the child list box sits in
+            // ── target version pills ──
+            draw_pill(hdc, FORGE_RECT, "1.8.9", "Forge", theme::LINK, state.target == Target::Forge, point_in(hover, FORGE_RECT));
+            draw_pill(hdc, FABRIC_RECT, "1.21.11", "Fabric", theme::SUCCESS, state.target == Target::Fabric, point_in(hover, FABRIC_RECT));
+            text_in(
+                hdc,
+                f.small,
+                C_DIM,
+                "preferred target — the agent adapts to the process you pick",
+                Rect { left: PAD + PILL_W * 2 + PILL_GAP + 28, top: VERSION_Y + 2, right: CLIENT_W - PAD, bottom: VERSION_Y + PILL_H - 2 },
+                DT_LEFT | DT_WORDBREAK,
+            );
+
+            // ── interface pills: where the modules are controlled after the agent lands ──
+            draw_pill(hdc, INWIN_RECT, "In-window GUI", "native", theme::LINK, state.gui == Gui::InWindow, point_in(hover, INWIN_RECT));
+            draw_pill(hdc, WEBGUI_RECT, "Web GUI", "browser", theme::SUCCESS, state.gui == Gui::Web, point_in(hover, WEBGUI_RECT));
+            text_in(
+                hdc,
+                f.small,
+                C_DIM,
+                "where you control the modules after the injection",
+                Rect { left: PAD + PILL_W * 2 + PILL_GAP + 28, top: IFACE_Y + 2, right: CLIENT_W - PAD, bottom: IFACE_Y + PILL_H - 2 },
+                DT_LEFT | DT_WORDBREAK,
+            );
+
+            // ── the card the child list box sits in ──
+            text_in(
+                hdc,
+                f.bold,
+                C_STRONG,
+                "Java processes",
+                Rect { left: PAD, top: LIST_Y - 30, right: PAD + 300, bottom: LIST_Y - 6 },
+                DT_LEFT | DT_SINGLELINE | DT_VCENTER,
+            );
             draw_card(hdc, Rect { left: LIST_X, top: LIST_Y, right: LIST_X + LIST_W, bottom: LIST_Y + LIST_H }, metrics::CARD_ROUNDING);
 
             let busy = BUSY.load(Ordering::SeqCst);
@@ -1257,11 +1555,23 @@ unsafe fn draw_main(hdc: Hdc) {
                     DT_LEFT | DT_SINGLELINE,
                 );
             } else {
+                let det = if state.detected.is_empty() {
+                    String::new()
+                } else {
+                    format!(" — looks like {}", state.detected)
+                };
+                let detected_kind = state.detected.split('·').last().unwrap_or("").trim().to_ascii_lowercase();
+                let matches = detected_kind.is_empty() || detected_kind == state.target.key();
+                let (color, mismatch) = if matches {
+                    (C_SUCCESS, "")
+                } else {
+                    (C_WARNING, " — differs from the pill above; the agent adapts anyway")
+                };
                 text_in(
                     hdc,
                     f.small,
-                    C_WARNING,
-                    &format!("Selected PID {sel}. Launching the game fresh is the only way to reload the agent."),
+                    color,
+                    &format!("Selected PID {sel}{det}{mismatch} · relaunching the game is the only way to reload the agent."),
                     Rect { left: PAD, top: HINT_Y, right: CLIENT_W - PAD, bottom: HINT_Y + 24 },
                     DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS,
                 );
@@ -1287,7 +1597,7 @@ unsafe fn draw_main(hdc: Hdc) {
                 f.bold,
                 head_color,
                 headline,
-                Rect { left: PAD, top: 88, right: CLIENT_W - PAD - 160, bottom: 114 },
+                Rect { left: PAD, top: 58, right: CLIENT_W - PAD - 160, bottom: 86 },
                 DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS,
             );
             if state.pid != 0 {
@@ -1296,7 +1606,7 @@ unsafe fn draw_main(hdc: Hdc) {
                     f.mono,
                     C_DIM,
                     &format!("PID {}", state.pid),
-                    Rect { left: CLIENT_W - PAD - 150, top: 90, right: CLIENT_W - PAD, bottom: 112 },
+                    Rect { left: CLIENT_W - PAD - 150, top: 60, right: CLIENT_W - PAD, bottom: 84 },
                     DT_RIGHT | DT_SINGLELINE | DT_VCENTER,
                 );
             }
@@ -1382,11 +1692,16 @@ unsafe fn draw_main(hdc: Hdc) {
                     Rect { left: inner_left + 88, top: box_top + 60, right: RESULT_CARD.right - metrics::PAD_CARD, bottom: box_top + 86 },
                     DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS,
                 );
+                let panel_hint_text = if state.gui == Gui::InWindow {
+                    "press Open panel to control the modules right here"
+                } else {
+                    "open that address in a browser to reach the in-game panel"
+                };
                 text_in(
                     hdc,
                     f.small,
                     C_DIM,
-                    "open that address in a browser to reach the in-game panel",
+                    panel_hint_text,
                     Rect { left: inner_left, top: box_top + 104, right: RESULT_CARD.right - metrics::PAD_CARD, bottom: box_top + 126 },
                     DT_LEFT | DT_SINGLELINE | DT_VCENTER,
                 );
@@ -1422,7 +1737,7 @@ unsafe fn draw_main(hdc: Hdc) {
                 hdc,
                 f.body,
                 OPEN_RECT,
-                "Open WebUI",
+                if state.gui == Gui::InWindow { "Open panel" } else { "Open WebUI" },
                 Btn::Primary,
                 BtnState {
                     enabled: open_enabled,
@@ -1445,6 +1760,192 @@ unsafe fn draw_main(hdc: Hdc) {
                 "Close",
                 Btn::Secondary,
                 BtnState { enabled: can_close, hovered: can_close && point_in(hover, CLOSE_RECT), pressed: can_close && pressed == Some(CLOSE_RECT) },
+            );
+        }
+        App::Panel => {
+            let ps = panel::state();
+            let synced = panel::lock(&ps.last_ok).map(|t| t.elapsed().as_secs()).unwrap_or(u64::MAX);
+            let last_err = panel::lock(&ps.last_err).clone();
+            let mods = panel::lock(&ps.modules);
+
+            // ── header row: back · title · sync health ──
+            draw_button(
+                hdc,
+                f.body,
+                PANEL_BACK_RECT,
+                "‹ Back",
+                Btn::Secondary,
+                BtnState { enabled: true, hovered: point_in(hover, PANEL_BACK_RECT), pressed: pressed == Some(PANEL_BACK_RECT) },
+            );
+            text_in(
+                hdc,
+                f.bold,
+                C_STRONG,
+                "Module panel",
+                Rect { left: PAD + 120, top: PANEL_HEAD_Y, right: CLIENT_W / 2, bottom: PANEL_HEAD_Y + 34 },
+                DT_LEFT | DT_SINGLELINE | DT_VCENTER,
+            );
+            let (st_rgb, st_text) = if last_err.is_empty() && synced < 60 {
+                (theme::SUCCESS, format!("synced {synced}s ago"))
+            } else if last_err.is_empty() {
+                (theme::WARNING, "waiting for first sync…".to_string())
+            } else {
+                (theme::DANGER, "offline — retrying…".to_string())
+            };
+            draw_dot(hdc, CLIENT_W - PAD - 128, PANEL_HEAD_Y + 17, 10, theme::colorref(st_rgb));
+            text_in(
+                hdc,
+                f.small,
+                theme::colorref(st_rgb),
+                &st_text,
+                Rect { left: CLIENT_W - PAD - 116, top: PANEL_HEAD_Y, right: CLIENT_W - PAD, bottom: PANEL_HEAD_Y + 34 },
+                DT_LEFT | DT_SINGLELINE | DT_VCENTER,
+            );
+            if !last_err.is_empty() {
+                text_in(
+                    hdc,
+                    f.small,
+                    C_DIM,
+                    &last_err,
+                    Rect { left: CLIENT_W / 2 + 60, top: PANEL_HEAD_Y, right: CLIENT_W - PAD - 130, bottom: PANEL_HEAD_Y + 34 },
+                    DT_RIGHT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS,
+                );
+            }
+            fill(hdc, C_SEPARATOR, Rect { left: PAD, top: 96, right: CLIENT_W - PAD, bottom: 97 });
+
+            // ── category rail ──
+            draw_card(hdc, RAIL_RECT, metrics::CARD_ROUNDING);
+            let cat_sel = PANEL_CAT.load(Ordering::Relaxed) as usize;
+            for (i, label) in RAIL_LABELS.iter().enumerate() {
+                let rr = rail_item_rect(i);
+                let is_sel = i == cat_sel;
+                if is_sel {
+                    round_rect_ringed(hdc, rr, 9, C_CARD_BORDER, C_ROW_SELECTED);
+                    fill(hdc, C_LINK, Rect { left: rr.left + 1, top: rr.top + 4, right: rr.left + 4, bottom: rr.bottom - 4 });
+                } else if point_in(hover, rr) {
+                    round_rect_ringed(hdc, rr, 9, C_CARD_BORDER, C_BTN_HOVER);
+                }
+                let n = if RAIL_CATS[i].is_empty() {
+                    mods.len()
+                } else {
+                    mods.iter().filter(|m| m.category == RAIL_CATS[i]).count()
+                };
+                text_in(
+                    hdc,
+                    if is_sel { f.bold } else { f.body },
+                    if is_sel { C_STRONG } else { C_SECOND },
+                    label,
+                    Rect { left: rr.left + 16, top: rr.top, right: rr.right - 44, bottom: rr.bottom },
+                    DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS,
+                );
+                text_in(
+                    hdc,
+                    f.small,
+                    if is_sel { C_ALT } else { C_DIM },
+                    &format!("{n}"),
+                    Rect { left: rr.right - 40, top: rr.top, right: rr.right - 12, bottom: rr.bottom },
+                    DT_RIGHT | DT_SINGLELINE | DT_VCENTER,
+                );
+            }
+            draw_button(
+                hdc,
+                f.body,
+                RAIL_OPEN_RECT,
+                "Open WebUI",
+                Btn::Secondary,
+                BtnState { enabled: true, hovered: point_in(hover, RAIL_OPEN_RECT), pressed: pressed == Some(RAIL_OPEN_RECT) },
+            );
+
+            // ── module rows ──
+            draw_card(hdc, MODS_RECT, metrics::CARD_ROUNDING);
+            let list: Vec<&panel::PanelModule> = if RAIL_CATS[cat_sel].is_empty() {
+                mods.iter().collect()
+            } else {
+                mods.iter().filter(|m| m.category == RAIL_CATS[cat_sel]).collect()
+            };
+            let visible = ((MODS_RECT.bottom - MODS_RECT.top - 20) / PANEL_ROW_H).max(1) as usize;
+            if list.is_empty() {
+                text_in(
+                    hdc,
+                    f.body,
+                    C_DIM,
+                    if last_err.is_empty() {
+                        "loading modules from the agent…"
+                    } else {
+                        "no modules — is the game still running?"
+                    },
+                    Rect { left: MODS_RECT.left, top: MODS_RECT.top, right: MODS_RECT.right, bottom: MODS_RECT.bottom },
+                    DT_CENTER | DT_VCENTER | DT_SINGLELINE,
+                );
+            } else {
+                let max_scroll = list.len().saturating_sub(visible) as i32;
+                let scroll = PANEL_SCROLL.load(Ordering::Relaxed).clamp(0, max_scroll);
+                if scroll != PANEL_SCROLL.load(Ordering::Relaxed) {
+                    PANEL_SCROLL.store(scroll, Ordering::Relaxed);
+                }
+                let top = MODS_RECT.top + 10;
+                for (ri, m) in list.iter().skip(scroll as usize).take(visible).enumerate() {
+                    let y = top + (ri as i32) * PANEL_ROW_H;
+                    let rr = Rect { left: MODS_RECT.left + 8, top: y, right: MODS_RECT.right - 10, bottom: y + PANEL_ROW_H };
+                    if point_in(hover, rr) {
+                        fill(hdc, C_BTN_HOVER, rr);
+                    }
+                    text_in(
+                        hdc,
+                        f.body,
+                        if m.enabled { C_STRONG } else { C_TEXT },
+                        &m.name,
+                        Rect { left: rr.left + 14, top: rr.top, right: rr.right - 200, bottom: rr.bottom },
+                        DT_LEFT | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS,
+                    );
+                    let key = m.key_name.trim();
+                    if !key.is_empty() && key != "NONE" {
+                        let cw = 18 + key.len() as i32 * 7;
+                        let chip = Rect { left: rr.right - 92 - cw, top: rr.top + 8, right: rr.right - 92, bottom: rr.bottom - 8 };
+                        draw_chip(hdc, f.mono, chip, key, theme::SECONDARY_TEXT);
+                    }
+                    let sw = Rect { left: rr.right - 62, top: rr.top + 8, right: rr.right - 20, bottom: rr.bottom - 8 };
+                    let (track, knob) = if m.enabled { (C_LINK, C_STRONG) } else { (C_BTN_ACTIVE, C_DIM) };
+                    round_rect_ringed(hdc, sw, (sw.bottom - sw.top) / 2, C_CARD_BORDER, track);
+                    let kx = if m.enabled { sw.right - 13 } else { sw.left + 13 };
+                    draw_dot(hdc, kx, (sw.top + sw.bottom) / 2, 13, knob);
+                }
+                if list.len() > visible {
+                    let track = Rect { left: MODS_RECT.right - 7, top: MODS_RECT.top + 12, right: MODS_RECT.right - 5, bottom: MODS_RECT.bottom - 12 };
+                    fill(hdc, C_SEPARATOR, track);
+                    let track_h = track.bottom - track.top;
+                    let th = ((track_h as f32) * (visible as f32 / list.len() as f32)).max(24.0) as i32;
+                    let off = if max_scroll > 0 {
+                        ((track_h - th) as f32 * (scroll as f32 / max_scroll as f32)) as i32
+                    } else {
+                        0
+                    };
+                    fill(hdc, C_DIM, Rect { left: track.left, top: track.top + off, right: track.right, bottom: track.top + off + th });
+                }
+            }
+
+            // ── footer: panel address + target summary ──
+            text_in(
+                hdc,
+                f.mono,
+                C_DIM,
+                &state.panel_url,
+                Rect { left: PAD, top: PANEL_BOTTOM + 10, right: CLIENT_W / 2 - 20, bottom: PANEL_BOTTOM + 34 },
+                DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS,
+            );
+            let info = format!(
+                "PID {} · {} · panel token {}",
+                state.pid,
+                if state.version.is_empty() { "—" } else { state.version.as_str() },
+                if state.panel_token.is_empty() { "in doppel-payload.log" } else { "loaded" }
+            );
+            text_in(
+                hdc,
+                f.small,
+                C_DIM,
+                &info,
+                Rect { left: CLIENT_W / 2, top: PANEL_BOTTOM + 10, right: CLIENT_W - PAD, bottom: PANEL_BOTTOM + 34 },
+                DT_RIGHT | DT_SINGLELINE | DT_END_ELLIPSIS,
             );
         }
     }
@@ -1472,7 +1973,14 @@ unsafe fn sync_list() {
         return;
     }
 
-    let procs = lock(&shared().procs);
+    let mut procs = lock(&shared().procs);
+    // Preferred flavour first, then live Minecraft processes, then the rest —
+    // computed AFTER sorting so the signature is stable across refreshes.
+    let want = match lock(&shared().state).target {
+        Target::Forge => "forge",
+        Target::Fabric => "fabric",
+    };
+    procs.sort_by_key(|p| (p.injected, !p.is_minecraft, !p.is_minecraft || platform_hint(p) != want));
     let sig: String = procs
         .iter()
         .map(|p| format!("{}:{}:{}:{};", p.pid, p.exe, p.is_minecraft, p.injected))
@@ -1498,15 +2006,19 @@ unsafe fn sync_list() {
         } else {
             p.exe.clone()
         };
+        let hint = platform_hint(p);
         let mut flags = String::new();
         let tag = if p.injected {
             flags.push_str("   [ALREADY LOADED]");
-            "ALREADY LOADED"
+            "ALREADY LOADED".to_string()
+        } else if p.is_minecraft && !hint.is_empty() {
+            flags.push_str(&format!("   [{hint}]"));
+            hint.to_string()
         } else if p.is_minecraft {
             flags.push_str("   [minecraft]");
-            "minecraft"
+            "minecraft".to_string()
         } else {
-            ""
+            String::new()
         };
         let line = format!("  {:>6}   {:<11} {}", p.pid, p.exe, title) + &flags;
         let w = wide(&line);
@@ -1521,8 +2033,13 @@ unsafe fn sync_list() {
     if let Some(i) = restore {
         SendMessageW(list, LB_SETCURSEL, i, 0);
     } else if selected == 0 {
-        // Auto-pick the first Minecraft process so the common case is one click.
-        if let Some(i) = procs.iter().position(|p| p.is_minecraft && !p.injected) {
+        // Auto-pick the first Minecraft process for the preferred flavour, so
+        // the common case is one click; fall back to any injectable one.
+        let pick = procs
+            .iter()
+            .position(|p| p.is_minecraft && !p.injected && platform_hint(p) == want)
+            .or_else(|| procs.iter().position(|p| p.is_minecraft && !p.injected));
+        if let Some(i) = pick {
             SendMessageW(list, LB_SETCURSEL, i, 0);
             *lock(&shared().selected) = procs[i].pid;
         }
@@ -1579,6 +2096,10 @@ unsafe fn draw_row(d: &DrawItemStruct) {
     if !row.tag.is_empty() {
         let (state, label) = if row.tag == "ALREADY LOADED" {
             (theme::WARNING, "ALREADY LOADED")
+        } else if row.tag == "forge" {
+            (theme::LINK, "forge")
+        } else if row.tag == "fabric" {
+            (theme::SUCCESS, "fabric")
         } else {
             (theme::SUCCESS, "minecraft")
         };
@@ -1723,8 +2244,59 @@ unsafe extern "system" fn wnd_proc(hwnd: Hwnd, msg: u32, wp: Wparam, lp: Lparam)
                 if sel >= 0 {
                     let pid = SendMessageW(list, LB_GETITEMDATA, sel as usize, 0) as u32;
                     *lock(&shared().selected) = pid;
+                    // What does the picked process look like? The real answer
+                    // comes from version.rs, which reads files — keep it off
+                    // the UI thread and light the hint up when it lands.
+                    let found = lock(&shared().procs)
+                        .iter()
+                        .find(|p| p.pid == pid)
+                        .map(|p| (p.path.clone(), p.window_title.clone()));
+                    if let Some((path, title)) = found {
+                        std::thread::spawn(move || {
+                            let info = version::parse_minecraft_version(&path, &title);
+                            let s = shared();
+                            lock(&s.state).detected = if info.valid {
+                                format!("{} · {}", info.version, info.platform)
+                            } else {
+                                String::new()
+                            };
+                            repaint();
+                        });
+                    }
                     repaint();
                 }
+            }
+            0
+        }
+        WM_NCCALCSIZE => {
+            // Collapse the client onto the whole window: the standard caption —
+            // the white box the old build showed — disappears, and the strip
+            // drawn at the top of paint() takes over.
+            if wp != 0 {
+                0
+            } else {
+                unsafe { DefWindowProcW(hwnd, msg, wp, lp) }
+            }
+        }
+        WM_NCHITTEST => {
+            // The strip drags the window; the caption buttons stay clickable;
+            // everything below the strip is plain client.
+            let mut pt = Point {
+                x: (lp & 0xFFFF) as u16 as i16 as i32,
+                y: ((lp >> 16) & 0xFFFF) as u16 as i16 as i32,
+            };
+            unsafe { ScreenToClient(hwnd, &mut pt) };
+            if pt.y < TITLE_H && !point_in(pt, CAP_CLOSE_RECT) && !point_in(pt, CAP_MIN_RECT) {
+                HTCAPTION
+            } else {
+                HTCLIENT
+            }
+        }
+        WM_MOUSEWHEEL => {
+            if lock(&shared().state).app == App::Panel {
+                let delta = ((wp >> 16) as u16) as i16 as i32;
+                PANEL_SCROLL.fetch_sub(delta / 120 * 3, Ordering::Relaxed);
+                repaint();
             }
             0
         }
@@ -1755,6 +2327,15 @@ unsafe extern "system" fn wnd_proc(hwnd: Hwnd, msg: u32, wp: Wparam, lp: Lparam)
                 x: (lp & 0xFFFF) as u16 as i16 as i32,
                 y: ((lp >> 16) & 0xFFFF) as u16 as i16 as i32,
             };
+            // Custom caption buttons — they live above every screen.
+            if point_in(p, CAP_CLOSE_RECT) {
+                PostQuitMessage(0);
+                return 0;
+            }
+            if point_in(p, CAP_MIN_RECT) {
+                hide_launcher();
+                return 0;
+            }
             let busy = BUSY.load(Ordering::SeqCst);
             let app = lock(&shared().state).app;
             match app {
@@ -1764,7 +2345,11 @@ unsafe extern "system" fn wnd_proc(hwnd: Hwnd, msg: u32, wp: Wparam, lp: Lparam)
                     repaint();
                 }
                 App::Chooser => {
-                    if point_in(p, REFRESH_RECT) && !busy {
+                    if point_in(p, FORGE_RECT) || point_in(p, FABRIC_RECT) {
+                        lock(&shared().state).target = if point_in(p, FORGE_RECT) { Target::Forge } else { Target::Fabric };
+                    } else if point_in(p, INWIN_RECT) || point_in(p, WEBGUI_RECT) {
+                        lock(&shared().state).gui = if point_in(p, INWIN_RECT) { Gui::InWindow } else { Gui::Web };
+                    } else if point_in(p, REFRESH_RECT) && !busy {
                         *lock(&PRESSED) = Some(REFRESH_RECT);
                         let scanned = flow::candidates();
                         let s = shared();
@@ -1797,6 +2382,58 @@ unsafe extern "system" fn wnd_proc(hwnd: Hwnd, msg: u32, wp: Wparam, lp: Lparam)
                     repaint();
                 }
                 App::Running => {}
+                App::Panel => {
+                    if point_in(p, PANEL_BACK_RECT) {
+                        lock(&shared().state).app = App::Chooser;
+                        *lock(&shared().shown_sig) = String::new();
+                    } else if point_in(p, RAIL_OPEN_RECT) {
+                        let url = lock(&shared().state).panel_url.clone();
+                        open_url(&url);
+                    } else {
+                        let mut hit = false;
+                        for i in 0..RAIL_CATS.len() {
+                            if point_in(p, rail_item_rect(i)) {
+                                PANEL_CAT.store(i as u32, Ordering::Relaxed);
+                                PANEL_SCROLL.store(0, Ordering::Relaxed);
+                                hit = true;
+                                break;
+                            }
+                        }
+                        if !hit {
+                            let mut target_name: Option<String> = None;
+                            {
+                                let mods = panel::lock(&panel::state().modules);
+                                let cs = PANEL_CAT.load(Ordering::Relaxed) as usize;
+                                let top = MODS_RECT.top + 10;
+                                let visible = ((MODS_RECT.bottom - MODS_RECT.top - 20) / PANEL_ROW_H).max(1);
+                                let count = if RAIL_CATS[cs].is_empty() {
+                                    mods.len() as i32
+                                } else {
+                                    mods.iter().filter(|m| m.category == RAIL_CATS[cs]).count() as i32
+                                };
+                                let max_scroll = (count - visible).max(0);
+                                let scroll = PANEL_SCROLL.load(Ordering::Relaxed).clamp(0, max_scroll);
+                                for ri in 0..visible.min(count - scroll) {
+                                    let y = top + (scroll + ri) * PANEL_ROW_H;
+                                    let rr = Rect { left: MODS_RECT.left + 8, top: y, right: MODS_RECT.right - 10, bottom: y + PANEL_ROW_H };
+                                    if point_in(p, rr) {
+                                        let idx = (scroll + ri) as usize;
+                                        target_name = if RAIL_CATS[cs].is_empty() {
+                                            mods.get(idx).map(|m| m.name.clone())
+                                        } else {
+                                            mods.iter().filter(|m| m.category == RAIL_CATS[cs]).nth(idx).map(|m| m.name.clone())
+                                        };
+                                        break;
+                                    }
+                                }
+                            }
+                            if let Some(name) = target_name {
+                                panel_toggle(&name);
+                            }
+                        }
+                    }
+                    repaint();
+                }
                 _ => {
                     let can_close = app == App::Done || app == App::Failed;
                     let has_panel = !lock(&shared().state).panel_url.is_empty();
@@ -1808,8 +2445,14 @@ unsafe extern "system" fn wnd_proc(hwnd: Hwnd, msg: u32, wp: Wparam, lp: Lparam)
                     } else if point_in(p, OPEN_RECT) {
                         if can_close && has_panel {
                             *lock(&PRESSED) = Some(OPEN_RECT);
-                            let url = lock(&shared().state).panel_url.clone();
-                            open_url(&url);
+                            let gui = lock(&shared().state).gui;
+                            if gui == Gui::InWindow {
+                                lock(&shared().state).app = App::Panel;
+                                spawn_panel_poller();
+                            } else {
+                                let url = lock(&shared().state).panel_url.clone();
+                                open_url(&url);
+                            }
                         }
                     } else if point_in(p, HIDE_RECT) {
                         if can_close {
@@ -1867,13 +2510,13 @@ pub fn run() -> i32 {
         }
 
         let style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
+        // WM_NCCALCSIZE collapses the client onto the whole window, so the
+        // outer size IS the client — no AdjustWindowRect, no white frame.
         // TODO(B3): the client is the reference's fixed 900x550 and the frame is
         // not DPI-scaled (GetDpiForWindow); Windows bitmap-stretches the window
         // on a scaled display. Unchanged from before the restyle.
-        let mut frame = Rect { left: 0, top: 0, right: CLIENT_W, bottom: CLIENT_H };
-        AdjustWindowRect(&mut frame, style, 0);
-        let w = frame.right - frame.left;
-        let h = frame.bottom - frame.top;
+        let w = CLIENT_W;
+        let h = CLIENT_H;
 
         let mut work: Rect = std::mem::zeroed();
         SystemParametersInfoW(SPI_GETWORKAREA, 0, &mut work as *mut Rect as *mut c_void, 0);
@@ -1910,12 +2553,20 @@ pub fn run() -> i32 {
         }
         let _ = HWND_MAIN.set(hwnd as usize);
 
-        // Dark native title bar, so the OS chrome does not clash with #0B0E13.
+        // Dark native chrome, so the OS frame cannot clash with #0B0E13. The
+        // caption itself is custom-drawn (WM_NCCALCSIZE); these pins only tint
+        // the residual 1 px frame / caption text on Win11 and give Win10 the
+        // dark mode the old build was missing on some machines.
         let dark: i32 = 1;
         let dark_ptr = &dark as *const i32 as *const c_void;
         if DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, dark_ptr, 4) != 0 {
             DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE_OLD, dark_ptr, 4);
         }
+        let bg = theme::colorref(theme::BACKGROUND);
+        let ink = theme::colorref(theme::STRONG_TEXT);
+        let _ = DwmSetWindowAttribute(hwnd, DWMWA_CAPTION_COLOR, &bg as *const u32 as *const c_void, 4);
+        let _ = DwmSetWindowAttribute(hwnd, DWMWA_TEXT_COLOR, &ink as *const u32 as *const c_void, 4);
+        let _ = DwmSetWindowAttribute(hwnd, DWMWA_BORDER_COLOR, &bg as *const u32 as *const c_void, 4);
 
         ShowWindow(hwnd, SW_SHOWNORMAL);
         UpdateWindow(hwnd);

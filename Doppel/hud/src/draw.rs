@@ -163,6 +163,83 @@ impl Canvas {
         }
     }
 
+    /// Fill a rounded rectangle whose colour runs as a linear gradient from
+    /// `from` at the box's start edge to `to` at its opposite edge — horizontal
+    /// when `horizontal` (left → right), vertical otherwise (top → bottom).
+    ///
+    /// Aurora's spine and watermark dot are the reason this exists: the ported
+    /// modes fill every shape with one flat colour, and the one new mode needed a
+    /// two-stop accent inside the same antialiased rounded silhouette. The shape
+    /// maths are `fill_rounded_rect_corners`'s, shared line for line; the only
+    /// difference is that the colour is resolved **per pixel** from the gradient
+    /// before the blend, with `t` measured from the pixel centre so a 1 px bar
+    /// still shows both stops.
+    ///
+    /// Both stops should carry the same alpha (they always do here — the callers
+    /// build them from the same `with_alpha`), because the blend takes the source
+    /// colour's alpha as-is; a mismatched stop would fade the shape from one side
+    /// to the other. `from`'s alpha wins wherever the two disagree, exactly as
+    /// `lerp_rgb` behaves.
+    pub fn fill_rounded_rect_gradient(
+        &mut self,
+        x: i32,
+        y: i32,
+        w: u32,
+        h: u32,
+        corners: [f32; 4],
+        from: u32,
+        to: u32,
+        horizontal: bool,
+    ) {
+        if w == 0 || h == 0 {
+            return;
+        }
+        let half_w = w as f32 / 2.0;
+        let half_h = h as f32 / 2.0;
+        let limit = half_w.min(half_h).max(0.0);
+        let r = [
+            corners[0].min(limit).max(0.0),
+            corners[1].min(limit).max(0.0),
+            corners[2].min(limit).max(0.0),
+            corners[3].min(limit).max(0.0),
+        ];
+        let cx = x as f32 + half_w;
+        let cy = y as f32 + half_h;
+
+        // One pixel past the box on every side, like the flat fill: the antialiased
+        // rim of even a sharp rectangle reaches into the neighbouring pixel.
+        let x0 = (x - 1).max(0);
+        let y0 = (y - 1).max(0);
+        let x1 = (x + w as i32 + 1).min(self.w as i32);
+        let y1 = (y + h as i32 + 1).min(self.h as i32);
+        if x0 >= x1 || y0 >= y1 {
+            return;
+        }
+
+        // The span the gradient runs over, in pixels. Guarded against zero so a
+        // degenerate 1 px box cannot divide by zero — its single column/row simply
+        // takes `t` ≈ 1, the far stop, which is what "the box ends there" means.
+        let span = if horizontal { w as f32 } else { h as f32 };
+
+        for py in y0..y1 {
+            for px in x0..x1 {
+                let distance = rounded_box_sdf(px, py, cx, cy, half_w, half_h, r);
+                let coverage = (0.5 - distance).max(0.0).min(1.0);
+                if coverage > 0.0 {
+                    // The gradient coordinate from the pixel centre, so the stops
+                    // land where the box's edges are rather than half a pixel in.
+                    let centre = if horizontal {
+                        px as f32 + 0.5 - x as f32
+                    } else {
+                        py as f32 + 0.5 - y as f32
+                    };
+                    let t = if span > 0.0 { centre / span } else { 1.0 };
+                    self.blend_pixel(px, py, lerp_rgb(from, to, t), coverage);
+                }
+            }
+        }
+    }
+
     /// Source-over blend of one pixel with an explicit coverage. Both the source
     /// we build here and the destination already in the buffer are premultiplied,
     /// so the whole composite reduces to `src + dst * (1 - src_alpha)` on every
@@ -347,6 +424,48 @@ mod tests {
         assert_eq!(lerp_rgb(base, red, -1.0), base);
         assert_eq!(lerp_rgb(base, red, 2.0), lerp_rgb(base, red, 1.0));
         assert_eq!(lerp_rgb(base, red, f32::NAN), base, "NaN is no tint, not a wild colour");
+    }
+
+    /// A gradient fill runs from `from` at the start edge to `to` at the far edge
+    /// and keeps the flat fill's antialiased silhouette.
+    #[test]
+    fn a_gradient_fill_runs_from_one_stop_to_the_other() {
+        let mut c = Canvas::new(8, 4);
+        c.fill_rounded_rect_gradient(
+            0,
+            0,
+            8,
+            4,
+            [0.0; 4],
+            argb(0x00, 0x00, 0x00, 0xFF),
+            argb(0xFF, 0xFF, 0xFF, 0xFF),
+            true,
+        );
+
+        // The gradient is sampled from each pixel's centre, so the outermost
+        // columns sit *near* the stops rather than exactly on them: near-stop at
+        // the left, far-stop at the right, monotonic in between.
+        let red = |x: u32| c.pixel(x, 2) >> 16 & 0xFF;
+        assert!(red(0) <= 0x20, "left edge is at the near stop ({})", red(0));
+        assert!(red(7) >= 0xDF, "right edge is at the far stop ({})", red(7));
+        assert!(red(0) < red(4) && red(4) < red(7), "the run is monotonic");
+
+        // Vertical runs the same way down the rows.
+        let mut v = Canvas::new(4, 8);
+        v.fill_rounded_rect_gradient(
+            0,
+            0,
+            4,
+            8,
+            [0.0; 4],
+            argb(0x00, 0x00, 0x00, 0xFF),
+            argb(0xFF, 0xFF, 0xFF, 0xFF),
+            false,
+        );
+        let vred = |y: u32| v.pixel(2, y) >> 16 & 0xFF;
+        assert!(vred(0) <= 0x20, "top row is at the near stop ({})", vred(0));
+        assert!(vred(7) >= 0xDF, "bottom row is at the far stop ({})", vred(7));
+        assert!(vred(0) < vred(4) && vred(4) < vred(7), "the run is monotonic");
     }
 
     /// A canvas knows where its surface sits on the monitor, which is what lets

@@ -1,12 +1,13 @@
 # doppel-hud — out-of-process HUD overlay
 
 A standalone Win32 process that puts the **OpenCommunity in-game HUD** on top of
-the Minecraft client: the watermark run and the module list, in **all four of the
-source's modes** — Default, Rise, VapeV4, Tesseract. Its layered window covers the
-**game window** — the rect the injector reads with `GetWindowRect` on Minecraft's
-own window and passes as `--rect`, or the whole primary monitor when there is no
-game window to follow — and the HUD is drawn only at the source's own margins;
-every other pixel is fully transparent.
+the Minecraft client: the watermark run and the module list, in the source's own
+four modes — Default, Rise, VapeV4, Tesseract — plus this port's own **Modern**
+and **Aurora** (see [Aurora](#aurora-mode-5--this-ports-own-look)). Its layered
+window covers the **game window** — the rect the injector reads with
+`GetWindowRect` on Minecraft's own window and passes as `--rect`, or the whole
+primary monitor when there is no game window to follow — and the HUD is drawn
+only at the source's own margins; every other pixel is fully transparent.
 
 It stays **above the game** (`WS_EX_TOPMOST`, re-asserted whenever something gets
 in front of it) and **never touches the mouse or the focus**: click-through, no
@@ -116,6 +117,27 @@ rather than imported, because the call only exists from Windows 10 1703 and a
 static import would stop the injector from *loading* on anything older. When it is
 unavailable the launch log says so explicitly rather than passing off possibly
 virtualised numbers as correct.
+
+## Aurora (mode 5) — this port's own look
+
+Aurora (`--mode aurora`, the WebUI's first `OverlayMode` choice) is **not** a port:
+it is the WebUI's own glass-card language carried into the game, drawn by the same
+pipeline. The card is a near-black navy glass panel inside a 1 px slate border with
+a 1 px highlight along its top edge, radius 7, 24 px tall at a 28 px pitch — and
+the accent is a 3 px **gradient spine** floating inside the card's left padding
+(top stop the row's live accent, bottom stop 450 ms further down the same sweep),
+not a bar glued to the right edge. Names are Play Bold near-white, values muted
+9 px behind them — lifted into the accent when the entry carries `highlight` — and
+the watermark is the same pill with a 6 px gradient dot before the bold `DOPPEL`.
+
+The sweep runs the header's primary/secondary on a 6 s cosine (0.13 cycles per
+row). While those still hold the reference's muted wave defaults bit-for-bit, the
+mode substitutes its own cyan `#4DC7FF` → violet `#B370FF` pair — the WebUI's
+palette; the moment the user picks colours in the WebUI they are honoured exactly.
+`draw.rs` grew one primitive for it (`fill_rounded_rect_gradient`), and the
+geometry lives behind the same `AURORA_*` constants with no source line to cite —
+they are the design, tuned on a pixel-faithful mockup built from the real Play
+faces before any of the code existed.
 
 ## The four modes
 

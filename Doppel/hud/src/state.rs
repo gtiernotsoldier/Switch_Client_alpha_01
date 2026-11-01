@@ -164,6 +164,9 @@ pub enum StateMode {
     Tesseract,
     /// v3 only. A v2 block can never decode to this (see `from_v2_flags`).
     Modern,
+    /// v3 only, like Modern. The port's own glass-card mode — no source line,
+    /// no v2 path can produce it.
+    Aurora,
 }
 
 impl StateMode {
@@ -175,6 +178,7 @@ impl StateMode {
             2 => StateMode::Vape,
             3 => StateMode::Tesseract,
             4 => StateMode::Modern,
+            5 => StateMode::Aurora,
             _ => StateMode::Default,
         }
     }
@@ -198,6 +202,7 @@ impl StateMode {
             StateMode::Vape => "vape",
             StateMode::Tesseract => "tesseract",
             StateMode::Modern => "modern",
+            StateMode::Aurora => "aurora",
         }
     }
 }

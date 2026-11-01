@@ -50,7 +50,7 @@
 // draw.rs (pure), the text in text.rs (GDI), the HUD in hud.rs (pure geometry).
 //
 // The HUD itself is a port of OpenCommunity's in-game HUD (its `HUD.cpp`), all
-// four of its modes plus this port's own Modern, selectable with `--mode`;
+// four of its modes plus this port's own Modern and Aurora, selectable with `--mode`;
 // `hud.rs` cites the source line of every constant it takes and the README says
 // what could not be reproduced.
 
@@ -199,11 +199,12 @@ usage: doppel-hud [options]
                        header's `positionLeft` bit (contract v3 flags bit 7, the
                        WebUI's Position option) when the block carries a header,
                        else right. Naming this flag overrides the header.
-  --mode <name>        default | rise | vape | tesseract | modern. The four modes
+  --mode <name>        default | rise | vape | tesseract | modern | aurora. The four modes
                        of the ported HUD (ArrayList.h:14) plus this port's own
-                       Modern, which the contract's version-3 mode field widened
-                       to three bits for; each brings its own geometry, colours
-                       and accent animation. `vapev4` is accepted for `vape`.
+                       Modern and Aurora, which the contract's version-3 mode
+                       field widened to three bits for; each brings its own
+                       geometry, colours and accent animation. `vapev4` is
+                       accepted for `vape`.
                        Default: the state header's mode, or `default` with no
                        header (see below).
   --scale <f>          multiply every metric and the font size, for a readable HUD
@@ -617,6 +618,7 @@ fn mode_of(bits: state::StateMode) -> Mode {
         state::StateMode::Vape => Mode::Vape,
         state::StateMode::Tesseract => Mode::Tesseract,
         state::StateMode::Modern => Mode::Modern,
+        state::StateMode::Aurora => Mode::Aurora,
     }
 }
 
@@ -2133,6 +2135,7 @@ mod tests {
             (state::StateMode::Vape, Mode::Vape),
             (state::StateMode::Tesseract, Mode::Tesseract),
             (state::StateMode::Modern, Mode::Modern),
+            (state::StateMode::Aurora, Mode::Aurora),
         ] {
             assert_eq!(mode_of(bits), want);
             assert_eq!(mode_of(bits).label(), bits.label());

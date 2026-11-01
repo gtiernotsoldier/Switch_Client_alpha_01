@@ -76,8 +76,16 @@ object HUD : Module("HUD", Category.VISUAL) {
     // CLI flag still wins. That is what lets a user switch list effect without relaunching the
     // injector (B1).
 
-    /** Which of the ported HUD's modes the overlay draws (plus this port's Modern mode). */
-    var overlayMode by choices("OverlayMode", arrayOf("Default", "Rise", "VapeV4", "Tesseract", "Modern"))
+    /**
+     * Which mode the external overlay draws.
+     *
+     * **Aurora first**: it is the mode's own look — glass cards, a gradient spine per row and the
+     * WebUI's cyan/violet as the sweep — and the visual reset the user asked for after the four
+     * ported modes. The four ports keep their original order and the reference's Default stays the
+     * fallback for anything unknown, but a fresh config now starts on the mode that was designed
+     * for this client rather than on a copy of another client's list.
+     */
+    var overlayMode by choices("OverlayMode", arrayOf("Aurora", "Default", "Rise", "VapeV4", "Tesseract", "Modern"))
 
     /** The Default mode's accent animation. */
     var overlayWave by boolean("OverlayWave", true)

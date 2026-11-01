@@ -9,10 +9,13 @@
 // rather than composed here. Every constant below carries the source line it came
 // from so the two can be diffed by eye.
 //
-// **Modern** is the one exception. It is this port's own fifth mode, added by the
-// user's request alongside contract v3's three-bit mode field, and has no source
-// line at all: its numbers are marked `MODERN_*` and explained where they are
-// declared, so nothing here can be mistaken for something HUD.cpp does.
+// **Modern** and **Aurora** are the two exceptions. Modern is the port's own
+// fifth mode, added by the user's request alongside contract v3's three-bit mode
+// field; Aurora is the sixth — the visual reset the user asked for after living
+// with the four ports, the WebUI's own glass-card language carried into the
+// game. Neither has a source line: their numbers are marked `MODERN_*` /
+// `AURORA_*` and explained where they are declared, so nothing here can be
+// mistaken for something HUD.cpp does.
 //
 // ── what is drawn ────────────────────────────────────────────────────────────
 //
@@ -119,6 +122,7 @@ pub enum Mode {
     Vape,
     Tesseract,
     Modern,
+    Aurora,
 }
 
 impl Mode {
@@ -131,9 +135,10 @@ impl Mode {
             "vape" | "vapev4" | "vape_v4" => Ok(Mode::Vape),
             "tesseract" => Ok(Mode::Tesseract),
             "modern" => Ok(Mode::Modern),
+            "aurora" => Ok(Mode::Aurora),
             other => {
                 Err(format!(
-                    "--mode: expected default, rise, vape, tesseract or modern, got {other}"
+                    "--mode: expected default, rise, vape, tesseract, modern or aurora, got {other}"
                 ))
             }
         }
@@ -146,6 +151,7 @@ impl Mode {
             Mode::Vape => "vape",
             Mode::Tesseract => "tesseract",
             Mode::Modern => "modern",
+            Mode::Aurora => "aurora",
         }
     }
 
@@ -158,10 +164,12 @@ impl Mode {
     }
 
     /// The face a module name is drawn in: the source uses its bold face in
-    /// Default mode and the regular one everywhere else (HUD.cpp:468).
+    /// Default mode and the regular one everywhere else (HUD.cpp:468). Aurora
+    /// joins Default in the bold face — its own choice, no source line: bold
+    /// near-white names against muted values are the mode's type hierarchy.
     pub fn name_font(self) -> FontId {
         match self {
-            Mode::Default => FontId::Name,
+            Mode::Default | Mode::Aurora => FontId::Name,
             _ => FontId::Body,
         }
     }
@@ -254,6 +262,73 @@ pub const MODERN_MARGIN_RIGHT: f32 = 6.0;
 /// One full sweep of the accent, ms. Slow on purpose: a fast accent is what the
 /// other four already are.
 pub const MODERN_SWEEP_MS: f32 = 4200.0;
+
+// ── Aurora (this port's own mode, contract v3) ──────────────────────────
+//
+// The visual reset the user asked for after the four ports and Modern: the
+// WebUI's own look carried into the game. The card is a glass panel — a
+// near-black navy fill inside a 1 px light border, with a 1 px highlight along
+// its top edge — rounded on all four corners, and the accent lives in a small
+// **gradient spine** floating inside the card's left edge instead of a bar
+// glued to its right one. The name is bold near-white, the value muted grey
+// unless the entry carries `highlight`, and the accent itself is the header's
+// two colours on a slow cosine — the mode's own cyan/violet pair while the
+// user has not picked any (see `aurora_stops`).
+//
+// None of these numbers has a source line; they are the design, tuned on the
+// mockup the user reviewed first (`scripts/hud_aurora_mockup.html` reads the
+// same constants).
+
+/// The glass card's fill: deep navy, translucent like the WebUI's cards.
+pub const AURORA_BACKGROUND: u32 = argb(13, 17, 26, 208);
+/// The card's 1 px border: the slate the WebUI draws around its cards.
+pub const AURORA_BORDER: u32 = argb(148, 163, 184, 56);
+/// The module name, bold. Near-white rather than the accent: the accent lives
+/// in the spine, and a name that fights it would read as noise.
+pub const AURORA_TEXT: u32 = argb(236, 242, 248, 255);
+/// The value tag and the watermark's middle segments.
+pub const AURORA_MUTED: u32 = argb(152, 164, 184, 255);
+/// The 1 px highlight along a card's top edge — the glass rim.
+pub const AURORA_TOP_HIGHLIGHT: u32 = argb(255, 255, 255, 18);
+/// The card's corner radius, all four corners.
+pub const AURORA_CARD_RADIUS: f32 = 7.0;
+/// `itemHeight`'s extra over the line height: taller than Modern's +6, so the
+/// glass card has room for the floating spine.
+pub const AURORA_ITEM_EXTRA: f32 = 8.0;
+/// The gap between two cards.
+pub const AURORA_MODULE_SPACING: f32 = 4.0;
+/// The right margin the list is flushed to.
+pub const AURORA_MARGIN_RIGHT: f32 = 8.0;
+/// The card's inner padding: the name starts this far in (the spine's zone
+/// plus breathing room), and the value ends this far from the other edge.
+pub const AURORA_PAD_LEFT: f32 = 11.0;
+pub const AURORA_PAD_RIGHT: f32 = 9.0;
+/// The text's vertical inset inside a 24 px card: (24 − 16) / 2.
+pub const AURORA_PAD_Y: f32 = 4.0;
+/// The spine floats this far in from the card's left edge, and its height is
+/// the card minus twice the vertical inset, so it never touches the border.
+pub const AURORA_SPINE_INSET_X: f32 = 3.0;
+pub const AURORA_SPINE_W: f32 = 3.0;
+pub const AURORA_SPINE_INSET_Y: f32 = 4.0;
+/// The gap between a row's name and its value.
+pub const AURORA_TAG_GAP: f32 = 9.0;
+/// The watermark pill's leading zone — pad, gradient dot, gap — before the
+/// title (`aurora_wm_lead`), and the pill's right pad.
+pub const AURORA_WM_PAD_X: f32 = 8.0;
+pub const AURORA_DOT: f32 = 6.0;
+pub const AURORA_DOT_GAP: f32 = 7.0;
+/// One full sweep of the accent, ms — slower than Modern's 4.2 s: the mode's
+/// whole point is that nothing hurries.
+pub const AURORA_SWEEP_MS: f32 = 6000.0;
+/// Each row's phase offset along the sweep, in cycles.
+pub const AURORA_ROW_PHASE: f32 = 0.13;
+/// The spine's bottom stop is this far down the same sweep as its top one, so
+/// the gradient visibly flows downward instead of sitting still.
+pub const AURORA_SPINE_OFFSET_MS: f64 = 450.0;
+/// The mode's own pair, used while the header still carries the reference's
+/// wave defaults (see `aurora_stops`): the WebUI's cyan and violet.
+pub const AURORA_COLD: [f32; 3] = [77.0 / 255.0, 199.0 / 255.0, 255.0 / 255.0];
+pub const AURORA_WARM: [f32; 3] = [179.0 / 255.0, 112.0 / 255.0, 255.0 / 255.0];
 
 /// The Default mode's wave colours, as `ModuleConfig.h:65-66` (and
 /// `ArrayList.h:18-19`) spells them: `78,86,107` → `120,146,214`.
@@ -352,6 +427,19 @@ pub struct Metrics {
     pub modern_rect_w: f32,
     pub modern_pad_x: f32,
     pub modern_pad_y: f32,
+    /// Aurora's own numbers, none of them sourced: the glass card's radius and
+    /// padding, the floating spine, the tag gap, and the watermark's leading
+    /// zone (pad, dot, gap).
+    pub aurora_card_radius: f32,
+    pub aurora_pad_left: f32,
+    pub aurora_pad_right: f32,
+    pub aurora_spine_w: f32,
+    pub aurora_spine_inset_x: f32,
+    pub aurora_spine_inset_y: f32,
+    pub aurora_tag_gap: f32,
+    pub aurora_wm_pad_x: f32,
+    pub aurora_dot: f32,
+    pub aurora_dot_gap: f32,
     /// The mode's right margin (HUD.cpp:610).
     pub right_margin: f32,
     /// The watermark run's inset from the edge it hangs off (HUD.cpp:537).
@@ -383,6 +471,7 @@ impl Metrics {
         let rise_like = mode.is_rise_like();
         let tesseract = mode == Mode::Tesseract;
         let modern = mode == Mode::Modern;
+        let aurora = mode == Mode::Aurora;
 
         let font_px = FONT_PX * s;
         // `lineHeight = max(tagSize, nameSize)` (HUD.cpp:472). Both faces are
@@ -394,6 +483,8 @@ impl Metrics {
             font_px + TESSERACT_ITEM_EXTRA * s
         } else if modern {
             line_height + MODERN_ITEM_EXTRA * s
+        } else if aurora {
+            line_height + AURORA_ITEM_EXTRA * s
         } else {
             line_height + DEFAULT_ITEM_EXTRA * s
         };
@@ -408,6 +499,8 @@ impl Metrics {
                 0.0
             } else if modern {
                 MODERN_MODULE_SPACING * s
+            } else if aurora {
+                AURORA_MODULE_SPACING * s
             } else {
                 MODULE_SPACING * s
             },
@@ -425,12 +518,24 @@ impl Metrics {
             modern_rect_w: MODERN_RECT_WIDTH * s,
             modern_pad_x: MODERN_PAD_X * s,
             modern_pad_y: MODERN_PAD_Y * s,
+            aurora_card_radius: AURORA_CARD_RADIUS * s,
+            aurora_pad_left: AURORA_PAD_LEFT * s,
+            aurora_pad_right: AURORA_PAD_RIGHT * s,
+            aurora_spine_w: AURORA_SPINE_W * s,
+            aurora_spine_inset_x: AURORA_SPINE_INSET_X * s,
+            aurora_spine_inset_y: AURORA_SPINE_INSET_Y * s,
+            aurora_tag_gap: AURORA_TAG_GAP * s,
+            aurora_wm_pad_x: AURORA_WM_PAD_X * s,
+            aurora_dot: AURORA_DOT * s,
+            aurora_dot_gap: AURORA_DOT_GAP * s,
             right_margin: if rise_like {
                 RISE_MARGIN_RIGHT * s
             } else if tesseract {
                 TESSERACT_MARGIN_RIGHT * s
             } else if modern {
                 MODERN_MARGIN_RIGHT * s
+            } else if aurora {
+                AURORA_MARGIN_RIGHT * s
             } else {
                 DEFAULT_MARGIN_RIGHT * s
             },
@@ -443,6 +548,10 @@ impl Metrics {
                 // The run sits inside Modern's card the way Rise's sits inside
                 // its panel: the card starts at `topY`, the text one pad lower.
                 TOP_Y * s + MODERN_PAD_Y * s
+            } else if aurora {
+                // The same rule as Modern: the pill starts at `topY`, its text
+                // one vertical pad lower, centred in the 24 px card.
+                TOP_Y * s + AURORA_PAD_Y * s
             } else {
                 TOP_Y * s
             },
@@ -453,6 +562,10 @@ impl Metrics {
                 TESSERACT_PADDING * s
             } else if modern {
                 MODERN_PAD_X * s
+            } else if aurora {
+                // A row's text clears the floating spine plus breathing room;
+                // the watermark title starts further in (see `aurora_wm_lead`).
+                AURORA_PAD_LEFT * s
             } else {
                 0.0
             },
@@ -462,6 +575,8 @@ impl Metrics {
                 TESSERACT_TEXT_INSET_Y * s
             } else if modern {
                 MODERN_PAD_Y * s
+            } else if aurora {
+                AURORA_PAD_Y * s
             } else {
                 0.0
             },
@@ -503,25 +618,32 @@ pub fn chip_corners(m: &Metrics) -> [f32; 4] {
         Mode::Vape => [m.vape_left_rounding, 0.0, 0.0, m.vape_left_rounding],
         Mode::Tesseract => [m.tesseract_chip_radius, 0.0, 0.0, m.tesseract_chip_radius],
         Mode::Modern => [m.modern_card_radius; 4],
+        Mode::Aurora => [m.aurora_card_radius; 4],
         _ => [0.0; 4],
     }
 }
 
 /// The chip the row sits on: Rise/VapeV4 `rgba(0,0,0,88)` over the whole row,
-/// Tesseract `rgba(25,25,30,240)`, Modern its own dark card, Default none
-/// (`Option::None`).
+/// Tesseract `rgba(25,25,30,240)`, Modern its own dark card, Aurora its glass
+/// card, Default none (`Option::None`). Aurora's chip is drawn by
+/// `paint_glass_card` — border, fill and top highlight — rather than by this
+/// colour alone; the value here is what `describe` reports and what a test
+/// can check.
 pub fn chip_colour(m: &Metrics) -> Option<u32> {
     match m.mode {
         Mode::Rise | Mode::Vape => Some(RISE_BACKGROUND),
         Mode::Tesseract => Some(TESSERACT_BACKGROUND),
         Mode::Modern => Some(MODERN_BACKGROUND),
+        Mode::Aurora => Some(AURORA_BACKGROUND),
         Mode::Default => None,
     }
 }
 
 /// The tag's colour: muted grey, `(255,85,85)` in VapeV4 while the module is in
 /// use (HUD.cpp:640), and Modern's live accent — the one mode whose tag is not a
-/// fixed grey. The source applies the active colour in VapeV4 only; every other
+/// fixed grey. Aurora does not come through here either: its value is muted
+/// until the entry carries `highlight`, and the lift into the accent happens in
+/// `paint_row`, where that flag is at hand. The source applies the active colour in VapeV4 only; every other
 /// ported mode keeps the grey whatever the flash byte says.
 ///
 /// `flash` is the v3 strength, read here only as "working at all": the *degree*
@@ -546,6 +668,10 @@ pub fn tag_colour(m: &Metrics, flash: bool, accent: u32) -> u32 {
 pub fn tag_gap(m: &Metrics, space_w: f32) -> f32 {
     if m.mode == Mode::Tesseract {
         m.tesseract_gap
+    } else if m.mode == Mode::Aurora {
+        // The mode's own 9 px — a space glyph is too tight between a bold name
+        // and a value for the glass card to read cleanly.
+        m.aurora_tag_gap
     } else {
         space_w
     }
@@ -562,6 +688,10 @@ pub fn box_width(m: &Metrics, layout_w: f32) -> f32 {
         // The card's padding on both sides plus its bar; no `+1`, which is a
         // source quirk of the Rise panel rather than a rule.
         layout_w + m.modern_pad_x * 2.0 + m.modern_rect_w
+    } else if m.mode == Mode::Aurora {
+        // The glass card's padding on both sides; the spine floats inside the
+        // left padding rather than adding to the box.
+        layout_w + m.aurora_pad_left + m.aurora_pad_right
     } else {
         layout_w
     }
@@ -572,6 +702,19 @@ pub fn box_width(m: &Metrics, layout_w: f32) -> f32 {
 /// Modern's numbers.
 pub fn modern_panel_width(m: &Metrics, run_w: f32) -> f32 {
     run_w + m.modern_pad_x * 2.0 + m.modern_rect_w
+}
+
+/// The distance from an Aurora pill's left edge to its title, and the
+/// title-to-run anchor the painter and `describe` share: the pad, the gradient
+/// dot and the gap between them.
+pub fn aurora_wm_lead(m: &Metrics) -> f32 {
+    m.aurora_wm_pad_x + m.aurora_dot + m.aurora_dot_gap
+}
+
+/// Aurora's watermark pill: the leading zone plus the run plus the right pad.
+/// No accent bar — the pill's accent is its dot.
+pub fn aurora_panel_width(m: &Metrics, run_w: f32) -> f32 {
+    aurora_wm_lead(m) + run_w + m.aurora_pad_right
 }
 
 /// The Rise-like watermark panel's width (HUD.cpp:544). The source computes
@@ -874,6 +1017,41 @@ pub fn modern_rgb(millis: f64, index: f32) -> [f32; 3] {
     ]
 }
 
+/// The two colours an Aurora frame actually sweeps between. The header's
+/// primary/secondary are the user's choice — but they arrive holding the
+/// reference's muted wave defaults bit-for-bit when the user has never touched
+/// them, and an Aurora built on `78,86,107 → 120,146,214` would be a grey-blue
+/// mode with no aurora in it. So the untouched defaults are treated as "no
+/// opinion" and the mode's own cold/warm pair is used instead; the moment the
+/// user picks their own colours in the WebUI they are honoured exactly.
+pub fn aurora_stops(primary: [f32; 3], secondary: [f32; 3]) -> ([f32; 3], [f32; 3]) {
+    let same = |a: [f32; 3], b: [f32; 3]| {
+        a.iter().zip(b.iter()).all(|(x, y)| (x - y).abs() < 0.5 / 255.0)
+    };
+    if same(primary, DEFAULT_PRIMARY) && same(secondary, DEFAULT_SECONDARY) {
+        (AURORA_COLD, AURORA_WARM)
+    } else {
+        (primary, secondary)
+    }
+}
+
+/// Aurora's accent: the two stops on a 6 s cosine, walked down the rows so the
+/// column reads as one gradient drifting along itself. Pure in `millis`, like
+/// every accent in this file — the review dump stays reproducible.
+pub fn aurora_rgb(millis: f64, index: f32, primary: [f32; 3], secondary: [f32; 3]) -> [f32; 3] {
+    let (cold, warm) = aurora_stops(primary, secondary);
+    let phase = 0.5
+        - 0.5 * ((millis / AURORA_SWEEP_MS as f64 + index as f64 * AURORA_ROW_PHASE as f64)
+            * std::f64::consts::TAU)
+            .cos();
+    let t = phase as f32;
+    [
+        cold[0] + (warm[0] - cold[0]) * t,
+        cold[1] + (warm[1] - cold[1]) * t,
+        cold[2] + (warm[2] - cold[2]) * t,
+    ]
+}
+
 // ── per-frame inputs ────────────────────────────────────────────────────────
 
 /// Everything the HUD needs that is not the published state: which mode, how big,
@@ -950,6 +1128,7 @@ pub fn accent(cfg: &Config, stamp: Stamp, index: usize) -> [f32; 3] {
         Mode::Vape => vape_rgb(stamp.seconds, index as f32),
         Mode::Tesseract => tesseract_rgb(stamp.millis, index as f32),
         Mode::Modern => modern_rgb(stamp.millis, index as f32),
+        Mode::Aurora => aurora_rgb(stamp.millis, index as f32, cfg.primary, cfg.secondary),
         Mode::Default => {
             if cfg.wave {
                 wave_rgb(
@@ -1046,6 +1225,10 @@ struct RowShape {
     /// same red (or lack of it) on its way out instead of snapping to a different
     /// colour mid-exit.
     flash: u8,
+    /// Whether the entry asked for its value in the accent (`highlight`). Only
+    /// Aurora reads it today; carried for every mode so an exit repaints the
+    /// same value colour the row left with.
+    highlight: bool,
 }
 
 /// A row on its way out.
@@ -1131,6 +1314,7 @@ impl Anim {
                     box_w: row.box_w,
                     slot,
                     flash: entry.flash,
+                    highlight: entry.highlight,
                 },
             );
         }
@@ -1287,6 +1471,10 @@ fn measure_rows(
         let sort_w = name_w + if has_tag { space_w + tag_w } else { 0.0 };
         let layout_w = if cfg.mode == Mode::Tesseract {
             name_w + if has_tag { m.tesseract_gap + tag_w } else { 0.0 }
+        } else if cfg.mode == Mode::Aurora {
+            // Aurora measures with its own 9 px gap for the box it will draw;
+            // the wedge sort stays on the space glyph like every other mode.
+            name_w + if has_tag { m.aurora_tag_gap + tag_w } else { 0.0 }
         } else {
             sort_w
         };
@@ -1431,6 +1619,7 @@ fn paint_watermark(
     let text_y = watermark_y(rect, m) - rect.y;
     let rise_like = m.mode.is_rise_like();
     let modern = m.mode == Mode::Modern;
+    let aurora = m.mode == Mode::Aurora;
 
     // The panel behind the run: the source's rectangular one for Rise/VapeV4, or
     // Modern's card, rounded on all four corners like its rows. Both are the same
@@ -1438,52 +1627,100 @@ fn paint_watermark(
     // so they share the drawing and differ only in the numbers.
     let panel_w = if modern {
         Some(modern_panel_width(m, run_w))
+    } else if aurora {
+        Some(aurora_panel_width(m, run_w))
     } else if rise_like {
         Some(watermark_panel_width(m, title_w, middle_w))
     } else {
         None
     };
     if let Some(panel_w) = panel_w {
-        let panel_colour = if modern { MODERN_BACKGROUND } else { RISE_BACKGROUND };
         let item_h = m.item_height.round().max(1.0) as u32;
-        canvas.fill_rounded_rect_corners(
-            box_x,
-            panel_y,
-            panel_w.round().max(1.0) as u32,
-            item_h,
-            chip_corners(m),
-            with_alpha(panel_colour, frame.background),
-        );
-        let bar_w = if modern { m.modern_rect_w } else { m.rise_rect_w };
-        let bar_x = (box_x as f32 + panel_w - bar_w).round() as i32;
-        let bar_px = bar_w.round().max(1.0) as u32;
-        if modern {
-            // Modern's bar rounds its own right corners to sit inside the card;
-            // the ported panel's bar is square, as the source draws it.
-            canvas.fill_rounded_rect_corners(
-                bar_x,
+        if aurora {
+            // The glass pill, and its brand mark: one small gradient dot, the
+            // only fixed shape in the run. Its two stops are the mode's pair.
+            paint_glass_card(
+                canvas,
+                box_x,
                 panel_y,
-                bar_px,
+                panel_w.round().max(1.0) as u32,
                 item_h,
-                [0.0, m.modern_card_radius, m.modern_card_radius, 0.0],
-                with_alpha(pack(accent, 1.0), frame.global),
+                m.aurora_card_radius,
+                frame.background,
+            );
+            let dot = m.aurora_dot.round().max(1.0) as u32;
+            let dot_x = (box_x as f32 + m.aurora_wm_pad_x).round() as i32;
+            let dot_y = panel_y + ((item_h as f32 - dot as f32) / 2.0).round() as i32;
+            let (cold, warm) = aurora_stops(frame.cfg.primary, frame.cfg.secondary);
+            canvas.fill_rounded_rect_gradient(
+                dot_x,
+                dot_y,
+                dot,
+                dot,
+                [dot as f32 / 2.0; 4],
+                pack(cold, 1.0),
+                pack(warm, 1.0),
+                true,
             );
         } else {
-            canvas.fill_rect(bar_x, panel_y, bar_px, item_h, with_alpha(pack(accent, 1.0), frame.global));
+            let panel_colour = if modern { MODERN_BACKGROUND } else { RISE_BACKGROUND };
+            canvas.fill_rounded_rect_corners(
+                box_x,
+                panel_y,
+                panel_w.round().max(1.0) as u32,
+                item_h,
+                chip_corners(m),
+                with_alpha(panel_colour, frame.background),
+            );
+            let bar_w = if modern { m.modern_rect_w } else { m.rise_rect_w };
+            let bar_x = (box_x as f32 + panel_w - bar_w).round() as i32;
+            let bar_px = bar_w.round().max(1.0) as u32;
+            if modern {
+                // Modern's bar rounds its own right corners to sit inside the card;
+                // the ported panel's bar is square, as the source draws it.
+                canvas.fill_rounded_rect_corners(
+                    bar_x,
+                    panel_y,
+                    bar_px,
+                    item_h,
+                    [0.0, m.modern_card_radius, m.modern_card_radius, 0.0],
+                    with_alpha(pack(accent, 1.0), frame.global),
+                );
+            } else {
+                canvas.fill_rect(bar_x, panel_y, bar_px, item_h, with_alpha(pack(accent, 1.0), frame.global));
+            }
         }
     }
 
-    let text_x =
-        (box_x as f32 + if rise_like || modern { m.text_inset_x } else { 0.0 }).round() as i32;
+    let text_x = (box_x as f32
+        + if rise_like || modern {
+            m.text_inset_x
+        } else if aurora {
+            // The title clears the pad + dot + gap, not the row inset: the
+            // leading zone is wider than a row's spine zone.
+            aurora_wm_lead(m)
+        } else {
+            0.0
+        })
+        .round() as i32;
     // Rise paints its title in `riseWatermarkTextColor` and leaves the accent to
     // the panel's bar (HUD.cpp:556); every other mode — Modern included — paints
-    // it in the accent.
+    // it in the accent. Aurora paints it near-white: the accent lives in the dot
+    // and the rows' spines, and a gradient title would fight them.
     let title_colour = if m.mode == Mode::Rise {
         RISE_WATERMARK_TEXT
+    } else if aurora {
+        AURORA_TEXT
     } else {
         pack(accent, 1.0)
     };
-    let secondary = if rise_like { RISE_SECONDARY_TEXT } else { SECONDARY_TEXT };
+    let secondary = if rise_like {
+        RISE_SECONDARY_TEXT
+    } else if aurora {
+        AURORA_MUTED
+    } else {
+        SECONDARY_TEXT
+    };
 
     draw_shadowed(text, canvas, name_font, PRODUCT, text_x, text_y, title_colour, frame.global);
     // The rest of the run: the nickname and the FPS segment, in the source's own
@@ -1588,6 +1825,37 @@ fn paint_exits(
     true
 }
 
+/// One Aurora card — row or watermark pill, the same three draws so the two
+/// cannot drift: the 1 px slate border, the glass fill inset inside it, and the
+/// 1 px highlight along the fill's top edge. `alpha` is the background
+/// multiplier the frame carries (the overlay's fade times the configured
+/// opacity); the border, fill and highlight share it, and the text is never
+/// dimmed by it.
+fn paint_glass_card(
+    canvas: &mut Canvas,
+    x: i32,
+    y: i32,
+    w: u32,
+    h: u32,
+    radius: f32,
+    alpha: f32,
+) {
+    canvas.fill_rounded_rect_corners(x, y, w, h, [radius; 4], with_alpha(AURORA_BORDER, alpha));
+    let inner_w = w.saturating_sub(2);
+    let inner_h = h.saturating_sub(2);
+    canvas.fill_rounded_rect_corners(
+        x + 1,
+        y + 1,
+        inner_w,
+        inner_h,
+        [(radius - 1.0).max(0.0); 4],
+        with_alpha(AURORA_BACKGROUND, alpha),
+    );
+    if inner_w > 0 {
+        canvas.fill_rect(x + 1, y + 1, inner_w, 1, with_alpha(AURORA_TOP_HIGHLIGHT, alpha));
+    }
+}
+
 /// Paint one row: its card, the accent bar and its two text runs, with the work
 /// pulse carried by the **text** colour rather than by a fill. A listed row and a
 /// row on its way out both come through here, so an exit cannot look different
@@ -1614,39 +1882,83 @@ fn paint_row(
     // row reads as its labels going red and a decaying `flash` walks them back.
     // Nothing is filled for it — no wash above the card, the accent bar or the
     // glyphs' shadow, and no change to the row's geometry or background.
-    let name_colour = flash_tint(accent, strength);
+    // Aurora's name base is the near-white constant instead of the accent: the
+    // accent lives in the spine, and a name that fights it would read as noise.
+    let name_base = if m.mode == Mode::Aurora { AURORA_TEXT } else { accent };
+    let name_colour = flash_tint(name_base, strength);
 
     // The chip: Rise/VapeV4 fill the whole row, Tesseract its own dark one,
-    // Modern its rounded card, Default nothing at all (HUD.cpp:619-634).
-    if let Some(colour) = chip_colour(m) {
-        canvas.fill_rounded_rect_corners(
+    // Modern its rounded card, Aurora its glass card, Default nothing at all
+    // (HUD.cpp:619-634).
+    if m.mode == Mode::Aurora {
+        paint_glass_card(
+            canvas,
             box_x,
             y,
             box_w,
             item_h,
-            chip_corners(m),
-            with_alpha(colour, frame.background * fade),
+            m.aurora_card_radius,
+            frame.background * fade,
         );
-    }
-    // The accent bar, flush against the row's right edge. Modern rounds its right
-    // corners to match the card; the ported modes keep the square bar.
-    let bar_w = bar_width(m);
-    if bar_w > 0.0 {
-        let bar_x = (box_x as f32 + shape.box_w - bar_w).round() as i32;
-        let bar_px = bar_w.round().max(1.0) as u32;
-        if m.mode == Mode::Modern {
-            // Modern's bar rounds its own right corners to sit inside the card.
+        // The spine: the row's gradient accent. Its top stop is the row's live
+        // accent and its bottom one `AURORA_SPINE_OFFSET_MS` further down the
+        // same sweep, so the gradient visibly flows downward. It floats inside
+        // the card's padding and never touches the border.
+        let spine_w = m.aurora_spine_w.round().max(1.0) as u32;
+        let spine_x = (box_x as f32 + m.aurora_spine_inset_x).round() as i32;
+        let spine_y = y + m.aurora_spine_inset_y.round() as i32;
+        let spine_h =
+            (m.item_height - 2.0 * m.aurora_spine_inset_y).round().max(spine_w as f32) as u32;
+        let bottom = pack(
+            aurora_rgb(
+                frame.stamp.millis + AURORA_SPINE_OFFSET_MS,
+                shape.slot as f32,
+                frame.cfg.primary,
+                frame.cfg.secondary,
+            ),
+            1.0,
+        );
+        canvas.fill_rounded_rect_gradient(
+            spine_x,
+            spine_y,
+            spine_w,
+            spine_h,
+            [spine_w as f32 / 2.0; 4],
+            accent,
+            bottom,
+            false,
+        );
+    } else {
+        if let Some(colour) = chip_colour(m) {
             canvas.fill_rounded_rect_corners(
-                bar_x,
+                box_x,
                 y,
-                bar_px,
+                box_w,
                 item_h,
-                [0.0, m.modern_card_radius, m.modern_card_radius, 0.0],
-                with_alpha(accent, text_alpha),
+                chip_corners(m),
+                with_alpha(colour, frame.background * fade),
             );
-        } else {
-            // The ported modes' bar is the source's square one.
-            canvas.fill_rect(bar_x, y, bar_px, item_h, with_alpha(accent, text_alpha));
+        }
+        // The accent bar, flush against the row's right edge. Modern rounds its
+        // right corners to match the card; the ported modes keep the square bar.
+        let bar_w = bar_width(m);
+        if bar_w > 0.0 {
+            let bar_x = (box_x as f32 + shape.box_w - bar_w).round() as i32;
+            let bar_px = bar_w.round().max(1.0) as u32;
+            if m.mode == Mode::Modern {
+                // Modern's bar rounds its own right corners to sit inside the card.
+                canvas.fill_rounded_rect_corners(
+                    bar_x,
+                    y,
+                    bar_px,
+                    item_h,
+                    [0.0, m.modern_card_radius, m.modern_card_radius, 0.0],
+                    with_alpha(accent, text_alpha),
+                );
+            } else {
+                // The ported modes' bar is the source's square one.
+                canvas.fill_rect(bar_x, y, bar_px, item_h, with_alpha(accent, text_alpha));
+            }
         }
     }
 
@@ -1661,8 +1973,18 @@ fn paint_row(
         // The value is tinted by the same strength as the name, from the colour
         // this mode gives that row's tag — so "the labels go red" is one rule, not
         // two, and the two runs cannot disagree about how far into the pulse the
-        // row is.
-        let tag = flash_tint(tag_colour(m, shape.flash != 0, accent), strength);
+        // row is. Aurora lifts a highlighted value into the accent before the
+        // tint; every other mode takes `tag_colour`'s word.
+        let tag_base = if m.mode == Mode::Aurora {
+            if shape.highlight {
+                accent
+            } else {
+                AURORA_MUTED
+            }
+        } else {
+            tag_colour(m, shape.flash != 0, accent)
+        };
+        let tag = flash_tint(tag_base, strength);
         draw_shadowed(text, canvas, FontId::Body, &shape.value, tag_x, text_y, tag, text_alpha);
     }
 }
@@ -1765,7 +2087,13 @@ pub fn describe(text: &TextEngine, entries: &[Entry], cfg: &Config, canvas_w: u3
             run_w,
             box_x,
             watermark_y(rect, &m),
-            if m.mode == Mode::Rise { " title #E8E8E8 (riseWatermarkTextColor)" } else { " title in the accent" },
+            if m.mode == Mode::Rise {
+                " title #E8E8E8 (riseWatermarkTextColor)"
+            } else if m.mode == Mode::Aurora {
+                " title #ECF2F8 (AURORA_TEXT)"
+            } else {
+                " title in the accent"
+            },
         ));
         if m.mode.is_rise_like() {
             let panel_w = watermark_panel_width(&m, title_w, middle_w);
@@ -1793,6 +2121,20 @@ pub fn describe(text: &TextEngine, entries: &[Entry], cfg: &Config, canvas_w: u3
                 m.modern_pad_x,
                 m.modern_pad_y,
                 m.modern_rect_w,
+            ));
+        } else if m.mode == Mode::Aurora {
+            out.push_str(&format!(
+                ", glass pill {:.0}x{:.0} at ({}, {}) {} radius {:.0} on all four corners, dot \
+                 {:.0}px at +{:.0}, lead {:.0}px, no bar",
+                aurora_panel_width(&m, run_w),
+                m.item_height,
+                box_x,
+                (rect.y as f32 + m.top_y).round() as i32,
+                hex(AURORA_BACKGROUND),
+                m.aurora_card_radius,
+                m.aurora_dot,
+                m.aurora_wm_pad_x,
+                aurora_wm_lead(&m),
             ));
         }
         out.push('\n');
@@ -1832,7 +2174,18 @@ pub fn describe(text: &TextEngine, entries: &[Entry], cfg: &Config, canvas_w: u3
             // with the pulse's own tint over it, so the dump's numbers cannot drift
             // from the frame.
             let tag_now = flash_tint(
-                tag_colour(&m, entry.flash != 0, accent_now),
+                // Aurora lifts a highlighted value into the accent before the
+                // pulse tint, exactly as `paint_row` does — the dump's numbers
+                // cannot drift from the frame.
+                if m.mode == Mode::Aurora {
+                    if entry.highlight {
+                        accent_now
+                    } else {
+                        AURORA_MUTED
+                    }
+                } else {
+                    tag_colour(&m, entry.flash != 0, accent_now)
+                },
                 flash_strength(entry.flash),
             );
             out.push_str(&format!(
@@ -1934,7 +2287,7 @@ mod tests {
     /// chips touch, and a multiplier on the gap alone would leave the knob dead).
     #[test]
     fn line_spacing_scales_the_row_pitch_in_every_mode() {
-        for mode in [Mode::Default, Mode::Rise, Mode::Vape, Mode::Tesseract, Mode::Modern] {
+        for mode in [Mode::Default, Mode::Rise, Mode::Vape, Mode::Tesseract, Mode::Modern, Mode::Aurora] {
             let one = Metrics::with_line_spacing(mode, 1.0, 1.0);
             let one_and_a_half = Metrics::with_line_spacing(mode, 1.0, 1.5);
             let tight = Metrics::with_line_spacing(mode, 1.0, 0.5);
@@ -1991,12 +2344,18 @@ mod tests {
         assert_eq!(chip_corners(&Metrics::new(Mode::Vape, 1.0)), [6.0, 0.0, 0.0, 6.0]);
         assert_eq!(chip_corners(&Metrics::new(Mode::Tesseract, 1.0)), [5.0, 0.0, 0.0, 5.0]);
         assert_eq!(chip_corners(&Metrics::new(Mode::Vape, 2.0)), [12.0, 0.0, 0.0, 12.0]);
+        assert_eq!(
+            chip_corners(&Metrics::new(Mode::Aurora, 1.0)),
+            [7.0; 4],
+            "Aurora rounds all four corners like Modern"
+        );
 
         // The chip fills: the source's own background colours, and none in Default.
         assert_eq!(chip_colour(&Metrics::new(Mode::Default, 1.0)), None);
         assert_eq!(chip_colour(&Metrics::new(Mode::Rise, 1.0)), Some(RISE_BACKGROUND));
         assert_eq!(chip_colour(&Metrics::new(Mode::Vape, 1.0)), Some(RISE_BACKGROUND));
         assert_eq!(chip_colour(&Metrics::new(Mode::Tesseract, 1.0)), Some(TESSERACT_BACKGROUND));
+        assert_eq!(chip_colour(&Metrics::new(Mode::Aurora, 1.0)), Some(AURORA_BACKGROUND));
         assert_eq!(TESSERACT_BACKGROUND >> 24, 240);
     }
 
@@ -2008,10 +2367,20 @@ mod tests {
         assert_eq!(box_width(&Metrics::new(Mode::Rise, 1.0), 100.0), 100.0 + 8.0 + 2.0 + 1.0);
         assert_eq!(box_width(&Metrics::new(Mode::Vape, 1.0), 100.0), 111.0);
         assert_eq!(box_width(&Metrics::new(Mode::Tesseract, 1.0), 100.0), 100.0 + 6.0 + 4.0 + 3.0);
+        assert_eq!(
+            box_width(&Metrics::new(Mode::Aurora, 1.0), 100.0),
+            100.0 + 11.0 + 9.0,
+            "Aurora's card padding, the spine floating inside it"
+        );
 
         // The panel the watermark sits in: the run plus the same padding and bar,
         // and no FPS term (this overlay has no frame counter).
         assert_eq!(watermark_panel_width(&Metrics::new(Mode::Rise, 1.0), 74.0, 33.0), 74.0 + 33.0 + 11.0);
+        assert_eq!(
+            aurora_panel_width(&Metrics::new(Mode::Aurora, 1.0), 74.0),
+            8.0 + 6.0 + 7.0 + 74.0 + 9.0,
+            "pad + dot + gap before the run, then the right pad"
+        );
     }
 
     /// The tag sits one space glyph after the name — except in Tesseract, which
@@ -2024,6 +2393,11 @@ mod tests {
         assert_eq!(tag_gap(&Metrics::new(Mode::Vape, 1.0), space), 4.0);
         assert_eq!(tag_gap(&Metrics::new(Mode::Tesseract, 1.0), space), TESSERACT_GAP_AFTER_TEXT);
         assert_eq!(tag_gap(&Metrics::new(Mode::Tesseract, 2.0), 4.0), 8.0, "and it scales");
+        assert_eq!(
+            tag_gap(&Metrics::new(Mode::Aurora, 1.0), space),
+            AURORA_TAG_GAP,
+            "Aurora's own 9 px, not the space glyph"
+        );
     }
 
     /// HSV → RGB against the definition, including the sector the Rise hue lands
@@ -2622,6 +2996,91 @@ mod tests {
     }
 
     // ── the exit animation (contract v3) ────────────────────────────────────
+
+    // ── Aurora (this port's own sixth mode) ──────────────────────────────
+
+    /// Aurora's numbers are its own, and they all scale together: a 24 px glass
+    /// card at pitch 28, the spine zone as the text inset, the pill's text one
+    /// pad below the top line.
+    #[test]
+    fn aurora_is_its_own_glass_geometry() {
+        let m = Metrics::new(Mode::Aurora, 1.0);
+        assert_eq!(m.item_height, 16.0 + 8.0, "the tallest card yet");
+        assert_eq!(row_pitch(&m), 24.0 + 4.0);
+        assert_eq!(m.right_margin, 8.0);
+        assert_eq!(m.text_inset_x, 11.0, "the spine zone plus breathing room");
+        assert_eq!(m.text_inset_y, 4.0, "centred in the 24 px card");
+        assert_eq!(m.watermark_y, 4.0 + 4.0, "the pill's text, one pad in");
+        assert_eq!(m.aurora_card_radius, 7.0);
+        assert_eq!(m.aurora_tag_gap, 9.0);
+        assert_eq!(m.aurora_spine_w, 3.0);
+
+        // And it all scales, like every other mode's numbers.
+        let big = Metrics::new(Mode::Aurora, 2.0);
+        assert_eq!(big.item_height, 48.0);
+        assert_eq!(big.aurora_card_radius, 14.0);
+        assert_eq!(big.aurora_tag_gap, 18.0);
+    }
+
+    /// Aurora reads the bold face like Default, sweeps whatever the wave switch
+    /// says, and parses and prints like the other five.
+    #[test]
+    fn aurora_names_are_bold_and_always_animated() {
+        assert!(matches!(Mode::Aurora.name_font(), FontId::Name), "bold names, like Default");
+        let mut cfg = Config::default();
+        cfg.mode = Mode::Aurora;
+        cfg.wave = false;
+        assert!(accent_is_animated(&cfg), "the 6 s sweep runs regardless of the wave switch");
+        assert_eq!(Mode::parse("aurora"), Ok(Mode::Aurora));
+        assert_eq!(Mode::Aurora.label(), "aurora");
+    }
+
+    /// The sweep: the mode's own pair while the header still carries the
+    /// reference defaults, the user's pair the moment they pick one, phase 0 on
+    /// the cold stop, half a cycle later on the warm one, and each row a step
+    /// along the way.
+    #[test]
+    fn aurora_sweeps_the_stops_over_six_seconds() {
+        let mut cfg = Config::default();
+        cfg.mode = Mode::Aurora;
+        let cold = accent(&cfg, Stamp { seconds: 0.0, millis: 0.0 }, 0);
+        let warm = accent(&cfg, Stamp { seconds: 3.0, millis: 3000.0 }, 0);
+        for i in 0..3 {
+            assert!(
+                (cold[i] - AURORA_COLD[i]).abs() < 1.0 / 255.0,
+                "phase 0 is the cold stop: {cold:?}"
+            );
+            assert!(
+                (warm[i] - AURORA_WARM[i]).abs() < 1.0 / 255.0,
+                "half a cycle later is the warm one: {warm:?}"
+            );
+        }
+
+        // The per-row phase walks the sweep, so the column reads as a gradient.
+        let a = accent(&cfg, Stamp { seconds: 0.0, millis: 0.0 }, 0);
+        let b = accent(&cfg, Stamp { seconds: 0.0, millis: 0.0 }, 1);
+        assert!(a != b, "row 1 sits elsewhere on the sweep than row 0");
+
+        // A user's own colours are honoured over the built-in pair.
+        let mine = [0.1, 0.2, 0.3];
+        let theirs = [0.9, 0.8, 0.7];
+        let stops = aurora_stops(mine, theirs);
+        assert_eq!(stops.0, mine);
+        assert_eq!(stops.1, theirs);
+    }
+
+    /// The work pulse reaches Aurora like every other mode — it tints the row's
+    /// text towards the mode red, from whatever colour the run would have used,
+    /// the white name included.
+    #[test]
+    fn aurora_work_pulse_tints_the_white_name_towards_red() {
+        assert_eq!(flash_tint(AURORA_TEXT, 0.0), AURORA_TEXT, "no flash, no tint");
+        assert_eq!(
+            flash_tint(AURORA_TEXT, 1.0) & 0x00FF_FFFF,
+            FLASH_TINT & 0x00FF_FFFF,
+            "a full pulse is the mode red, whatever the base was"
+        );
+    }
 
     /// The timeline of a row leaving: it is remembered while it is listed, it
     /// starts an exit the frame it disappears, it is painted for ~220 ms and then

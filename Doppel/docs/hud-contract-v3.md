@@ -17,7 +17,7 @@ offset size  field
                     bit0     wave            (Default mode's accent animation)
                     bit1     spaced          (split CamelCase names)
                     bit2     watermark       (draw the watermark run)
-                    bits 3..5 mode          0 default, 1 rise, 2 vape, 3 tesseract, 4 modern
+                    bits 3..5 mode          0 default, 1 rise, 2 vape, 3 tesseract, 4 modern, 5 aurora
                     bit6     orderPublished  draw rows in published order, not width-sorted
                     bit7     positionLeft     anchor the module list to the left edge
                     bits 8..31 reserved (ignored)
@@ -48,7 +48,7 @@ char value[24]  UTF-8, NUL padded, empty = no value shown
 | Field | v2 | v3 | Why |
 | --- | --- | --- | --- |
 | `version` | 2 | 3 | The two semantic changes below are a protocol change |
-| mode bits | bits 3..4 (2 bits, 4 values) | bits 3..5 (3 bits, 5 values) | adds the Modern mode |
+| mode bits | bits 3..4 (2 bits, 4 values) | bits 3..5 (3 bits, 5 values) | adds the Modern mode; the same three bits later took Aurora (5) with no further change |
 | new `orderPublished` | — | flags bit 6 | the user's manual HUD order must survive to the overlay, which otherwise sorts rows by width (the reference's wedge) |
 | `scale_x1000` | reserved (28) | 0 = unset, else scale x1000 (500..4000) | the user can set the HUD scale from the WebUI instead of a CLI flag |
 | `opacity` | reserved (56) | 0 = unset, else 1..100 percent | the user can set the background opacity |

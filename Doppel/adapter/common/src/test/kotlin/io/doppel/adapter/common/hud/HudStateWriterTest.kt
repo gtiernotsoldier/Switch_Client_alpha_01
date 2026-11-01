@@ -122,6 +122,7 @@ class HudStateWriterTest {
         assertEquals(2 shl HudStateWriter.MODE_SHIFT, flagsOf(HudStateWriter.MODE_VAPE))
         assertEquals(3 shl HudStateWriter.MODE_SHIFT, flagsOf(HudStateWriter.MODE_TESSERACT))
         assertEquals(4 shl HudStateWriter.MODE_SHIFT, flagsOf(HudStateWriter.MODE_MODERN), "modern is a 5th value")
+        assertEquals(5 shl HudStateWriter.MODE_SHIFT, flagsOf(HudStateWriter.MODE_AURORA), "aurora is a 6th value")
         assertEquals(7 shl HudStateWriter.MODE_SHIFT, flagsOf(0x7F), "masked, not shifted out")
         assertEquals(0, flagsOf(0x7F) and HudStateWriter.FLAG_ORDER_PUBLISHED, "no aliasing of the flags")
     }

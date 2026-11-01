@@ -20,7 +20,7 @@ import java.nio.ByteOrder
  *   4    4    uint32 version   3
  *   8    4    uint32 count     entries written, <= 64
  *  12    4    uint32 flags     bit0 wave, bit1 spaced, bit2 watermark,
- *                              bits 3..5 mode (0 default, 1 rise, 2 vape, 3 tesseract, 4 modern),
+ *                              bits 3..5 mode (0 default, 1 rise, 2 vape, 3 tesseract, 4 modern, 5 aurora),
  *                              bit6 draw rows in published order, bits 7..31 reserved
  *  16    4    uint32 primary   0x00RRGGBB
  *  20    4    uint32 secondary 0x00RRGGBB
@@ -118,12 +118,13 @@ object HudStateWriter {
      */
     const val FLAG_POSITION_LEFT: Int = 1 shl 7
 
-    /** `ArrayListMode` values (`ArrayList.h:14`, plus this port's Modern mode). */
+    /** `ArrayListMode` values (`ArrayList.h:14`, plus this port's Modern and Aurora modes). */
     const val MODE_DEFAULT: Int = 0
     const val MODE_RISE: Int = 1
     const val MODE_VAPE: Int = 2
     const val MODE_TESSERACT: Int = 3
     const val MODE_MODERN: Int = 4
+    const val MODE_AURORA: Int = 5
 
     /** The wave colour pair, the same defaults the overlay falls back to (ModuleConfig.h:65-66). */
     const val DEFAULT_PRIMARY: Int = 0x4E566B
@@ -194,6 +195,7 @@ object HudStateWriter {
         "vape", "vapev4" -> MODE_VAPE
         "tesseract" -> MODE_TESSERACT
         "modern" -> MODE_MODERN
+        "aurora" -> MODE_AURORA
         else -> MODE_DEFAULT
     }
 

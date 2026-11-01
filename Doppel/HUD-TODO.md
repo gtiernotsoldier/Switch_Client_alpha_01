@@ -21,6 +21,41 @@ without re-deriving anything.
 | Launcher | restyled to the OpenCommunity dark palette with a short intro fade |
 | Option sanity | Min/Max option pairs are kept ordered on every write, so `Random.nextInt(min, max + 1)` can no longer be handed an inverted range |
 
+## Round 11 — Aurora, the HUD's own look (overlay mode 5)
+
+The user's verdict on the HUD after living with the ports: 视觉不够好看 — the overlay was a copy of
+other clients, not a look of its own. This pass adds **Aurora** (`--mode aurora`, contract mode 5,
+the WebUI's new default first choice): the WebUI's own glass-card language carried into the game.
+
+* **The card** — a near-black navy glass panel (`#0D111A @ 82 %`) inside a 1 px slate border with a
+  1 px highlight along its top edge, radius 7 on all four corners, 24 px tall at pitch 28 (the
+  tallest row of any mode). The accent is not a bar glued to the right edge any more: it is a
+  3 px **gradient spine** floating inside the card's left padding, top stop the row's live accent,
+  bottom stop 450 ms further down the same sweep, so the gradient visibly flows downward.
+* **The type** — names in Play Bold near-white (`#ECF2F8`), values muted (`#98A4B8`) 9 px after the
+  name, a value lifted into the accent when the entry carries `highlight` (the contract's highlight
+  byte is finally plumbed into the painter, through `RowShape`). The work pulse tints all of it
+  towards the mode red exactly as in the other five modes.
+* **The watermark** — the same glass pill, with a 6 px gradient dot as the brand mark before a
+  near-white bold `DOPPEL`, nickname and FPS in the muted grey.
+* **The sweep** — the header's primary/secondary on a 6 s cosine, 0.13 cycles per row. While the
+  header still carries the reference's muted wave defaults bit-for-bit, the mode substitutes its
+  own cold cyan `#4DC7FF` → warm violet `#B370FF` pair (the Modern palette, i.e. the WebUI's); the
+  moment the user picks their own colours in the WebUI they are honoured exactly.
+* **Plumbing** — `draw.rs` grew `fill_rounded_rect_gradient` (the flat fill's SDF with a per-pixel
+  two-stop lerp); `state.rs` decodes mode 5; `main.rs` maps and documents it; `HudStateWriter`
+  publishes it and `HUD.kt` offers it **first** in `OverlayMode`, so a fresh config starts on it (a
+  saved choice still wins). The WebUI renders the dropdown from the module's options, so it needed
+  no change of its own.
+* **Verified without a desktop**: `cargo check --all-targets` on the real crate, and the pure
+  geometry/colour suites (50 tests, the four new Aurora ones included) run green under a scratch
+  harness kept **outside the tree** (`#[path]`-includes of `draw.rs`/`state.rs`/`hud.rs` plus
+  `hud/src/text_stub.rs`, a stand-in text engine the Windows build never compiles); the two
+  remaining pixel-assertion tests are GDI-metric-dependent and fail identically under the stub
+  with and without this pass, so they are Windows-runner material as before. The design was tuned
+  on a pixel-faithful mockup (`scripts/hud_aurora_mockup.html`, real Play faces, the same
+  constants) and reviewed as screenshots before any of the code was written.
+
 ## Round 10 — NoCameraBob (固定准星)
 
 Added `NoCameraBob` (Utility): the crosshair stays where you are aiming while you walk, and the

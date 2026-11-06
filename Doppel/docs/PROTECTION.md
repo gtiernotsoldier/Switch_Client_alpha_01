@@ -309,6 +309,24 @@ DLL（全部 IP）
 
 逆向者打开 jar，看到的是 `native` 声明和转发；要么去逆 DLL，要么什么都没有。
 
+**方向更新（2026-11-06，用户决定）——core 搬 Rust 但不开 DLL：独立进程。**
+上面的进程内 DLL 形态被推翻。约束来自用户：**注入器与外部 UI 一律不携带 IP，算法/策略
+住进自己的进程**。目标形状变为：
+
+```
+游戏进程    jar 胶水：agentmain / Transformer / 传感器 + 执行器（零 IP，纯 Java 反射，无 JNI）
+核心进程    doppel-core.exe（Rust）：strategy + algorithm + 阈值 + 授权验签 —— 全部 IP
+注入器      只负责注入 agent、拉起 core 与 overlay，不携带 IP
+外部 UI     配置面（WebUI/ClickGUI），不携带 IP；HUD/overlay 读取 state 不变
+```
+
+进程拆分比 DLL 多买到三样：游戏地址空间里没有任何策略代码可供反作弊扫描；core 崩溃降级为
+「模块全关」而非带崩游戏；agent 用纯 Java 反射，**mappings 描述符列这个 JNI 前置直接消失**。
+代价是 tick 路径变成协议：每个 tick 相位做一次同步握手（共享内存或 loopback，RTT 预算远低于
+50 ms tick 的 1 ms），超时降级为「沿用上一帧命令」；`PlatformCommand` 需要一套版本化的、
+进程安全的动词表——`CancelPacket(handle: Any)` 携带 JVM 对象引用，要改成抽象 packet id，
+由 agent 侧调度器解析回真实包。WebUI 服务（今在 adapter 内，随游戏进程）迁到 core 进程。
+
 ---
 
 ## 10. 一句话总结

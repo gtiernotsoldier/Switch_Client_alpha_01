@@ -99,9 +99,9 @@ Java 客户端不存在"防逆向"，只存在"提高成本"。JVM 在执行前�
 
 ### L3 结构（胶水化）
 
-目标：**jar 里只剩 JVM 要求的东西、native 声明、转发。**
+目标：**jar 里只剩 JVM 要求的东西、薄桩转发。**
 
-见 §9 的分层审计。核心是把 `core/`（7.1k 行，零反射）搬到 Rust，`adapter/` 保持 Kotlin。
+见 §9 的分层审计。核心是把 `core/`（7.1k 行，零反射）搬到 **Rust 独立进程**，`adapter/` 保持 Kotlin，游戏侧只留不含业务的编组薄桩（设计见 9.5）。
 
 ### L4 授权
 
@@ -215,7 +215,7 @@ org.objectweb.asm.**  →  io.doppel.shaded.asm.**
 | **P3** | 改掉三处自反射（`Class.forName` / `getDeclaredMethod` / `getName`），换成生成式注册表 | 1 天 | 无 |
 | **P4** | R8 激进配置（repackage + merge + overload），跑通全部模块与 WebUI | 2 天 | P3 |
 | **P5** | 字符串 + 数字加密（自定义 ASM pass） | 3–5 天 | P4 |
-| **P6** | `core/strategy` + `core/algorithm` 搬 Rust（JNI 边界） | 4–6 周 | 无 |
+| **P6** | `core/strategy` + `core/algorithm` 搬 Rust **独立进程**（IPC 边界，设计见 9.5） | 4–6 周 | 无 |
 | **P7** | 水印 + 每份构建独立密钥 | 半天 | P4 |
 | **P8** | 离线授权（私钥签名 + 指纹绑定） | 3–5 天 | P7 |
 | **P9** | 参数服务端化 | 1–2 周 | P8 |
@@ -280,7 +280,7 @@ org.objectweb.asm.**  →  io.doppel.shaded.asm.**
 
 1. `agentmain(String, Instrumentation)` —— JVM 按名字调，签名固定
 2. `ClassFileTransformer.transform(...)` —— 接口是 Java 的
-3. `native` 声明所在的类 —— JNI 需要
+3. `CoreStub` —— IPC 薄桩：快照编组、决策解组、core 进程监督。只有数据，没有业务
 
 ### 9.3 语言能力矩阵
 
@@ -288,47 +288,124 @@ org.objectweb.asm.**  →  io.doppel.shaded.asm.**
 |---|---|---|---|
 | 注入 | Java agent | DLL + `LoadLibrary` | 都可 |
 | 拿 `Instrumentation` | `agentmain` | JVMTI `Agent_OnAttach` | 后者更底层 |
-| 读游戏状态 | 反射 | JNI（需**描述符**，不只是名字） | 搬的话要给映射表补签名列 |
+| 读游戏状态 | 反射（留在 JVM 内） | —— | 独立进程方案里 core **永不**碰游戏内存，映射表不用补描述符列 |
 | 改字节码 | ASM | 自己写编辑器 | ASM 仍是最优 |
 | 渲染 | LWJGL 直调 | hook GL / 独立 overlay | native 很痛 |
-| 业务逻辑 | 任意 | 任意 | JNI 边界成本 |
+| 业务逻辑 | 任意 | 任意 | IPC 边界成本，实测往返 ~10µs（见 9.5） |
 
 ### 9.4 目标形态
 
 ```
-jar（~300 行，全是胶水）
-├─ Agent.java            入口、读配置、LoadLibrary
-├─ Transformer.java      transform() → native byte[] t(name, bytes)
-└─ Native.java           native decide(...) / native apply(...)
+游戏 JVM（agent.jar）
+├─ Agent.java            入口、Attach、ASM 变换（重定位 ASM）
+├─ Transformer.java      transform() → 改名 / 字符串加密（P2–P5）
+├─ adapter（瘦身）        读游戏状态、应用动作——只有管道，没有策略
+└─ CoreStub.kt           快照编组 → IPC → 决策解组 → 监督 core 进程
 
-DLL（全部 IP）
-├─ 策略 / 算法 / 阈值
-├─ 映射解析
-└─ 授权验签
+core 进程（doppel-core.exe，Rust；游戏内存与注入器里都没有它）
+├─ strategy / algorithm / option / condition / safety / model
+├─ 授权验签（P8）
+├─ 会话状态：策略 FSM、噪声 RNG、调度放行决策
+├─ WebUI 服务：配置面从游戏进程整体迁出（今天它住在 adapter 里）
+└─ --replay 模式：金测回放器
+
+注入器                    只负责注入 agent、拉起 core 与 overlay，不携带 IP
+外部 UI / HUD             ClickGUI 走外部 overlay，HUD 读 state 文件——均不携带 IP
 ```
 
-逆向者打开 jar，看到的是 `native` 声明和转发；要么去逆 DLL，要么什么都没有。
-
-**方向更新（2026-11-06，用户决定）——core 搬 Rust 但不开 DLL：独立进程。**
-上面的进程内 DLL 形态被推翻。约束来自用户：**注入器与外部 UI 一律不携带 IP，算法/策略
-住进自己的进程**。目标形状变为：
-
-```
-游戏进程    jar 胶水：agentmain / Transformer / 传感器 + 执行器（零 IP，纯 Java 反射，无 JNI）
-核心进程    doppel-core.exe（Rust）：strategy + algorithm + 阈值 + 授权验签 —— 全部 IP
-注入器      只负责注入 agent、拉起 core 与 overlay，不携带 IP
-外部 UI     配置面（WebUI/ClickGUI），不携带 IP；HUD/overlay 读取 state 不变
-```
-
-进程拆分比 DLL 多买到三样：游戏地址空间里没有任何策略代码可供反作弊扫描；core 崩溃降级为
-「模块全关」而非带崩游戏；agent 用纯 Java 反射，**mappings 描述符列这个 JNI 前置直接消失**。
-代价是 tick 路径变成协议：每个 tick 相位做一次同步握手（共享内存或 loopback，RTT 预算远低于
-50 ms tick 的 1 ms），超时降级为「沿用上一帧命令」；`PlatformCommand` 需要一套版本化的、
-进程安全的动词表——`CancelPacket(handle: Any)` 携带 JVM 对象引用，要改成抽象 packet id，
-由 agent 侧调度器解析回真实包。WebUI 服务（今在 adapter 内，随游戏进程）迁到 core 进程。
+逆向者 dump 游戏进程：策略和算法不在里面；打开 jar：只有编组和转发。要看懂这套客户端，只能去逆那个独立 exe。
 
 ---
 
+### 9.5 P6 v2：core 独立进程（2026-11 决定）
+
+P6 从「进程内 JNI（DLL 随 agent 加载进游戏进程）」改为「**独立 core 进程 + 游戏侧薄桩**」。
+决定的三条理由，按重要性排：
+
+1. **崩溃隔离**：进程内 native 崩 = 游戏崩；独立进程崩 = 该 tick 模块降级 + 重启 core，游戏无感。
+2. **延迟实测不敏感**：一次 IPC 往返 10µs 级，占 50ms tick 预算的 0.02%（见 9.5.1）——「core 放哪」不影响执行时机，真正决定执行延迟的是游戏 tick 本身。
+3. **游戏内存干净**：dump 游戏进程看不到任何策略 / 算法 / 阈值（附带收益，不是主要动机）。
+
+#### 9.5.1 通讯延迟实测
+
+同主机两进程一次往返，256 B（≈一 tick 状态快照），2 万次采样
+（复现脚本 `scripts/ipc_latency_bench.c`，Linux 2 核沙箱；Windows named pipe 同一量级）：
+
+| 通道 | p50 | p99 | p999 |
+|---|---|---|---|
+| 共享内存 + 自旋 | 0.43 µs | 0.53 µs | 3.2 µs |
+| 本机 socket | 9.5 µs | 14.9 µs | 21.2 µs |
+| 匿名管道 | 7.9 µs | 12.8 µs | 18.4 µs |
+
+对照 50ms tick 预算：
+
+- RTT p50 = 0.019%，p999 = 0.042%
+- 全链路（编组 5µs + RTT p999 + 单次决策按 100µs 算）≈ **0.13ms = 0.25%**
+- 20 TPS 下每秒 IPC 花费 0.19ms ≈ 单核的 0.019%
+- 240fps 的帧预算 4.17ms，往返占 0.23%——帧级也够，但帧级走 9.5.2 的轨迹计划，不需要每帧通讯
+
+落地选择：**先 named pipe**（Windows 本机 socket 等价物），简单够用；真要抠延迟再换共享内存双缓冲，消息边界不变，协议不用改。
+
+#### 9.5.2 tick 时序（执行延迟 = 0 个额外 tick）
+
+```
+tick 边界（50ms 一次）
+① 薄桩拍快照：实体 / 自身 / 旋转 / 包事件 → 定长结构（几百字节）
+② 发送 → core 策略 FSM + 算法（µs 级）→ 决策返回    ← 同一个 tick 内完成
+③ 薄桩解组，经现有 adapter 路径应用
+```
+
+决策在**当 tick 内**返回并应用——生效时机与进程内方案完全相同。
+三种通讯类型，不要求每次都同步等返回：
+
+| 类型 | 例子 | 往返 |
+|---|---|---|
+| 同步决策 | 瞄准方向、velocity 修改/取消 | 当 tick 往返一次 |
+| 异步通知 | PacketScheduler 放行决策 | 无往返 |
+| 帧级计划 | 每 tick 返回整条旋转插值曲线 | 每 tick 一次，帧间零通讯 |
+
+帧级平滑走**轨迹计划**：`RotationCalculator.interpolate` 是纯函数，薄桩拿一条曲线本地逐帧执行，帧与帧之间不通讯。
+
+#### 9.5.3 deadline 降级纪律
+
+协议按**延迟**设计，不按吞吐：
+
+- 每个同步决策带 deadline（1ms ≈ p99 的 67 倍）
+- 超时没回 → **本拍沿用上一拍命令**（对修改类动作即跳过本拍），游戏永远不等 core
+- core 进程死了 → 薄桩重启（exe 冷启动 ~10ms 量级），期间全部降级；tick 快照本身就是心跳
+- 崩溃纪律不变：每个入口 `catch_unwind` → 错误码 → 模块降级；进程模型多一层兜底
+
+最坏情况只是丢一拍，不存在「卡住等待」这个状态。
+
+#### 9.5.4 边界与状态
+
+JNI 三分类在进程模型下更简单——**所有决策状态都长驻 core 进程**：
+
+| 分类 | 处理 |
+|---|---|
+| 纯函数（rotateInterp / withinFov3D / VectorOperations） | 搬 core，结果进输出曲线 |
+| 有状态噪声（GaussianNoise / NoiseProvider 的 RNG） | 状态整体住 core 进程，不过边界 |
+| 永不过界（游戏对象 / 字符串 / Map / FSM 胶水） | 留薄桩侧，或变成 wire 数据 |
+
+唯一非纯点不变：`core/network` PacketScheduler 队列存 `Any`（JVM 对象跨 tick）→ 队列留 Kotlin，只有放行决策过边界。连带一条：`PlatformCommand.CancelPacket(handle: Any)` 携带 JVM 对象引用，跨进程要改成**抽象 packet id**（版本化动词表），由薄桩侧调度器解析回真实包。
+
+旧 P6 的「mappings 补描述符列」**取消**：core 永不读游戏内存，读状态是薄桩（JVM 内、按现有 mappings）；边界是自定义定长 wire 格式，不是 JNI 描述符。
+
+#### 9.5.5 切换标准（不变）
+
+金测回放：Kotlin 录（输入序列 + 种子 → 决策序列），core `--replay` 放同一份输入，diff 为零才切换。
+决策只依赖（快照，种子，内部状态），与传输无关——IPC 不引入非确定性，f32 同序同结果。
+
+#### 9.5.6 工作量
+
+| 步骤 | 估时 |
+|---|---|
+| wire 协议 + 薄桩编组/解组 + 进程监督 | 2–3 天 |
+| core 进程骨架（生命周期 / 握手 / --replay） | 2–3 天 |
+| 策略 + 算法移植（主体） | 3–4 周 |
+| 金测回放基建 + 对拍清零 | 1 周 |
+| **合计** | **4–6 周**（与 v1 相当，省掉 JNI 描述符基建） |
+
 ## 10. 一句话总结
 
-> **搬算法，不搬管道；留 ASM，只把它改名；先断提取，再谈混淆；参数永远不在客户端。**
+> **搬算法进独立进程，不搬管道；留 ASM，只把它改名；先断提取，再谈混淆；参数永远不在客户端。**

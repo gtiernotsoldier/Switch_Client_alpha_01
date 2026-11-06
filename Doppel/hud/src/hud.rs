@@ -1717,8 +1717,11 @@ fn paint_watermark(
                 with_alpha(SPINE_SURFACE, frame.background),
             );
             // The brand tile: the WebUI `.rail-mark` — a cyan-violet wash
-            // inside a 1 px cyan rim — carrying the `ᗡD` mark vectorized:
-            // two geometric D's, the first mirrored (see `fill_letter_d`).
+            // inside a 1 px cyan rim — carrying the mark the rail-mark itself
+            // carries: the text run `ᗡD` (U+15E1 + D). The HUD's fonts carry no
+            // U+15E1, so the run is vectorized as two geometric D's, the first
+            // mirrored (see `fill_letter_d`), at the run's own measured
+            // footprint.
             let tile = m.spine_tile.round().max(2.0) as u32;
             let tile_x = box_x + m.spine_wm_pad_x.round() as i32;
             let tile_y = panel_y + ((item_h as f32 - tile as f32) / 2.0).round() as i32;
@@ -1742,9 +1745,10 @@ fn paint_watermark(
                     with_alpha(SPINE_TILE_B, frame.background),
                     true,
                 );
-                // The mark's proportions come from the mockup's 26×24 viewBox:
-                // two 8 px-radius D's filling an 11×10 zone inside the tile.
-                let d_h = (tile as f32 * 10.0 / 14.0).round().max(2.0) as u32;
+                // The mark's proportions come from the mockup's own text run:
+                // at the tile's 7 px the `ᗡD` fallback renders 11.6×6 ink — a
+                // pair of ~5×6 D's, 1 px apart, centred in the tile.
+                let d_h = (tile as f32 * 6.0 / 14.0).round().max(2.0) as u32;
                 let d_w = (tile as f32 * 5.0 / 14.0).round().max(1.0) as u32;
                 let pair_w = 2.0 * d_w as f32 + m.scale;
                 let gx = tile_x as f32 + (tile as f32 - pair_w) / 2.0;

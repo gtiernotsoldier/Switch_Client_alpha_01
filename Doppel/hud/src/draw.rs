@@ -244,10 +244,13 @@ impl Canvas {
     /// `ᗡD`: two letter D's, the first mirrored. A "D" here is a geometric
     /// construction, not a font glyph: a stem bar on one side and a half-ellipse
     /// bowl hinged against it, united per pixel by the nearer of the two
-    /// distances. `mirrored` flips the sampling coordinate, turning the left
-    /// glyph's bowl around. The mark is a dozen pixels tall at scale 1, so the
-    /// radial approximation of the ellipse distance is far below the glyph's
-    /// resolving power — the tiles it draws into are 14 px at scale 1.
+    /// distances, with the bowl's counter — a concentric inner half-ellipse of
+    /// the same stroke the stem carries — punched out so the pair reads as the
+    /// letters it stands for rather than a solid capsule. `mirrored` flips the
+    /// sampling coordinate, turning the left glyph's bowl around. The mark is a
+    /// dozen pixels tall at scale 1, so the radial approximation of the ellipse
+    /// distance is far below the glyph's resolving power — the tiles it draws
+    /// into are 14 px at scale 1.
     pub fn fill_letter_d(&mut self, x: i32, y: i32, w: u32, h: u32, colour: u32, mirrored: bool) {
         if w == 0 || h == 0 {
             return;
@@ -296,7 +299,24 @@ impl Canvas {
                     f32::INFINITY
                 };
 
-                let coverage = (0.5 - d_stem.min(d_bowl)).max(0.0).min(1.0);
+                // The counter: the same half-ellipse one stroke in, so the bowl
+                // is a ring and the glyph reads as a letter. The stem itself
+                // bounds the counter's left side — the same half-plane as the
+                // bowl. A glyph too small to carry the hole (the inner radii
+                // would not survive a pixel) stays solid.
+                let stroke = stem;
+                let crx = rx - stroke;
+                let cry = ry - stroke;
+                let d_counter = if bu >= 0.0 && crx >= 1.0 && cry >= 1.0 {
+                    let q = (bu / crx).powi(2) + (bv / cry).powi(2);
+                    (q.sqrt() - 1.0) * crx.min(cry)
+                } else {
+                    f32::INFINITY
+                };
+
+                // (stem ∪ bowl) minus the counter, as an SDF intersection.
+                let d_shape = d_stem.min(d_bowl).max(-d_counter);
+                let coverage = (0.5 - d_shape).max(0.0).min(1.0);
                 if coverage > 0.0 {
                     self.blend_pixel(px, py, colour, coverage);
                 }

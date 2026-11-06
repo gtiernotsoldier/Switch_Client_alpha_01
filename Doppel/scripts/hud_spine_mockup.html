@@ -190,7 +190,13 @@
     border: 1px solid rgba(34,211,238,0.35);
     box-shadow: 0 0 10px rgba(34,211,238,0.12);
   }
-  .player-status .tile svg { width: 11px; height: 10px; display: block; }
+  .player-status .tile .mark {
+    /* the WebUI rail-mark's own text run — ᗡ (U+15E1) + D, weight 800 —
+       carried over verbatim; the ᗡ falls through Roboto to the system's
+       syllabics-capable fallback, exactly as the rail-mark does */
+    font-size: 7px; font-weight: 800; line-height: 1;
+    color: #fff;
+  }
   .player-status .brand { font-weight: 700; letter-spacing: 0.3px; }
   .player-status .ver   { color: var(--disabled-text); font-weight: 400; margin-right: 2px; }
   .player-status .bar   { color: rgba(255,255,255,0.25); margin: 0 5px; }
@@ -208,13 +214,7 @@
 <body>
 
 <div class="player-status">
-  <span class="tile" id="brand-tile">
-    <!-- doppel mark = the WebUI rail-mark "ᗡD" vectorized: mirrored D + D -->
-    <svg viewBox="1 0 26 24">
-      <path d="M13 4 H9.5 A8 8 0 0 0 9.5 20 H13 Z" fill="#ffffff"/>
-      <path d="M14.5 4 H18 A8 8 0 0 1 18 20 H14.5 Z" fill="#ffffff"/>
-    </svg>
-  </span><span class="brand">DOPPEL</span><span class="ver">&nbsp;v0.1-alpha</span><span class="bar">|</span>PING <span class="st">14</span><span class="bar">|</span>FPS <span class="st">240</span>
+  <span class="tile" id="brand-tile"><span class="mark">ᗡD</span></span><span class="brand">DOPPEL</span><span class="ver">&nbsp;v0.1-alpha</span><span class="bar">|</span>PING <span class="st">14</span><span class="bar">|</span>FPS <span class="st">240</span>
 </div>
 
 <div class="module-list-wrapper">

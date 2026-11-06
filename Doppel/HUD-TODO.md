@@ -522,6 +522,15 @@ Scoped, all of it cosmetic or environmental rather than broken:
    overlay's log has now ruled itself out; the next step is to ask which surface it was.
 7. **D6 de-characterisation** is still pending by design: the state file name, the window class and
    the process names are all fixed.
+8. **The ClickGUI will be external — decided, deliberately not started.** The user's call after
+   being burned by drawing a GUI inside the game: the future ClickGUI renders in an **external
+   overlay window**, never in the game's render pipeline — the model the HUD overlay already
+   proves (own process, layered topmost window, `--follow-pid` client-area tracking). Do not start
+   until the user calls for it. When it does start, the genuinely new problems are input routing
+   (the overlay is click-through while idle but must take the mouse when the GUI opens, while the
+   game keeps reading raw input), foreground/focus against a fullscreen game, and reusing the
+   panel work's component language (`window.rs`, the VAPE-style pane) in overlay form. The old
+   HUD mockups in `scripts/` stay as design reference for that pass.
 
 ## Verification (copy-paste)
 

@@ -101,8 +101,19 @@ jobs:
             echo "ERROR: EventBridge.class not found in fat jar. Class merging broken."
             exit 1
           fi
-          if ! jar tf "$JAR" | grep -q "io/doppel/core/model/PlayerState"; then
-            echo "ERROR: PlayerState.class not found in fat jar. Core not included."
+          # Value types live in :contract now (split out of :core), the IPC
+          # transport and the safety wrapper in :ipc / :safety. All three must be
+          # in the artifact even though :core itself is scheduled to leave it.
+          if ! jar tf "$JAR" | grep -q "io/doppel/contract/model/PlayerState"; then
+            echo "ERROR: PlayerState.class not found in fat jar. :contract not included."
+            exit 1
+          fi
+          if ! jar tf "$JAR" | grep -q "io/doppel/ipc/CoreStub"; then
+            echo "ERROR: CoreStub.class not found in fat jar. :ipc not included."
+            exit 1
+          fi
+          if ! jar tf "$JAR" | grep -q "io/doppel/safety/SafetyWrapper"; then
+            echo "ERROR: SafetyWrapper.class not found in fat jar. :safety not included."
             exit 1
           fi
           if ! jar tf "$JAR" | grep -q "io/doppel/adapter/forge/v1_8_9/ForgeBootstrap"; then

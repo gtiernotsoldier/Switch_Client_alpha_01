@@ -692,6 +692,33 @@ pub fn encode_scalar(seq: u32, tick: u32, module: Module, action: WireAction, v:
     f
 }
 
+/// A variable-length list of released motions: `count(u16)` then `count * (x, y, z)`.
+///
+/// The knockback delay can release several packets on the same tick, so this cannot reuse the
+/// fixed decision layout. `count` is capped at what one frame holds; the rest stay queued and come
+/// out on the next pump rather than being dropped.
+pub fn encode_motions(seq: u32, tick: u32, motions: &[Vec3]) -> Frame {
+    let mut f = Frame::new(Kind::Decision, seq, tick, Module::Velocity);
+    let max = (crate::wire::MAX_PAYLOAD - 4) / 24;
+    let n = motions.len().min(max);
+    let mut buf = [0u8; crate::wire::MAX_PAYLOAD];
+    {
+        let mut w = Writer::new(&mut buf);
+        w.u8(WireAction::Modify as u8);
+        w.u8(Reason::Released as u8);
+        w.u16(n as u16);
+        for m in motions.iter().take(n) {
+            w.f64(m.x);
+            w.f64(m.y);
+            w.f64(m.z);
+        }
+    }
+    let len = 4 + n * 24;
+    f.payload[..len].copy_from_slice(&buf[..len]);
+    f.set_len(len);
+    f
+}
+
 pub fn encode_bool(seq: u32, tick: u32, module: Module, action: WireAction, v: bool) -> Frame {
     let mut f = Frame::new(Kind::Decision, seq, tick, module);
     let mut buf = [0u8; 40];
@@ -772,6 +799,19 @@ pub fn decode_suppress(f: &Frame) -> Result<(bool, bool, bool, bool), Status> {
 // the right is the argument list, in order, as f64.
 
 pub mod op {
+    /// velocity: `brace_keys(yaw_deg, sector)` → 4 bits (forward, back, left, right).
+    /// The armed window and its remaining ticks are core state; this consumes one.
+    pub const VEL_BRACE: u8 = 0;
+    /// velocity: `delay_enqueue(tick, chance, max_delay, require_weapon, flags,
+    ///            min_d, max_d, look_angle, gate_chance)` → bool (swallowed).
+    ///
+    /// The delay parameters ride on the request instead of a config frame because
+    /// KnockbackDelay and Velocity are separate modules that would otherwise
+    /// overwrite each other's single velocity config slot.
+    pub const VEL_DELAY_ENQUEUE: u8 = 1;
+    /// velocity: `delay_pump(tick)` → released motions, packed.
+    pub const VEL_DELAY_PUMP: u8 = 2;
+
     /// movement: `socd_resolve(forward, back, left, right)` → 4 bits.
     pub const MOV_SOCD: u8 = 0;
     /// movement: `strafe_correct(forward, back, left, right, distance,
@@ -794,6 +834,9 @@ pub mod op {
     pub const TAP_POST_DELAY: u8 = 4;
     /// tap: `begin_tap(now_ns, duration_ms)` → none.
     pub const TAP_BEGIN: u8 = 5;
+    /// tap: `random_side()` → side. Draws from `rng_tap`, so a module that mixes
+    /// this with seven_tap_side keeps one stream.
+    pub const TAP_RANDOM: u8 = 6;
 
     /// combat: `trigger_evaluate(mode, hurt_resistant, max_hurt, counter,
     ///          threshold, per_min, per_max, chance, hurt_gate)` → fire.
@@ -842,14 +885,27 @@ pub fn f64_to_side(v: f64) -> crate::strategy::tap::Side {
 /// Combat's answer. `Block` carries the score in `motion.x` and the effective
 /// hurt time in `clicks`; the reason table is reused rather than extended
 /// because the stub only logs it.
-pub fn encode_verdict(seq: u32, tick: u32, block: bool, score: f64, effective_hurt: i32) -> Frame {
+pub fn encode_verdict(
+    seq: u32,
+    tick: u32,
+    block: bool,
+    score: f64,
+    effective_hurt: i32,
+    locked: bool,
+    threat: bool,
+) -> Frame {
     let mut f = Frame::new(Kind::Decision, seq, tick, Module::Combat);
     let mut buf = [0u8; 40];
     {
         let mut w = Writer::new(&mut buf);
         w.u8(WireAction::Block as u8);
         w.u8(Reason::None as u8);
-        w.u16(if block { 1 } else { 0 });
+        // bit0 block, bit1 locked (layer A), bit2 threat (layer B). The adaptive mode needs all
+        // three: it weighs each signal separately, so "block" alone would collapse the two.
+        let flags = (if block { 1 } else { 0 })
+            | (if locked { 2 } else { 0 })
+            | (if threat { 4 } else { 0 });
+        w.u16(flags);
         w.f64(score);
         w.f64(0.0);
         w.f64(0.0);
@@ -880,6 +936,7 @@ pub fn known_ops(module: Module) -> &'static [u8] {
     match module {
         Module::Movement => &[op::MOV_SOCD, op::MOV_STRAFE, op::MOV_SLIDING],
         Module::Tap => &[
+            op::TAP_RANDOM,
             op::TAP_CHASE,
             op::TAP_SEVEN,
             op::TAP_WRAP,
@@ -895,6 +952,7 @@ pub fn known_ops(module: Module) -> &'static [u8] {
             op::CBT_DECIDE,
         ],
         Module::Reach => &[op::REACH_INTERSECT],
+        Module::Velocity => &[op::VEL_BRACE, op::VEL_DELAY_ENQUEUE, op::VEL_DELAY_PUMP],
         _ => &[],
     }
 }

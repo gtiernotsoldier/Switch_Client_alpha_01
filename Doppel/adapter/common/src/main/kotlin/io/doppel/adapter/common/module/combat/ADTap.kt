@@ -3,8 +3,6 @@ package io.doppel.adapter.common.module.combat
 import io.doppel.contract.model.PlayerState
 import io.doppel.contract.model.TargetState
 import io.doppel.contract.strategy.tap.Side
-import io.doppel.core.strategy.tap.StrafePattern
-import io.doppel.core.strategy.tap.TapStateMachine
 import io.doppel.adapter.common.api.EventBridge
 import io.doppel.adapter.common.module.Module
 import io.doppel.adapter.common.module.Category
@@ -12,6 +10,8 @@ import io.doppel.adapter.common.option.boolean
 import io.doppel.adapter.common.option.choices
 import io.doppel.adapter.common.option.float
 import io.doppel.adapter.common.option.int
+import io.doppel.ipc.Strategies
+import io.doppel.ipc.Strategies.TapTick
 import kotlin.random.Random
 
 /**
@@ -27,7 +27,7 @@ import kotlin.random.Random
  * Patterns:
  *  - Seven  : classic 7-tap — alternating A/D with a small fumble chance.
  *  - Random : random side + uniform durations, maximum unpredictability.
- *  - Chase  : side chosen by target motion prediction (StrafePattern.chaseSide) —
+ *  - Chase  : side chosen by target motion prediction (core `chase_side`) —
  *             strafes toward where the target is flying to hold the combo.
  *  - Hybrid : Seven while being hit (evade), Chase otherwise (align).
  *
@@ -70,7 +70,8 @@ object ADTap : Module("ADTap", Category.COMBAT) {
     private val requireForward by boolean("RequireForward", true)
 
     // ========== Core State ==========
-    private val machine = TapStateMachine()
+    // The phase and its two deadlines live in the core; this module only remembers which side it
+    // is currently holding, because that is a key it must be able to release.
     private var pendingSide: Side = Side.LEFT
     private var lastSide: Side = Side.LEFT
 
@@ -98,17 +99,22 @@ object ADTap : Module("ADTap", Category.COMBAT) {
         if (EventBridge.physicalLeftDown || EventBridge.physicalRightDown) { abort(); return }
 
         // ---- State machine events ----
-        when (machine.tick(now)) {
-            TapStateMachine.Event.END_TAP -> {
+        val t = Strategies.tapTick(player, target, now)
+        // No core: TapTick.OFFLINE is idle forever, and chooseSide answers null, so abort() is
+        // what actually stops this module. Explicit here so it cannot fall through to a tap.
+        if (!Strategies.online) { abort(); return }
+
+        when (t.event) {
+            TapTick.END_TAP -> {
                 setSide(pendingSide, false)
-                machine.beginPostDelay(now, nextGapMs())
+                Strategies.tapBegin(player, target, now, nextGapMs(), postDelay = true)
             }
-            TapStateMachine.Event.SHOULD_START_TAP -> startTap(player, target, now)
-            TapStateMachine.Event.NONE -> {}
+            TapTick.SHOULD_START_TAP -> startTap(player, target, now)
+            else -> {}
         }
 
         // First entry into combat (or resume after an abort) → begin the pattern.
-        if (machine.phase == TapStateMachine.Phase.IDLE) {
+        if (t.phase == TapTick.IDLE) {
             startTap(player, target, now)
         }
     }
@@ -118,25 +124,40 @@ object ADTap : Module("ADTap", Category.COMBAT) {
     // ================================================================
     private fun startTap(player: PlayerState, target: TargetState, nowNs: Long) {
         if (chance < 100 && Random.nextInt(100) >= chance) {
-            machine.beginPostDelay(nowNs, nextGapMs())
+            Strategies.tapBegin(player, target, nowNs, nextGapMs(), postDelay = true)
             return
         }
-        pendingSide = chooseSide(player, target)
-        lastSide = pendingSide
+        val side = chooseSide(player, target)
+        if (side == null) { abort(); return }
+        pendingSide = side
+        lastSide = side
         val duration = Random.nextInt(tapMinMs, tapMaxMs + 1)
         setSide(pendingSide, true)
         markWorked()                      // HUD work flash — the module just acted
-        machine.beginTap(nowNs, duration)
+        Strategies.tapBegin(player, target, nowNs, duration, postDelay = false)
     }
 
-    private fun chooseSide(player: PlayerState, target: TargetState): Side = when (mode) {
-        "Seven" -> StrafePattern.sevenTapSide(lastSide, repeatChance)
-        "Random" -> StrafePattern.randomSide()
-        "Chase" -> StrafePattern.chaseSide(player.rotation.yaw, player.position, target, leadTicks)
+    /**
+     * Side selection runs in the core: `seven` draws from the tap stream, `chase` needs the
+     * target's predicted position, `random` must draw from the same stream the other patterns do
+     * or the module's own draw order stops being reproducible. Null = no core / no target.
+     */
+    private fun chooseSide(player: PlayerState, target: TargetState): Side? = when (mode) {
+        "Seven" -> sideOf(Strategies.tapSeven(player, target, sideCode(lastSide), repeatChance))
+        "Random" -> sideOf(Strategies.tapRandom(player, target))
+        "Chase" -> sideOf(Strategies.tapChase(player, target, player.rotation.yaw, leadTicks))
         "Hybrid" ->
-            if (player.hurtTime > 0) StrafePattern.sevenTapSide(lastSide, repeatChance)
-            else StrafePattern.chaseSide(player.rotation.yaw, player.position, target, leadTicks)
+            if (player.hurtTime > 0) sideOf(Strategies.tapSeven(player, target, sideCode(lastSide), repeatChance))
+            else sideOf(Strategies.tapChase(player, target, player.rotation.yaw, leadTicks))
         else -> Side.LEFT
+    }
+
+    private fun sideCode(s: Side) = if (s == Side.LEFT) 0 else 1
+
+    private fun sideOf(code: Int?): Side? = when (code) {
+        null -> null
+        0 -> Side.LEFT
+        else -> Side.RIGHT
     }
 
     private fun nextGapMs(): Int = Random.nextInt(gapMinMs, gapMaxMs + 1)
@@ -158,11 +179,14 @@ object ADTap : Module("ADTap", Category.COMBAT) {
     private fun abort() {
         EventBridge.releaseLeft(name)
         EventBridge.releaseRight(name)
-        machine.reset()
+        Strategies.resetTap()
     }
 
     // ========== Lifecycle ==========
     override fun onEnable() {
+        // A fresh activation must not inherit the previous one's phase: a half-elapsed tap would
+        // fire an instant key press on the first tick back.
+        Strategies.resetTap()
         EventBridge.registerTickListener(tickListener)
     }
 

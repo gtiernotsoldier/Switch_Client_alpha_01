@@ -3,10 +3,7 @@ package io.doppel.adapter.common.module.combat
 import io.doppel.contract.logging.CoreLogger
 import io.doppel.contract.model.PlayerState
 import io.doppel.contract.model.TargetState
-import io.doppel.core.strategy.autoblock.RangeGate
 import io.doppel.contract.strategy.click.WeaponType
-import io.doppel.core.strategy.combat.BlockArbiter
-import io.doppel.core.strategy.combat.BlockPredictor
 import io.doppel.adapter.common.api.EventBridge
 import io.doppel.adapter.common.module.Module
 import io.doppel.adapter.common.module.Category
@@ -18,6 +15,16 @@ import io.doppel.adapter.common.option.triggerOptions
 import kotlin.random.Random
 import io.doppel.contract.option.TriggerOptions
 import io.doppel.ipc.Strategies
+
+// Option *defaults*, not algorithm parameters: the live values travel to the core with every call.
+// File-level rather than object members because an object's properties are initialized in
+// declaration order and the option delegates below read these while they are being built.
+private const val DEFAULT_MAX_HURT = 20
+private const val DEFAULT_RTT_TICKS = 2
+private const val DEFAULT_LEAD_TICKS = 2
+private const val DEFAULT_PREDICT_WINDOW = 3
+private const val DEFAULT_PREDICT_CHANCE = 50
+private const val RANGE_HYSTERESIS = 1.5f
 
 /**
  * AutoBlock Module — 1.8 exclusive (sword blocking).
@@ -43,10 +50,10 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
     // Sag     = hold-style: block continuously while the player keeps attacking.
     // Predict = lock-style: hold the guard while the target's damage lock is up, and swing the
     //           moment it lifts; also holds ahead of the opponent's own estimated attack.
-    //           The algorithm lives in [BlockPredictor].
+    //           The algorithm lives in the core (`CBT_PREDICT`).
     // Lag      = no block at all: hold the packet stream back instead.
     // Adaptive = the three above combined: four signals, weighted by how much each one actually
-    //            knows, plus a duty-cycle budget. See [BlockArbiter].
+    //            knows, plus a duty-cycle budget (core `CBT_ARBITER`).
     private val mode by choices("Mode", arrayOf("Normal", "Sag", "Predict", "Adaptive", "Lag"))
 
     // ========== Distance Range ==========
@@ -97,7 +104,7 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
      */
     private val maxHoldMs by int("MaxHold", 700, 400..2000, "ms", modes = arrayOf("Sag"))
 
-    // ========== Predict (see BlockPredictor) ==========
+    // ========== Predict (core CBT_PREDICT) ==========
     // Layer A is arithmetic — the target's i-frame countdown, high half = our hit is discarded.
     // Layer B is an estimate — the opponent's attack rhythm, learned from hits we take.
     //
@@ -111,7 +118,7 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
      * armed the moment it does. 0 = release exactly when a hit starts landing.
      */
     private val predictLead by int(
-        "PredictLead", BlockPredictor.DEFAULT_LEAD_TICKS, 0..10, "ticks", modes = arrayOf("Predict"))
+        "PredictLead", DEFAULT_LEAD_TICKS, 0..10, "ticks", modes = arrayOf("Predict"))
 
     /**
      * [Predict]: ticks to subtract from the target's i-frame counter before comparing, because the
@@ -119,38 +126,38 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
      * comes off before a hit can actually land.
      */
     private val predictRtt by int(
-        "PredictRtt", BlockPredictor.DEFAULT_RTT_TICKS, 0..10, "ticks", modes = arrayOf("Predict"))
+        "PredictRtt", DEFAULT_RTT_TICKS, 0..10, "ticks", modes = arrayOf("Predict"))
 
     /** [Predict]: also hold the guard when the opponent's own next attack is due (layer B). */
     private val predictAttacks by boolean("PredictAttacks", true, modes = arrayOf("Predict"))
 
     /** [Predict]: how close the predicted attack must be, in ticks. */
     private val predictWindow by int(
-        "PredictWindow", BlockPredictor.DEFAULT_PREDICT_WINDOW, 0..20, "ticks", modes = arrayOf("Predict"))
+        "PredictWindow", DEFAULT_PREDICT_WINDOW, 0..20, "ticks", modes = arrayOf("Predict"))
 
     /** [Predict]: probability that a due prediction holds the guard (0-100). */
     private val predictChance by int(
-        "PredictChance", BlockPredictor.DEFAULT_PREDICT_CHANCE, 0..100, "%", modes = arrayOf("Predict"))
+        "PredictChance", DEFAULT_PREDICT_CHANCE, 0..100, "%", modes = arrayOf("Predict"))
 
-    // ========== Adaptive (see BlockArbiter) ==========
+    // ========== Adaptive (core CBT_ARBITER) ==========
     // One weight per signal. With the arbiter's defaults, lock/threat/sustain each hold on their own
     // — so Adaptive is never weaker than the single mode it replaces — and only reflex needs
     // company. Setting a weight to 0 tunes that mode's contribution out, which is how "Sag but not
     // Normal" is expressed here.
     /** [Adaptive]: weight of the damage-lock signal — arithmetic, so it is trusted most. */
-    private val sigLock by float("SigLock", BlockArbiter.DEFAULT_LOCK.toFloat(), 0f..1f, modes = arrayOf("Adaptive"))
+    private val sigLock by float("SigLock", 1.0f, 0f..1f, modes = arrayOf("Adaptive"))
 
     /** [Adaptive]: weight of the predicted-attack signal (an estimate). */
-    private val sigThreat by float("SigThreat", BlockArbiter.DEFAULT_THREAT.toFloat(), 0f..1f, modes = arrayOf("Adaptive"))
+    private val sigThreat by float("SigThreat", 0.6f, 0f..1f, modes = arrayOf("Adaptive"))
 
     /** [Adaptive]: weight of "I have been attacking" — Sag's signal. */
-    private val sigSustain by float("SigSustain", BlockArbiter.DEFAULT_SUSTAIN.toFloat(), 0f..1f, modes = arrayOf("Adaptive"))
+    private val sigSustain by float("SigSustain", 0.5f, 0f..1f, modes = arrayOf("Adaptive"))
 
     /** [Adaptive]: weight of "I just swung" — Normal's signal. */
-    private val sigReflex by float("SigReflex", BlockArbiter.DEFAULT_REFLEX.toFloat(), 0f..1f, modes = arrayOf("Adaptive"))
+    private val sigReflex by float("SigReflex", 0.4f, 0f..1f, modes = arrayOf("Adaptive"))
 
     /** [Adaptive]: how much combined weight is needed to hold the guard. */
-    private val sigThreshold by float("SigThreshold", BlockArbiter.DEFAULT_THRESHOLD.toFloat(), 0f..1f, modes = arrayOf("Adaptive"))
+    private val sigThreshold by float("SigThreshold", 0.5f, 0f..1f, modes = arrayOf("Adaptive"))
 
     /**
      * [Adaptive]: ceiling on how much of the time the guard may be up, in %. Above it only the
@@ -180,15 +187,6 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
 
     /** Last nanoTime an attack was detected (Srg debounce). */
     private var lastAttackNano: Long = 0L
-
-    /** OnEnter range-mode latch (algorithm state, owned by core RangeGate). */
-    private val rangeGateState = RangeGate.State()
-
-    /** [Predict]: the opponent-attack clock and its layer-B estimate (algorithm state, in core). */
-    private val predictState = BlockPredictor.State()
-
-    /** [Adaptive]: rolling duty-cycle window (algorithm state, in core). */
-    private val arbiterState = BlockArbiter.State()
 
     /** [Predict]: previous tick's own i-frame counter, for the "we were just hit" rising edge. */
     private var lastSelfHurt: Int = 0
@@ -251,16 +249,14 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
         val conditionsMet = Strategies.gate(player, target, triggerOptions)
 
         // Distance gate — behavior depends on RangeMode (InRange = continuous; OnEnter = latch
-        // on entry with hysteresis). Algorithm lives in core RangeGate.
-        val inRange = RangeGate.compute(
-            rangeGateState,
-            RangeGate.Config(
-                mode = if (rangeMode == "OnEnter") RangeGate.Mode.ON_ENTER else RangeGate.Mode.IN_RANGE,
-                minDistance = minDistance,
-                maxDistance = maxDistance,
-                hysteresis = RangeGate.DEFAULT_HYSTERESIS
-            ),
-            target?.distance
+        // on entry with hysteresis). Algorithm lives in the core (`CBT_RANGE`).
+        val inRange = Strategies.range(
+            player, target,
+            onEnter = rangeMode == "OnEnter",
+            minDistance = minDistance,
+            maxDistance = maxDistance,
+            hysteresis = RANGE_HYSTERESIS,
+            distance = target?.distance
         )
         val probPass = probability >= 100 || Random.nextInt(100) < probability
 
@@ -314,17 +310,20 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
             // countdown (11..20 of 20) and it can still hit us back. Swinging into that window is a
             // wasted swing with the guard down; the useful move is to hold, and to swing the moment
             // the lock lifts. Layer B adds the guessed half: hold even outside the lock when the
-            // opponent's own next attack is due. The algorithm is entirely in [BlockPredictor].
+            // opponent's own next attack is due. The algorithm is entirely in the core (`CBT_PREDICT`).
             "Predict" -> {
-                val decision = BlockPredictor.evaluate(
-                    targetHurtResistantTime = target?.hurtResistantTime,
+                val decision = Strategies.predict(
+                    player, target,
+                    maxHurt = predictMaxHurt(),
+                    rttTicks = predictRtt,
+                    leadTicks = predictLead,
+                    predictAttacks = predictAttacks,
+                    windowTicks = predictWindow,
+                    chance = predictChance,
                     currentTick = tickCounter,
-                    opponentJustHit = selfJustHit,
-                    state = predictState,
-                    config = predictConfig(),
-                    rng = Random
+                    opponentJustHit = selfJustHit
                 )
-                if (decision.block && conditionsMet && inRange && probPass) {
+                if (decision != null && decision.block && conditionsMet && inRange && probPass) {
                     if (!blockHeld) {
                         EventBridge.syntheticUse = true
                         markWorked() // block starting — a transition, not the steady hold
@@ -337,10 +336,8 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
                 }
                 if (diagCount % 40 == 0) {
                     CoreLogger.info(
-                        "[AutoBlock] predict reason=${decision.reason} block=${decision.block} " +
-                        "effHurt=${decision.effectiveHurt} held=$blockHeld " +
-                        "ivl=${predictState.intervalEma.toInt()}t/" +
-                        "${predictState.intervalSamples}smp"
+                        "[AutoBlock] predict block=${decision?.block} " +
+                        "effHurt=${decision?.effectiveHurt} held=$blockHeld"
                     )
                 }
             }
@@ -353,16 +350,19 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
             // The three modes differ in what they KNOW, not in what they want, so they are four
             // signals rather than alternatives: Predict supplies `locked` (arithmetic) and `threat`
             // (an estimate), Sag supplies `sustain` (attacking lately), Normal supplies `reflex`
-            // (just swung). [BlockArbiter] weighs them by how much each one knows and applies a
+            // (just swung). The core's block arbiter weighs them by how much each one knows and applies a
             // duty-cycle budget on top.
             "Adaptive" -> {
-                val decision = BlockPredictor.evaluate(
-                    targetHurtResistantTime = target?.hurtResistantTime,
+                val decision = Strategies.predict(
+                    player, target,
+                    maxHurt = predictMaxHurt(),
+                    rttTicks = predictRtt,
+                    leadTicks = predictLead,
+                    predictAttacks = predictAttacks,
+                    windowTicks = predictWindow,
+                    chance = predictChance,
                     currentTick = tickCounter,
-                    opponentJustHit = selfJustHit,
-                    state = predictState,
-                    config = predictConfig(),
-                    rng = Random
+                    opponentJustHit = selfJustHit
                 )
                 // Sag's signal, including Sag's own release debounce: a fast AutoClick cadence
                 // sampled at 20 Hz flickers the raw attack state, so the block would drop mid-fight.
@@ -370,18 +370,25 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
                 // Normal's signal: inside the short window Normal would hold after a swing.
                 val reflex = elapsedNs(lastAttackNano) < delayMs * 1_000_000L
 
-                val verdict = BlockArbiter.evaluate(
-                    locked = decision.locked,
-                    threat = decision.threat,
+                // locked/threat are the two separate predictor signals, not a decode of `block`:
+                // the arbiter weighs them differently, so collapsing them loses the distinction
+                // that makes Adaptive stronger than either mode alone. A missing answer is "no
+                // signal", which weighs the same as false.
+                val verdict = Strategies.arbiter(
+                    player, target,
+                    locked = decision?.locked ?: false,
+                    threat = decision?.threat ?: false,
                     sustain = sustain,
                     reflex = reflex,
-                    weights = arbiterWeights(),
+                    wLock = sigLock.toDouble(),
+                    wThreat = sigThreat.toDouble(),
+                    wSustain = sigSustain.toDouble(),
+                    wReflex = sigReflex.toDouble(),
                     threshold = sigThreshold.toDouble(),
-                    duty = arbiterState.duty(),
                     maxDuty = sigMaxDuty / 100.0
                 )
 
-                if (verdict.block && conditionsMet && inRange && probPass) {
+                if (verdict != null && verdict.block && conditionsMet && inRange && probPass) {
                     if (!blockHeld) {
                         EventBridge.syntheticUse = true
                         markWorked() // block starting — a transition, not the steady hold
@@ -390,14 +397,12 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
                 } else {
                     releaseBlock()
                 }
-                arbiterState.record(verdict.block)
-
+                // No record() here: the core records inside the call above, so the duty budget
+                // counts ticks rather than module decisions.
                 if (diagCount % 40 == 0) {
                     CoreLogger.info(
-                        "[AutoBlock] adaptive score=${"%.2f".format(verdict.score)} " +
-                        "firing=${verdict.firing} held=$blockHeld " +
-                        "duty=${"%.2f".format(arbiterState.duty())}" +
-                        (if (verdict.throttled) " THROTTLED" else "")
+                        "[AutoBlock] adaptive score=${"%.2f".format(verdict?.score ?: 0.0)} " +
+                        "held=$blockHeld"
                     )
                 }
             }
@@ -478,22 +483,8 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
      * `PredictHurtTime` option hardcoded 10 as the window's *upper bound* — 10 is the half-way
      * value, so the window it selected was the wrong half of the countdown.
      */
-    /** [Adaptive]: assemble the arbiter's weights from the signal options. */
-    private fun arbiterWeights() = BlockArbiter.Weights(
-        lock = sigLock.toDouble(),
-        threat = sigThreat.toDouble(),
-        sustain = sigSustain.toDouble(),
-        reflex = sigReflex.toDouble()
-    )
-
-    private fun predictConfig() = BlockPredictor.Config(
-        maxHurtResistantTime = if (lastKnownMaxHurt > 0) lastKnownMaxHurt else BlockPredictor.DEFAULT_MAX_HURT,
-        rttTicks = predictRtt,
-        leadTicks = predictLead,
-        predictAttacks = predictAttacks,
-        predictWindowTicks = predictWindow,
-        predictChance = predictChance
-    )
+    private fun predictMaxHurt(): Int =
+        if (lastKnownMaxHurt > 0) lastKnownMaxHurt else DEFAULT_MAX_HURT
 
     // ========== Lifecycle ==========
 
@@ -502,9 +493,7 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
         // right-click (Raven style). Overriding the whole use key would swallow the
         // player's manual blocking.
         lastAttackNano = 0L
-        rangeGateState.reset()
-        predictState.reset()
-        arbiterState.reset()
+        Strategies.resetCombat()
         lastSelfHurt = 0
         tickCounter = 0
         EventBridge.registerTickListener(tickListener)
@@ -515,9 +504,7 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
         releaseBlock()
         EventBridge.syntheticUse = false
         lastAttackNano = 0L
-        rangeGateState.reset()
-        predictState.reset()
-        arbiterState.reset()
+        Strategies.resetCombat()
         lastSelfHurt = 0
     }
 }

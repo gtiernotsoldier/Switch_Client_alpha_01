@@ -175,6 +175,254 @@ object Strategies {
             distance, bearingRad, yawDeg, reach, nextTick()
         )
     }
+
+    /**
+     * SOCD: which of the four movement keys should be taken away, as `[f, b, l, r]`.
+     *
+     * Off-line returns null, and null means "suppress nothing" — the player's own two keys
+     * then cancel each other exactly as vanilla does. That is a working movement, just without
+     * the snap; the alternative (defaulting to true) would remove keys the user is holding.
+     */
+    fun socd(
+        player: PlayerState,
+        target: TargetState?,
+        forward: Boolean,
+        back: Boolean,
+        left: Boolean,
+        right: Boolean
+    ): BooleanArray? {
+        val stub = CoreLink.stub ?: return null
+        return stub.movementSocd(player, target, forward, back, left, right, nextTick())
+    }
+
+    /** One tap tick: the event to handle and the phase it left behind. */
+    class TapTick(val event: Int, val phase: Int) {
+        companion object {
+            const val NONE = 0
+            const val END_TAP = 1
+            const val SHOULD_START_TAP = 2
+
+            const val IDLE = 0
+            const val POST_DELAY = 1
+            const val TAPPING = 2
+
+            /** No core: stay idle forever, which is the state every tap module starts in. */
+            val OFFLINE = TapTick(NONE, IDLE)
+        }
+    }
+
+    fun tapTick(player: PlayerState, target: TargetState?, nowNs: Long): TapTick {
+        val stub = CoreLink.stub ?: return TapTick.OFFLINE
+        val v = stub.tapTick(player, target, nowNs, nextTick()) ?: return TapTick.OFFLINE
+        val n = v.toInt()
+        return TapTick(n and 3, n shr 2)
+    }
+
+    fun tapBegin(
+        player: PlayerState,
+        target: TargetState?,
+        nowNs: Long,
+        durationMs: Int,
+        postDelay: Boolean
+    ) {
+        val stub = CoreLink.stub ?: return
+        stub.tapBegin(player, target, nowNs, durationMs, postDelay, nextTick())
+    }
+
+    /** Tap side from target motion, or null when there is no target (or no core). */
+    fun tapChase(player: PlayerState, target: TargetState?, yaw: Float, leadTicks: Int): Int? {
+        val stub = CoreLink.stub ?: return null
+        val v = stub.tapChase(player, target, yaw, leadTicks, nextTick()) ?: return null
+        val side = v.toInt()
+        return if (side < 0) null else side
+    }
+
+    fun tapSeven(player: PlayerState, target: TargetState?, lastSide: Int, repeatChance: Int): Int? {
+        val stub = CoreLink.stub ?: return null
+        val v = stub.tapSeven(player, target, lastSide, repeatChance, nextTick()) ?: return null
+        val side = v.toInt()
+        return if (side < 0) null else side
+    }
+
+    /** Uniform side draw from the core's tap stream; null when there is no core. */
+    fun tapRandom(player: PlayerState, target: TargetState?): Int? {
+        val stub = CoreLink.stub ?: return null
+        val v = stub.tapRandom(player, target, nextTick()) ?: return null
+        val side = v.toInt()
+        return if (side < 0) null else side
+    }
+
+    fun tapWrap(player: PlayerState, target: TargetState?, angle: Float): Float? {
+        val stub = CoreLink.stub ?: return null
+        return stub.tapWrap(player, target, angle, nextTick())?.toFloat()
+    }
+
+    /** Forget what the core remembers about one module. Safe to call with no core attached. */
+    fun reset(module: Int) {
+        CoreLink.stub?.reset(module)
+    }
+
+    fun resetMovement() = reset(Wire.MODULE_MOVEMENT)
+    fun resetTap() = reset(Wire.MODULE_TAP)
+    fun resetCombat() = reset(Wire.MODULE_COMBAT)
+    fun resetVelocity() = reset(Wire.MODULE_VELOCITY)
+
+    /**
+     * AutoBlock: is the target inside the gate's distance band?
+     *
+     * The `OnEnter` latch is core state, which is why this cannot be a local comparison: the
+     * answer depends on whether the target was inside on the previous tick.
+     *
+     * Off-line answers `false` — do not block. Same reasoning as everywhere else: a module whose
+     * question cannot be answered stays idle instead of acting on a guess.
+     */
+    fun range(
+        player: PlayerState,
+        target: TargetState?,
+        onEnter: Boolean,
+        minDistance: Float,
+        maxDistance: Float,
+        hysteresis: Float,
+        distance: Float?
+    ): Boolean {
+        val stub = CoreLink.stub ?: return false
+        return stub.combatRange(
+            player, target, if (onEnter) 1 else 0, minDistance, maxDistance, hysteresis,
+            distance, nextTick()
+        ) ?: false
+    }
+
+    /**
+     * AutoBlock Predict: hold the guard or swing, from the target's damage lock plus the learned
+     * attack rhythm. The rhythm estimate (`intervalEma`) lives in the core and is updated by this
+     * call, so calling it twice per tick would learn twice as fast.
+     */
+    fun predict(
+        player: PlayerState,
+        target: TargetState?,
+        maxHurt: Int,
+        rttTicks: Int,
+        leadTicks: Int,
+        predictAttacks: Boolean,
+        windowTicks: Int,
+        chance: Int,
+        currentTick: Int,
+        opponentJustHit: Boolean
+    ): Verdict? {
+        val stub = CoreLink.stub ?: return null
+        return stub.combatPredict(
+            player, target, maxHurt, rttTicks, leadTicks, predictAttacks, windowTicks, chance,
+            INTERVAL_ALPHA, SEED_INTERVAL_TICKS, currentTick, opponentJustHit, nextTick()
+        )
+    }
+
+    /**
+     * AutoBlock Adaptive: weigh the four signals and apply the duty-cycle budget.
+     *
+     * The duty window is core state as well — `record` happens inside this call, so the budget
+     * counts one tick per request, not per decision the module happens to make.
+     */
+    fun arbiter(
+        player: PlayerState,
+        target: TargetState?,
+        locked: Boolean,
+        threat: Boolean,
+        sustain: Boolean,
+        reflex: Boolean,
+        wLock: Double,
+        wThreat: Double,
+        wSustain: Double,
+        wReflex: Double,
+        threshold: Double,
+        maxDuty: Double
+    ): Verdict? {
+        val stub = CoreLink.stub ?: return null
+        return stub.combatArbiter(
+            player, target, locked, threat, sustain, reflex,
+            wLock, wThreat, wSustain, wReflex, threshold, maxDuty, nextTick()
+        )
+    }
+
+    /**
+     * Smoothing for the opponent-attack estimate. Fixed rather than configurable: it is the
+     * estimator's own constant, and exposing it would let a slider silently change how fast the
+     * predictor learns — a different algorithm, not a tuning value.
+     */
+    private const val INTERVAL_ALPHA = 0.35
+    private const val SEED_INTERVAL_TICKS = 12.0
+
+    /** One velocity hit's answer, plus the one thing the result type cannot express. */
+    class VelocityOutcome(
+        @JvmField val result: io.doppel.contract.strategy.velocity.VelocityResult,
+        /** SPRINT only: this hit opened a brace window. */
+        @JvmField val sprintArmed: Boolean
+    )
+
+    /**
+     * Velocity, one incoming knockback.
+     *
+     * The config is pushed before every hit rather than cached. A knockback arrives at most a few
+     * times a second, and a config frame is 104 bytes — the alternative is tracking which options
+     * changed, and getting that wrong means the core runs the previous mode while the GUI shows
+     * the new one, silently.
+     *
+     * Off-line passes the packet through: vanilla applies the knockback itself, which is exactly
+     * what "no reduction configured" looks like.
+     */
+    fun velocity(
+        ctx: io.doppel.contract.model.VelocityContext,
+        config: io.doppel.contract.strategy.velocity.VelocityConfig
+    ): VelocityOutcome {
+        val stub = CoreLink.stub
+            ?: return VelocityOutcome(io.doppel.contract.strategy.velocity.VelocityResult.Pass(ctx.originalMotion), false)
+        stub.pushConfig(Wire.MODULE_VELOCITY, encodeVelocityConfig(config))
+        val d = stub.decideFrame(ctx, nextTick())
+            ?: return VelocityOutcome(io.doppel.contract.strategy.velocity.VelocityResult.Pass(ctx.originalMotion), false)
+        val result = when (d.action) {
+            Wire.ACTION_PASS -> io.doppel.contract.strategy.velocity.VelocityResult.Pass(ctx.originalMotion)
+            Wire.ACTION_MODIFY -> io.doppel.contract.strategy.velocity.VelocityResult.Modify(d.motion)
+            Wire.ACTION_CLICK_BURST -> io.doppel.contract.strategy.velocity.VelocityResult.ClickBurst(d.targetId, d.clicks)
+            Wire.ACTION_CANCEL -> io.doppel.contract.strategy.velocity.VelocityResult.Cancel(ctx.packetHandle)
+            else -> io.doppel.contract.strategy.velocity.VelocityResult.NoOp
+        }
+        return VelocityOutcome(result, d.reason == Wire.REASON_SPRINT_ARMED)
+    }
+
+    /**
+     * One tick of the sprint brace: `[forward, back, left, right]`, or null when the window is
+     * closed (or there is no core). Null means release every key.
+     */
+    fun braceKeys(player: PlayerState, target: TargetState?, yaw: Float, sector: Double): BooleanArray? {
+        val stub = CoreLink.stub ?: return null
+        return stub.velocityBrace(player, target, yaw, sector, nextTick())
+    }
+
+    /**
+     * KnockbackDelay: hold this knockback back?
+     *
+     * Off-line answers false — the packet goes through with vanilla's trajectory, which is what a
+     * user who did not enable the module would see, and the safe direction: holding a packet the
+     * client then forgets to release leaves the player stuck in the air.
+     */
+    fun delayEnqueue(
+        ctx: io.doppel.contract.model.VelocityContext,
+        nowTick: Int,
+        chance: Int,
+        maxDelayTicks: Int,
+        requireWeapon: Boolean,
+        options: TriggerOptions
+    ): Boolean {
+        val stub = CoreLink.stub ?: return false
+        return stub.velocityDelayEnqueue(
+            ctx, nowTick, chance, maxDelayTicks, requireWeapon, options, nextTick()
+        ) ?: false
+    }
+
+    /** KnockbackDelay: the held motions that came due this tick. Empty when none (or no core). */
+    fun delayPump(player: PlayerState, target: TargetState?, nowTick: Int): List<io.doppel.contract.util.Vec3> {
+        val stub = CoreLink.stub ?: return emptyList()
+        return stub.velocityDelayPump(player, target, nowTick, nextTick()) ?: emptyList()
+    }
 }
 
 private object OfflineAim : AimStrategy {

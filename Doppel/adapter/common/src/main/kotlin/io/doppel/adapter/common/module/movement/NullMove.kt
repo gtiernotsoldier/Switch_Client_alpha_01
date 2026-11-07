@@ -6,7 +6,7 @@ import io.doppel.adapter.common.module.Module
 import io.doppel.adapter.common.option.boolean
 import io.doppel.contract.model.PlayerState
 import io.doppel.contract.model.TargetState
-import io.doppel.core.strategy.movement.SocdResolver
+import io.doppel.ipc.Strategies
 
 /**
  * NullMove — SOCD cleaning for the movement keys (a.k.a. Snap Tap / Null binds).
@@ -40,31 +40,33 @@ object NullMove : Module("NullMove", Category.MOVEMENT) {
     /** A + D: the classic strafe snap. */
     private val strafeAxis by boolean("StrafeAxis", true)
 
-    private val resolver = SocdResolver()
-
     private const val F = 1
     private const val B = 2
     private const val L = 4
     private const val R = 8
 
-    private val tickListener: (PlayerState, TargetState?) -> Unit = { _, _ ->
-        if (enabled) onTick()
+    private val tickListener: (PlayerState, TargetState?) -> Unit = { p, _ ->
+        if (enabled) onTick(p)
     }
 
-    private fun onTick() {
-        val c = resolver.resolve(
+    private fun onTick(player: PlayerState) {
+        // null = no core attached: suppress nothing, which is vanilla's behaviour (the two keys
+        // of an axis simply cancel). Not an error — this module has nothing to compute locally.
+        val c = Strategies.socd(
+            player = player,
+            target = null,
             forward = EventBridge.physicalForwardDown,
             back = EventBridge.physicalBackDown,
             left = EventBridge.physicalLeftDown,
             right = EventBridge.physicalRightDown
-        )
+        ) ?: return
         // Re-asserted every tick rather than cached: a claim can be dropped from outside (a module
         // disable, a platform reset), and a cache would then believe in a suppression that is no
         // longer there. Four cheap map ops are worth not having that failure mode.
-        put(c.suppressForward && forwardAxis, F)
-        put(c.suppressBack && forwardAxis, B)
-        put(c.suppressLeft && strafeAxis, L)
-        put(c.suppressRight && strafeAxis, R)
+        put(c[0] && forwardAxis, F)
+        put(c[1] && forwardAxis, B)
+        put(c[2] && strafeAxis, L)
+        put(c[3] && strafeAxis, R)
     }
 
     private fun put(on: Boolean, bit: Int) {
@@ -86,13 +88,15 @@ object NullMove : Module("NullMove", Category.MOVEMENT) {
     }
 
     override fun onEnable() {
-        resolver.reset()
+        // The core keeps the key-order history; a fresh activation must not inherit the previous
+        // session's "which key was pressed later".
+        Strategies.resetMovement()
         EventBridge.registerTickListener(tickListener)
     }
 
     override fun onDisable() {
         EventBridge.unregisterTickListener(tickListener)
-        resolver.reset()
+        Strategies.resetMovement()
         EventBridge.releaseForward(name)
         EventBridge.releaseBack(name)
         EventBridge.releaseLeft(name)

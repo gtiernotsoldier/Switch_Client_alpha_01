@@ -130,6 +130,7 @@ impl Session {
         match frame.header.kind {
             Kind::Snapshot => self.on_snapshot(frame),
             Kind::Config => self.on_config(frame),
+            Kind::Reset => self.on_reset(frame),
             Kind::Ping => {
                 let mut r = Frame::new(
                     Kind::Pong,
@@ -143,6 +144,42 @@ impl Session {
             _ => Frame::new(Kind::Error, frame.header.seq, frame.header.tick, Module::Velocity)
                 .with_status(Status::UnknownKind),
         }
+    }
+
+    /// Forget one module's cross-tick memory, keeping its configuration.
+    ///
+    /// Configuration and state are reset in different places on purpose: the
+    /// user's settings survive a module toggle, but a held key, a half-elapsed
+    /// tap or a queued velocity slot must not. A stale `SocdResolver` would
+    /// believe the opposite key was pressed later than it was; a stale tap
+    /// timer would fire an instant key press on the tick the module comes back.
+    fn on_reset(&mut self, frame: &Frame) -> Frame {
+        let module = match Module::from_u8(frame.header.module) {
+            Some(m) => m,
+            None => return self.bad(frame, Status::UnknownKind),
+        };
+        match module {
+            Module::Velocity => self.velocity = velocity::State::new(),
+            Module::Aim => self.aim = AimState::default(),
+            Module::Click => {
+                self.click = match self.click {
+                    ClickSlot::Probabilistic(c, _) => {
+                        ClickSlot::Probabilistic(c, ClickState::default())
+                    }
+                    ClickSlot::Cooldown(c, _) => ClickSlot::Cooldown(c, CritState::default()),
+                };
+            }
+            Module::Movement => self.socd = SocdResolver::default(),
+            Module::Tap => self.tap = TapStateMachine::default(),
+            Module::Combat => {
+                self.arbiter = BlockArbiterState::default();
+                self.predictor = PredictorState::default();
+                self.range_state = RangeGateState { engaged: false };
+            }
+            // Reach keeps nothing between calls; the geometry is in the request.
+            Module::Reach => {}
+        }
+        Frame::new(Kind::Reset, frame.header.seq, frame.header.tick, module)
     }
 
     fn on_config(&mut self, frame: &Frame) -> Frame {
@@ -207,6 +244,74 @@ impl Session {
         }
     }
 
+    /// Velocity's tick-level questions, which ride on a snapshot plus an op byte.
+    fn on_velocity_op(&mut self, frame: &Frame, len: usize) -> Frame {
+        let req = match codec::decode_generic(&frame.payload, len) {
+            Ok(r) => r,
+            Err(s) => return self.bad(frame, s),
+        };
+        let seq = frame.header.seq;
+        let tick = frame.header.tick;
+        let mut run = || -> Result<Frame, Status> {
+            match req.op {
+                op::VEL_BRACE => {
+                    let keys =
+                        velocity::brace_keys(req.ctx.player.yaw, req.arg(0)?, &mut self.velocity);
+                    let corr = movement::StrafeCorrection {
+                        suppress_forward: keys.0,
+                        suppress_back: keys.1,
+                        suppress_left: keys.2,
+                        suppress_right: keys.3,
+                        before: 0.0,
+                        after: 0.0,
+                    };
+                    Ok(codec::encode_suppress(seq, tick, Module::Velocity, &corr))
+                }
+                op::VEL_DELAY_ENQUEUE => {
+                    self.velocity.tick_counter = req.i32(0)?;
+                    let cfg = VelocityConfig {
+                        delay_chance: req.i32(1)?,
+                        max_delay_ticks: req.i32(2)?,
+                        require_weapon: req.bool(3)?,
+                        trigger: codec::trigger_from_packed(
+                            req.arg(4)?,
+                            req.arg(5)?,
+                            req.arg(6)?,
+                            req.arg(7)?,
+                            req.arg(8)?,
+                        ),
+                        ..VelocityConfig::default()
+                    };
+                    let swallowed = velocity::delay_enqueue(
+                        &cfg,
+                        &mut self.velocity,
+                        &req.ctx,
+                        &mut self.rng_velocity,
+                    );
+                    Ok(codec::encode_bool(
+                        seq,
+                        tick,
+                        Module::Velocity,
+                        WireAction::Bool,
+                        swallowed,
+                    ))
+                }
+                op::VEL_DELAY_PUMP => {
+                    let released = velocity::delay_pump(&mut self.velocity, req.i32(0)?);
+                    Ok(codec::encode_motions(seq, tick, &released))
+                }
+                _ => Err(Status::BadPayload),
+            }
+        };
+        match run() {
+            Ok(f) => {
+                self.decisions += 1;
+                f
+            }
+            Err(s) => self.bad(frame, s),
+        }
+    }
+
     fn degrade(&mut self, frame: &Frame) -> Frame {
         self.degraded += 1;
         let m = Module::from_u8(frame.header.module).unwrap_or(Module::Velocity);
@@ -220,6 +325,12 @@ impl Session {
     }
 
     fn on_velocity(&mut self, frame: &Frame, len: usize) -> Frame {
+        // A payload longer than the snapshot carries an op byte after it. Velocity's
+        // per-hit path is a bare snapshot; only the tick-level brace asks a question,
+        // and it must not re-run the reduction that the hit's own frame already ran.
+        if len > SLOT_SNAPSHOT {
+            return self.on_velocity_op(frame, len);
+        }
         let ctx = match decode_snapshot(&frame.payload, len) {
             Ok(c) => c,
             Err(s) => return self.bad(frame, s),
@@ -427,6 +538,16 @@ impl Session {
                         codec::side_to_f64(side),
                     ))
                 }
+                op::TAP_RANDOM => {
+                    let side = tap::random_side(&mut self.rng_tap);
+                    Ok(codec::encode_scalar(
+                        seq,
+                        tick,
+                        Module::Tap,
+                        WireAction::TapSide,
+                        codec::side_to_f64(side),
+                    ))
+                }
                 op::TAP_WRAP => Ok(codec::encode_scalar(
                     seq,
                     tick,
@@ -441,7 +562,22 @@ impl Session {
                         tap::TapEvent::EndTap => 1.0,
                         tap::TapEvent::ShouldStartTap => 2.0,
                     };
-                    Ok(codec::encode_scalar(seq, tick, Module::Tap, WireAction::Scalar, v))
+                    // Phase rides along in the same word: `event + 4 * phase`. The
+                    // module needs both every tick, and a second round trip to ask
+                    // "what phase are we in" would be one more chance to interleave
+                    // with the tap timer it is asking about.
+                    let phase = match self.tap.phase {
+                        tap::TapPhase::Idle => 0.0,
+                        tap::TapPhase::PostDelay => 1.0,
+                        tap::TapPhase::Tapping => 2.0,
+                    };
+                    Ok(codec::encode_scalar(
+                        seq,
+                        tick,
+                        Module::Tap,
+                        WireAction::Scalar,
+                        v + 4.0 * phase,
+                    ))
                 }
                 op::TAP_POST_DELAY => {
                     self.tap.begin_post_delay(req.arg(0)? as i64, req.i32(1)?);
@@ -516,7 +652,7 @@ impl Session {
                         req.arg(9)?,
                     );
                     self.arbiter.record(v.block);
-                    Ok(codec::encode_verdict(seq, tick, v.block, v.score, 0))
+                    Ok(codec::encode_verdict(seq, tick, v.block, v.score, 0, false, false))
                 }
                 op::CBT_PREDICT => {
                     let cfg = PredictorConfig {
@@ -537,7 +673,15 @@ impl Session {
                         &cfg,
                         &mut self.rng_combat,
                     );
-                    Ok(codec::encode_verdict(seq, tick, d.block, 0.0, d.effective_hurt))
+                    Ok(codec::encode_verdict(
+                        seq,
+                        tick,
+                        d.block,
+                        0.0,
+                        d.effective_hurt,
+                        d.locked,
+                        d.threat,
+                    ))
                 }
                 op::CBT_RANGE => {
                     let mode = match req.i32(0)? {

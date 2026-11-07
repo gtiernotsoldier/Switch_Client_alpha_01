@@ -2,7 +2,6 @@ dependencies {
     implementation(project(":contract"))
     implementation(project(":ipc"))
     implementation(project(":safety"))
-    implementation(project(":core"))
     implementation(project(":adapter:common"))
 
     // Netty — required by ForgePacketInterceptor (compile-time only, provided by MC at runtime)

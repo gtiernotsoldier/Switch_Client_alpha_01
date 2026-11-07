@@ -47,6 +47,13 @@ pub enum Kind {
     Error = 8,
     /// Client tells the core it is shutting down; core exits cleanly.
     Bye = 9,
+    /// Client forgets one module's cross-tick state.
+    ///
+    /// The module was just disabled (or re-enabled on a different player), so
+    /// whatever the core remembers from the last session — which key was held,
+    /// how long the tap had left, which direction the velocity queue was on —
+    /// is about to be wrong. Zero payload; the target module is in the header.
+    Reset = 10,
 }
 
 impl Kind {
@@ -61,6 +68,7 @@ impl Kind {
             7 => Kind::Pong,
             8 => Kind::Error,
             9 => Kind::Bye,
+            10 => Kind::Reset,
             _ => return None,
         })
     }
@@ -204,6 +212,10 @@ pub enum Reason {
     Released = 10,
     PassThrough = 11,
     Panic = 12,
+    /// SPRINT: the hit opened a brace window. The packet still passes through
+    /// untouched — this only tells the adapter that the key press is coming, so
+    /// it can flash the HUD and start the wall-clock deadline.
+    SprintArmed = 13,
 }
 
 pub fn reason_name(r: u8) -> &'static str {
@@ -221,6 +233,7 @@ pub fn reason_name(r: u8) -> &'static str {
         10 => "released",
         11 => "pass_through",
         12 => "panic",
+        13 => "sprint_armed",
         _ => "unknown",
     }
 }

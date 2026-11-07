@@ -5,6 +5,10 @@ import io.doppel.contract.model.PlayerState
 import io.doppel.contract.strategy.click.WeaponType
 import io.doppel.contract.util.Vec2
 import io.doppel.contract.util.Vec3
+import io.doppel.ipc.CoreLink
+import io.doppel.ipc.CoreStub
+import io.mockk.every
+import io.mockk.mockk
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -20,9 +24,40 @@ import org.junit.jupiter.api.Test
  */
 class NullMoveTest {
 
+    private lateinit var core: CoreStub
+
+    // The rule the core implements: the key that rose last wins, and a tie does nothing. It is
+    // reproduced here rather than mocked away so these tests still exercise "the module suppresses
+    // the older key", which is what they are about. The arithmetic itself is matched against the
+    // Rust implementation in MovementParityTest.
+    private var counter = 0L
+    private var prev = booleanArrayOf(false, false, false, false)
+    private var seq = longArrayOf(0, 0, 0, 0)
+
+    private fun socd(f: Boolean, b: Boolean, l: Boolean, r: Boolean): BooleanArray {
+        val now = booleanArrayOf(f, b, l, r)
+        counter++
+        for (i in 0 until 4) if (now[i] && !prev[i]) seq[i] = counter
+        prev = now
+        return booleanArrayOf(
+            f && b && seq[0] < seq[1],
+            f && b && seq[1] < seq[0],
+            l && r && seq[2] < seq[3],
+            l && r && seq[3] < seq[2]
+        )
+    }
+
     @BeforeEach
     fun setUp() {
         EventBridge.reset()
+        counter = 0L
+        prev = booleanArrayOf(false, false, false, false)
+        seq = longArrayOf(0, 0, 0, 0)
+        core = mockk(relaxed = true)
+        every { core.movementSocd(any(), any(), any(), any(), any(), any(), any()) } answers {
+            socd(arg(2), arg(3), arg(4), arg(5))
+        }
+        CoreLink.stub = core
         EventBridge.physicalForwardDown = false
         EventBridge.physicalBackDown = false
         EventBridge.physicalLeftDown = false
@@ -34,6 +69,7 @@ class NullMoveTest {
     @AfterEach
     fun tearDown() {
         NullMove.disable()
+        CoreLink.stub = null
         EventBridge.reset()
     }
 

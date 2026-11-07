@@ -286,9 +286,7 @@ class CoreStub(
      * bounded at one tick.
      */
     fun decide(ctx: VelocityContext, tick: Int): VelocityResult {
-        val f = roundTrip(Wire.MODULE_VELOCITY, encodeSnapshot(ctx), tick)
-            ?: return VelocityResult.Pass(ctx.originalMotion)
-        val d = decodeDecision(f)
+        val d = decideFrame(ctx, tick) ?: return VelocityResult.Pass(ctx.originalMotion)
         return when (d.action) {
             Wire.ACTION_PASS -> VelocityResult.Pass(ctx.originalMotion)
             Wire.ACTION_MODIFY -> VelocityResult.Modify(d.motion)
@@ -296,6 +294,81 @@ class CoreStub(
             Wire.ACTION_CANCEL -> VelocityResult.Cancel(ctx.packetHandle)
             else -> VelocityResult.NoOp
         }
+    }
+
+    /**
+     * One velocity hit, keeping the reason code.
+     *
+     * SPRINT's answer is always "pass the packet through", so the only way to know whether it also
+     * armed a brace window is the reason (`sprint_armed`). Collapsing this to [VelocityResult]
+     * would make the module unable to tell "no brace" from "braced", and the HUD flash and the
+     * wall-clock deadline both hang off that distinction.
+     */
+    fun decideFrame(ctx: VelocityContext, tick: Int): DecisionFrame? {
+        val f = roundTrip(Wire.MODULE_VELOCITY, encodeSnapshot(ctx), tick) ?: return null
+        return decodeDecision(f)
+    }
+
+    /**
+     * One tick of the sprint brace: which keys to hold, as `[forward, back, left, right]`.
+     *
+     * The armed window and its remaining ticks live in the core, so this call consumes one. Null
+     * means no answer — the caller then releases the keys, which is the safe direction: a stuck
+     * brace walks the player into the knockback.
+     */
+    fun velocityBrace(
+        player: io.doppel.contract.model.PlayerState,
+        target: io.doppel.contract.model.TargetState?,
+        yaw: Float,
+        sector: Double,
+        tick: Int
+    ): BooleanArray? {
+        val payload = genericRequest(
+            encodeSnapshot(player, target), Ops.VEL_BRACE, yaw.toDouble(), sector
+        )
+        val f = roundTrip(Wire.MODULE_VELOCITY, payload, tick) ?: return null
+        return decodeSuppress(f)
+    }
+
+    /**
+     * KnockbackDelay: hold this knockback back, or let it through?
+     *
+     * The delay parameters travel with the request rather than a config frame: Velocity and
+     * KnockbackDelay are separate modules sharing one velocity session, and a config push from one
+     * would replace the other's settings mid-flight.
+     */
+    fun velocityDelayEnqueue(
+        ctx: io.doppel.contract.model.VelocityContext,
+        tickNow: Int,
+        chance: Int,
+        maxDelayTicks: Int,
+        requireWeapon: Boolean,
+        options: io.doppel.contract.option.TriggerOptions,
+        tick: Int
+    ): Boolean? {
+        val payload = genericRequest(
+            encodeSnapshot(ctx), Ops.VEL_DELAY_ENQUEUE,
+            tickNow.toDouble(), chance.toDouble(), maxDelayTicks.toDouble(),
+            b(requireWeapon), encodeTriggerFlags(options),
+            options.minDistance.toDouble(), options.maxDistance.toDouble(),
+            options.lookAngleThreshold.toDouble(), options.chance.toDouble()
+        )
+        val f = roundTrip(Wire.MODULE_VELOCITY, payload, tick) ?: return null
+        return decodeBool(f)
+    }
+
+    /** KnockbackDelay: which held motions have come due this tick. */
+    fun velocityDelayPump(
+        player: io.doppel.contract.model.PlayerState,
+        target: io.doppel.contract.model.TargetState?,
+        tickNow: Int,
+        tick: Int
+    ): List<io.doppel.contract.util.Vec3>? {
+        val payload = genericRequest(
+            encodeSnapshot(player, target), Ops.VEL_DELAY_PUMP, tickNow.toDouble()
+        )
+        val f = roundTrip(Wire.MODULE_VELOCITY, payload, tick) ?: return null
+        return decodeMotions(f)
     }
 
     /**
@@ -425,6 +498,17 @@ class CoreStub(
             encodeSnapshot(player, target), Ops.TAP_SEVEN,
             lastSide.toDouble(), repeatChancePercent.toDouble()
         )
+        val f = roundTrip(Wire.MODULE_TAP, payload, tick) ?: return null
+        return decodeScalar(f)
+    }
+
+    /** Uniform side draw from the core's tap stream. -1.0 when there is no core. */
+    fun tapRandom(
+        player: io.doppel.contract.model.PlayerState,
+        target: io.doppel.contract.model.TargetState?,
+        tick: Int
+    ): Double? {
+        val payload = genericRequest(encodeSnapshot(player, target), Ops.TAP_RANDOM)
         val f = roundTrip(Wire.MODULE_TAP, payload, tick) ?: return null
         return decodeScalar(f)
     }
@@ -628,6 +712,31 @@ class CoreStub(
     }
 
     private fun b(v: Boolean): Double = if (v) 1.0 else 0.0
+
+    /**
+     * Drops one module's cross-tick memory in the core.
+     *
+     * Called on module disable and on enable, because both leave the core
+     * holding facts that stopped being true: a key that is no longer held, a tap
+     * whose remaining time belongs to the previous activation, the previous
+     * player's motion. Fire-and-forget like [pushConfig] — the next request
+     * carries its own inputs, and a lost reset degrades to "one stale tick",
+     * not to a wrong answer forever.
+     */
+    fun reset(module: Int) {
+        val ch = channel ?: return
+        try {
+            ch.write(
+                Frame(
+                    Wire.KIND_RESET, seq.getAndIncrement(), 0,
+                    module = module, payload = ByteArray(0), payloadLen = 0
+                ).encode()
+            )
+        } catch (e: IOException) {
+            lastError = e.message
+            connected.set(false)
+        }
+    }
 
     /** Pushes a config snapshot. Fire-and-forget: the core acknowledges with a Config frame. */
     fun pushConfig(payload: ByteArray) = pushConfig(Wire.MODULE_VELOCITY, payload)

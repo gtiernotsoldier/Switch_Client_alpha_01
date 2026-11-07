@@ -1,8 +1,9 @@
 package io.doppel.adapter.common.module.combat
 
 import io.doppel.contract.model.PlatformCommand
+import io.doppel.contract.model.PlayerState
+import io.doppel.contract.model.TargetState
 import io.doppel.contract.model.VelocityContext
-import io.doppel.core.strategy.velocity.KnockbackDelayStrategy
 import io.doppel.adapter.common.api.EventBridge
 import io.doppel.adapter.common.module.Module
 import io.doppel.adapter.common.module.Category
@@ -10,6 +11,7 @@ import io.doppel.adapter.common.option.boolean
 import io.doppel.adapter.common.option.float
 import io.doppel.adapter.common.option.int
 import io.doppel.adapter.common.option.triggerOptions
+import io.doppel.ipc.Strategies
 
 /**
  * KnockbackDelay Module — delay the knockback we RECEIVE.
@@ -76,28 +78,31 @@ object KnockbackDelay : Module("KnockbackDelay", Category.COMBAT) {
         onlyOnClick = this@KnockbackDelay.mousePressed
     }
 
-    // ========== Core strategy (algorithm lives here) ==========
-    private val strategy = KnockbackDelayStrategy()
-    private val state = KnockbackDelayStrategy.State()
-
-    private fun buildConfig() = KnockbackDelayStrategy.Config(
-        chance = chance,
-        maxDelayTicks = maxDelayTicks,
-        requireWeapon = requireWeapon,
-        triggerOptions = triggerOptions
-    )
+    // ========== Core ==========
+    // The queue of held knockbacks lives in the core session — it holds the motion and the release
+    // tick, nothing platform-specific — so this module only decides when to ask and what to do
+    // with the answer.
 
     // ========== Listeners ==========
     private val velocityListenerRef: (VelocityContext) -> PlatformCommand = { ctx ->
         if (enabled) onVelocityPacket(ctx) else PlatformCommand.Pass(ctx.originalMotion)
     }
-    private val tickListener: (Int) -> Unit = { tick ->
-        if (enabled) onTick(tick)
+    /**
+     * The clock both sides of the queue agree on.
+     *
+     * A module-local counter rather than the game's tick number: the core only ever compares two
+     * of these values, and a counter this side owns cannot jump backwards when the world changes.
+     */
+    private var tickIndex: Int = 0
+
+    private val tickListener: (PlayerState, TargetState?) -> Unit = { p, t ->
+        if (enabled) onTick(p, t)
     }
 
     fun onVelocityPacket(ctx: VelocityContext): PlatformCommand {
-        val config = cachedConfig { buildConfig() }
-        val swallowed = strategy.enqueue(config, state, ctx)
+        val swallowed = Strategies.delayEnqueue(
+            ctx, tickIndex, chance, maxDelayTicks, requireWeapon, triggerOptions
+        )
         return if (swallowed) {
             // The packet was actually held back: that is the module working.
             markWorked()
@@ -107,16 +112,17 @@ object KnockbackDelay : Module("KnockbackDelay", Category.COMBAT) {
         }
     }
 
-    fun onTick(currentTick: Int) {
-        val config = cachedConfig { buildConfig() }
-        for (motion in strategy.pump(config, state, currentTick)) {
+    fun onTick(player: PlayerState, target: TargetState?) {
+        tickIndex++
+        for (motion in Strategies.delayPump(player, target, tickIndex)) {
             EventBridge.applyMotion(motion)
         }
     }
 
     // ========== Lifecycle ==========
     override fun onEnable() {
-        state.reset()
+        tickIndex = 0
+        Strategies.resetVelocity()
         EventBridge.registerVelocityListener(velocityListenerRef, EventBridge.VELOCITY_PRIORITY_DELAY)
         EventBridge.registerTickListener(tickListener)
     }
@@ -124,6 +130,6 @@ object KnockbackDelay : Module("KnockbackDelay", Category.COMBAT) {
     override fun onDisable() {
         EventBridge.unregisterVelocityListener(velocityListenerRef)
         EventBridge.unregisterTickListener(tickListener)
-        state.reset()
+        Strategies.resetVelocity()
     }
 }

@@ -1,9 +1,9 @@
 package io.doppel.adapter.common.module.combat
 
 import io.doppel.ipc.Strategies
+import io.doppel.ipc.Strategies.TapTick
 import io.doppel.contract.model.PlayerState
 import io.doppel.contract.model.TargetState
-import io.doppel.core.strategy.tap.TapStateMachine
 import io.doppel.adapter.common.api.EventBridge
 import io.doppel.adapter.common.module.Module
 import io.doppel.adapter.common.module.Category
@@ -20,7 +20,7 @@ import kotlin.random.Random
  * Presses the back key (S) for [actionTicks] milliseconds while holding W,
  * causing a near-instant speed drop that disrupts opponent aim prediction.
  *
- * State machine managed by Core [TapStateMachine].
+ * State machine managed by the core (`TAP_TICK` / `TAP_BEGIN`).
  * Only activates while holding W ([PlayerState.isMovingForward]).
  */
 object STap : Module("STap", Category.COMBAT) {
@@ -66,7 +66,6 @@ object STap : Module("STap", Category.COMBAT) {
     private val onceEvery19Max by int("OnceEvery19Max", 3, 1..10)
 
     // ========== Core State Machine ==========
-    private val machine = TapStateMachine()
     private var hitCounter: Int = 0
     private var hitThreshold: Int = 1
 
@@ -87,14 +86,18 @@ object STap : Module("STap", Category.COMBAT) {
     private fun onTick(player: PlayerState, target: TargetState?) {
         val now = System.nanoTime()
 
+        // No core, no tap: the timing lives there, and a local guess would be a different module.
+        if (!Strategies.online) { ownS(EventBridge.physicalBackDown); return }
+
         // ---- State machine events ----
-        when (machine.tick(now)) {
-            TapStateMachine.Event.END_TAP -> ownS(false)
-            TapStateMachine.Event.SHOULD_START_TAP -> startTap(now)
-            TapStateMachine.Event.NONE -> {}
+        val t = Strategies.tapTick(player, target, now)
+        when (t.event) {
+            TapTick.END_TAP -> ownS(false)
+            TapTick.SHOULD_START_TAP -> startTap(player, target, now)
+            else -> {}
         }
 
-        if (machine.phase != TapStateMachine.Phase.IDLE) return
+        if (t.phase != TapTick.IDLE) return
 
         // In IDLE, mirror the TRUE physical back key (LWJGL Keyboard.isKeyDown) so the
         // override doesn't block the player from voluntarily walking backward (S). STap only
@@ -125,7 +128,7 @@ object STap : Module("STap", Category.COMBAT) {
             "1.8" -> evaluate18(player, target, now)
             "1.9+" -> {
                 if (!Strategies.gate(player, target, triggerOptions)) return
-                evaluate19(now)
+                evaluate19(player, target, now)
             }
         }
     }
@@ -154,16 +157,16 @@ object STap : Module("STap", Category.COMBAT) {
 
         val pd = Random.nextInt(postDelayMin, postDelayMax + 1)
         if (pd > 0) {
-            machine.beginPostDelay(now, pd)
+            Strategies.tapBegin(player, target, now, pd, postDelay = true)
         } else {
-            startTap(now)
+            startTap(player, target, now)
         }
     }
 
     // ================================================================
     // 1.9+ — Low-frequency micro-stutter
     // ================================================================
-    private fun evaluate19(now: Long) {
+    private fun evaluate19(player: PlayerState, target: TargetState?, now: Long) {
         if (!EventBridge.isLeftMousePhysicallyDown) return
 
         if (Random.nextInt(100) >= chance19) return
@@ -173,13 +176,13 @@ object STap : Module("STap", Category.COMBAT) {
         hitCounter = 0
         hitThreshold = Random.nextInt(onceEvery19Min, onceEvery19Max + 1).coerceAtLeast(1)
 
-        startTap(now)
+        startTap(player, target, now)
     }
 
     // ================================================================
     // Execution
     // ================================================================
-    private fun startTap(nowNs: Long) {
+    private fun startTap(player: PlayerState, target: TargetState?, nowNs: Long) {
         ownS(true)                         // press S for the tap
         markWorked()                      // HUD work flash — the module just acted
         val ms = when (combatVersion) {
@@ -187,7 +190,7 @@ object STap : Module("STap", Category.COMBAT) {
             "1.9+" -> Random.nextInt(actionMin19, actionMax19 + 1)
             else -> 40
         }
-        machine.beginTap(nowNs, ms)
+        Strategies.tapBegin(player, target, nowNs, ms, postDelay = false)
     }
 
     // ========== Lifecycle ==========
@@ -205,7 +208,7 @@ object STap : Module("STap", Category.COMBAT) {
     override fun onDisable() {
         EventBridge.unregisterTickListener(tickListener)
         EventBridge.releaseBack(name)
-        machine.reset()
+        Strategies.resetTap()
         hitCounter = 0
     }
 }

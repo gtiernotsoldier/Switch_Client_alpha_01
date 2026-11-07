@@ -286,7 +286,7 @@ all look alike and none of which can be checked without counting bytes.
 
 | Module | Tail after byte 232 |
 |---|---|
-| Velocity | none |
+| Velocity | none for a knockback; `op u8, nargs u8, nargs × f64` for the tick-level questions |
 | Aim | `mouse_dx f32, mouse_dy f32, sensitivity f32` (12 bytes) |
 | Click | `attack_cooldown f32, is_falling u8, pad 3` (8 bytes) |
 | Movement / Tap / Combat / Reach | `op u8, nargs u8, nargs × f64` |
@@ -294,6 +294,25 @@ all look alike and none of which can be checked without counting bytes.
 Op ids are append-only, same reasoning as module ids: the stub and the core are
 separate binaries. The tables live beside their decoders in `codec.rs` and are
 mirrored in `Wire.Ops`.
+
+Velocity's tail distinguishes the two shapes by length: a knockback is exactly
+the snapshot, and anything longer carries an op byte after it. That is why the
+module needs two ops for things that are not per-hit — the sprint brace and the
+knockback delay both run on the tick clock, not the packet clock.
+
+### `Reset` frames
+
+`Kind::Reset` (10) carries no payload; the module id in the header says whose
+state to forget. Configuration is deliberately kept — a module toggle must not
+reset the user's settings — while everything the module learned is dropped: the
+key that was held, the tap whose remainder belonged to the previous activation,
+the velocity gate's last verdict, the brace window, the delay queue.
+
+Sent on enable and on disable. Skipping it does not fail loudly: a stale
+`SocdResolver` believes the opposite key was pressed later than it was, a stale
+tap timer fires an instantaneous key press on the first tick back, and a stale
+velocity gate biases the next hit's probability. All three look like "the module
+misbehaves after being toggled" and none of them point at the queue.
 
 Combat's `CBT_DECIDE` (op 4) is the one op that merges two questions — the
 condition gate and the trigger — into a single request. They have to share a

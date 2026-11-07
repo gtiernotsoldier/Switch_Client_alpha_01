@@ -1,14 +1,12 @@
 package io.doppel.adapter.common.module.combat
 
 import io.doppel.contract.model.*
-import io.doppel.core.strategy.velocity.ClickVelocityStrategy
-import io.doppel.core.strategy.velocity.LegitVelocityStrategy
-import io.doppel.core.strategy.velocity.SprintVelocityStrategy
 import io.doppel.contract.strategy.velocity.VelocityConfig
 import io.doppel.contract.strategy.velocity.VelocityMode
 import io.doppel.contract.strategy.velocity.VelocityResult
 import io.doppel.contract.strategy.velocity.VelocityStrategy
 import io.doppel.adapter.common.api.EventBridge
+import io.doppel.ipc.Strategies
 import io.doppel.adapter.common.module.HudLineProvider
 import io.doppel.adapter.common.module.Module
 import io.doppel.adapter.common.module.Category
@@ -127,7 +125,7 @@ object Velocity : Module("Velocity", Category.COMBAT), HudLineProvider {
     private val reduceGivenSkipped by int("ReduceGivenSkipped", 25, 0..100, "%")
 
     // ========== Legit: only reduce on the frame the player is hit (LB port) ==========
-    // The check itself moved into LegitVelocityStrategy; this only feeds the config.
+    // The check itself lives in the core's legit path; this only feeds the config.
     private val onlyOnHitFrame by boolean("OnlyOnHitFrame", false)
 
     // ========== Condition flags (six independent toggles) ==========
@@ -156,11 +154,10 @@ object Velocity : Module("Velocity", Category.COMBAT), HudLineProvider {
     private val maxAngleDifference by float("MaxAngleDifference", 90f, 0f..180f, "degrees")
     private val clickRange by float("ClickRange", 3.0f, 0.0f..6.0f, "blocks")
 
-    // ========== Core Strategies (Algorithm lives here) ==========
-    private val legitStrategy = LegitVelocityStrategy()
-    private val clickStrategy = ClickVelocityStrategy()
-    private val sprintStrategy = SprintVelocityStrategy()
-    private val strategyState = VelocityStrategy.State()
+    // ========== Core Strategies ==========
+    // No strategy objects here: the algorithm, its cross-hit gate state, the delay queue and the
+    // sprint brace window all live in the core session. This module assembles the config and maps
+    // the answer onto a platform command.
 
     /** Named listener reference so we can unregister exactly this handler (chain-friendly). */
     private val velocityListenerRef: (VelocityContext) -> PlatformCommand = { ctx ->
@@ -168,7 +165,7 @@ object Velocity : Module("Velocity", Category.COMBAT), HudLineProvider {
     }
 
     // ========== Sprint mode state ==========
-    // The arithmetic and the gate live in SprintVelocityStrategy (Core); only the adapter-side
+    // The arithmetic and the gate live in the core's sprint path; only the adapter-side
     // bookkeeping of "am I currently holding keys" stays here.
     @Volatile private var braceKeysHeld = false
 
@@ -211,13 +208,6 @@ object Velocity : Module("Velocity", Category.COMBAT), HudLineProvider {
         sprintSector = sprintSector
     )
 
-    /** Select the active strategy based on mode. */
-    private fun currentStrategy(): VelocityStrategy = when (mode) {
-        "Legit" -> legitStrategy
-        "Click" -> clickStrategy
-        else -> legitStrategy
-    }
-
     // ========== Entry Point ==========
 
     /** Throttle for the velocity result diagnostic. */
@@ -229,7 +219,7 @@ object Velocity : Module("Velocity", Category.COMBAT), HudLineProvider {
         // point: vanilla applies the knockback itself, so there is nothing to detect.
         if (mode == "Sprint") return onSprintKnockback(ctx)
 
-        // The hit-frame filter and the gate both live in LegitVelocityStrategy now — the module
+        // The hit-frame filter and the gate both live in the core's legit path — the module
         // assembles the config and maps the result, which is all the architecture asks of it.
         return reduceNormally(cachedConfig { buildConfig() }, ctx)
     }
@@ -242,7 +232,7 @@ object Velocity : Module("Velocity", Category.COMBAT), HudLineProvider {
      * the whole mode: it contributes nothing to the packet stream.
      */
     private fun onSprintKnockback(ctx: VelocityContext): PlatformCommand {
-        if (sprintStrategy.arm(cachedConfig { buildConfig() }, strategyState, ctx)) {
+        if (Strategies.velocity(ctx, cachedConfig { buildConfig() }).sprintArmed) {
             // Two ticks of slack past the window so a normal hiccup does not cut the brace short;
             // the point is only that it cannot outlive the world it was armed in.
             braceDeadlineNanos = System.nanoTime() + (sprintHoldTicks + 2) * 50_000_000L
@@ -266,12 +256,9 @@ object Velocity : Module("Velocity", Category.COMBAT), HudLineProvider {
 
         val expired = System.nanoTime() > braceDeadlineNanos
         val keys = if (expired) {
-            strategyState.braceTicksLeft = 0
             null
         } else {
-            sprintStrategy.braceKeys(
-                cachedConfig { buildConfig() }, strategyState, player.rotation.yaw
-            )
+            Strategies.braceKeys(player, EventBridge.crosshairTarget, player.rotation.yaw, sprintSector.toDouble())
         }
         if (keys == null) {
             releaseBraceKeys()
@@ -281,10 +268,10 @@ object Velocity : Module("Velocity", Category.COMBAT), HudLineProvider {
         // ADDITIVE claims, not direct writes: WTap/STap OWN W/S while a tap is live and beat us
         // on a shared tick (a trade), after which we resume. Writing the fields directly was
         // what let the tap and the brace silently cancel each other.
-        EventBridge.claimForward(name, keys.forward)
-        EventBridge.claimBack(name, keys.back)
-        EventBridge.claimRight(name, keys.right)
-        EventBridge.claimLeft(name, keys.left)
+        EventBridge.claimForward(name, keys[0])
+        EventBridge.claimBack(name, keys[1])
+        EventBridge.claimRight(name, keys[3])
+        EventBridge.claimLeft(name, keys[2])
         braceKeysHeld = true
 
         if (sprintSyncServerSprint) {
@@ -311,7 +298,7 @@ object Velocity : Module("Velocity", Category.COMBAT), HudLineProvider {
         EventBridge.releaseSprint(name)
         // Drop the window itself, not just the keys: a mode change or a stalled tick must not leave
         // a remainder that resumes (and re-presses) the next time Sprint mode is selected.
-        strategyState.braceTicksLeft = 0
+        Strategies.resetVelocity()
         braceDeadlineNanos = 0L
         if (!braceKeysHeld) return
         EventBridge.releaseForward(name)
@@ -323,7 +310,7 @@ object Velocity : Module("Velocity", Category.COMBAT), HudLineProvider {
 
     /** Run the strategy (conditions + scaling) and return its command. */
     private fun reduceNormally(config: VelocityConfig, ctx: VelocityContext): PlatformCommand {
-        val result = currentStrategy().execute(config, strategyState, ctx)
+        val result = Strategies.velocity(ctx, config).result
         // Expose whether velocity was actually modified/cancelled (for the VelocityDisplay HUD).
         val modified = result is VelocityResult.Modify || result is VelocityResult.Cancel
         EventBridge.velocityModified = modified
@@ -362,51 +349,21 @@ object Velocity : Module("Velocity", Category.COMBAT), HudLineProvider {
 
     // ========== Lifecycle ==========
 
-    /**
-     * Named reference, not an inline lambda.
-     *
-     * `unregisterTickListener(this::onTick)` cannot remove an anonymous `{ ... }` registered
-     * earlier — a Kotlin function reference is a new object every time, and the listener list
-     * matches by identity. The previous code therefore leaked one `onTick` per enable/disable
-     * cycle: `pumpDelayed` ran N times per tick after N toggles.
-     */
-    private val tickListenerRef: (Int) -> Unit = { currentTick ->
-        if (enabled) onTick(currentTick)
-    }
-
     override fun onEnable() {
-        // The gate's chain state and the Sprint brace window both live in strategyState and are
-        // cleared by strategyState.reset() in onDisable.
+        // The gate's chain state, the delay queue and the sprint brace window all live in the
+        // core; this clears them so a re-enable does not resume the previous session.
         braceKeysHeld = false
         braceDeadlineNanos = 0L
-        EventBridge.registerTickListener(tickListenerRef)
+        Strategies.resetVelocity()
         EventBridge.registerTickListener(sprintTickListenerRef)
         EventBridge.registerVelocityListener(velocityListenerRef, EventBridge.VELOCITY_PRIORITY_REDUCE)
     }
 
     override fun onDisable() {
         EventBridge.unregisterVelocityListener(velocityListenerRef)
-        EventBridge.unregisterTickListener(tickListenerRef)
         EventBridge.unregisterTickListener(sprintTickListenerRef)
-        strategyState.reset()
+        Strategies.resetVelocity()
         releaseBraceKeys()
-    }
-    /**
-     * Called on every tick to drain any delayed velocity packets from the
-     * strategy's delay queue (kept for the strategy interface; DELAY mode moved
-     * to the standalone KnockbackDelay module), and — in Sprint mode — to run
-     * one tick of the brace.
-     */
-    fun onTick(currentTick: Int) {
-        val config = cachedConfig { buildConfig() }
-        val strategy = currentStrategy()
-        val results = strategy.pumpDelayed(config, strategyState, currentTick)
-        for (result in results) {
-            val command = mapResultToCommand(result)
-            if (command is PlatformCommand.ModifyMotion) {
-                EventBridge.applyMotion(command.motion)
-            }
-        }
     }
 
     /**
@@ -423,7 +380,7 @@ object Velocity : Module("Velocity", Category.COMBAT), HudLineProvider {
     private val sprintTickListenerRef: (PlayerState, TargetState?) -> Unit = { p, _ ->
         if (enabled && mode == "Sprint") {
             sprintTick(p)
-        } else if (braceKeysHeld || strategyState.braceTicksLeft > 0 || braceDeadlineNanos != 0L) {
+        } else if (braceKeysHeld || braceDeadlineNanos != 0L) {
             releaseBraceKeys()
         }
     }

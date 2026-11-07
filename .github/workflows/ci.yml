@@ -158,7 +158,17 @@ jobs:
             echo "ERROR: org/objectweb/asm/ClassReader not found in fat jar. ASM dependency missing!"
             exit 1
           fi
-          echo "agent.jar validation passed. All modules + render bridge present."
+          # The split is complete: no algorithm class may ride along. This is the point of
+          # the whole refactor — :core is not a runtime dependency of the agent any more,
+          # and a reintroduced `project(":core")` would show up here as ~90 classes.
+          CORE=$(jar tf "$JAR" | grep -c "io/doppel/core/" || true)
+          if [ "$CORE" -ne 0 ]; then
+            echo "ERROR: $CORE io/doppel/core/ classes in agent.jar."
+            echo "The agent must not ship the algorithm module; ask the core over IPC instead."
+            jar tf "$JAR" | grep "io/doppel/core/" | head -10
+            exit 1
+          fi
+          echo "agent.jar validation passed. All modules + render bridge present, 0 core classes."
       - name: Run tests
         run: cd Doppel && gradle :core:test :adapter:common:test :agent:test --no-daemon
       - name: Compile summary

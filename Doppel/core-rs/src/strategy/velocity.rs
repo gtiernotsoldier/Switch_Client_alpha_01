@@ -27,6 +27,16 @@ pub struct State {
 
     /// SPRINT: did the previous hit brace?
     pub brace_last_passed: bool,
+
+    /// SPRINT: the armed window, as (source_x, source_z). None = idle.
+    ///
+    /// Source only; the length is `brace_ticks_left`. Unlike the JVM version
+    /// there is no identity check on adoption — this state is touched by one
+    /// thread, so a fresh arm can simply overwrite the remainder.
+    pub brace_window: Option<(f64, f64)>,
+
+    /// SPRINT: ticks left in the current window.
+    pub brace_ticks_left: i32,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -42,6 +52,8 @@ impl State {
             delay_queue: Vec::new(),
             tick_counter: 0,
             brace_last_passed: false,
+            brace_window: None,
+            brace_ticks_left: 0,
         }
     }
 
@@ -50,6 +62,8 @@ impl State {
         self.delay_queue.clear();
         self.tick_counter = 0;
         self.brace_last_passed = false;
+        self.brace_window = None;
+        self.brace_ticks_left = 0;
     }
 }
 
@@ -67,8 +81,13 @@ pub fn execute(config: &VelocityConfig, state: &mut State, ctx: &VelocityContext
             // SPRINT never touches the packet: it arms a key-press window and
             // returns Pass. The window itself is tick-level and resolved by the
             // stub from the last armed plan (9.5.2 "frame-level plan").
-            let _armed = arm(config, state, ctx, rng);
-            Decision::pass(ctx.original_motion, Reason::PassThrough as u8)
+            let armed = arm(config, state, ctx, rng);
+            let reason = if armed {
+                Reason::SprintArmed
+            } else {
+                Reason::PassThrough
+            };
+            Decision::pass(ctx.original_motion, reason as u8)
         }
     }
 }
@@ -160,7 +179,45 @@ fn arm(config: &VelocityConfig, state: &mut State, ctx: &VelocityContext, rng: &
     };
     let passed = (rng.next_int(100) as i32) < p;
     state.brace_last_passed = passed;
+    if passed {
+        if let Some(source) = brace_source(&ctx.original_motion) {
+            state.brace_window = Some(source);
+            state.brace_ticks_left = config.sprint_hold_ticks;
+        }
+    }
     passed
+}
+
+/// `SprintBrace.keysFor` — resolve the armed direction against the player's
+/// current facing, in `(forward, back, left, right)` order.
+///
+/// The yaw comes from the snapshot, not from the hit: the mapping depends on
+/// where the player is facing *now*, and that changes during the window.
+pub fn brace_keys(yaw_deg: f32, sector: f64, state: &mut State) -> (bool, bool, bool, bool) {
+    let window = match state.brace_window {
+        Some(w) => w,
+        None => return (false, false, false, false),
+    };
+    if state.brace_ticks_left <= 0 {
+        state.brace_window = None;
+        return (false, false, false, false);
+    }
+    state.brace_ticks_left -= 1;
+
+    let yaw = (yaw_deg as f64).to_radians();
+    let fwd_x = -yaw.sin();
+    let fwd_z = yaw.cos();
+    // Right of forward in the (x, z) plane: (x, z) -> (-z, x).
+    let rgt_x = -fwd_z;
+    let rgt_z = fwd_x;
+    let f_dot = fwd_x * window.0 + fwd_z * window.1;
+    let r_dot = rgt_x * window.0 + rgt_z * window.1;
+    (
+        f_dot > sector,
+        f_dot < -sector,
+        r_dot < -sector,
+        r_dot > sector,
+    )
 }
 
 /// `SprintBrace.sourceFrom` — unit vector back at the attacker, or None when the
@@ -205,8 +262,10 @@ pub fn delay_enqueue(config: &VelocityConfig, state: &mut State, ctx: &VelocityC
 }
 
 /// Release everything whose tick has arrived, unchanged.
+///
+/// Does not touch `tick_counter`: the caller decides which clock the queue runs on, and having
+/// this overwrite it made the delay depend on whether a knockback happened to arrive that tick.
 pub fn delay_pump(state: &mut State, current_tick: i32) -> Vec<Vec3> {
-    state.tick_counter = current_tick;
     let mut released = Vec::new();
     let mut i = 0;
     while i < state.delay_queue.len() {

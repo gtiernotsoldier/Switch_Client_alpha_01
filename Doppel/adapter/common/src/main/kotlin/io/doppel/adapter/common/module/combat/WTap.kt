@@ -1,9 +1,9 @@
 package io.doppel.adapter.common.module.combat
 
 import io.doppel.ipc.Strategies
+import io.doppel.ipc.Strategies.TapTick
 import io.doppel.contract.model.PlayerState
 import io.doppel.contract.model.TargetState
-import io.doppel.core.strategy.tap.TapStateMachine
 import io.doppel.adapter.common.api.EventBridge
 import io.doppel.adapter.common.module.Module
 import io.doppel.adapter.common.module.Category
@@ -21,7 +21,7 @@ import kotlin.random.Random
  * an attack, then re-presses it. This resets the player's sprint state,
  * allowing knockback to function at full strength on the next hit.
  *
- * State machine managed by Core [TapStateMachine].
+ * State machine managed by the core (`TAP_TICK` / `TAP_BEGIN`).
  * Only activates while the player is holding W ([PlayerState.isMovingForward]).
  */
 object WTap : Module("WTap", Category.COMBAT) {
@@ -65,7 +65,7 @@ object WTap : Module("WTap", Category.COMBAT) {
     private val actionMax19 by int("ActionMsMax19", 30, 1..500, "ms")
 
     // ========== Core State Machine ==========
-    private val machine = TapStateMachine()
+    // Phase and both deadlines live in the core; this module keeps only what it must release.
     private var hitCounter: Int = 0
     private var hitThreshold: Int = 1
 
@@ -90,15 +90,19 @@ object WTap : Module("WTap", Category.COMBAT) {
     private fun onTick(player: PlayerState, target: TargetState?) {
         val now = System.nanoTime()
 
+        // No core, no tap: this module's whole job is a timed key press it cannot compute.
+        if (!Strategies.online) { ownW(EventBridge.physicalForwardDown); return }
+
         // ---- State machine events ----
-        when (machine.tick(now)) {
-            TapStateMachine.Event.END_TAP -> ownW(true)
-            TapStateMachine.Event.SHOULD_START_TAP -> startTap(now)
-            TapStateMachine.Event.NONE -> {}
+        val t = Strategies.tapTick(player, target, now)
+        when (t.event) {
+            TapTick.END_TAP -> ownW(true)
+            TapTick.SHOULD_START_TAP -> startTap(player, target, now)
+            else -> {}
         }
 
         // Only evaluate trigger in IDLE phase
-        if (machine.phase != TapStateMachine.Phase.IDLE) return
+        if (t.phase != TapTick.IDLE) return
 
         // Guard: W must be physically held. Use the TRUE physical key state (LWJGL
         // Keyboard.isKeyDown), not player.isMovingForward (velocity-based, lags after the
@@ -157,9 +161,9 @@ object WTap : Module("WTap", Category.COMBAT) {
 
         val pd = Random.nextInt(postDelayMin, postDelayMax + 1)
         if (pd > 0) {
-            machine.beginPostDelay(now, pd)
+            Strategies.tapBegin(player, target, now, pd, postDelay = true)
         } else {
-            startTap(now)
+            startTap(player, target, now)
         }
     }
 
@@ -176,13 +180,13 @@ object WTap : Module("WTap", Category.COMBAT) {
 
         if (chance < 100 && Random.nextInt(100) >= chance) return
 
-        startTap(now)
+        startTap(player, target, now)
     }
 
     // ================================================================
     // Execution
     // ================================================================
-    private fun startTap(nowNs: Long) {
+    private fun startTap(player: PlayerState, target: TargetState?, nowNs: Long) {
         ownW(false)                           // release W for the tap
         markWorked()                          // HUD work flash — the module just acted
         val ms = when (combatVersion) {
@@ -190,7 +194,7 @@ object WTap : Module("WTap", Category.COMBAT) {
             "1.9+" -> Random.nextInt(actionMin19, actionMax19 + 1)
             else -> 40
         }
-        machine.beginTap(nowNs, ms)
+        Strategies.tapBegin(player, target, nowNs, ms, postDelay = false)
     }
 
     // ========== Lifecycle ==========
@@ -204,7 +208,7 @@ object WTap : Module("WTap", Category.COMBAT) {
     override fun onDisable() {
         EventBridge.unregisterTickListener(tickListener)
         EventBridge.releaseForward(name)
-        machine.reset()
+        Strategies.resetTap()
         hitCounter = 0
     }
 }

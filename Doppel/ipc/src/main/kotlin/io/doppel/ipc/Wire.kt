@@ -63,6 +63,8 @@ object Wire {
     const val KIND_PONG = 7
     const val KIND_ERROR = 8
     const val KIND_BYE = 9
+    /** Forget one module's cross-tick state; the module id is in the header. */
+    const val KIND_RESET = 10
 
     // status
     const val STATUS_OK = 0
@@ -84,6 +86,9 @@ object Wire {
 
     // actions
     const val ACTION_NOOP = 0
+    /** Reason codes that a caller may branch on (`decodeDecision(...).reason`). */
+    const val REASON_SPRINT_ARMED = 13
+
     const val ACTION_PASS = 1
     const val ACTION_MODIFY = 2
     const val ACTION_CLICK_BURST = 3
@@ -367,6 +372,11 @@ fun reasonName(r: Int): String = when (r) {
  * `core-rs/src/codec.rs`.
  */
 object Ops {
+    // velocity
+    const val VEL_BRACE = 0         // yaw, sector → 4 bits (forward, back, left, right)
+    const val VEL_DELAY_ENQUEUE = 1 // tick, chance, maxDelay, requireWeapon, flags, minD, maxD, lookAngle, gateChance → bool
+    const val VEL_DELAY_PUMP = 2    // tick → released motions
+
     // movement
     const val MOV_SOCD = 0          // forward, back, left, right
     const val MOV_STRAFE = 1        // forward, back, left, right, distance, bearingRad, yawDeg, reach
@@ -379,6 +389,7 @@ object Ops {
     const val TAP_TICK = 3          // nowNs
     const val TAP_POST_DELAY = 4    // nowNs, delayMs
     const val TAP_BEGIN = 5         // nowNs, durationMs
+    const val TAP_RANDOM = 6        // (no args) → side
 
     // combat
     const val CBT_TRIGGER = 0       // mode, hurtResistant, maxHurt, counter, threshold, perMin, perMax, chance, hurtGate
@@ -515,7 +526,25 @@ fun decodeCombatDecision(f: Frame): CombatDecision {
 }
 
 /** Combat verdict: block, score, effective hurt time. */
-class Verdict(@JvmField val block: Boolean, @JvmField val score: Double, @JvmField val effectiveHurt: Int)
+class Verdict(
+    @JvmField val block: Boolean,
+    @JvmField val score: Double,
+    @JvmField val effectiveHurt: Int,
+    /** Layer A: the target is damage-locked, so a hit cannot land. */
+    @JvmField val locked: Boolean = false,
+    /** Layer B: the opponent's next attack is due within the window. */
+    @JvmField val threat: Boolean = false
+)
+
+/** The motions a delay pump released this tick, in queue order. */
+fun decodeMotions(f: Frame): List<Vec3> {
+    val b = ByteBuffer.wrap(f.payload, 0, f.payloadLen).order(ByteOrder.LITTLE_ENDIAN)
+    b.get(); b.get()
+    val n = b.short.toInt()
+    val out = ArrayList<Vec3>(n)
+    repeat(n) { out.add(Vec3(b.double, b.double, b.double)) }
+    return out
+}
 
 fun decodeVerdict(f: Frame): Verdict {
     val b = ByteBuffer.wrap(f.payload, 0, f.payloadLen).order(ByteOrder.LITTLE_ENDIAN)
@@ -524,7 +553,7 @@ fun decodeVerdict(f: Frame): Verdict {
     val score = b.double
     b.double; b.double
     val eff = b.int
-    return Verdict(flags and 1 != 0, score, eff)
+    return Verdict(flags and 1 != 0, score, eff, flags and 2 != 0, flags and 4 != 0)
 }
 
 // ── config encoders ────────────────────────────────────────────────────────
@@ -556,6 +585,54 @@ private fun putTrigger(b: ByteBuffer, t: io.doppel.contract.option.TriggerOption
     b.putInt(t.delayTicks)
     b.putInt(t.delayMs)
     b.putFloat(t.lookAngleThreshold)
+}
+
+/**
+ * Velocity config, 104 bytes — the layout `session::decode_config` reads.
+ *
+ * This encoder did not exist before: nothing ever pushed a velocity config, so the core ran every
+ * mode on `VelocityConfig::default()`. The numbers the module shows in its GUI were only used by
+ * the JVM-side strategies, which is why the omission was invisible until the strategies moved.
+ */
+fun encodeVelocityConfig(c: io.doppel.contract.strategy.velocity.VelocityConfig): ByteArray {
+    val b = Wire.le(104)
+    b.put(
+        when (c.mode) {
+            io.doppel.contract.strategy.velocity.VelocityMode.LEGIT -> 0
+            io.doppel.contract.strategy.velocity.VelocityMode.CLICK -> 1
+            io.doppel.contract.strategy.velocity.VelocityMode.SPRINT -> 2
+        }.toByte()
+    )
+    b.put(if (c.onlyOnHitFrame) 1 else 0)
+    b.put(if (c.whenFacingEnemyOnly) 1 else 0)
+    b.put(0)                                   // require_weapon: not a Velocity option, see KnockbackDelay
+    b.putFloat(c.horizontalMin)
+    b.putFloat(c.horizontalMax)
+    b.putFloat(c.verticalMin)
+    b.putFloat(c.verticalMax)
+    b.putFloat(c.clickRange)
+    b.putFloat(c.maxAngleDifference)
+    b.putFloat(c.sprintSector)
+    b.putInt(c.reduceGivenReduced)
+    b.putInt(c.reduceGivenSkipped)
+    b.putInt(c.clickBurstMin)
+    b.putInt(c.clickBurstMax)
+    b.putInt(c.hurtTimeToClick)
+    b.putInt(c.sprintHoldTicks)
+    b.putInt(c.sprintGateBraced)
+    b.putInt(c.sprintGateIdle)
+    b.putInt(0)                                // delay_chance — DELAY lives in KnockbackDelay now
+    b.putInt(0)                                // max_delay_ticks
+    b.putShort(encodeTriggerFlags(c.triggerOptions).toInt().toShort())
+    b.putShort(0)                              // padding, mirrors the u16 + skip(2)
+    b.putFloat(c.triggerOptions.minDistance)
+    b.putFloat(c.triggerOptions.maxDistance)
+    b.putInt(c.triggerOptions.chance)
+    b.putInt(c.triggerOptions.delayTicks)
+    b.putInt(c.triggerOptions.delayMs)
+    b.putFloat(c.triggerOptions.lookAngleThreshold)
+    require(b.position() == 104) { "velocity config must be 104 bytes, got ${b.position()}" }
+    return b.array()
 }
 
 fun encodeAimConfig(c: io.doppel.contract.strategy.aim.AimConfig): ByteArray {

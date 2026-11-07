@@ -1,6 +1,6 @@
 package io.doppel.adapter.common.module.movement
 
-import io.doppel.core.condition.ConditionChecker
+import io.doppel.ipc.Strategies
 import io.doppel.contract.model.PlayerState
 import io.doppel.contract.model.TargetState
 import io.doppel.adapter.common.api.EventBridge
@@ -42,7 +42,7 @@ object Sprint : Module("Sprint", Category.MOVEMENT) {
 
     private fun onTick(player: PlayerState) {
         if (!player.isMovingForward) return
-        if (!ConditionChecker.check(triggerOptions, player, null)) return
+        if (!Strategies.gate(player, null, triggerOptions)) return
         if (EventBridge.isInFluid || EventBridge.foodLevel <= 6) return
         // Vanilla: can't sprint while blocking or using item
         if (player.isBlocking || player.isUsingItem) return

@@ -1,9 +1,8 @@
 package io.doppel.adapter.common.module.combat
 
-import io.doppel.core.condition.ConditionChecker
+import io.doppel.ipc.Strategies
 import io.doppel.contract.model.PlayerState
 import io.doppel.contract.model.TargetState
-import io.doppel.core.strategy.combat.CombatTrigger
 import io.doppel.core.strategy.tap.TapStateMachine
 import io.doppel.adapter.common.api.EventBridge
 import io.doppel.adapter.common.module.Module
@@ -120,13 +119,14 @@ object STap : Module("STap", Category.COMBAT) {
         if (target.health <= 0f) { hitCounter = 0; return }
         if (onlyPlayers && target.name.isEmpty()) { hitCounter = 0; return }
 
-        // Unified conditions
-        if (!ConditionChecker.check(triggerOptions, player, target)) return
-
-        // Route by version
+        // 1.8 runs the gate inside the trigger — one round trip, one random stream. 1.9 has no
+        // trigger to merge it with, so it asks on its own.
         when (combatVersion) {
             "1.8" -> evaluate18(player, target, now)
-            "1.9+" -> evaluate19(now)
+            "1.9+" -> {
+                if (!Strategies.gate(player, target, triggerOptions)) return
+                evaluate19(now)
+            }
         }
     }
 
@@ -134,22 +134,23 @@ object STap : Module("STap", Category.COMBAT) {
     // 1.8 — CombatTrigger pipeline
     // ================================================================
     private fun evaluate18(player: PlayerState, target: TargetState, now: Long) {
-        val eval = CombatTrigger.evaluate(
-            mode = if (eventType == "PRE") CombatTrigger.Mode.PRE else CombatTrigger.Mode.POST,
-            target = target,
+        // hurtGate = false: fire on the attack itself, not the target's i-frame window (20 Hz
+        // sampling of that window is unreliable) — restores "attack triggers a tap".
+        val decision = Strategies.decide(
+            player, target, triggerOptions,
+            mode = if (eventType == "PRE") 1 else 0,
+            hurtGate = false,
             maxHurtTime = player.maxHurtResistantTime,
+            targetHurtResistantTime = target.hurtResistantTime,
             hitCounter = hitCounter,
             hitThreshold = hitThreshold,
             hitPerMin = onceEveryMin,
             hitPerMax = onceEveryMax,
-            chance = chance18,
-            // Fire on the attack itself, not the target's i-frame window (20Hz sampling of it is
-            // unreliable) — restores the working "attack triggers a tap" behaviour.
-            hurtGate = false
-        )
-        hitCounter = eval.hitCounter
-        hitThreshold = eval.hitThreshold
-        if (!eval.fire) return
+            triggerChance = chance18
+        ) ?: return
+        hitCounter = decision.counter
+        hitThreshold = decision.threshold
+        if (!decision.fire) return
 
         val pd = Random.nextInt(postDelayMin, postDelayMax + 1)
         if (pd > 0) {

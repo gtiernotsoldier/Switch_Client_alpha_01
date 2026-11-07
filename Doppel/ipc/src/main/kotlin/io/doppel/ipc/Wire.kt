@@ -385,6 +385,7 @@ object Ops {
     const val CBT_ARBITER = 1       // locked, threat, sustain, reflex, wLock, wThreat, wSustain, wReflex, threshold, maxDuty
     const val CBT_PREDICT = 2       // maxHurt, rtt, lead, predict, window, chance, alpha, seed, tick, opponentJustHit
     const val CBT_RANGE = 3         // mode, min, max, hysteresis, hasDistance, distance
+    const val CBT_DECIDE = 4        // flags, minD, maxD, lookAngle, gateChance, mode, hurtGate, maxHurt, targetHurt, counter, threshold, perMin, perMax, triggerChance
 
     // reach
     const val REACH_INTERSECT = 0   // minX..maxZ, originX..Z, dirX..Z, maxDist
@@ -467,6 +468,50 @@ fun decodeBool(f: Frame): Boolean {
     b.get(); b.get()
     val flags = b.short.toInt()
     return flags and 1 != 0
+}
+
+/**
+ * Packs [TriggerOptions]'s thirteen booleans into the bit field the core's
+ * `trigger_from_packed` reads.
+ *
+ * The bit order is the one `write_trigger` uses for the config frames. Two layouts would
+ * eventually disagree about which bit means `onlyStrafe`, and the disagreement would show
+ * up as a module that fires when it should not — with nothing in the logs to explain it.
+ */
+fun encodeTriggerFlags(o: TriggerOptions): Double {
+    var f = 0
+    if (o.onlyGround) f = f or (1 shl 0)
+    if (o.onlyAir) f = f or (1 shl 1)
+    if (o.onlyMove) f = f or (1 shl 2)
+    if (o.onlyMoveForward) f = f or (1 shl 3)
+    if (o.onlyMoveBackward) f = f or (1 shl 4)
+    if (o.onlyStrafe) f = f or (1 shl 5)
+    if (o.onlyWhenTargetGoesBack) f = f or (1 shl 6)
+    if (o.onlyWhenTargetApproaches) f = f or (1 shl 7)
+    if (o.onLook) f = f or (1 shl 8)
+    if (o.onlyCurrentView) f = f or (1 shl 9)
+    if (o.disableOnMine) f = f or (1 shl 10)
+    if (o.onlyOnClick) f = f or (1 shl 11)
+    if (o.disabledInAir) f = f or (1 shl 12)
+    return f.toDouble()
+}
+
+/**
+ * Gate + trigger answer: fire, and the trigger's new hit counter and threshold.
+ *
+ * The threshold comes back because the core samples it; the JVM has no way to derive it and
+ * guessing would desynchronise the next fire.
+ */
+class CombatDecision(@JvmField val fire: Boolean, @JvmField val counter: Int, @JvmField val threshold: Int)
+
+fun decodeCombatDecision(f: Frame): CombatDecision {
+    val b = ByteBuffer.wrap(f.payload, 0, f.payloadLen).order(ByteOrder.LITTLE_ENDIAN)
+    b.get(); b.get()
+    val flags = b.short.toInt()
+    b.double; b.double; b.double
+    val counter = b.int
+    val threshold = b.int
+    return CombatDecision(flags and 1 != 0, counter, threshold)
 }
 
 /** Combat verdict: block, score, effective hurt time. */

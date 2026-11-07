@@ -2,6 +2,7 @@ package io.doppel.ipc
 
 import io.doppel.contract.model.PlayerState
 import io.doppel.contract.model.TargetState
+import io.doppel.contract.option.TriggerOptions
 import io.doppel.contract.strategy.aim.AimConfig
 import io.doppel.contract.strategy.aim.AimResult
 import io.doppel.contract.strategy.aim.AimStrategy
@@ -98,6 +99,56 @@ object Strategies {
         return stub.movementSliding(
             player, null, motionX, motionZ, yaw, releasedForward, minSpeed, nextTick()
         ) ?: false
+    }
+
+    /**
+     * The condition gate alone: may this module act on this tick?
+     *
+     * Off-line answers `false`. Every caller treats false as "do not act", so a machine without
+     * the core gets modules that are visibly idle rather than modules acting on a stale or
+     * unconditional verdict.
+     */
+    fun gate(
+        player: PlayerState,
+        target: TargetState?,
+        options: TriggerOptions
+    ): Boolean {
+        val stub = CoreLink.stub ?: return false
+        return stub.combatDecide(
+            player, target, options,
+            mode = -1, hurtGate = false, maxHurtTime = 0, targetHurtResistantTime = 0,
+            hitCounter = 0, hitThreshold = 1, hitPerMin = 1, hitPerMax = 1, triggerChance = 100,
+            tick = nextTick()
+        )?.fire ?: false
+    }
+
+    /**
+     * Gate + combat trigger in one round trip.
+     *
+     * Returns null when no core is attached; callers then leave their counters untouched and do
+     * not fire. [CombatDecision.counter] and [CombatDecision.threshold] must be written back even when the
+     * answer is "do not fire" — the core advances the counter on every evaluated attack, and
+     * dropping that increment makes the module count hits it never made.
+     */
+    fun decide(
+        player: PlayerState,
+        target: TargetState?,
+        options: TriggerOptions,
+        mode: Int,
+        hurtGate: Boolean,
+        maxHurtTime: Int,
+        targetHurtResistantTime: Int,
+        hitCounter: Int,
+        hitThreshold: Int,
+        hitPerMin: Int,
+        hitPerMax: Int,
+        triggerChance: Int
+    ): CombatDecision? {
+        val stub = CoreLink.stub ?: return null
+        return stub.combatDecide(
+            player, target, options, mode, hurtGate, maxHurtTime, targetHurtResistantTime,
+            hitCounter, hitThreshold, hitPerMin, hitPerMax, triggerChance, nextTick()
+        )
     }
 
     /**

@@ -1,6 +1,5 @@
 package io.doppel.adapter.common.module.combat
 
-import io.doppel.core.condition.ConditionChecker
 import io.doppel.contract.logging.CoreLogger
 import io.doppel.contract.model.PlayerState
 import io.doppel.contract.model.TargetState
@@ -18,6 +17,7 @@ import io.doppel.adapter.common.option.int
 import io.doppel.adapter.common.option.triggerOptions
 import kotlin.random.Random
 import io.doppel.contract.option.TriggerOptions
+import io.doppel.ipc.Strategies
 
 /**
  * AutoBlock Module — 1.8 exclusive (sword blocking).
@@ -248,7 +248,7 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
 
         // Unified condition engine (OnlyPlane / OnlyTargeting / OnlyMove / OnlyMoveForward /
         // OnlyWhenTargetGoesBack). Applies to ALL modes.
-        val conditionsMet = ConditionChecker.check(triggerOptions, player, target)
+        val conditionsMet = Strategies.gate(player, target, triggerOptions)
 
         // Distance gate — behavior depends on RangeMode (InRange = continuous; OnEnter = latch
         // on entry with hysteresis). Algorithm lives in core RangeGate.

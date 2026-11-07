@@ -494,6 +494,53 @@ class CoreStub(
         return decodeBool(f)
     }
 
+    /**
+     * The condition gate and the combat trigger as one decision.
+     *
+     * `mode < 0` runs the gate alone — that is what the modules that only ask "may I act this
+     * tick" need (JumpReset, Sprint, SuperKnockback...). `mode` 0/1/2 is POST/PRE/EQUAL and adds
+     * the hurt-window gate, the hit counter and the probability roll.
+     *
+     * One op rather than two because both halves draw from the same stream in the core. Splitting
+     * them would let the gate's roll and the trigger's draws interleave differently on each side,
+     * and no replay would survive 300 ticks.
+     */
+    fun combatDecide(
+        player: io.doppel.contract.model.PlayerState,
+        target: io.doppel.contract.model.TargetState?,
+        options: io.doppel.contract.option.TriggerOptions,
+        mode: Int,
+        hurtGate: Boolean,
+        maxHurtTime: Int,
+        targetHurtResistantTime: Int,
+        hitCounter: Int,
+        hitThreshold: Int,
+        hitPerMin: Int,
+        hitPerMax: Int,
+        triggerChance: Int,
+        tick: Int
+    ): CombatDecision? {
+        val payload = genericRequest(
+            encodeSnapshot(player, target), Ops.CBT_DECIDE,
+            encodeTriggerFlags(options),
+            options.minDistance.toDouble(),
+            options.maxDistance.toDouble(),
+            options.lookAngleThreshold.toDouble(),
+            options.chance.toDouble(),
+            mode.toDouble(),
+            b(hurtGate),
+            maxHurtTime.toDouble(),
+            targetHurtResistantTime.toDouble(),
+            hitCounter.toDouble(),
+            hitThreshold.toDouble(),
+            hitPerMin.toDouble(),
+            hitPerMax.toDouble(),
+            triggerChance.toDouble()
+        )
+        val f = roundTrip(Wire.MODULE_COMBAT, payload, tick) ?: return null
+        return decodeCombatDecision(f)
+    }
+
     fun combatArbiter(
         player: io.doppel.contract.model.PlayerState,
         target: io.doppel.contract.model.TargetState?,

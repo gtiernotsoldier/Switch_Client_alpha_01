@@ -559,6 +559,72 @@ impl Session {
                     let v = combat::range_gate_compute(Some(&mut self.range_state), &cfg, distance);
                     Ok(codec::encode_bool(seq, tick, Module::Combat, WireAction::Bool, v))
                 }
+                op::CBT_DECIDE => {
+                    let opts = codec::trigger_from_packed(
+                        req.arg(0)?,
+                        req.arg(1)?,
+                        req.arg(2)?,
+                        req.arg(3)?,
+                        req.arg(4)?,
+                    );
+                    let mode_code = req.i32(5)?;
+                    let hurt_gate = req.bool(6)?;
+                    let max_hurt = req.i32(7)?;
+                    let target_hurt = req.i32(8)?;
+                    let counter = req.i32(9)?;
+                    let threshold = req.i32(10)?;
+                    let per_min = req.i32(11)?;
+                    let per_max = req.i32(12)?;
+                    let trigger_chance = req.i32(13)?;
+
+                    // Gate first, trigger second — the order the JVM path used, so that the
+                    // trigger's one or two draws land at the same offsets in the stream. Reversing
+                    // these still passes a single-tick test and breaks every replay.
+                    let blocked = crate::condition::check(
+                        &opts,
+                        &req.ctx.player,
+                        req.ctx.target.as_ref(),
+                        &mut self.rng_combat,
+                    )
+                    .is_some();
+                    if blocked {
+                        return Ok(codec::encode_tristate(
+                            seq, tick, Module::Combat, WireAction::Bool, false, counter, threshold,
+                        ));
+                    }
+                    if mode_code < 0 {
+                        return Ok(codec::encode_tristate(
+                            seq, tick, Module::Combat, WireAction::Bool, true, counter, threshold,
+                        ));
+                    }
+                    let mode = match mode_code {
+                        0 => combat::TriggerMode::Post,
+                        1 => combat::TriggerMode::Pre,
+                        2 => combat::TriggerMode::Equal,
+                        _ => return Err(Status::BadPayload),
+                    };
+                    let r = combat::combat_trigger_evaluate(
+                        mode,
+                        target_hurt,
+                        max_hurt,
+                        counter,
+                        threshold,
+                        per_min,
+                        per_max,
+                        trigger_chance,
+                        hurt_gate,
+                        &mut self.rng_combat,
+                    );
+                    Ok(codec::encode_tristate(
+                        seq,
+                        tick,
+                        Module::Combat,
+                        WireAction::Bool,
+                        r.fire,
+                        r.hit_counter,
+                        r.hit_threshold,
+                    ))
+                }
                 _ => Err(Status::BadPayload),
             }
         };

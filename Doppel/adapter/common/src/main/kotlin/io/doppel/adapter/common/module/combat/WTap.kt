@@ -1,9 +1,8 @@
 package io.doppel.adapter.common.module.combat
 
-import io.doppel.core.condition.ConditionChecker
+import io.doppel.ipc.Strategies
 import io.doppel.contract.model.PlayerState
 import io.doppel.contract.model.TargetState
-import io.doppel.core.strategy.combat.CombatTrigger
 import io.doppel.core.strategy.tap.TapStateMachine
 import io.doppel.adapter.common.api.EventBridge
 import io.doppel.adapter.common.module.Module
@@ -136,24 +135,25 @@ object WTap : Module("WTap", Category.COMBAT) {
     // 1.8 — CombatTrigger pipeline
     // ================================================================
     private fun evaluate18(player: PlayerState, target: TargetState, now: Long) {
-        if (!ConditionChecker.check(triggerOptions, player, target)) return
-
-        val eval = CombatTrigger.evaluate(
-            mode = if (eventType == "PRE") CombatTrigger.Mode.PRE else CombatTrigger.Mode.POST,
-            target = target,
+        // Gate and trigger in one call: they share the core's random stream, and asking twice
+        // would spend two draws where the original spent one.
+        // hurtGate = false: fire on the attack itself, not the target's i-frame window (20 Hz
+        // sampling of that window is unreliable).
+        val decision = Strategies.decide(
+            player, target, triggerOptions,
+            mode = if (eventType == "PRE") 1 else 0,
+            hurtGate = false,
             maxHurtTime = player.maxHurtResistantTime,
+            targetHurtResistantTime = target.hurtResistantTime,
             hitCounter = hitCounter,
             hitThreshold = hitThreshold,
             hitPerMin = onceEveryMin,
             hitPerMax = onceEveryMax,
-            chance = chance,
-            // Fire on the attack itself, not the target's i-frame window (20Hz sampling of it is
-            // unreliable) — restores the working "attack triggers a tap" behaviour.
-            hurtGate = false
-        )
-        hitCounter = eval.hitCounter
-        hitThreshold = eval.hitThreshold
-        if (!eval.fire) return
+            triggerChance = chance
+        ) ?: return
+        hitCounter = decision.counter
+        hitThreshold = decision.threshold
+        if (!decision.fire) return
 
         val pd = Random.nextInt(postDelayMin, postDelayMax + 1)
         if (pd > 0) {
@@ -172,7 +172,7 @@ object WTap : Module("WTap", Category.COMBAT) {
         val cooldown = player.attackCooldownProgress
         if (cooldown < cooldownThreshold) return
 
-        if (!ConditionChecker.check(triggerOptions, player, target)) return
+        if (!Strategies.gate(player, target, triggerOptions)) return
 
         if (chance < 100 && Random.nextInt(100) >= chance) return
 

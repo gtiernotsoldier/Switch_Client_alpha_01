@@ -1,6 +1,6 @@
 package io.doppel.adapter.common.module.combat
 
-import io.doppel.core.condition.ConditionChecker
+import io.doppel.ipc.Strategies
 import io.doppel.contract.model.PlayerState
 import io.doppel.contract.model.TargetState
 import io.doppel.adapter.common.api.EventBridge
@@ -206,7 +206,7 @@ object SuperKnockback : Module("SuperKnockback", Category.COMBAT) {
     /** Trigger gates: range, unified conditions. */
     private fun canTrigger(player: PlayerState, target: TargetState): Boolean {
         if (target.distance < rangeMin || target.distance > rangeMax) return false
-        return ConditionChecker.check(triggerOptions, player, target)
+        return Strategies.gate(player, target, triggerOptions)
     }
 
     private fun startAction(player: PlayerState) {

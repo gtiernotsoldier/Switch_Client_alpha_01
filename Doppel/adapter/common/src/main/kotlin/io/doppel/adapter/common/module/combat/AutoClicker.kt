@@ -24,6 +24,7 @@ import io.doppel.adapter.common.option.triggerOptions
 import io.doppel.contract.strategy.click.CritState
 import io.doppel.contract.strategy.click.OnItemUse
 import io.doppel.contract.strategy.click.WeaponFilter
+import io.doppel.ipc.Strategies
 
 /**
  * AutoClicker Module
@@ -171,7 +172,7 @@ object AutoClicker : Module("AutoClicker", Category.COMBAT), HudLineProvider {
                 // Distinguish "probability miss" (keep clicking, cadence still runs) from
                 // "condition blocked" (stop). Re-check the gate directly.
                 val gate = !(config.disableOnBlock && player.isMining) &&
-                    io.doppel.core.condition.ConditionChecker.check(config.triggerOptions, player, target)
+                    Strategies.gate(player, target, config.triggerOptions)
                 EventBridge.syntheticAttack = gate
             }
             is ClickResult.StopSprint -> { /* not used in 1.8 path */ }

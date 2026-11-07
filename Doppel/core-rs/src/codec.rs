@@ -149,6 +149,75 @@ pub fn read_trigger(r: &mut Reader) -> Result<TriggerOptions, Status> {
     Ok(t)
 }
 
+// ── trigger gate packed into a request argument ────────────────────────────
+
+/// Rebuilds a [`TriggerOptions`] from the packed form a generic request carries.
+///
+/// The bit order is `write_trigger`'s, deliberately: a config frame and a per-tick
+/// gate must describe the same trigger, and two layouts would eventually disagree
+/// about which bit is `only_strafe`.
+pub fn trigger_from_packed(
+    flags: f64,
+    min_distance: f64,
+    max_distance: f64,
+    look_angle_threshold: f64,
+    chance: f64,
+) -> TriggerOptions {
+    let f = flags as u16;
+    let mut t = TriggerOptions::default();
+    t.only_ground = f & (1 << 0) != 0;
+    t.only_air = f & (1 << 1) != 0;
+    t.only_move = f & (1 << 2) != 0;
+    t.only_move_forward = f & (1 << 3) != 0;
+    t.only_move_backward = f & (1 << 4) != 0;
+    t.only_strafe = f & (1 << 5) != 0;
+    t.only_when_target_goes_back = f & (1 << 6) != 0;
+    t.only_when_target_approaches = f & (1 << 7) != 0;
+    t.on_look = f & (1 << 8) != 0;
+    t.only_current_view = f & (1 << 9) != 0;
+    t.disable_on_mine = f & (1 << 10) != 0;
+    t.only_on_click = f & (1 << 11) != 0;
+    t.disabled_in_air = f & (1 << 12) != 0;
+    t.min_distance = min_distance as f32;
+    t.max_distance = max_distance as f32;
+    t.chance = chance as i32;
+    t.look_angle_threshold = look_angle_threshold as f32;
+    t
+}
+
+/// `encode_bool` plus two counters.
+///
+/// The trigger's hit counter and freshly-sampled threshold have to come back or the
+/// module cannot count toward its next fire — and the threshold is sampled inside the
+/// core, so the JVM cannot reconstruct it.
+pub fn encode_tristate(
+    seq: u32,
+    tick: u32,
+    module: Module,
+    action: WireAction,
+    flag: bool,
+    a: i32,
+    b: i32,
+) -> Frame {
+    let mut f = Frame::new(Kind::Decision, seq, tick, module);
+    let mut buf = [0u8; 40];
+    {
+        let mut w = Writer::new(&mut buf);
+        w.u8(action as u8);
+        w.u8(Reason::None as u8);
+        w.u16(if flag { 1 } else { 0 });
+        w.f64(0.0);
+        w.f64(0.0);
+        w.f64(0.0);
+        w.i32(a);
+        w.i32(b);
+        w.u32(tick);
+    }
+    f.payload[..40].copy_from_slice(&buf);
+    f.set_len(40);
+    f
+}
+
 // ── generic request: op + f64 arguments ────────────────────────────────────
 
 pub struct GenericRequest {
@@ -739,6 +808,15 @@ pub mod op {
     /// combat: `range_gate(mode, min_distance, max_distance, hysteresis,
     ///          has_distance, distance)` → bool.
     pub const CBT_RANGE: u8 = 3;
+    /// combat: `decide(flags, min_d, max_d, look_angle, gate_chance, mode,
+    ///          hurt_gate, max_hurt, target_hurt, counter, threshold,
+    ///          per_min, per_max, trigger_chance)` → fire + new counter/threshold.
+    ///
+    /// The gate and the trigger in one round trip, because they share a random
+    /// stream. Split across two calls the gate's `chance` roll and the trigger's
+    /// two draws would interleave differently on each side, and a 300-tick replay
+    /// would diverge on the first fire.
+    pub const CBT_DECIDE: u8 = 4;
 
     /// reach: `intersect_box(min_x, min_y, min_z, max_x, max_y, max_z,
     ///          ox, oy, oz, dx, dy, dz)` → bool.
@@ -814,8 +892,117 @@ pub fn known_ops(module: Module) -> &'static [u8] {
             op::CBT_ARBITER,
             op::CBT_PREDICT,
             op::CBT_RANGE,
+            op::CBT_DECIDE,
         ],
         Module::Reach => &[op::REACH_INTERSECT],
         _ => &[],
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `trigger_from_packed` must read the same bits `write_trigger` writes.
+    ///
+    /// Two layouts for one concept is the failure this guards: if a bit moves here and not
+    /// there, the gate silently answers a different question — a module fires with
+    /// `onlyGround` set while the player is airborne, and nothing in the log says why.
+    #[test]
+    fn packed_trigger_matches_the_config_layout() {
+        let mut t = TriggerOptions::default();
+        t.only_ground = true;
+        t.only_strafe = true;
+        t.only_when_target_approaches = true;
+        t.on_look = true;
+        t.disabled_in_air = true;
+        t.min_distance = 1.5;
+        t.max_distance = 4.25;
+        t.chance = 37;
+        t.look_angle_threshold = 22.5;
+
+        let mut buf = [0u8; 64];
+        let mut w = Writer::new(&mut buf);
+        write_trigger(&mut w, &t);
+        let mut r = Reader::new(&buf[..26]);
+        let from_config = read_trigger(&mut r).expect("config layout");
+
+        let from_request = trigger_from_packed(
+            from_config_flags(&from_config),
+            t.min_distance as f64,
+            t.max_distance as f64,
+            t.look_angle_threshold as f64,
+            t.chance as f64,
+        );
+
+        assert_eq!(from_request.only_ground, t.only_ground);
+        assert_eq!(from_request.only_air, t.only_air);
+        assert_eq!(from_request.only_move, t.only_move);
+        assert_eq!(from_request.only_move_forward, t.only_move_forward);
+        assert_eq!(from_request.only_move_backward, t.only_move_backward);
+        assert_eq!(from_request.only_strafe, t.only_strafe);
+        assert_eq!(
+            from_request.only_when_target_goes_back,
+            t.only_when_target_goes_back
+        );
+        assert_eq!(
+            from_request.only_when_target_approaches,
+            t.only_when_target_approaches
+        );
+        assert_eq!(from_request.on_look, t.on_look);
+        assert_eq!(from_request.only_current_view, t.only_current_view);
+        assert_eq!(from_request.disable_on_mine, t.disable_on_mine);
+        assert_eq!(from_request.only_on_click, t.only_on_click);
+        assert_eq!(from_request.disabled_in_air, t.disabled_in_air);
+        assert_eq!(from_request.min_distance, t.min_distance);
+        assert_eq!(from_request.max_distance, t.max_distance);
+        assert_eq!(from_request.chance, t.chance);
+        assert_eq!(from_request.look_angle_threshold, t.look_angle_threshold);
+    }
+
+    /// The bit field as the config frame carries it, so the test compares layouts rather than
+    /// re-deriving the mask a third time.
+    fn from_config_flags(t: &TriggerOptions) -> f64 {
+        let mut f: u16 = 0;
+        if t.only_ground {
+            f |= 1 << 0;
+        }
+        if t.only_air {
+            f |= 1 << 1;
+        }
+        if t.only_move {
+            f |= 1 << 2;
+        }
+        if t.only_move_forward {
+            f |= 1 << 3;
+        }
+        if t.only_move_backward {
+            f |= 1 << 4;
+        }
+        if t.only_strafe {
+            f |= 1 << 5;
+        }
+        if t.only_when_target_goes_back {
+            f |= 1 << 6;
+        }
+        if t.only_when_target_approaches {
+            f |= 1 << 7;
+        }
+        if t.on_look {
+            f |= 1 << 8;
+        }
+        if t.only_current_view {
+            f |= 1 << 9;
+        }
+        if t.disable_on_mine {
+            f |= 1 << 10;
+        }
+        if t.only_on_click {
+            f |= 1 << 11;
+        }
+        if t.disabled_in_air {
+            f |= 1 << 12;
+        }
+        f as f64
     }
 }

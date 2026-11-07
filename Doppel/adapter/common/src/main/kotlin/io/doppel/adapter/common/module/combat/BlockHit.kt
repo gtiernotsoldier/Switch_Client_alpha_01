@@ -1,9 +1,8 @@
 package io.doppel.adapter.common.module.combat
 
-import io.doppel.core.condition.ConditionChecker
+import io.doppel.ipc.Strategies
 import io.doppel.contract.model.PlayerState
 import io.doppel.contract.model.TargetState
-import io.doppel.core.strategy.combat.CombatTrigger
 import io.doppel.contract.strategy.click.WeaponType
 import io.doppel.adapter.common.api.EventBridge
 import io.doppel.adapter.common.module.Module
@@ -157,26 +156,24 @@ object BlockHit : Module("BlockHit", Category.COMBAT) {
         if (!isValidTarget(target)) { resetState(); return }
         if (target.distance < rangeMin || target.distance > rangeMax) { resetState(); return }
 
-        // ---- Additional conditions (Unified Engine) ----
-        if (!ConditionChecker.check(triggerOptions, player, target)) return
-
-        // ---- POST/PRE hurt-time + probability + hit counting (shared via Core) ----
-        val eval = CombatTrigger.evaluate(
-            mode = if (eventType == "PRE") CombatTrigger.Mode.PRE else CombatTrigger.Mode.POST,
-            target = target,
+        // ---- Conditions, hurt window, probability and hit counting, in one core call ----
+        // hurtGate = false: fire on the attack itself, not the target's i-frame window (20 Hz
+        // sampling of that window is unreliable) — restores "attack triggers a block".
+        val decision = Strategies.decide(
+            player, target, triggerOptions,
+            mode = if (eventType == "PRE") 1 else 0,
+            hurtGate = false,
             maxHurtTime = player.maxHurtResistantTime,
+            targetHurtResistantTime = target.hurtResistantTime,
             hitCounter = hitCounter,
             hitThreshold = hitPerThreshold,
             hitPerMin = hitPerMin,
             hitPerMax = hitPerMax,
-            chance = chance,
-            // Fire on the attack itself, not the target's i-frame window (20Hz sampling of it is
-            // unreliable) — restores the working "attack triggers a block" behaviour.
-            hurtGate = false
-        )
-        hitCounter = eval.hitCounter
-        hitPerThreshold = eval.hitThreshold
-        if (!eval.fire) return
+            triggerChance = chance
+        ) ?: return
+        hitCounter = decision.counter
+        hitPerThreshold = decision.threshold
+        if (!decision.fire) return
 
         // ---- Execute block-hit ----
         val postDelayMs = Random.nextInt(postDelayMin, postDelayMax + 1)

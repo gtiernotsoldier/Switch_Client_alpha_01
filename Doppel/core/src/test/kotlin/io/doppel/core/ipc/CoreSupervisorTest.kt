@@ -3,6 +3,7 @@ package io.doppel.core.ipc
 import io.doppel.contract.model.Hitbox
 import io.doppel.contract.model.PlayerState
 import io.doppel.contract.model.TargetState
+import io.doppel.contract.option.TriggerOptions
 import io.doppel.contract.strategy.aim.AimConfig
 import io.doppel.contract.strategy.aim.AimInput
 import io.doppel.contract.strategy.aim.AimResult
@@ -85,6 +86,58 @@ class CoreSupervisorTest {
         val result = strategy.execute(AimConfig(), AimStrategy.State(), input)
         assertNotNull(result)
         assertTrue(result is AimResult.ApplyRotation || result is AimResult.Skip)
+    }
+
+    /**
+     * The gate op, end to end.
+     *
+     * This is the one test that would catch a mis-packed flag: `onlyAir` has to travel as bit 1
+     * of the request argument and come back as "blocked" for a player who is standing on the
+     * ground. A layout that drifted by one position still compiles on both sides and still
+     * returns a boolean — it just answers about a different condition.
+     */
+    @Test
+    fun `the condition gate answers through the real core`() {
+        val exe = binary()
+        assumeTrue(exe != null, "doppel-core not built — run: cd Doppel/core-rs && cargo build")
+        System.setProperty("doppel.core.path", exe!!.absolutePath)
+        assertTrue(CoreSupervisor.start())
+
+        val player = PlayerState(
+            name = "tester",
+            posX = 0.0, posY = 64.0, posZ = 0.0,
+            motionX = 0.0, motionY = 0.0, motionZ = 0.0,
+            rotationYaw = 0f, rotationPitch = 0f,
+            onGround = true, isMovingForward = false, isSprinting = false,
+            health = 20f, hurtTime = 0, ticks = 1L
+        )
+        val target = TargetState(
+            entityId = 7, name = "target",
+            posX = 0.0, posY = 64.0, posZ = 3.0,
+            motionX = 0.0, motionY = 0.0, motionZ = 0.0,
+            health = 20f, hurtTime = 0, distance = 3.0f,
+            hitbox = Hitbox(-0.3, 0.0, -0.3, 0.3, 1.8, 0.3)
+        )
+
+        // No conditions set: the gate is open.
+        assertTrue(Strategies.gate(player, target, TriggerOptions()))
+
+        // onlyAir with an on-ground player: blocked. If the bit field were shifted this would
+        // still return a boolean, and it would be the wrong one.
+        assertFalse(Strategies.gate(player, target, TriggerOptions(onlyAir = true)))
+
+        // onlyGround holds for the same player.
+        assertTrue(Strategies.gate(player, target, TriggerOptions(onlyGround = true)))
+
+        // decide() with the hurt window disabled, no chance gate and a threshold of one: fires.
+        val d = Strategies.decide(
+            player, target, TriggerOptions(),
+            mode = 0, hurtGate = false, maxHurtTime = 10, targetHurtResistantTime = 0,
+            hitCounter = 0, hitThreshold = 1, hitPerMin = 1, hitPerMax = 1, triggerChance = 100
+        )
+        assertNotNull(d)
+        assertTrue(d!!.fire, "a POST trigger with hurtGate=false and threshold=1 must fire")
+        assertTrue(d.counter == 0, "the counter resets after a fire, got ${d.counter}")
     }
 
     @Test

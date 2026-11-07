@@ -295,6 +295,13 @@ Op ids are append-only, same reasoning as module ids: the stub and the core are
 separate binaries. The tables live beside their decoders in `codec.rs` and are
 mirrored in `Wire.Ops`.
 
+Combat's `CBT_DECIDE` (op 4) is the one op that merges two questions — the
+condition gate and the trigger — into a single request. They have to share a
+round trip because they share the module's random stream: the gate may draw once
+and the trigger draws once or twice, and splitting them across two ops lets the
+draws interleave differently on the two sides. `mode < 0` asks for the gate
+alone, which is what the modules with no trigger behind it use.
+
 Each module owns **its own RNG stream**, all seeded from the session seed. A
 single shared stream would make one module's decisions depend on which other
 modules were enabled and in what order they ran, so toggling aim would quietly

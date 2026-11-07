@@ -1,6 +1,6 @@
 package io.doppel.adapter.common.module.combat
 
-import io.doppel.core.condition.ConditionChecker
+import io.doppel.ipc.Strategies
 import io.doppel.contract.model.PlayerState
 import io.doppel.contract.model.TargetState
 import io.doppel.adapter.common.api.EventBridge
@@ -103,7 +103,7 @@ object SprintReset : Module("SprintReset", Category.COMBAT) {
         if (target.distance < rangeMin || target.distance > rangeMax) return
 
         // Condition check
-        if (!ConditionChecker.check(triggerOptions, player, target)) return
+        if (!Strategies.gate(player, target, triggerOptions)) return
 
         // Rising-edge "just hit": hurtTime just became > 0 (fresh hit). Reliable at 20Hz.
         val isHurt = target.hurtTime > 0

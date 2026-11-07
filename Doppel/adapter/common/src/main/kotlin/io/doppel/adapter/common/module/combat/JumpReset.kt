@@ -1,6 +1,6 @@
 package io.doppel.adapter.common.module.combat
 
-import io.doppel.core.condition.ConditionChecker
+import io.doppel.ipc.Strategies
 import io.doppel.contract.model.PlayerState
 import io.doppel.contract.model.TargetState
 import io.doppel.contract.model.VelocityContext
@@ -129,7 +129,7 @@ object JumpReset : Module("JumpReset", Category.COMBAT) {
         if (!isKnockbackFromFront(player, motion)) return
 
         // ---- Configurable conditions ----
-        if (!ConditionChecker.check(triggerOptions, player, target)) return
+        if (!Strategies.gate(player, target, triggerOptions)) return
 
         // ---- Probability ----
         if (chance < 100 && Random.nextInt(100) >= chance) return

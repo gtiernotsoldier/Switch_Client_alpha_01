@@ -316,6 +316,8 @@ mod tests {
         let target = TargetState {
             id: 42,
             position: Vec3::new(0.0, 64.0, 2.0),
+            motion: Vec3::new(0.0, 0.0, 0.0),
+            hitbox: crate::geom::Hitbox::around(Vec3::new(0.0, 64.0, 2.0), 0.3, 1.8),
             distance: 2.0,
             health: 20.0,
             hurt_time: 0,

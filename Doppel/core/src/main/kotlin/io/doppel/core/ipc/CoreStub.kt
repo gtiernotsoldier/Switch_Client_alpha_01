@@ -213,30 +213,45 @@ class CoreStub(
     }
 
     /**
-     * One tick. Never blocks longer than [deadlineNanos].
+     * One round trip. Returns the decision frame, or null after a miss.
+     *
+     * Every module funnels through here so the deadline, the reconnect and the
+     * degradation accounting have exactly one implementation. A miss, a dead
+     * socket and a `Degraded` status all collapse to null: each caller decides
+     * what "no answer" means for its own command type, and none of them is
+     * allowed to guess.
      */
-    fun decide(ctx: VelocityContext, tick: Int): VelocityResult {
+    private fun roundTrip(module: Int, payload: ByteArray, tick: Int): Frame? {
         if (!connected.get()) {
             if (!tryReconnect()) {
                 degradedTicks.incrementAndGet()
-                return VelocityResult.Pass(ctx.originalMotion)
+                return null
             }
         }
-        val ch = channel ?: return VelocityResult.Pass(ctx.originalMotion)
+        val ch = channel ?: run {
+            degradedTicks.incrementAndGet()
+            return null
+        }
 
         val s = seq.getAndIncrement()
         val slot = Pending()
         pending[s] = slot
 
-        val payload = encodeSnapshot(ctx)
         try {
-            ch.write(Frame(Wire.KIND_SNAPSHOT, s, tick, payload = payload, payloadLen = payload.size).encode())
+            ch.write(
+                Frame(
+                    Wire.KIND_SNAPSHOT, s, tick,
+                    module = module,
+                    payload = payload,
+                    payloadLen = payload.size
+                ).encode()
+            )
         } catch (e: IOException) {
             pending.remove(s)
             lastError = e.message
             connected.set(false)
             degradedTicks.incrementAndGet()
-            return VelocityResult.Pass(ctx.originalMotion)
+            return null
         }
 
         val arrived = slot.latch.await(deadlineNanos, TimeUnit.NANOSECONDS)
@@ -246,14 +261,28 @@ class CoreStub(
         if (!arrived || f == null) {
             timeouts.incrementAndGet()
             degradedTicks.incrementAndGet()
-            return VelocityResult.Pass(ctx.originalMotion)
+            return null
         }
         if (f.status != Wire.STATUS_OK) {
             degradedTicks.incrementAndGet()
-            return VelocityResult.Pass(ctx.originalMotion)
+            return null
         }
-
         roundTrips.incrementAndGet()
+        return f
+    }
+
+    /**
+     * Velocity, one tick. Never blocks longer than [deadlineNanos].
+     *
+     * Degradation (PROTECTION.md 9.5.3): a miss, a dead socket, or a `Degraded`
+     * status all return **Pass(original motion)**, never the previous command.
+     * Replaying last tick's vector would apply last tick's scale factor to this
+     * tick's knockback, and the position error would stack instead of staying
+     * bounded at one tick.
+     */
+    fun decide(ctx: VelocityContext, tick: Int): VelocityResult {
+        val f = roundTrip(Wire.MODULE_VELOCITY, encodeSnapshot(ctx), tick)
+            ?: return VelocityResult.Pass(ctx.originalMotion)
         val d = decodeDecision(f)
         return when (d.action) {
             Wire.ACTION_PASS -> VelocityResult.Pass(ctx.originalMotion)
@@ -264,11 +293,310 @@ class CoreStub(
         }
     }
 
+    /**
+     * Aim, one tick. Null means the core did not answer — the caller must skip
+     * the tick rather than re-apply the last rotation, for the same reason
+     * velocity passes instead of replaying.
+     */
+    fun decideAim(
+        player: io.doppel.core.model.PlayerState,
+        target: io.doppel.core.model.TargetState?,
+        mouseDeltaX: Float,
+        mouseDeltaY: Float,
+        sensitivity: Float,
+        tick: Int
+    ): AimDecision? {
+        val snap = encodeSnapshot(player, target)
+        val f = roundTrip(
+            Wire.MODULE_AIM,
+            withAimTail(snap, mouseDeltaX, mouseDeltaY, sensitivity),
+            tick
+        ) ?: return null
+        return decodeAimDecision(f)
+    }
+
+    /** Click, one tick. A miss degrades to Skip — never to a synthetic click. */
+    fun decideClick(
+        player: io.doppel.core.model.PlayerState,
+        target: io.doppel.core.model.TargetState?,
+        attackCooldown: Float,
+        isFalling: Boolean,
+        tick: Int
+    ): io.doppel.core.strategy.click.ClickResult {
+        val snap = encodeSnapshot(player, target)
+        val f = roundTrip(
+            Wire.MODULE_CLICK,
+            withClickTail(snap, attackCooldown, isFalling),
+            tick
+        ) ?: return io.doppel.core.strategy.click.ClickResult.Skip
+        return decodeClickDecision(f)
+    }
+
+    /**
+     * Movement's three predicates. Each returns null on a miss, and a null
+     * suppression means "do not touch the keys" — the conservative reading.
+     */
+    fun movementSocd(
+        player: io.doppel.core.model.PlayerState,
+        target: io.doppel.core.model.TargetState?,
+        forward: Boolean,
+        back: Boolean,
+        left: Boolean,
+        right: Boolean,
+        tick: Int
+    ): BooleanArray? {
+        val payload = genericRequest(
+            encodeSnapshot(player, target), Ops.MOV_SOCD,
+            b(forward), b(back), b(left), b(right)
+        )
+        val f = roundTrip(Wire.MODULE_MOVEMENT, payload, tick) ?: return null
+        return decodeSuppress(f)
+    }
+
+    fun movementStrafe(
+        player: io.doppel.core.model.PlayerState,
+        target: io.doppel.core.model.TargetState?,
+        forward: Boolean,
+        back: Boolean,
+        left: Boolean,
+        right: Boolean,
+        distance: Double,
+        bearingRad: Double,
+        yawDeg: Double,
+        reach: Double,
+        tick: Int
+    ): BooleanArray? {
+        val payload = genericRequest(
+            encodeSnapshot(player, target), Ops.MOV_STRAFE,
+            b(forward), b(back), b(left), b(right),
+            distance, bearingRad, yawDeg, reach
+        )
+        val f = roundTrip(Wire.MODULE_MOVEMENT, payload, tick) ?: return null
+        return decodeSuppress(f)
+    }
+
+    fun movementSliding(
+        player: io.doppel.core.model.PlayerState,
+        target: io.doppel.core.model.TargetState?,
+        motionX: Double,
+        motionZ: Double,
+        yaw: Float,
+        releasedForward: Boolean,
+        minSpeed: Double,
+        tick: Int
+    ): Boolean? {
+        val payload = genericRequest(
+            encodeSnapshot(player, target), Ops.MOV_SLIDING,
+            motionX, motionZ, yaw.toDouble(), b(releasedForward), minSpeed
+        )
+        val f = roundTrip(Wire.MODULE_MOVEMENT, payload, tick) ?: return null
+        return decodeBool(f)
+    }
+
+    /** Tap side, or -1.0 when the core did not answer or there is no target. */
+    fun tapChase(
+        player: io.doppel.core.model.PlayerState,
+        target: io.doppel.core.model.TargetState?,
+        yaw: Float,
+        leadTicks: Int,
+        tick: Int
+    ): Double? {
+        val payload = genericRequest(
+            encodeSnapshot(player, target), Ops.TAP_CHASE,
+            yaw.toDouble(), leadTicks.toDouble()
+        )
+        val f = roundTrip(Wire.MODULE_TAP, payload, tick) ?: return null
+        return decodeScalar(f)
+    }
+
+    fun tapSeven(
+        player: io.doppel.core.model.PlayerState,
+        target: io.doppel.core.model.TargetState?,
+        lastSide: Int,
+        repeatChancePercent: Int,
+        tick: Int
+    ): Double? {
+        val payload = genericRequest(
+            encodeSnapshot(player, target), Ops.TAP_SEVEN,
+            lastSide.toDouble(), repeatChancePercent.toDouble()
+        )
+        val f = roundTrip(Wire.MODULE_TAP, payload, tick) ?: return null
+        return decodeScalar(f)
+    }
+
+    fun tapWrap(
+        player: io.doppel.core.model.PlayerState,
+        target: io.doppel.core.model.TargetState?,
+        angle: Float,
+        tick: Int
+    ): Double? {
+        val payload = genericRequest(encodeSnapshot(player, target), Ops.TAP_WRAP, angle.toDouble())
+        val f = roundTrip(Wire.MODULE_TAP, payload, tick) ?: return null
+        return decodeScalar(f)
+    }
+
+    /**
+     * Advances the tap state machine. 0 = none, 1 = end tap, 2 = should start.
+     */
+    fun tapTick(
+        player: io.doppel.core.model.PlayerState,
+        target: io.doppel.core.model.TargetState?,
+        nowNs: Long,
+        tick: Int
+    ): Double? {
+        val payload = genericRequest(encodeSnapshot(player, target), Ops.TAP_TICK, nowNs.toDouble())
+        val f = roundTrip(Wire.MODULE_TAP, payload, tick) ?: return null
+        return decodeScalar(f)
+    }
+
+    fun tapBegin(
+        player: io.doppel.core.model.PlayerState,
+        target: io.doppel.core.model.TargetState?,
+        nowNs: Long,
+        durationMs: Int,
+        postDelay: Boolean,
+        tick: Int
+    ) {
+        val payload = genericRequest(
+            encodeSnapshot(player, target),
+            if (postDelay) Ops.TAP_POST_DELAY else Ops.TAP_BEGIN,
+            nowNs.toDouble(), durationMs.toDouble()
+        )
+        roundTrip(Wire.MODULE_TAP, payload, tick)
+    }
+
+    fun combatTrigger(
+        player: io.doppel.core.model.PlayerState,
+        target: io.doppel.core.model.TargetState?,
+        mode: Int,
+        targetHurtResistantTime: Int,
+        maxHurtTime: Int,
+        hitCounter: Int,
+        hitThreshold: Int,
+        hitPerMin: Int,
+        hitPerMax: Int,
+        chance: Int,
+        hurtGate: Boolean,
+        tick: Int
+    ): Boolean? {
+        val payload = genericRequest(
+            encodeSnapshot(player, target), Ops.CBT_TRIGGER,
+            mode.toDouble(), targetHurtResistantTime.toDouble(), maxHurtTime.toDouble(),
+            hitCounter.toDouble(), hitThreshold.toDouble(), hitPerMin.toDouble(),
+            hitPerMax.toDouble(), chance.toDouble(), b(hurtGate)
+        )
+        val f = roundTrip(Wire.MODULE_COMBAT, payload, tick) ?: return null
+        return decodeBool(f)
+    }
+
+    fun combatArbiter(
+        player: io.doppel.core.model.PlayerState,
+        target: io.doppel.core.model.TargetState?,
+        locked: Boolean,
+        threat: Boolean,
+        sustain: Boolean,
+        reflex: Boolean,
+        wLock: Double,
+        wThreat: Double,
+        wSustain: Double,
+        wReflex: Double,
+        threshold: Double,
+        maxDuty: Double,
+        tick: Int
+    ): Verdict? {
+        val payload = genericRequest(
+            encodeSnapshot(player, target), Ops.CBT_ARBITER,
+            b(locked), b(threat), b(sustain), b(reflex),
+            wLock, wThreat, wSustain, wReflex, threshold, maxDuty
+        )
+        val f = roundTrip(Wire.MODULE_COMBAT, payload, tick) ?: return null
+        return decodeVerdict(f)
+    }
+
+    fun combatPredict(
+        player: io.doppel.core.model.PlayerState,
+        target: io.doppel.core.model.TargetState?,
+        maxHurt: Int,
+        rtt: Int,
+        lead: Int,
+        predict: Boolean,
+        window: Int,
+        chance: Int,
+        alpha: Double,
+        seedInterval: Double,
+        currentTick: Int,
+        opponentJustHit: Boolean,
+        tick: Int
+    ): Verdict? {
+        val payload = genericRequest(
+            encodeSnapshot(player, target), Ops.CBT_PREDICT,
+            maxHurt.toDouble(), rtt.toDouble(), lead.toDouble(), b(predict),
+            window.toDouble(), chance.toDouble(), alpha, seedInterval,
+            currentTick.toDouble(), b(opponentJustHit)
+        )
+        val f = roundTrip(Wire.MODULE_COMBAT, payload, tick) ?: return null
+        return decodeVerdict(f)
+    }
+
+    fun combatRange(
+        player: io.doppel.core.model.PlayerState,
+        target: io.doppel.core.model.TargetState?,
+        mode: Int,
+        minDistance: Float,
+        maxDistance: Float,
+        hysteresis: Float,
+        distance: Float?,
+        tick: Int
+    ): Boolean? {
+        val payload = genericRequest(
+            encodeSnapshot(player, target), Ops.CBT_RANGE,
+            mode.toDouble(), minDistance.toDouble(), maxDistance.toDouble(),
+            hysteresis.toDouble(), b(distance != null), (distance ?: 0f).toDouble()
+        )
+        val f = roundTrip(Wire.MODULE_COMBAT, payload, tick) ?: return null
+        return decodeBool(f)
+    }
+
+    fun reachIntersect(
+        player: io.doppel.core.model.PlayerState,
+        target: io.doppel.core.model.TargetState?,
+        box: io.doppel.core.model.Hitbox,
+        origin: io.doppel.core.util.Vec3,
+        dir: io.doppel.core.util.Vec3,
+        maxDistance: Double,
+        tick: Int
+    ): Boolean? {
+        val payload = genericRequest(
+            encodeSnapshot(player, target), Ops.REACH_INTERSECT,
+            box.minX, box.minY, box.minZ, box.maxX, box.maxY, box.maxZ,
+            origin.x, origin.y, origin.z, dir.x, dir.y, dir.z, maxDistance
+        )
+        val f = roundTrip(Wire.MODULE_REACH, payload, tick) ?: return null
+        return decodeBool(f)
+    }
+
+    private fun b(v: Boolean): Double = if (v) 1.0 else 0.0
+
     /** Pushes a config snapshot. Fire-and-forget: the core acknowledges with a Config frame. */
-    fun pushConfig(payload: ByteArray) {
+    fun pushConfig(payload: ByteArray) = pushConfig(Wire.MODULE_VELOCITY, payload)
+
+    /**
+     * Pushes a config for one module.
+     *
+     * Fire-and-forget on purpose: a config is a handful of scalars that change
+     * when the user drags a slider, not per tick. Waiting for the ack would put
+     * a round trip on the UI thread for no benefit — and if it is lost, the next
+     * push carries the same values.
+     */
+    fun pushConfig(module: Int, payload: ByteArray) {
         val ch = channel ?: return
         try {
-            ch.write(Frame(Wire.KIND_CONFIG, seq.getAndIncrement(), 0, payload = payload, payloadLen = payload.size).encode())
+            ch.write(
+                Frame(
+                    Wire.KIND_CONFIG, seq.getAndIncrement(), 0,
+                    module = module, payload = payload, payloadLen = payload.size
+                ).encode()
+            )
         } catch (e: IOException) {
             lastError = e.message
             connected.set(false)

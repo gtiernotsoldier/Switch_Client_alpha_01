@@ -32,10 +32,17 @@ another local process, not a substitute for not exposing the port.
 
 ## 2. Framing
 
-Every message is exactly **256 bytes**: a 32-byte header and up to 224 bytes of
+Every message is exactly **384 bytes**: a 32-byte header and up to 352 bytes of
 payload. Fixed size means the reader is one `readFully` into a stack buffer, there
 is no length prefix to desynchronise, and the shared-memory path (if ever needed)
 can reuse the same layout unchanged.
+
+384, not the original 256. While velocity was the only module its snapshot was
+160 bytes and the remainder was headroom. Aim needs the target's per-tick velocity
+and world-space box — the predictive lead reads the first, the multipoint reads
+the second — and the generic modules need an op byte plus up to 14 f64 arguments
+behind the snapshot. One 232-byte snapshot plus a 14-argument tail is 346 bytes,
+which does not fit in 224. Still one page, still a single read.
 
 All integers little-endian. Floats are IEEE-754 and are sent as **raw bits**.
 
@@ -93,9 +100,11 @@ supposed to be the crash barrier.
 | 5 | `Degraded` | strategy panicked; **the tick is lost on purpose** |
 | 6 | `NoSession` | no successful handshake on this connection |
 
-## 4. `Snapshot` payload — 160 bytes (module 1)
+## 4. `Snapshot` payload — 232 bytes (all modules)
 
-Offsets are from the start of the payload.
+Offsets are from the start of the payload. Every module receives this same
+block, whether or not it reads all of it: one layout means one decoder, and the
+offsets cannot drift between modules.
 
 | Offset | Size | Field |
 |---:|---:|---|
@@ -115,20 +124,28 @@ Offsets are from the start of the payload.
 | 98 | 2 | — |
 | 100 | 4 | `target.id` (i32) |
 | 104 | 24 | `target.position.x/y/z` (f64) |
-| 128 | 4 | `target.distance` (f32) |
-| 132 | 4 | `target.health` (f32) |
-| 136 | 4 | `target.hurt_time` |
-| 140 | 1 | `target.is_moving_backward` |
-| 141 | 1 | `target.is_moving_towards_player` |
-| 142 | 2 | — |
-| 144 | 4 | `ticks` (u32, low half of the JVM `Long`) |
-| 148 | 4 | `packet_id` — reserved for the `CancelPacket(handle: Any)` replacement |
-| 152 | 4 | `config_revision` — reserved |
-| 156 | 4 | — |
+| 128 | 24 | `target.motion.x/y/z` (f64) — aim's predictive lead |
+| 152 | 4 | `target.distance` (f32) |
+| 156 | 4 | `target.health` (f32) |
+| 160 | 4 | `target.hurt_time` |
+| 164 | 1 | `target.is_moving_backward` |
+| 165 | 1 | `target.is_moving_towards_player` |
+| 166 | 2 | — |
+| 168 | 48 | `target.hitbox` min.xyz/max.xyz (f64 ×6) — aim's multipoint |
+| 216 | 4 | `ticks` (u32, low half of the JVM `Long`) |
+| 220 | 4 | `packet_id` — reserved for the `CancelPacket(handle: Any)` replacement |
+| 224 | 4 | `config_revision` — reserved |
+| 228 | 4 | — |
 
-When `has_target == 0`, bytes 100–143 are zero. The block is **always present**
-(44 bytes either way); the core skips it rather than branching the layout, so the
+When `has_target == 0`, bytes 100–215 are zero. The block is **always present**
+(116 bytes either way); the core skips it rather than branching the layout, so the
 offsets never shift.
+
+`target.motion` and `target.hitbox` were added when aim moved into the core.
+Substituting zeros and a default player-shaped box works for a standing player
+and fails for everything else: a sneaking target is 0.3 blocks shorter, and a
+moving one is led in the wrong direction. Both are f64 because both feed a
+decision.
 
 ### 4.1 Flags
 
@@ -252,13 +269,42 @@ tick boundary (50 ms)
 | Kotlin↔Rust decision parity, 2000 ticks | `VelocityParityTest` | bit-exact on f64 |
 | Process-level e2e, 500 ticks | `CoreStubE2ETest` | tick-for-tick equal |
 | Latency benchmark on the real path | `--bench` | p50 6.70 µs / p99 12.50 µs |
+| Aim port (LEGIT / NORMAL / LINEAR / SELF_ADAPTIVE) | `strategy/aim.rs`, `geom.rs` | `AimParityTest`, 2000 ticks |
+| Click port (probabilistic + cooldown crit FSM) | `strategy/click.rs` | `ClickParityTest`, 4000 ticks |
+| Movement port (SOCD / strafe / instant stop) | `strategy/movement.rs` | `MovementParityTest`, 600 ticks |
+| Tap / combat / reach ports | `strategy/{tap,combat,reach}.rs` | 20 Rust unit tests |
+| Six-module session dispatch | `session.rs`, `codec.rs` | `ModuleSessionParityTest`, 1300 round trips |
+| Portable fdlibm (sin/cos/atan/atan2/acos) | `trig.rs`, `PortableMath.kt` | C reference, 1M values, 0 diffs |
+
+### Module request shapes
+
+Beyond the shared snapshot, each module appends its own tail. Aim and click get
+named fields because their configs are large and positional; movement, tap,
+combat and reach use a tagged op with an f64 argument vector, because a bespoke
+decoder for each of their twelve small functions would be twelve decoders that
+all look alike and none of which can be checked without counting bytes.
+
+| Module | Tail after byte 232 |
+|---|---|
+| Velocity | none |
+| Aim | `mouse_dx f32, mouse_dy f32, sensitivity f32` (12 bytes) |
+| Click | `attack_cooldown f32, is_falling u8, pad 3` (8 bytes) |
+| Movement / Tap / Combat / Reach | `op u8, nargs u8, nargs × f64` |
+
+Op ids are append-only, same reasoning as module ids: the stub and the core are
+separate binaries. The tables live beside their decoders in `codec.rs` and are
+mirrored in `Wire.Ops`.
+
+Each module owns **its own RNG stream**, all seeded from the session seed. A
+single shared stream would make one module's decisions depend on which other
+modules were enabled and in what order they ran, so toggling aim would quietly
+change click timing.
 
 ### Not done (deliberately out of this slice)
 
 | Item | Why it is not here |
 |---|---|
-| Aim / Click / Combat / Movement / Reach ports | ~3–4 weeks; each needs its own parity fixture. The pattern is established by velocity — one module, one fixture, one green diff. |
-| `PacketScheduler` queue move | Needs the versioned verb table (§9.5.4). The queue stays in Kotlin until `CancelPacket(handle: Any)` becomes an abstract packet id; `Snapshot.packet_id` is reserved for it. |
+| `PacketScheduler` queue move | Needs the versioned verb table (§9.5.4). The queue stays in Kotlin until `CancelPacket(handle: Any)` becomes an abstract packet id; `Snapshot.packet_id` is reserved for it. The class is currently referenced by nothing, so the table would abstract a call chain that does not exist. |
 | WebUI service move out of the adapter | Independent of the decision path; moving it now would mix two migrations in one diff. |
 | Windows named pipe transport | §1. Blocked on a JNA decision, not on protocol design. |
 | Windows on-device validation | The sandbox is Linux. Everything here is platform-neutral except `transport.rs`'s `cfg(unix)` branch, which is compiled out on Windows. |

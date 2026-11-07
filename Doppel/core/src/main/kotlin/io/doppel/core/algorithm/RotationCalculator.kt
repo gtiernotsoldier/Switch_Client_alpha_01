@@ -4,6 +4,7 @@ import io.doppel.core.model.Hitbox
 import io.doppel.core.util.Vec2
 import io.doppel.core.util.Vec3
 import kotlin.random.Random
+import io.doppel.core.math.PortableMath
 
 /**
  * Rotation calculator for aim assist and target tracking.
@@ -61,7 +62,7 @@ object RotationCalculator {
         if (dist < 1e-6) return true
         val dir = aimToDirection(aim)
         val cosAngle = (dir.dot(toTarget) / dist).coerceIn(-1.0, 1.0)
-        val angle = Math.toDegrees(kotlin.math.acos(cosAngle)).toFloat()
+        val angle = PortableMath.toDegrees(PortableMath.acos(cosAngle)).toFloat()
         return angle <= fov / 2f
     }
     
@@ -192,15 +193,20 @@ object RotationCalculator {
      * If lockOnCrosshair, aim at the center of the hitbox.
      * Otherwise, randomly sample a point within the hitbox.
      */
-    fun calculateTargetPoint(playerPos: Vec3, hitbox: Hitbox, lockOnCrosshair: Boolean): Vec2 {
+    fun calculateTargetPoint(
+        playerPos: Vec3,
+        hitbox: Hitbox,
+        lockOnCrosshair: Boolean,
+        random: io.doppel.core.ipc.RandomSource = io.doppel.core.ipc.DefaultRandomSource
+    ): Vec2 {
         val eyePos = Vec3(playerPos.x, playerPos.y + EYE_HEIGHT, playerPos.z)
         val targetPoint = if (lockOnCrosshair) {
             hitboxCenter(hitbox)
         } else {
             Vec3(
-                randomInRange(hitbox.minX, hitbox.maxX),
-                randomInRange(hitbox.minY, hitbox.maxY),
-                randomInRange(hitbox.minZ, hitbox.maxZ)
+                randomInRange(hitbox.minX, hitbox.maxX, random),
+                randomInRange(hitbox.minY, hitbox.maxY, random),
+                randomInRange(hitbox.minZ, hitbox.maxZ, random)
             )
         }
         return calculateRotation(eyePos, targetPoint)
@@ -344,11 +350,16 @@ object RotationCalculator {
      * @param current current rotation value, degrees.
      * @param diff max degrees moved per tick (0..180).
      */
-    fun rotMove(target: Float, current: Float, diff: Float): Float {
+    fun rotMove(
+        target: Float,
+        current: Float,
+        diff: Float,
+        random: io.doppel.core.ipc.RandomSource = io.doppel.core.ipc.DefaultRandomSource
+    ): Float {
         if (diff <= 0f) return current
         var delta = normalizeAngle(target - current)
         // Stop below a tiny random threshold — the assist releases instead of micro-jittering.
-        if (kotlin.math.abs(delta) < 0.1f * kotlin.random.Random.nextFloat() + 0.1f) return current
+        if (kotlin.math.abs(delta) < 0.1f * random.nextFloat() + 0.1f) return current
         if (kotlin.math.abs(delta) <= diff) return current + delta
         return current + (if (delta < 0f) -diff else diff)
     }
@@ -364,7 +375,8 @@ object RotationCalculator {
      */
     fun updateNaturalDrift(
         state: io.doppel.core.strategy.aim.AimStrategy.State,
-        offset: Float
+        offset: Float,
+        random: io.doppel.core.ipc.RandomSource = io.doppel.core.ipc.DefaultRandomSource
     ): Pair<Float, Float> {
         if (offset <= 0f) {
             state.driftYaw = 0f
@@ -372,9 +384,9 @@ object RotationCalculator {
             return 0f to 0f
         }
         if (state.driftTicksLeft <= 0) {
-            state.driftGoalYaw = kotlin.random.Random.nextFloat() * 2f - 1f
-            state.driftGoalPitch = kotlin.random.Random.nextFloat() * 2f - 1f
-            state.driftTicksLeft = 20 + kotlin.random.Random.nextInt(40)
+            state.driftGoalYaw = random.nextFloat() * 2f - 1f
+            state.driftGoalPitch = random.nextFloat() * 2f - 1f
+            state.driftTicksLeft = 20 + random.nextInt(40)
         }
         state.driftTicksLeft--
         // Ease 10% of the remaining way toward the goal each tick — smooth, never a jump.
@@ -535,13 +547,13 @@ object RotationCalculator {
      * Minecraft convention: yaw=0 faces south (-Z), yaw=90 faces west (-X).
      */
     private fun aimToDirection(aim: Vec2): Vec3 {
-        val yawRad = Math.toRadians(aim.yaw.toDouble())
-        val pitchRad = Math.toRadians(aim.pitch.toDouble())
-        val cosPitch = kotlin.math.cos(pitchRad)
+        val yawRad = PortableMath.toRadians(aim.yaw.toDouble())
+        val pitchRad = PortableMath.toRadians(aim.pitch.toDouble())
+        val cosPitch = PortableMath.cos(pitchRad)
         return Vec3(
-            -kotlin.math.sin(yawRad) * cosPitch,
-            -kotlin.math.sin(pitchRad),
-            kotlin.math.cos(yawRad) * cosPitch
+            -PortableMath.sin(yawRad) * cosPitch,
+            -PortableMath.sin(pitchRad),
+            PortableMath.cos(yawRad) * cosPitch
         )
     }
 
@@ -605,8 +617,12 @@ object RotationCalculator {
     /**
      * Random double in range [min, max].
      */
-    private fun randomInRange(min: Double, max: Double): Double {
-        return min + kotlin.random.Random.nextDouble() * (max - min)
+    private fun randomInRange(
+        min: Double,
+        max: Double,
+        random: io.doppel.core.ipc.RandomSource
+    ): Double {
+        return min + random.nextDouble() * (max - min)
     }
 
     /**
@@ -661,8 +677,8 @@ object RotationCalculator {
         val diffZ = to.z - from.z
         
         val distance = kotlin.math.sqrt(diffX * diffX + diffZ * diffZ)
-        val yaw = kotlin.math.atan2(diffZ, diffX).toFloat() * (180f / kotlin.math.PI.toFloat()) - 90f
-        val pitch = -(kotlin.math.atan2(diffY, distance).toFloat() * (180f / kotlin.math.PI.toFloat()))
+        val yaw = PortableMath.atan2(diffZ, diffX).toFloat() * (180f / kotlin.math.PI.toFloat()) - 90f
+        val pitch = -(PortableMath.atan2(diffY, distance).toFloat() * (180f / kotlin.math.PI.toFloat()))
         
         return Vec2(yaw, pitch)
     }
@@ -675,11 +691,11 @@ object RotationCalculator {
      * (ConditionChecker).
      */
     fun yawToDirection(yaw: Float): Vec3 {
-        val yawRad = Math.toRadians(yaw.toDouble())
+        val yawRad = PortableMath.toRadians(yaw.toDouble())
         return Vec3(
-            -kotlin.math.sin(yawRad),
+            -PortableMath.sin(yawRad),
             0.0,
-            kotlin.math.cos(yawRad)
+            PortableMath.cos(yawRad)
         )
     }
 

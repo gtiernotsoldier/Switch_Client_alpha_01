@@ -13,8 +13,18 @@
 
 use std::convert::TryInto;
 
-/// Frame size. One tick snapshot fits in this with room to spare.
-pub const FRAME: usize = 256;
+/// Frame size.
+///
+/// 256 was enough while velocity was the only module: its snapshot is 160
+/// bytes and the rest was headroom. Aim needs the target's per-tick velocity
+/// and world-space box — the predictive lead and the multipoint both read them,
+/// and substituting a default player box makes the core's answer diverge from
+/// the in-process one for any entity that is not a standing player. That is 72
+/// more bytes, and the generic modules need an op plus up to 14 arguments after
+/// the snapshot. 384 keeps everything in one shape instead of three.
+///
+/// Still one page, still a single `read_exact` into a stack buffer.
+pub const FRAME: usize = 384;
 /// Header size; payload starts here.
 pub const HEADER: usize = 32;
 /// Maximum payload length.
@@ -89,12 +99,21 @@ impl Status {
 
 /// Module id in the header. One core process serves every module; the id picks
 /// the strategy for this frame.
+///
+/// The ids are append-only. A number, once shipped, never changes meaning: the
+/// stub and the core are separate binaries that can be upgraded independently,
+/// and a renumbering would turn a stale stub into a process that silently
+/// computes the wrong strategy rather than one that fails loudly.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum Module {
     Velocity = 1,
     Click = 2,
     Aim = 3,
+    Movement = 4,
+    Tap = 5,
+    Combat = 6,
+    Reach = 7,
 }
 
 impl Module {
@@ -103,12 +122,22 @@ impl Module {
             1 => Module::Velocity,
             2 => Module::Click,
             3 => Module::Aim,
+            4 => Module::Movement,
+            5 => Module::Tap,
+            6 => Module::Combat,
+            7 => Module::Reach,
             _ => return None,
         })
     }
 }
 
 /// What the core decided. Mirrors `VelocityResult` / `PlatformCommand` one to one.
+///
+/// The first four are velocity's; the rest exist because a decision frame is the
+/// only channel back to the stub and every module needs to name its outcome.
+/// Two generic arms — [`Action::Scalar`] and [`Action::Bool`] — cover the pure
+/// predicates (reach intersection, still-sliding, wrap180) so that adding one
+/// does not force a protocol revision.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum Action {
@@ -117,6 +146,22 @@ pub enum Action {
     Modify = 2,
     ClickBurst = 3,
     Cancel = 4,
+    /// Aim: apply the rotation in the payload.
+    ApplyRotation = 5,
+    /// Click: attack this tick.
+    Click = 6,
+    StopSprint = 7,
+    RestoreSprint = 8,
+    /// Movement: one or more keys damped.
+    Suppress = 9,
+    /// Tap: emit a strafe side.
+    TapSide = 10,
+    /// Combat: block verdict.
+    Block = 11,
+    /// Generic f64 result, carried in `motion.x`.
+    Scalar = 12,
+    /// Generic boolean result, carried in `clicks`.
+    Bool = 13,
 }
 
 impl Action {
@@ -126,6 +171,15 @@ impl Action {
             2 => Action::Modify,
             3 => Action::ClickBurst,
             4 => Action::Cancel,
+            5 => Action::ApplyRotation,
+            6 => Action::Click,
+            7 => Action::StopSprint,
+            8 => Action::RestoreSprint,
+            9 => Action::Suppress,
+            10 => Action::TapSide,
+            11 => Action::Block,
+            12 => Action::Scalar,
+            13 => Action::Bool,
             _ => Action::NoOp,
         }
     }
@@ -418,7 +472,11 @@ mod tests {
     fn rejects_overlong_payload() {
         let f = Frame::new(Kind::Ping, 1, 1, Module::Velocity);
         let mut bytes = f.encode();
-        bytes[16..18].copy_from_slice(&300u16.to_le_bytes());
+        // One past the payload capacity. The exact number is derived, not
+        // written down: a hardcoded value silently became valid when the frame
+        // grew for the aim snapshot.
+        let over = (MAX_PAYLOAD + 1) as u16;
+        bytes[16..18].copy_from_slice(&over.to_le_bytes());
         assert_eq!(Frame::decode(&bytes).unwrap_err(), Status::BadPayload);
     }
 

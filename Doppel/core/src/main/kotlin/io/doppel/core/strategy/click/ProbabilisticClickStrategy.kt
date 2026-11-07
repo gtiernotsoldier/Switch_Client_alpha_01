@@ -1,6 +1,5 @@
 package io.doppel.core.strategy.click
 
-import io.doppel.core.algorithm.NoiseProvider
 import io.doppel.core.condition.ConditionChecker
 import io.doppel.core.model.PlayerState
 import io.doppel.core.model.TargetState
@@ -36,7 +35,8 @@ class ProbabilisticClickStrategy : ClickStrategy<ClickConfig, ClickStrategy.Stat
         config: ClickConfig,
         state: ClickStrategy.State,
         player: PlayerState,
-        target: TargetState?
+        target: TargetState?,
+        random: io.doppel.core.ipc.RandomSource = io.doppel.core.ipc.DefaultRandomSource
     ): ClickResult {
         // 1. Block-hit prevention
         if (config.disableOnBlock && player.isMining) {
@@ -51,7 +51,7 @@ class ProbabilisticClickStrategy : ClickStrategy<ClickConfig, ClickStrategy.Stat
 
         // 3. Condition check (blind: target may be null — ConditionChecker skips
         //    target-based conditions when null, matching CooldownClickStrategy)
-        if (!ConditionChecker.check(config.triggerOptions, player, target)) {
+        if (!ConditionChecker.check(config.triggerOptions, player, target, random)) {
             return ClickResult.Skip
         }
 
@@ -64,17 +64,17 @@ class ProbabilisticClickStrategy : ClickStrategy<ClickConfig, ClickStrategy.Stat
         val lo = config.minCps.coerceAtMost(config.maxCps)
         val hi = config.maxCps.coerceAtLeast(config.minCps)
         val effectiveCps = when (config.mode) {
-            ClickOperatingMode.NORMAL -> sampleCpsInRange(lo, hi)
+            ClickOperatingMode.NORMAL -> sampleCpsInRange(lo, hi, random)
             ClickOperatingMode.LEGIT -> {
-                val base = sampleCpsInRange(lo, hi)
+                val base = sampleCpsInRange(lo, hi, random)
                 // Blind mode: when there's no target there is no distance to adjust by.
-                if (target != null) adjustCpsByDistance(base, lo, hi, target.distance) else base
+                if (target != null) adjustCpsByDistance(base, lo, hi, target.distance, random) else base
             }
         }.coerceAtLeast(1)
 
         // 6. Per-tick probability roll
         val clickChance = effectiveCps / 20.0
-        if (NoiseProvider.nextUniform(0f, 1f) >= clickChance) {
+        if (nextUniform(0f, 1f, random) >= clickChance) {
             return ClickResult.Skip
         }
 
@@ -90,10 +90,14 @@ class ProbabilisticClickStrategy : ClickStrategy<ClickConfig, ClickStrategy.Stat
     /**
      * Sample a CPS value uniformly within [lo, hi].
      */
-    private fun sampleCpsInRange(lo: Int, hi: Int): Int {
+    private fun sampleCpsInRange(lo: Int, hi: Int, random: io.doppel.core.ipc.RandomSource): Int {
         if (lo == hi) return lo
-        return lo + (NoiseProvider.nextUniform(0f, 1f) * (hi - lo + 1)).toInt().coerceIn(0, hi - lo)
+        return lo + (nextUniform(0f, 1f, random) * (hi - lo + 1)).toInt().coerceIn(0, hi - lo)
     }
+
+    /** Same shape as `NoiseProvider.nextUniform`, routed through the injectable source. */
+    private fun nextUniform(min: Float, max: Float, random: io.doppel.core.ipc.RandomSource): Float =
+        min + random.nextFloat() * (max - min)
 
     /**
      * Adjust CPS based on target distance for LEGIT mode.
@@ -101,14 +105,20 @@ class ProbabilisticClickStrategy : ClickStrategy<ClickConfig, ClickStrategy.Stat
      * - Distance < 1.5 blocks: increase CPS by 3-5.
      * - Otherwise: no change.
      */
-    private fun adjustCpsByDistance(baseCps: Int, lo: Int, hi: Int, distance: Float): Int {
+    private fun adjustCpsByDistance(
+        baseCps: Int,
+        lo: Int,
+        hi: Int,
+        distance: Float,
+        random: io.doppel.core.ipc.RandomSource
+    ): Int {
         val adjusted = when {
             distance > 2.5f -> {
-                val reduction = NoiseProvider.nextUniform(2f, 5f).toInt()
+                val reduction = nextUniform(2f, 5f, random).toInt()
                 baseCps - reduction
             }
             distance < 1.5f -> {
-                val boost = NoiseProvider.nextUniform(3f, 5f).toInt()
+                val boost = nextUniform(3f, 5f, random).toInt()
                 baseCps + boost
             }
             else -> baseCps

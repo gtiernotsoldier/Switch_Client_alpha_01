@@ -36,7 +36,7 @@ impl WeaponType {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct Vec3 {
     pub x: f64,
     pub y: f64,
@@ -46,6 +46,33 @@ pub struct Vec3 {
 impl Vec3 {
     pub fn new(x: f64, y: f64, z: f64) -> Vec3 {
         Vec3 { x, y, z }
+    }
+
+    pub fn length(&self) -> f64 {
+        (self.x * self.x + self.y * self.y + self.z * self.z).sqrt()
+    }
+
+    pub fn dot(&self, o: &Vec3) -> f64 {
+        self.x * o.x + self.y * o.y + self.z * o.z
+    }
+
+    pub fn cross(&self, o: &Vec3) -> Vec3 {
+        Vec3::new(
+            self.y * o.z - self.z * o.y,
+            self.z * o.x - self.x * o.z,
+            self.x * o.y - self.y * o.x,
+        )
+    }
+
+    pub fn normalize(&self) -> Vec3 {
+        let len = self.length();
+        if len > 0.0 {
+            // Multiply by the reciprocal; the Kotlin is `times(1.0 / len)`.
+            let inv = 1.0 / len;
+            Vec3::new(self.x * inv, self.y * inv, self.z * inv)
+        } else {
+            Vec3::new(0.0, 0.0, 0.0)
+        }
     }
 
     pub fn distance_to(&self, o: &Vec3) -> f64 {
@@ -110,11 +137,28 @@ impl PlayerState {
 pub struct TargetState {
     pub id: i32,
     pub position: Vec3,
+    /// Per-tick velocity of the target, needed by the predictive lead in
+    /// SELF_ADAPTIVE. The velocity modules never read it.
+    pub motion: Vec3,
+    /// Entity bounding box in world space. Read by every aim mode; the velocity
+    /// modules ignore it, which is why it can carry a default until the wire
+    /// grows a field for it.
+    pub hitbox: crate::geom::Hitbox,
     pub distance: f32,
     pub health: f32,
     pub hurt_time: i32,
     pub is_moving_backward: bool,
     pub is_moving_towards_player: bool,
+}
+
+impl TargetState {
+    /// Hitbox a player-shaped entity occupies at `position`, before the adapter
+    /// replaces it with the exact box. Purely a fallback for paths that have no
+    /// box on the wire yet.
+    pub fn with_default_hitbox(mut self) -> TargetState {
+        self.hitbox = crate::geom::Hitbox::around(self.position, 0.3, 1.8);
+        self
+    }
 }
 
 /// Mirrors `TriggerOptions` — same fields, same defaults.
@@ -312,4 +356,44 @@ impl Decision {
             clicks,
         }
     }
+}
+
+// ── setback models ─────────────────────────────────────────────────────────
+
+/// One movement vector a module produced at a given tick.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ModuleMovementSample {
+    pub module_id: String,
+    pub tick: i64,
+    pub movement: Vec3,
+}
+
+/// Snapshot of an anti-cheat pull-back.
+#[derive(Debug, Clone)]
+pub struct SetbackEvent {
+    pub tick: i64,
+    pub position_before: Vec3,
+    pub position_after: Vec3,
+    pub recent_movement_samples: Vec<ModuleMovementSample>,
+}
+
+impl SetbackEvent {
+    pub fn displacement(&self) -> Vec3 {
+        Vec3::new(
+            self.position_before.x - self.position_after.x,
+            self.position_before.y - self.position_after.y,
+            self.position_before.z - self.position_after.z,
+        )
+    }
+
+    pub fn displacement_magnitude(&self) -> f64 {
+        self.displacement().length()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum SetbackVerdict {
+    ExternalCause { tick: i64, total_setbacks: i32 },
+    BlameModule { module_id: String, blame_count: i32, threshold: i32 },
+    CircuitBreak { module_id: String, blame_count: i32 },
 }

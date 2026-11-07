@@ -1,10 +1,9 @@
 package io.doppel.core.strategy.movement
 
 import kotlin.math.abs
-import kotlin.math.cos
-import kotlin.math.hypot
+import kotlin.math.sqrt
 import kotlin.math.max
-import kotlin.math.sin
+import io.doppel.core.math.PortableMath
 
 /**
  * StrafeCorrector — decides which **one** of the player's own movement keys to damp.
@@ -114,11 +113,11 @@ object StrafeCorrector {
     internal fun score(input: Input, s: State): Double {
         if (!input.any) return 0.0
 
-        val yaw = Math.toRadians(s.yawDeg)
-        val fx = -sin(yaw)
-        val fz = cos(yaw)          // Minecraft forward
-        val rx = cos(yaw)
-        val rz = sin(yaw)          // right of forward
+        val yaw = PortableMath.toRadians(s.yawDeg)
+        val fx = -PortableMath.sin(yaw)
+        val fz = PortableMath.cos(yaw)          // Minecraft forward
+        val rx = PortableMath.cos(yaw)
+        val rz = PortableMath.sin(yaw)          // right of forward
 
         var vx = 0.0
         var vz = 0.0
@@ -127,14 +126,19 @@ object StrafeCorrector {
         if (input.right) { vx += rx; vz += rz }
         if (input.left) { vx -= rx; vz -= rz }
 
-        val len = hypot(vx, vz)
+        // sqrt, not hypot: Java's Math.hypot is fdlibm's scaling algorithm and
+        // glibc's is correctly rounded, so the two disagree by an ulp on inputs
+        // like these. Components here are bounded by 2, so the overflow guard
+        // hypot exists for cannot trigger — and bit-exact parity with the Rust
+        // port is worth more than a guard that never runs.
+        val len = sqrt(vx * vx + vz * vz)
         // W+S or A+D cancel: no movement direction, no claim to make about it.
         if (len < 1e-6) return 0.0
         vx /= len
         vz /= len
 
-        val bx = cos(s.bearingRad)
-        val bz = sin(s.bearingRad)
+        val bx = PortableMath.cos(s.bearingRad)
+        val bz = PortableMath.sin(s.bearingRad)
 
         // Cross (z) = tangential share.  Dot = radial share; positive means closing in.
         val tangential = abs(vx * bz - vz * bx)

@@ -1,7 +1,7 @@
 package io.doppel.core.strategy.movement
 
-import kotlin.math.cos
-import kotlin.math.sin
+import io.doppel.core.math.PortableMath
+
 
 /**
  * The arithmetic behind Instant Stop: how long to keep braking after the player lets go of a key.
@@ -32,9 +32,9 @@ object StopTap {
         releasedForward: Boolean,
         minSpeed: Double = MIN_SPEED
     ): Boolean {
-        val yaw = Math.toRadians(yawDegrees.toDouble())
-        val forwardX = -sin(yaw)
-        val forwardZ = cos(yaw)
+        val yaw = PortableMath.toRadians(yawDegrees.toDouble())
+        val forwardX = -PortableMath.sin(yaw)
+        val forwardZ = PortableMath.cos(yaw)
         val dirX = if (releasedForward) forwardX else -forwardX
         val dirZ = if (releasedForward) forwardZ else -forwardZ
         return motionX * dirX + motionZ * dirZ > minSpeed

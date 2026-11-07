@@ -111,7 +111,7 @@ pub fn is_looking_at(player: &PlayerState, target: &TargetState, threshold_deg: 
     }
 
     // MC convention: yaw 0 faces +Z, yaw 90 faces -X.
-    let yaw_to_target = ((-dx).atan2(dz) * RAD_TO_DEG) as f32;
+    let yaw_to_target = (crate::trig::atan2(-dx, dz) * RAD_TO_DEG) as f32;
 
     let player_yaw = normalize_angle(player.yaw);
     let angle_deg = normalize_angle(player_yaw - yaw_to_target).abs();
@@ -156,8 +156,8 @@ pub fn normalize_angle(angle: f32) -> f32 {
 /// (x, y, z) in f64 — matches `RotationCalculator.yawToDirection`, which builds
 /// a `Vec3` of doubles.
 pub fn yaw_to_direction(yaw: f32) -> (f64, f64, f64) {
-    let rad = (yaw as f64).to_radians();
-    (-rad.sin(), 0.0, rad.cos())
+    let rad = crate::geom::to_radians(yaw as f64);
+    (-crate::trig::sin(rad), 0.0, crate::trig::cos(rad))
 }
 
 #[cfg(test)]
@@ -184,6 +184,8 @@ mod tests {
         TargetState {
             id: 7,
             position: Vec3::new(x, 64.0, z),
+            motion: Vec3::new(0.0, 0.0, 0.0),
+            hitbox: crate::geom::Hitbox::around(Vec3::new(x, 64.0, z), 0.3, 1.8),
             distance,
             health: 20.0,
             hurt_time: 0,

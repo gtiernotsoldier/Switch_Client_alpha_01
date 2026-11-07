@@ -29,11 +29,32 @@ jobs:
       - name: Setup Gradle 8.5
         uses: gradle/actions/setup-gradle@v4
         with: { gradle-version: '8.5' }
-      - name: JVM IPC tests (includes the process-level parity run)
-        run: cd Doppel && gradle :core:test --tests "io.doppel.core.ipc.*" --no-daemon
+      - name: JVM IPC and maths parity tests
+        run: |
+          cd Doppel
+          gradle :core:test \
+            --tests "io.doppel.core.ipc.*" \
+            --tests "io.doppel.core.math.*" \
+            --no-daemon
       # The e2e test skips itself when no binary is present, so the `jvm` job can
       # run the whole suite without a Rust toolchain. Here the binary exists by
       # construction, which means a skip in *this* job is a bug, not a shortcut.
+      # Same failure mode as the e2e skip, applied to every parity fixture.
+      # A wrong `golden` path makes the suites fail, but an empty fixture makes
+      # them pass vacuously — so assert the row counts were actually consumed.
+      - name: Assert the parity fixtures were replayed
+        run: |
+          for t in VelocityParityTest AimParityTest ClickParityTest MovementParityTest ModuleSessionParityTest; do
+            f=Doppel/core/build/test-results/test/TEST-io.doppel.core.ipc.$t.xml
+            test -f "$f" || { echo "::error::$t produced no report"; exit 1; }
+            grep -q 'tests="0"' "$f" && { echo "::error::$t ran zero cases"; exit 1; }
+            grep -q 'skipped="[1-9]' "$f" && { echo "::error::$t skipped cases"; exit 1; }
+          done
+          f=Doppel/core/build/test-results/test/TEST-io.doppel.core.math.PortableMathParityTest.xml
+          test -f "$f" || { echo "::error::PortableMathParityTest produced no report"; exit 1; }
+          grep -q 'skipped="[1-9]' "$f" && { echo "::error::PortableMathParityTest skipped cases"; exit 1; }
+          echo "parity suites replayed"
+
       - name: Assert the e2e test ran instead of skipping
         run: |
           f=Doppel/core/build/test-results/test/TEST-io.doppel.core.ipc.CoreStubE2ETest.xml

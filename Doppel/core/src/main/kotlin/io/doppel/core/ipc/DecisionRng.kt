@@ -44,6 +44,11 @@ class DecisionRng(seed: Long) : RandomSource {
     override fun nextFloat(): Float = (nextU32() ushr 8).toFloat() / 16_777_216.0f
 
     /**
+     * 32-bit resolution, matching `Pcg32::next_double` in Rust.
+     */
+    override fun nextDouble(): Double = nextU32().toDouble() / 4_294_967_296.0
+
+    /**
      * Modulo, not rejection sampling — see the Rust twin for why. The bias is
      * ~2e-7 at bound 100, far below anything measurable in play.
      */

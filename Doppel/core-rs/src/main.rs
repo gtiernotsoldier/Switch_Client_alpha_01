@@ -21,12 +21,16 @@
 // instead of inviting someone to delete the unused half and re-add it later.
 #![allow(dead_code)]
 
+mod codec;
 mod condition;
+mod geom;
 mod model;
 mod rng;
+mod safety;
 mod session;
 mod strategy;
 mod transport;
+mod trig;
 mod wire;
 
 use std::io::Write;
@@ -86,6 +90,31 @@ fn main() {
                     }
                 }
             }
+            "--trig-probe" => {
+                // Internal audit hook: replay a table of raw f64 bit patterns
+                // through `trig` and print the results as bits. The point is to
+                // diff this against a compiled fdlibm reference, so nothing is
+                // formatted as decimal — a decimal round-trip can hide a 1 ulp
+                // difference, which is the only thing this mode exists to see.
+                let input = args.get(i + 1).cloned();
+                let output = args.get(i + 2).cloned();
+                match (input, output) {
+                    (Some(inp), Some(out)) => match trig_probe(&inp, &out) {
+                        Ok(n) => {
+                            println!("TRIG PROBE OK {} rows", n);
+                            return;
+                        }
+                        Err(e) => {
+                            eprintln!("trig probe failed: {}", e);
+                            std::process::exit(1);
+                        }
+                    },
+                    _ => {
+                        eprintln!("--trig-probe needs <input.tsv> <output.tsv>");
+                        std::process::exit(2);
+                    }
+                }
+            }
             "--help" | "-h" => {
                 print_help();
                 return;
@@ -114,6 +143,7 @@ fn print_help() {
     println!("  --port-file <path>                   write the bound address here");
     println!("  --bench                              loopback round-trip benchmark");
     println!("  --emit-golden <dir>                  write the JVM parity fixture");
+    println!("  --trig-probe <in.tsv> <out.tsv>      audit trig against an fdlibm build");
     println!("  --selftest                           internal consistency checks");
 }
 
@@ -506,8 +536,403 @@ fn selftest_ctx() -> VelocityContext {
 /// disagree, the test fails, and the disagreement is real. Regenerating the
 /// fixture after a deliberate behaviour change is a two-line diff in git, which
 /// is the point: a behaviour change cannot pass silently.
-fn emit_golden(dir: &str) -> Result<(), String> {
+
+/// Writes the input/expected pair that `AimParityTest.kt` replays.
+///
+/// Two independent RNG streams, one per mode, so a divergence in one mode
+/// cannot be masked by the other's draws. The input stream is separate again:
+/// if the port ever consumed an extra draw inside a branch, the *input* would
+/// stop matching first, which localises the fault to the branch rather than to
+/// the whole tick.
+fn emit_aim_golden(dir: &str, seed: u64) -> Result<(), String> {
     use std::fs;
+
+    let mut input = String::new();
+    input.push_str("# doppel-aim-golden v1\n");
+    input.push_str(&format!("# seed {}\n", seed));
+    input.push_str(
+        "idx\tpx\tpy\tpz\tyaw\tpitch\tflags\thurt\ttx\tty\ttz\ttmx\ttmy\ttmz\tthealth\tthurt\ttid\t\
+         hminx\thminy\thminz\thmaxx\thmaxy\thmaxz\n",
+    );
+
+    let mut expected = String::new();
+    expected.push_str("# idx\tmode\taction\twx_bits\twy_bits\twz_bits\tfy_bits\tfp_bits\n");
+
+    let mut in_rng = Pcg32::new(0x00AA_11BB_22CC_33DD);
+    let mut st_legit = strategy::aim::AimState::default();
+    let mut st_self = strategy::aim::AimState::default();
+    let mut rng_legit = Pcg32::new(seed ^ 1);
+    let mut rng_self = Pcg32::new(seed ^ 2);
+
+    let cfg_legit = strategy::aim::AimConfig {
+        mode: strategy::aim::AimMode::Legit,
+        ..Default::default()
+    };
+    let cfg_self = strategy::aim::AimConfig {
+        mode: strategy::aim::AimMode::SelfAdaptive,
+        ..Default::default()
+    };
+
+    for i in 0..1000u32 {
+        let px = in_rng.random_float(-2.0, 2.0) as f64;
+        let py = 64.0f64 + in_rng.random_float(-1.0, 1.0) as f64;
+        let pz = in_rng.random_float(-2.0, 2.0) as f64;
+        let yaw = in_rng.random_float(-180.0, 180.0);
+        let pitch = in_rng.random_float(-90.0, 90.0);
+
+        let mut flags: u16 = 0;
+        if in_rng.next_int(2) == 1 { flags |= model::F_ON_GROUND; }
+        if in_rng.next_int(2) == 1 { flags |= model::F_MOVING; }
+        if in_rng.next_int(2) == 1 { flags |= model::F_SPRINTING; }
+        if in_rng.next_int(2) == 1 { flags |= model::F_ATTACK_KEY_DOWN; }
+        let hurt = in_rng.next_int(10) as i32;
+
+        let angle = in_rng.random_float(-3.14159, 3.14159) as f64;
+        let dist = in_rng.random_float(2.0, 8.0) as f64;
+        let tx = px + trig::cos(angle) * dist;
+        let tz = pz + trig::sin(angle) * dist;
+        let ty = in_rng.random_float(0.0, 1.2) as f64 + 63.0;
+
+        let tmx = in_rng.random_float(-0.2, 0.2) as f64;
+        let tmy = in_rng.random_float(-0.2, 0.2) as f64;
+        let tmz = in_rng.random_float(-0.2, 0.2) as f64;
+
+        let hw = in_rng.random_float(0.2, 0.4) as f64;
+        let hh = in_rng.random_float(1.6, 2.0) as f64;
+        let ox = in_rng.random_float(-0.05, 0.05) as f64;
+        let oz = in_rng.random_float(-0.05, 0.05) as f64;
+
+        let thealth = in_rng.random_float(1.0, 20.0);
+        let thurt = in_rng.next_int(10) as i32;
+        let tid = 10 + in_rng.next_int(5) as i32;
+
+        input.push_str(&format!(
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+            i, px, py, pz, yaw, pitch, flags, hurt,
+            tx, ty, tz, tmx, tmy, tmz, thealth, thurt, tid,
+            tx - hw + ox, ty, tz - hw + oz, tx + hw + ox, ty + hh, tz + hw + oz
+        ));
+
+        let player = model::PlayerState {
+            position: Vec3::new(px, py, pz),
+            motion: Vec3::new(0.0, 0.0, 0.0),
+            yaw,
+            pitch,
+            health: 20.0,
+            hurt_time: hurt,
+            hurt_resistant_time: hurt,
+            weapon: model::WeaponType::Sword,
+            flags,
+            ticks: i,
+        };
+        let target = model::TargetState {
+            id: tid,
+            position: Vec3::new(tx, ty, tz),
+            motion: Vec3::new(tmx, tmy, tmz),
+            hitbox: crate::geom::Hitbox::new(
+                tx - hw + ox, ty, tz - hw + oz,
+                tx + hw + ox, ty + hh, tz + hw + oz,
+            ),
+            distance: dist as f32,
+            health: thealth,
+            hurt_time: thurt,
+            is_moving_backward: false,
+            is_moving_towards_player: false,
+        };
+
+        let input_bundle = strategy::aim::AimInput {
+            player,
+            target: Some(target),
+            mouse_delta_x: 0.0,
+            mouse_delta_y: 0.0,
+        };
+
+        let r_legit = strategy::aim::execute(&cfg_legit, &mut st_legit, &input_bundle, &mut rng_legit);
+        let r_self = strategy::aim::execute(&cfg_self, &mut st_self, &input_bundle, &mut rng_self);
+
+        for (mode, r) in [(0u8, r_legit), (1u8, r_self)] {
+            match r {
+                strategy::aim::AimResult::ApplyRotation { world_point, hitbox: _, fraction_y, fraction_p } => {
+                    expected.push_str(&format!(
+                        "{}\t{}\t1\t{:016x}\t{:016x}\t{:016x}\t{:08x}\t{:08x}\n",
+                        i, mode,
+                        world_point.x.to_bits(), world_point.y.to_bits(), world_point.z.to_bits(),
+                        fraction_y.to_bits(), fraction_p.to_bits()
+                    ));
+                }
+                strategy::aim::AimResult::Skip => {
+                    expected.push_str(&format!("{}\t{}\t0\t0\t0\t0\t0\t0\n", i, mode));
+                }
+            }
+        }
+    }
+
+    fs::write(format!("{}/aim_input.tsv", dir), input).map_err(|e| e.to_string())?;
+    fs::write(format!("{}/aim_expected.tsv", dir), expected).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+
+/// Writes the input/expected pair that `ClickParityTest.kt` replays.
+///
+/// Five configurations, each with its own state and RNG stream, because the
+/// interesting behaviour is path-dependent: DOUBLE holds a pending click across
+/// a tick, and the crit FSM spans five. Sharing one stream would let a
+/// divergence in one configuration hide behind the others' draws.
+fn emit_click_golden(dir: &str, seed: u64) -> Result<(), String> {
+    use std::fs;
+
+    let mut input = String::new();
+    input.push_str("# doppel-click-golden v1\n");
+    input.push_str(&format!("# seed {}\n", seed));
+    input.push_str("idx\tflags\tcooldown\tfalling\thas_target\ttx\ttz\ttdist\thurt\n");
+
+    let mut expected = String::new();
+    expected.push_str("# idx\tstrategy\taction\n");
+
+    let mut in_rng = Pcg32::new(0x0C1C_0000_0000_BEEF);
+
+    let cfg_prob_normal = strategy::click::ClickConfig::default();
+    let cfg_prob_legit = strategy::click::ClickConfig {
+        mode: strategy::click::ClickOperatingMode::Legit,
+        click_mode: strategy::click::ClickMode::Double,
+        min_cps: 6,
+        max_cps: 12,
+        ..Default::default()
+    };
+    let cfg_cd_off = strategy::click::CooldownClickConfig::default();
+    let cfg_cd_on = strategy::click::CooldownClickConfig {
+        crit_mode: strategy::click::CritMode::On,
+        cooldown_mode: strategy::click::CooldownClickMode::Legit,
+        cooldown_threshold: 0.9,
+        ..Default::default()
+    };
+    let cfg_cd_smart = strategy::click::CooldownClickConfig {
+        crit_mode: strategy::click::CritMode::Smart,
+        ..Default::default()
+    };
+
+    let mut st0 = strategy::click::ClickState::default();
+    let mut st1 = strategy::click::ClickState::default();
+    let mut st2 = strategy::click::CritState::default();
+    let mut st3 = strategy::click::CritState::default();
+    let mut st4 = strategy::click::CritState::default();
+
+    let mut rng0 = Pcg32::new(seed ^ 0x10);
+    let mut rng1 = Pcg32::new(seed ^ 0x11);
+    let mut rng2 = Pcg32::new(seed ^ 0x12);
+    let mut rng3 = Pcg32::new(seed ^ 0x13);
+    let mut rng4 = Pcg32::new(seed ^ 0x14);
+
+    for i in 0..800u32 {
+        let mut flags: u16 = 0;
+        if in_rng.next_int(3) != 0 { flags |= model::F_ON_GROUND; }
+        if in_rng.next_int(2) == 1 { flags |= model::F_SPRINTING; }
+        if in_rng.next_int(8) == 0 { flags |= model::F_MINING; }
+        if in_rng.next_int(2) == 1 { flags |= model::F_ATTACK_KEY_DOWN; }
+        let hurt = in_rng.next_int(10) as i32;
+
+        // Cooldown swings so the gate opens and closes repeatedly.
+        let cooldown = in_rng.random_float(0.0, 1.05);
+        let falling = in_rng.next_int(2) == 1;
+
+        // A target is present most ticks; her distance varies around the LEGIT
+        // CPS adjustment thresholds (1.5 and 2.5).
+        let has_target = in_rng.next_int(6) != 0;
+        let tdist = in_rng.random_float(0.8, 4.0);
+        let tx = tdist as f64;
+        let tz = 0.0f64;
+
+        input.push_str(&format!(
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+            i, flags, cooldown, if falling { 1 } else { 0 },
+            if has_target { 1 } else { 0 }, tx, tz, tdist, hurt
+        ));
+
+        let player = model::PlayerState {
+            position: Vec3::new(0.0, 64.0, 0.0),
+            motion: Vec3::new(0.0, 0.0, 0.0),
+            yaw: 0.0,
+            pitch: 0.0,
+            health: 20.0,
+            hurt_time: hurt,
+            hurt_resistant_time: hurt,
+            weapon: model::WeaponType::Sword,
+            flags,
+            ticks: i,
+        };
+        let target = if has_target {
+            Some(model::TargetState {
+                id: 5,
+                position: Vec3::new(tx, 64.0, tz),
+                motion: Vec3::new(0.0, 0.0, 0.0),
+                hitbox: crate::geom::Hitbox::around(Vec3::new(tx, 64.0, tz), 0.3, 1.8),
+                distance: tdist,
+                health: 20.0,
+                hurt_time: 0,
+                is_moving_backward: false,
+                is_moving_towards_player: false,
+            })
+        } else {
+            None
+        };
+
+        let click_input = strategy::click::ClickInput {
+            player,
+            target,
+            attack_cooldown: cooldown,
+            is_falling: falling,
+        };
+
+        let r0 = strategy::click::probabilistic_tick(&cfg_prob_normal, &mut st0, &click_input, &mut rng0);
+        let r1 = strategy::click::probabilistic_tick(&cfg_prob_legit, &mut st1, &click_input, &mut rng1);
+        let r2 = strategy::click::cooldown_tick(&cfg_cd_off, &mut st2, &click_input, &mut rng2);
+        let r3 = strategy::click::cooldown_tick(&cfg_cd_on, &mut st3, &click_input, &mut rng3);
+        let r4 = strategy::click::cooldown_tick(&cfg_cd_smart, &mut st4, &click_input, &mut rng4);
+
+        for (sid, r) in [(0u8, r0), (1, r1), (2, r2), (3, r3), (4, r4)] {
+            let code: u8 = match r {
+                strategy::click::ClickResult::Skip => 0,
+                strategy::click::ClickResult::Click => 1,
+                strategy::click::ClickResult::StopSprint => 2,
+                strategy::click::ClickResult::RestoreSprint { was_sprinting: true } => 3,
+                strategy::click::ClickResult::RestoreSprint { was_sprinting: false } => 4,
+            };
+            expected.push_str(&format!("{}\t{}\t{}\n", i, sid, code));
+        }
+    }
+
+    fs::write(format!("{}/click_input.tsv", dir), input).map_err(|e| e.to_string())?;
+    fs::write(format!("{}/click_expected.tsv", dir), expected).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+
+/// Fixture for the movement family: SOCD, instant-stop and the strafe corrector.
+/// All three are deterministic, so this one needs no RNG stream at all — a
+/// mismatch here is arithmetic, never a lost draw.
+fn emit_movement_golden(dir: &str) -> Result<(), String> {
+    use std::fs;
+
+    let mut input = String::new();
+    input.push_str("# doppel-movement-golden v1\n");
+    input.push_str("idx\tfwd\tback\tleft\tright\tyaw\tmx\tmz\tdist\tbearing\treach\n");
+
+    let mut expected = String::new();
+    expected.push_str("# idx\tkind\tvalue\ta\tb\n");
+
+    let mut in_rng = Pcg32::new(0x0000_0A0B_0000_0001);
+    let mut socd = strategy::movement::SocdResolver::default();
+    let mut gate_state = strategy::combat::RangeGateState::default();
+
+    for i in 0..600u32 {
+        let fwd = in_rng.next_int(2) == 1;
+        let back = in_rng.next_int(2) == 1;
+        let left = in_rng.next_int(2) == 1;
+        let right = in_rng.next_int(2) == 1;
+        let yaw = in_rng.random_float(-180.0, 180.0);
+        let mx = in_rng.random_float(-0.5, 0.5) as f64;
+        let mz = in_rng.random_float(-0.5, 0.5) as f64;
+        let dist = in_rng.random_float(0.5, 6.0);
+        let bearing = in_rng.random_float(-3.14159, 3.14159) as f64;
+        let reach = in_rng.random_float(2.5, 3.5);
+
+        input.push_str(&format!(
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+            i,
+            if fwd { 1 } else { 0 },
+            if back { 1 } else { 0 },
+            if left { 1 } else { 0 },
+            if right { 1 } else { 0 },
+            yaw, mx, mz, dist, bearing, reach
+        ));
+
+        // 0 — SOCD: bitmask of the four suppressions
+        let c = socd.resolve(fwd, back, left, right);
+        let mask = (c.suppress_forward as u8)
+            | ((c.suppress_back as u8) << 1)
+            | ((c.suppress_left as u8) << 2)
+            | ((c.suppress_right as u8) << 3);
+        expected.push_str(&format!("{}\t0\t{}\t0\t0\n", i, mask));
+
+        // 1 — instant stop, forward release
+        let sliding = strategy::movement::still_sliding(mx, mz, yaw, true, strategy::movement::MIN_SPEED);
+        expected.push_str(&format!("{}\t1\t{}\t0\t0\n", i, if sliding { 1 } else { 0 }));
+
+        // 2 — strafe corrector: mask, before-bits, after-bits
+        let si = strategy::movement::StrafeInput { forward: fwd, back, left, right };
+        let ss = strategy::movement::StrafeState {
+            distance: dist as f64,
+            bearing_rad: bearing,
+            yaw_deg: yaw as f64,
+            reach: reach as f64,
+        };
+        let sc = strategy::movement::strafe_correct(si, ss);
+        let smask = (sc.suppress_forward as u8)
+            | ((sc.suppress_back as u8) << 1)
+            | ((sc.suppress_left as u8) << 2)
+            | ((sc.suppress_right as u8) << 3);
+        expected.push_str(&format!(
+            "{}\t2\t{}\t{:016x}\t{:016x}\n",
+            i, smask, sc.before.to_bits(), sc.after.to_bits()
+        ));
+
+        // 3 — range gate, ON_ENTER with hysteresis
+        let cfg = strategy::combat::RangeGateConfig {
+            mode: strategy::combat::RangeMode::OnEnter,
+            min_distance: 0.0,
+            max_distance: 4.0,
+            hysteresis: 1.5,
+        };
+        let in_range = strategy::combat::range_gate_compute(Some(&mut gate_state), &cfg, Some(dist));
+        expected.push_str(&format!("{}\t3\t{}\t0\t0\n", i, if in_range { 1 } else { 0 }));
+    }
+
+    fs::write(format!("{}/movement_input.tsv", dir), input).map_err(|e| e.to_string())?;
+    fs::write(format!("{}/movement_expected.tsv", dir), expected).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Replays `(x, y, a)` bit-pattern triples through `trig` and writes
+/// `(sin x, cos x, atan y, atan2(y, x), acos a)` back as bits.
+fn trig_probe(input: &str, output: &str) -> Result<usize, String> {
+    use std::io::{BufRead, BufReader};
+
+    let fin = std::fs::File::open(input).map_err(|e| format!("open {}: {}", input, e))?;
+    let mut fout = std::fs::File::create(output).map_err(|e| format!("create {}: {}", output, e))?;
+    let mut rows = 0usize;
+
+    for line in BufReader::new(fin).lines() {
+        let line = line.map_err(|e| e.to_string())?;
+        let t = line.trim();
+        if t.is_empty() || t.starts_with('#') {
+            continue;
+        }
+        let mut it = t.split_whitespace();
+        let xb: u64 = it.next().ok_or("short row")?.parse().map_err(|e| format!("{}", e))?;
+        let yb: u64 = it.next().ok_or("short row")?.parse().map_err(|e| format!("{}", e))?;
+        let ab: u64 = it.next().ok_or("short row")?.parse().map_err(|e| format!("{}", e))?;
+
+        let x = f64::from_bits(xb);
+        let y = f64::from_bits(yb);
+        let a = f64::from_bits(ab);
+
+        writeln!(
+            fout,
+            "{} {} {} {} {}",
+            trig::sin(x).to_bits(),
+            trig::cos(x).to_bits(),
+            trig::atan(y).to_bits(),
+            trig::atan2(y, x).to_bits(),
+            trig::acos(a).to_bits()
+        )
+        .map_err(|e| e.to_string())?;
+        rows += 1;
+    }
+    Ok(rows)
+}
+
+fn emit_golden(dir: &str) -> Result<(), String> {    use std::fs;
 
     fs::create_dir_all(dir).map_err(|e| e.to_string())?;
 
@@ -566,5 +991,9 @@ fn emit_golden(dir: &str) -> Result<(), String> {
 
     fs::write(format!("{}/velocity_input.tsv", dir), input).map_err(|e| e.to_string())?;
     fs::write(format!("{}/velocity_expected.tsv", dir), expected).map_err(|e| e.to_string())?;
+
+    emit_aim_golden(dir, 0x0000_5EED_A1A1_0001)?;
+    emit_click_golden(dir, 0x0000_5EED_C11C_0001)?;
+    emit_movement_golden(dir)?;
     Ok(())
 }

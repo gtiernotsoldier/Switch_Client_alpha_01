@@ -130,11 +130,11 @@ object ADTap : Module("ADTap", Category.COMBAT) {
     }
 
     private fun chooseSide(player: PlayerState, target: TargetState): Side = when (mode) {
-        "Seven" -> StrafePattern.sevenTapSide(lastSide, repeatChance, Random)
-        "Random" -> StrafePattern.randomSide(Random)
+        "Seven" -> StrafePattern.sevenTapSide(lastSide, repeatChance)
+        "Random" -> StrafePattern.randomSide()
         "Chase" -> StrafePattern.chaseSide(player.rotation.yaw, player.position, target, leadTicks)
         "Hybrid" ->
-            if (player.hurtTime > 0) StrafePattern.sevenTapSide(lastSide, repeatChance, Random)
+            if (player.hurtTime > 0) StrafePattern.sevenTapSide(lastSide, repeatChance)
             else StrafePattern.chaseSide(player.rotation.yaw, player.position, target, leadTicks)
         else -> Side.LEFT
     }

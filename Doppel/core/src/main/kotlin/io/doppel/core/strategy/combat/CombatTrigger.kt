@@ -1,7 +1,8 @@
 package io.doppel.core.strategy.combat
 
 import io.doppel.core.model.TargetState
-import kotlin.random.Random
+import io.doppel.core.ipc.DefaultRandomSource
+import io.doppel.core.ipc.RandomSource
 
 /**
  * Shared combat trigger logic for modules that fire after landing hits.
@@ -47,7 +48,14 @@ object CombatTrigger {
         hitPerMin: Int,
         hitPerMax: Int,
         chance: Int,
-        hurtGate: Boolean = true
+        hurtGate: Boolean = true,
+        /**
+         * Injected rather than reached for. This method draws from the generator
+         * twice on a fire and once on a miss, so the *sequence* matters as much
+         * as the distribution — an unseeded source makes the port in `combat.rs`
+         * impossible to verify against this one.
+         */
+        rng: RandomSource = DefaultRandomSource
     ): EvalResult {
         // POST/PRE hurt window gate. Raven semantics (MC 1.8.9 Entity.hurtResistantTime,
         // i-frames counted down from 20): the target is "just hit" while in the window.
@@ -75,12 +83,12 @@ object CombatTrigger {
         if (c < hitThreshold) return EvalResult(false, c, hitThreshold)
 
         // 3. Probability roll (after counting — only roll when about to fire)
-        if (chance < 100 && Random.nextInt(100) >= chance) {
-            val nextT = Random.nextInt(hitPerMin, hitPerMax + 1).coerceAtLeast(1)
+        if (chance < 100 && rng.nextInt(100) >= chance) {
+            val nextT = rng.randomInt(hitPerMin, hitPerMax).coerceAtLeast(1)
             return EvalResult(false, 0, nextT)
         }
 
-        val nextThreshold = Random.nextInt(hitPerMin, hitPerMax + 1).coerceAtLeast(1)
+        val nextThreshold = rng.randomInt(hitPerMin, hitPerMax).coerceAtLeast(1)
         return EvalResult(true, 0, nextThreshold)
     }
 }

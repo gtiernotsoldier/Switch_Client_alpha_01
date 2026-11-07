@@ -54,7 +54,8 @@ class LegitAimStrategy : AimStrategy {
         player: PlayerState,
         target: TargetState?,
         mouseDeltaX: Float = 0f,
-        mouseDeltaY: Float = 0f
+        mouseDeltaY: Float = 0f,
+        random: io.doppel.core.ipc.RandomSource = io.doppel.core.ipc.DefaultRandomSource
     ): AimResult {
         // 1. Null guard
         if (target == null) {
@@ -72,7 +73,7 @@ class LegitAimStrategy : AimStrategy {
         }
 
         // 3. Condition check
-        if (!ConditionChecker.check(config.triggerOptions, player, target)) {
+        if (!ConditionChecker.check(config.triggerOptions, player, target, random)) {
             return AimResult.Skip
         }
 
@@ -94,7 +95,7 @@ class LegitAimStrategy : AimStrategy {
 
         // 6b. Natural drift — the aim point wanders slowly (human-like hand noise). Applied as a
         // small world-space offset around the multipoint point.
-        val (driftYaw, driftPitch) = RotationCalculator.updateNaturalDrift(state, config.offset)
+        val (driftYaw, driftPitch) = RotationCalculator.updateNaturalDrift(state, config.offset, random)
         val eyeToTarget = Vec3(
             aimPoint.x - eyePos.x,
             aimPoint.y - eyePos.y,

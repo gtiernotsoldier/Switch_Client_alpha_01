@@ -1,6 +1,5 @@
 package io.doppel.core.strategy.click
 
-import io.doppel.core.algorithm.NoiseProvider
 import io.doppel.core.condition.ConditionChecker
 
 /**
@@ -67,7 +66,8 @@ class CooldownClickStrategy : ClickStrategy<CooldownClickConfig, CooldownClickSt
     fun processTick(
         config: CooldownClickConfig,
         state: CritState,
-        input: ClickInput
+        input: ClickInput,
+        random: io.doppel.core.ipc.RandomSource = io.doppel.core.ipc.DefaultRandomSource
     ): ClickResult {
         val player = input.player
         val target = input.target
@@ -81,12 +81,12 @@ class CooldownClickStrategy : ClickStrategy<CooldownClickConfig, CooldownClickSt
         //    This takes priority over target loss — if we already stopped
         //    sprinting we must restore it.
         if (config.critMode != CritMode.OFF && state.critPhase != CritPhase.IDLE) {
-            return driveCritPhase(config, state, input)
+            return driveCritPhase(config, state, input, random)
         }
 
         // 3. Condition check (blind: target may be null;
         //    ConditionChecker skips target-based conditions when null)
-        if (!ConditionChecker.check(config.triggerOptions, player, target)) {
+        if (!ConditionChecker.check(config.triggerOptions, player, target, random)) {
             return ClickResult.Skip
         }
 
@@ -106,7 +106,7 @@ class CooldownClickStrategy : ClickStrategy<CooldownClickConfig, CooldownClickSt
         // 6. LEGIT mode: random delay after cooldown ready
         if (config.cooldownMode == CooldownClickMode.LEGIT) {
             if (state.legitDelayTicks == 0) {
-                state.legitDelayTicks = sampleLegitDelay()
+                state.legitDelayTicks = sampleLegitDelay(random)
             }
             state.legitDelayTicks--
             if (state.legitDelayTicks > 0) {
@@ -187,7 +187,8 @@ class CooldownClickStrategy : ClickStrategy<CooldownClickConfig, CooldownClickSt
     private fun driveCritPhase(
         config: CooldownClickConfig,
         state: CritState,
-        input: ClickInput
+        input: ClickInput,
+        random: io.doppel.core.ipc.RandomSource
     ): ClickResult {
         return when (state.critPhase) {
             // ---- ON mode phases ----
@@ -223,7 +224,7 @@ class CooldownClickStrategy : ClickStrategy<CooldownClickConfig, CooldownClickSt
                 // LEGIT delay in crit sequence too
                 if (config.cooldownMode == CooldownClickMode.LEGIT) {
                     if (state.legitDelayTicks == 0) {
-                        state.legitDelayTicks = sampleLegitDelay()
+                        state.legitDelayTicks = sampleLegitDelay(random)
                     }
                     state.legitDelayTicks--
                     if (state.legitDelayTicks > 0) return ClickResult.Skip
@@ -274,8 +275,9 @@ class CooldownClickStrategy : ClickStrategy<CooldownClickConfig, CooldownClickSt
 
     // ---- Helpers ----
 
-    private fun sampleLegitDelay(): Int {
-        return NoiseProvider.nextUniform(1f, 4f).toInt().coerceIn(1, 3)
+    private fun sampleLegitDelay(random: io.doppel.core.ipc.RandomSource): Int {
+        val u = 1f + random.nextFloat() * (4f - 1f)
+        return u.toInt().coerceIn(1, 3)
     }
 
     private fun resetCritState(state: CritState) {

@@ -7,7 +7,12 @@ import io.doppel.core.logging.CoreLogger
 import io.doppel.core.model.PlayerState
 import io.doppel.core.model.TargetState
 import io.doppel.core.option.TriggerOptions
-import kotlin.math.*
+import io.doppel.core.math.PortableMath
+import kotlin.math.PI
+import kotlin.math.abs
+import kotlin.math.max
+import kotlin.math.min
+import kotlin.math.sqrt
 
 /**
  * Unified condition checker for all trigger options.
@@ -149,7 +154,7 @@ object ConditionChecker {
         if (dx == 0.0 && dz == 0.0) return true // on top of target
 
         // Yaw to target in degrees (MC convention: yaw=0 faces south/+Z, yaw=90 faces west/-X)
-        val yawToTarget = (atan2(-dx, dz) * (180.0 / PI)).toFloat()
+        val yawToTarget = (PortableMath.atan2(-dx, dz) * (180.0 / PI)).toFloat()
 
         // Normalize both to -180..180 and compute absolute angular difference
         val playerYaw = normalizeAngle(player.rotation.yaw)

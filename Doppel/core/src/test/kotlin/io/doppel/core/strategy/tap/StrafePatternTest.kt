@@ -6,7 +6,7 @@ import io.doppel.core.util.Vec3
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
-import kotlin.random.Random
+import io.doppel.core.ipc.DecisionRng
 
 class StrafePatternTest {
 
@@ -72,7 +72,7 @@ class StrafePatternTest {
 
     @Test
     fun sevenTap_alternatesWithZeroRepeatChance() {
-        val rng = Random(42)
+        val rng = DecisionRng(42)
         var side = Side.LEFT
         repeat(200) {
             val next = StrafePattern.sevenTapSide(side, repeatChancePercent = 0, rng = rng)
@@ -84,7 +84,7 @@ class StrafePatternTest {
 
     @Test
     fun sevenTap_repeatChanceProducesFumbles() {
-        val rng = Random(7)
+        val rng = DecisionRng(7)
         var side = Side.LEFT
         var repeats = 0
         repeat(1000) {
@@ -98,7 +98,7 @@ class StrafePatternTest {
 
     @Test
     fun randomSide_coversBothSides() {
-        val rng = Random(99)
+        val rng = DecisionRng(99)
         var lefts = 0
         repeat(500) { if (StrafePattern.randomSide(rng) == Side.LEFT) lefts++ }
         assertTrue(lefts in 150..350, "lefts=$lefts")

@@ -67,6 +67,16 @@ impl Pcg32 {
         (self.next_u32() >> 8) as f32 / 16_777_216.0f32
     }
 
+    /// Uniform in `[0, 1)`, 32-bit resolution.
+    ///
+    /// Deliberately coarser than Kotlin's `Random.nextDouble` (53-bit): the
+    /// Kotlin twin `DecisionRng.nextDouble` uses the same 32-bit form, so the
+    /// two agree bit for bit. Matching Kotlin's *default* generator instead
+    /// would be unreproducible by construction.
+    pub fn next_double(&mut self) -> f64 {
+        self.next_u32() as f64 / 4_294_967_296.0
+    }
+
     /// `MathUtils.randomFloat` semantics, including swapped-bound ordering.
     pub fn random_float(&mut self, a: f32, b: f32) -> f32 {
         let lo = a.min(b);

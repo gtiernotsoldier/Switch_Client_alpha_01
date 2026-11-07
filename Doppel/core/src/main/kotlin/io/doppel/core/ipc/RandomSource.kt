@@ -16,6 +16,16 @@ interface RandomSource {
     /** Uniform in `[0, 1)`. */
     fun nextFloat(): Float
 
+    /**
+     * Uniform in `[0, 1)` at 32-bit resolution.
+     *
+     * Deliberately coarser than `kotlin.random.Random.nextDouble` (53-bit): the
+     * Rust twin `Pcg32::next_double` uses the same 32-bit form, and the two must
+     * agree bit for bit. Matching the default generator instead would be a
+     * sequence no seeder can reproduce.
+     */
+    fun nextDouble(): Double
+
     /** Uniform in `[0, bound)`. */
     fun nextInt(bound: Int): Int
 
@@ -34,6 +44,8 @@ interface RandomSource {
  */
 object DefaultRandomSource : RandomSource {
     override fun nextFloat(): Float = kotlin.random.Random.nextFloat()
+
+    override fun nextDouble(): Double = kotlin.random.Random.nextDouble()
 
     override fun nextInt(bound: Int): Int = kotlin.random.Random.nextInt(bound)
 

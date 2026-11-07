@@ -1,10 +1,9 @@
 package io.doppel.core.strategy.velocity
 
 import io.doppel.core.util.Vec3
-import kotlin.math.cos
-import kotlin.math.sin
 import kotlin.math.sqrt
 import kotlin.random.Random
+import io.doppel.core.math.PortableMath
 
 /** Which movement keys one brace tick should hold. */
 data class BraceKeys(
@@ -56,9 +55,9 @@ object SprintBrace {
      * direction more than ~22.5° off an axis still gets a press and a diagonal gets two.
      */
     fun keysFor(yawDegrees: Float, source: BraceSource, sector: Double): BraceKeys {
-        val yaw = Math.toRadians(yawDegrees.toDouble())
-        val fwdX = -sin(yaw)
-        val fwdZ = cos(yaw)
+        val yaw = PortableMath.toRadians(yawDegrees.toDouble())
+        val fwdX = -PortableMath.sin(yaw)
+        val fwdZ = PortableMath.cos(yaw)
         // Right of forward in the (x, z) plane: (x, z) -> (-z, x).
         val rgtX = -fwdZ
         val rgtZ = fwdX

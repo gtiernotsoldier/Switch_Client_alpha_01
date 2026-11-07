@@ -52,7 +52,8 @@ class SelfAdaptiveAimStrategy : AimStrategy {
         config: AimConfig,
         state: AdaptiveState,
         player: PlayerState,
-        target: TargetState?
+        target: TargetState?,
+        random: io.doppel.core.ipc.RandomSource = io.doppel.core.ipc.DefaultRandomSource
     ): AimResult {
         // 1. Null guard
         if (target == null) {
@@ -70,7 +71,7 @@ class SelfAdaptiveAimStrategy : AimStrategy {
         }
 
         // 3. Condition check
-        if (!ConditionChecker.check(config.triggerOptions, player, target)) {
+        if (!ConditionChecker.check(config.triggerOptions, player, target, random)) {
             return AimResult.Skip
         }
 
@@ -106,7 +107,7 @@ class SelfAdaptiveAimStrategy : AimStrategy {
 
         // 6c. Natural drift — the aim point wanders slowly within ±offset, human-like. Applied as
         // a small world-space lateral offset around the multipoint point.
-        val (driftYaw, driftPitch) = RotationCalculator.updateNaturalDrift(state, config.offset)
+        val (driftYaw, driftPitch) = RotationCalculator.updateNaturalDrift(state, config.offset, random)
         val eyeToTarget = Vec3(
             aimPoint.x - eyePos.x,
             aimPoint.y - eyePos.y,

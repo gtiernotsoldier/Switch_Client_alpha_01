@@ -2,8 +2,9 @@ package io.doppel.core.strategy.tap
 
 import io.doppel.core.model.TargetState
 import io.doppel.core.util.Vec3
-import kotlin.math.atan2
-import kotlin.random.Random
+import io.doppel.core.ipc.DefaultRandomSource
+import io.doppel.core.ipc.RandomSource
+import io.doppel.core.math.PortableMath
 
 /** Strafe side for ADTap (keyboard A/D only — never the mouse). */
 enum class Side {
@@ -50,7 +51,7 @@ object StrafePattern {
         val az = target.position.z + target.motionZ * k
         val dx = ax - playerPos.x
         val dz = az - playerPos.z
-        val bearing = Math.toDegrees(atan2(-dx, dz)).toFloat()
+        val bearing = PortableMath.toDegrees(PortableMath.atan2(-dx, dz)).toFloat()
         val delta = wrap180(bearing - yaw)
         return if (delta < 0f) Side.LEFT else Side.RIGHT
     }
@@ -59,11 +60,16 @@ object StrafePattern {
      * 7-tap side selection: alternating in principle, with a small configurable
      * probability of repeating the same side instead of flipping.
      */
-    fun sevenTapSide(lastSide: Side, repeatChancePercent: Int, rng: Random): Side {
+    fun sevenTapSide(
+        lastSide: Side,
+        repeatChancePercent: Int,
+        rng: RandomSource = DefaultRandomSource
+    ): Side {
         return if (repeatChancePercent > 0 && rng.nextInt(100) < repeatChancePercent) lastSide
         else lastSide.flipped()
     }
 
     /** Uniform side draw for the Random pattern. */
-    fun randomSide(rng: Random): Side = if (rng.nextInt(2) == 0) Side.LEFT else Side.RIGHT
+    fun randomSide(rng: RandomSource = DefaultRandomSource): Side =
+        if (rng.nextInt(2) == 0) Side.LEFT else Side.RIGHT
 }

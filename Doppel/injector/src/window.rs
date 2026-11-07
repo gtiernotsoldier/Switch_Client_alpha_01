@@ -2049,14 +2049,27 @@ fn open_popup(m: &panel::PanelModule, kebab: Rect) {
 
 // ── panel drawing helpers ──
 
-/// The on/off switch a module card (and BOOLEAN options) use. The knob scales
-/// with the pill, so the same helper draws both sizes.
+/// The on/off pill switch a module card uses. The knob scales with the pill,
+/// so the same helper draws both sizes.
 unsafe fn draw_switch(hdc: Hdc, r: Rect, on: bool) {
     let h = r.bottom - r.top;
     round_rect_ringed(hdc, r, h / 2, C_CARD_BORDER, if on { C_LINK } else { C_BTN_ACTIVE });
     let d = (h - 6).max(8);
     let kx = if on { r.right - d / 2 - 3 } else { r.left + d / 2 + 3 };
     draw_dot(hdc, kx, (r.top + r.bottom) / 2, d, if on { C_STRONG } else { C_DIM });
+}
+
+/// The BOOLEAN option tick box: 14 px rounded square — hollow tile when off,
+/// accent body with a strong stroke check when on (the mockup's ESP rows;
+/// same idiom as the switch's strong-on-link knob). Only option rows use it;
+/// module cards keep the pill switch.
+unsafe fn draw_check_box(hdc: Hdc, r: Rect, on: bool) {
+    if !on {
+        round_rect_ringed(hdc, r, 4, C_CARD_BORDER, C_BTN_ACTIVE);
+        return;
+    }
+    round_rect_ringed(hdc, r, 4, C_LINK, C_LINK);
+    icons::draw(hdc, "UI:check", "", r.left, r.top, r.right - r.left, theme::STRONG_TEXT);
 }
 
 /// A ghost icon button for the nav row: faint rounded tile on hover, glyph
@@ -2964,12 +2977,12 @@ unsafe fn draw_main(hdc: Hdc) {
                                 "BOOLEAN" => {
                                     text_in(
                                         hdc, f.small, C_ALT, &o.name,
-                                        Rect { left: hr.left, top: hr.top, right: hr.right - 50, bottom: hr.bottom },
+                                        Rect { left: hr.left, top: hr.top, right: hr.right - 24, bottom: hr.bottom },
                                         DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS,
                                     );
-                                    draw_switch(
+                                    draw_check_box(
                                         hdc,
-                                        Rect { left: hr.right - 40, top: hr.top + 7, right: hr.right, bottom: hr.top + 23 },
+                                        Rect { left: hr.right - 14, top: hr.top + 7, right: hr.right, bottom: hr.top + 21 },
                                         o.value_bool(),
                                     );
                                 }

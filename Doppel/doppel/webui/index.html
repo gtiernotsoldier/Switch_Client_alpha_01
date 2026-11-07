@@ -339,6 +339,23 @@
         .toggle-switch.on .pulse-ring { border-color: rgba(34, 211, 238, 0.3); animation: pulse-glow 2.5s infinite ease-in-out; }
         @keyframes pulse-glow { 0% { opacity: 0.4; transform: scale(1); } 50% { opacity: 1; transform: scale(1.12); } 100% { opacity: 0.4; transform: scale(1); } }
 
+        /* ===== Option checkbox — BOOLEAN sub-options tick like the mockup's ESP
+                   rows (box + dark check); the module master switch stays a pill ===== */
+        .opt-check {
+            width: 16px; height: 16px; flex: 0 0 auto; position: relative; cursor: pointer;
+            border: 1px solid rgba(255,255,255,0.28); border-radius: 4px;
+            background: rgba(0,0,0,0.25);
+            display: flex; align-items: center; justify-content: center;
+            transition: background 0.2s, border-color 0.2s, box-shadow 0.2s;
+        }
+        .opt-check svg { width: 11px; height: 11px; fill: #10131a; opacity: 0; transform: scale(0.5);
+            transition: opacity 0.18s ease, transform 0.22s cubic-bezier(0.34, 1.56, 0.64, 1); }
+        .opt-check.on { background: linear-gradient(135deg, #22D3EE, #A78BFA); border-color: transparent;
+            box-shadow: 0 0 12px rgba(34, 211, 238, 0.25); }
+        .opt-check.on svg { opacity: 1; transform: scale(1); }
+        /* 40px tap band, the same rule the pill switches follow */
+        .opt-check::before { content: ''; position: absolute; top: -12px; bottom: -12px; left: -10px; right: -10px; }
+
         /* ===== Expanded drawer — the "push the table" effect ===== */
         .sub-options {
             max-height: 0;
@@ -375,7 +392,7 @@
             min-width: 0; flex: 1 1 auto; overflow: hidden;
         }
         .sub-label .opt-name { overflow: hidden; text-overflow: ellipsis; flex: 0 1 auto; min-width: 0; }
-        .sub-row .sub-select, .sub-row .toggle-switch { flex: 0 0 auto; }
+        .sub-row .sub-select, .sub-row .toggle-switch, .sub-row .opt-check { flex: 0 0 auto; }
         .mini-btn { font-size: 10px; padding: 3px 10px; border-radius: 30px; border: 1px solid rgba(34,211,238,0.15); color: rgba(34,211,238,0.7); background: rgba(34,211,238,0.06); cursor: pointer; }
         .mini-btn:hover { background: rgba(34,211,238,0.12); }
         .noopts { font-size: 11px; color: rgba(255,255,255,0.2); font-style: italic; }
@@ -837,6 +854,11 @@
         html[data-theme="google-dark"] .toggle-switch.on { background: #1a73e8; box-shadow: none; }
         html[data-theme="google"] .toggle-switch.on .pulse-ring,
         html[data-theme="google-dark"] .toggle-switch.on .pulse-ring { border-color: rgba(26,115,232,.25); }
+        html[data-theme="google"] .opt-check,
+        html[data-theme="google-dark"] .opt-check { background: #fff; border-color: #dadce0; }
+        html[data-theme="google"] .opt-check.on,
+        html[data-theme="google-dark"] .opt-check.on { background: #1a73e8; box-shadow: none; }
+        html[data-theme="google"] .opt-check.on svg { fill: #fff; }
 
         html[data-theme="google"] .sub-row,
         html[data-theme="google-dark"] .sub-row { color: #3c4043; }
@@ -1083,6 +1105,9 @@
         html[data-theme="google-dark"] .toggle-switch.on { background: #8ab4f8; }
         html[data-theme="google-dark"] .toggle-switch.on::after { background: #2b2d31; }
         html[data-theme="google-dark"] .toggle-switch.on .pulse-ring { border-color: rgba(138,180,248,.3); }
+        html[data-theme="google-dark"] .opt-check { background: #303134; border-color: #5f6368; }
+        html[data-theme="google-dark"] .opt-check.on { background: #8ab4f8; }
+        html[data-theme="google-dark"] .opt-check.on svg { fill: #2b2d31; }
         html[data-theme="google-dark"] .sub-row { color: #d5d7db; }
         html[data-theme="google-dark"] .mini-btn { color:#a8c7fa; background:rgba(138,180,248,.14); border-color:transparent; }
         html[data-theme="google-dark"] .noopts { color: #9aa0a6; }
@@ -1662,7 +1687,7 @@
                 const tag = versionTag(o) + (rule ? modeTag(o, rule) : '');
                 return `<div class="sub-row">
                     <span class="sub-label"><span class="opt-name">${o.name}</span>${tag}</span>
-                    <div class="toggle-switch ${val?'on':''}" data-key="${key}"><span class="pulse-ring"></span></div>
+                    <div class="opt-check ${val?'on':''}" data-key="${key}"><svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg></div>
                 </div>`;
             }
             if(t === 'FLOAT' || t === 'INT' || t === 'PROBABILITY'){
@@ -1928,7 +1953,7 @@
                 (m.options||[]).forEach(o => {
                     const w = grid.querySelector(`[data-key="${o.key}"]`);
                     if(!w || w === document.activeElement) return;
-                    if(w.classList.contains('toggle-switch')){
+                    if(w.classList.contains('toggle-switch') || w.classList.contains('opt-check')){
                         w.classList.toggle('on', !!o.value);
                     } else if(w.tagName === 'SELECT'){
                         const label = (o.value && o.value.name) ? o.value.name : o.value;
@@ -2141,7 +2166,7 @@
                 return;
             }
             // Sub-option toggle
-            const subSw = e.target.closest('.sub-grid .toggle-switch[data-key]');
+            const subSw = e.target.closest('.sub-grid .opt-check[data-key]');
             if(subSw){
                 const on = !subSw.classList.contains('on');
                 subSw.classList.toggle('on', on);

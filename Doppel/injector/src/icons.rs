@@ -111,6 +111,7 @@ pub const MARKUPS: &[(&str, &str)] = &[
     ("UI:star", r##"<path d="M12 3.6l2.6 5.3 5.9 0.9-4.3 4.1 1 5.9-5.2-2.8-5.2 2.8 1-5.9-4.3-4.1 5.9-0.9z"/>"##),
     ("UI:kebab", r##"<circle cx="12" cy="5.2" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="12" cy="18.8" r="1.2"/>"##),
     ("UI:key", r##"<circle cx="8" cy="12" r="3.6"/><path d="M11.6 12H20.5M17.5 12v3.2M14.5 12v2.4"/>"##),
+    ("UI:check", r##"<path d="M5 12.6l4.6 4.6L19 7.6"/>"##),
 ];
 
 /// Category glyphs (index.html `CAT_NAV`) plus the "All" tile.

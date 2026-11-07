@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Draggable Cards - Advanced Client</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+    :root {
+        --primary: #D0BCFF; 
+        --secondary: #EFB8C8;
+        --bg-dark: rgba(18, 18, 22, 0.85); 
+        --panel-border: rgba(255, 255, 255, 0.1);
+        --hover-bg: rgba(255, 255, 255, 0.06);
+        --text-main: #FFFFFF;
+        --text-dim: #888888;
+        --font: 'Inter', -apple-system, sans-serif;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+        background: linear-gradient(135deg, #FFB6C1 0%, #DA70D6 50%, #6A5ACD 100%);
+        height: 100vh;
+        font-family: var(--font);
+        overflow: hidden;
+        user-select: none;
+    }
+
+    /* === 拖拽卡片容器 === */
+    .drag-card {
+        position: absolute;
+        width: 230px;
+        background: var(--bg-dark);
+        backdrop-filter: blur(20px);
+        -webkit-backdrop-filter: blur(20px);
+        border: 1px solid var(--panel-border);
+        border-radius: 12px;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.4);
+        display: flex;
+        flex-direction: column;
+        
+        /* 拖拽物理反馈动画 */
+        transition: transform 0.2s cubic-bezier(0.25, 0.8, 0.25, 1), 
+                    box-shadow 0.2s ease;
+        animation: popIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        opacity: 0;
+        transform: scale(0.95);
+    }
+
+    .drag-card.dragging {
+        transform: scale(0.97);
+        box-shadow: 0 20px 40px rgba(0,0,0,0.6);
+        cursor: grabbing;
+        z-index: 9999 !important;
+    }
+
+    /* 卡片头部 (拖拽把手) */
+    .drag-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 10px 14px;
+        cursor: grab;
+        border-bottom: 1px solid var(--panel-border);
+        background: rgba(0, 0, 0, 0.15);
+        border-radius: 12px 12px 0 0;
+    }
+
+    .drag-title {
+        font-size: 12px;
+        font-weight: 700;
+        color: var(--text-main);
+        letter-spacing: 1px;
+        text-transform: uppercase;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+    /* 分类专属 SVG 图标 */
+    .drag-title svg { width: 14px; height: 14px; fill: var(--primary); }
+
+    /* 模块列表区 */
+    .module-list {
+        display: flex;
+        flex-direction: column;
+        padding: 6px;
+        gap: 2px;
+        max-height: 380px;
+        overflow-y: auto;
+    }
+    .module-list::-webkit-scrollbar { width: 3px; }
+    .module-list::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 3px; }
+
+    /* === 单个模块 === */
+    .module-item {
+        display: flex;
+        flex-direction: column;
+        border-radius: 6px;
+        overflow: hidden;
+        transition: all 0.2s;
+    }
+
+    .module-main {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 7px 10px;
+        cursor: pointer;
+        border-radius: 6px;
+    }
+    .module-main:hover { background: var(--hover-bg); }
+
+    .module-name {
+        font-size: 12px;
+        color: var(--text-dim);
+        font-weight: 500;
+        transition: color 0.2s;
+    }
+
+    .module-right { display: flex; align-items: center; gap: 8px; }
+
+    /* 开关 (Toggle) */
+    .toggle {
+        width: 26px; height: 14px;
+        background: rgba(255, 255, 255, 0.1);
+        border-radius: 10px; position: relative;
+        transition: background 0.3s;
+    }
+    .toggle::after {
+        content: ''; position: absolute; top: 2px; left: 2px;
+        width: 10px; height: 10px; background: #666;
+        border-radius: 50%; transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+    }
+
+    /* 展开箭头 (SVG) */
+    .chevron {
+        width: 14px; height: 14px;
+        cursor: pointer;
+        display: flex; align-items: center; justify-content: center;
+    }
+    .chevron svg { width: 100%; height: 100%; fill: var(--text-dim); transition: transform 0.3s, fill 0.3s; }
+
+    /* === 模块开启 (Active) 状态 === */
+    .module-item.active { background: rgba(208, 188, 255, 0.05); }
+    .module-item.active .module-name { color: var(--text-main); }
+    .module-item.active .toggle { background: var(--primary); box-shadow: 0 0 8px rgba(208, 188, 255, 0.4); }
+    .module-item.active .toggle::after { transform: translateX(12px); background: #121214; }
+    .module-item.active .chevron svg { fill: var(--text-main); }
+
+    /* === 手风琴展开 === */
+    .module-item.expanded .chevron svg { transform: rotate(180deg); }
+    
+    .module-settings {
+        display: grid; grid-template-rows: 0fr;
+        transition: grid-template-rows 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+        background: rgba(0, 0, 0, 0.2);
+        border-radius: 0 0 6px 6px;
+    }
+    .module-item.expanded .module-settings { grid-template-rows: 1fr; }
+    
+    .settings-inner {
+        overflow: hidden; padding: 0 10px; opacity: 0; transform: translateY(-5px);
+        transition: opacity 0.3s 0.1s, transform 0.3s 0.1s;
+        display: flex; flex-direction: column; gap: 8px;
+    }
+    .module-item.expanded .settings-inner { padding: 10px; opacity: 1; transform: translateY(0); }
+
+    /* === 控件样式 (QML 风格) === */
+    .setting-row { display: flex; justify-content: space-between; align-items: center; }
+    .setting-label { font-size: 10px; color: var(--text-dim); font-weight: 500; }
+    .setting-value { color: var(--secondary); font-weight: 700; font-family: monospace; font-size: 10px;}
+
+    /* 滑块 */
+    .slider-track {
+        position: relative; width: 100px; height: 3px;
+        background: rgba(255, 255, 255, 0.1); border-radius: 2px; cursor: pointer;
+    }
+    .slider-fill { position: absolute; top: 0; left: 0; height: 100%; background: var(--primary); border-radius: 2px; pointer-events: none; }
+    .slider-thumb {
+        position: absolute; top: 50%; width: 10px; height: 10px; background: #fff;
+        border-radius: 50%; transform: translate(-50%, -50%); pointer-events: none; transition: transform 0.1s;
+    }
+    .slider-track:hover .slider-thumb { transform: translate(-50%, -50%) scale(1.3); }
+    input[type="range"] { position: absolute; opacity: 0; width: 100%; height: 100%; cursor: pointer; z-index: 2; }
+
+    /* 下拉菜单 */
+    .dropdown {
+        position: relative; width: 80px; height: 22px;
+        background: rgba(0,0,0,0.3); border: 1px solid var(--panel-border);
+        border-radius: 4px; display: flex; align-items: center; justify-content: space-between;
+        padding: 0 6px; font-size: 10px; color: var(--text-main); cursor: pointer;
+    }
+    .dropdown-menu {
+        position: absolute; top: 26px; left: 0; right: 0;
+        background: rgba(30, 30, 35, 0.95); border: 1px solid var(--panel-border);
+        border-radius: 4px; overflow: hidden; display: none; flex-direction: column; z-index: 100;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+    }
+    .dropdown.open .dropdown-menu { display: flex; }
+    .dropdown-item { padding: 5px 8px; font-size: 10px; color: var(--text-dim); transition: background 0.2s; }
+    .dropdown-item:hover { background: rgba(255,255,255,0.1); color: var(--text-main); }
+    .dropdown-item.selected { color: var(--primary); font-weight: 600; }
+
+    /* 多选框 */
+    .checkbox {
+        width: 14px; height: 14px; border: 1px solid var(--text-dim);
+        border-radius: 3px; cursor: pointer; display: flex; justify-content: center; align-items: center;
+        transition: all 0.2s;
+    }
+    .checkbox svg { width: 10px; height: 10px; fill: #121214; opacity: 0; transform: scale(0.5); transition: all 0.2s; }
+    .checkbox.checked { background: var(--primary); border-color: var(--primary); }
+    .checkbox.checked svg { opacity: 1; transform: scale(1); }
+
+    @keyframes popIn {
+        to { opacity: 1; transform: scale(1); }
+    }
+    
+    /* 初始位置 */
+    .drag-card:nth-child(1) { top: 60px; left: 60px; animation-delay: 0s; }
+    .drag-card:nth-child(2) { top: 90px; left: 330px; animation-delay: 0.05s; }
+    .drag-card:nth-child(3) { top: 380px; left: 120px; animation-delay: 0.1s; }
+</style>
+</head>
+<body>
+
+    <!-- 卡片 1：Combat -->
+    <div class="drag-card">
+        <div class="drag-header">
+            <div class="drag-title">
+                <svg viewBox="0 0 24 24"><path d="M6.92 5H5l9 9 1-.94L6.92 5zm-.42 5.06l-4.24 4.24 1.42 1.42 4.24-4.24-1.42-1.42zM19 3h-1.92l-9.79 9.79 1.42 1.42L19 3z"/></svg>
+                Combat
+            </div>
+        </div>
+        <div class="module-list">
+            <!-- 模块: Aim Assist (滑块) -->
+            <div class="module-item active expanded">
+                <div class="module-main">
+                    <span class="module-name">Aim Assist</span>
+                    <div class="module-right">
+                        <div class="toggle"></div>
+                        <div class="chevron"><svg viewBox="0 0 24 24"><path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z"/></svg></div>
+                    </div>
+                </div>
+                <div class="module-settings">
+                    <div class="settings-inner">
+                        <div class="setting-row">
+                            <span class="setting-label">FOV</span>
+                            <span class="setting-value">90°</span>
+                        </div>
+                        <div class="slider-track">
+                            <div class="slider-fill" style="width: 50%;"></div>
+                            <div class="slider-thumb" style="left: 50%;"></div>
+                            <input type="range" min="30" max="180" value="90" oninput="updateSlider(this, '°')">
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 模块: Auto Clicker -->
+            <div class="module-item">
+                <div class="module-main">
+                    <span class="module-name">Auto Clicker</span>
+                    <div class="module-right">
+                        <div class="toggle"></div>
+                        <div class="chevron"><svg viewBox="0 0 24 24"><path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z"/></svg></div>
+                    </div>
+                </div>
+                <div class="module-settings">
+                    <div class="settings-inner">
+                        <div class="setting-row">
+                            <span class="setting-label">CPS</span>
+                            <span class="setting-value">12</span>
+                        </div>
+                        <div class="slider-track">
+                            <div class="slider-fill" style="width: 60%;"></div>
+                            <div class="slider-thumb" style="left: 60%;"></div>
+                            <input type="range" min="1" max="20" value="12" oninput="updateSlider(this, '')">
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 模块: Criticals (下拉菜单) -->
+            <div class="module-item active">
+                <div class="module-main">
+                    <span class="module-name">Criticals</span>
+                    <div class="module-right">
+                        <div class="toggle"></div>
+                        <div class="chevron"><svg viewBox="0 0 24 24"><path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z"/></svg></div>
+                    </div>
+                </div>
+                <div class="module-settings">
+                    <div class="settings-inner">
+                        <div class="setting-row">
+                            <span class="setting-label">Mode</span>
+                            <div class="dropdown" onclick="toggleDropdown(this, event)">
+                                <span class="drop-text">Packet</span>
+                                <svg style="width:10px; height:10px; fill:#888;" viewBox="0 0 24 24"><path d="M7 10l5 5 5-5z"/></svg>
+                                <div class="dropdown-menu">
+                                    <div class="dropdown-item" onclick="selectDropdown(this, 'Jump')">Jump</div>
+                                    <div class="dropdown-item selected" onclick="selectDropdown(this, 'Packet')">Packet</div>
+                                    <div class="dropdown-item" onclick="selectDropdown(this, 'Mini')">Mini</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 模块: Velocity -->
+            <div class="module-item active">
+                <div class="module-main">
+                    <span class="module-name">Velocity</span>
+                    <div class="module-right">
+                        <div class="toggle"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 卡片 2：Movement -->
+    <div class="drag-card">
+        <div class="drag-header">
+            <div class="drag-title">
+                <svg style="fill: var(--secondary);" viewBox="0 0 24 24"><path d="M13.5 5.5c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zM9.8 8.9L7 23h2.1l1.8-8 2.1 2v6h2v-7.5l-2.1-2 .6-3C14.8 12 16.8 13 19 13v-2c-1.9 0-3.5-1-4.3-2.4l-1-1.6c-.4-.6-1-1-1.7-1-.3 0-.5.1-.8.1L6 8.3V13h2V9.6l1.8-.7"/></svg>
+                Movement
+            </div>
+        </div>
+        <div class="module-list">
+            <!-- 模块: Fly (下拉菜单) -->
+            <div class="module-item active">
+                <div class="module-main">
+                    <span class="module-name">Fly</span>
+                    <div class="module-right">
+                        <div class="toggle"></div>
+                        <div class="chevron"><svg viewBox="0 0 24 24"><path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z"/></svg></div>
+                    </div>
+                </div>
+                <div class="module-settings">
+                    <div class="settings-inner">
+                        <div class="setting-row">
+                            <span class="setting-label">Mode</span>
+                            <div class="dropdown" onclick="toggleDropdown(this, event)">
+                                <span class="drop-text">Glide</span>
+                                <svg style="width:10px; height:10px; fill:#888;" viewBox="0 0 24 24"><path d="M7 10l5 5 5-5z"/></svg>
+                                <div class="dropdown-menu">
+                                    <div class="dropdown-item" onclick="selectDropdown(this, 'Vanilla')">Vanilla</div>
+                                    <div class="dropdown-item" onclick="selectDropdown(this, 'Packet')">Packet</div>
+                                    <div class="dropdown-item selected" onclick="selectDropdown(this, 'Glide')">Glide</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 模块: Sprint -->
+            <div class="module-item active">
+                <div class="module-main">
+                    <span class="module-name">Sprint</span>
+                    <div class="module-right">
+                        <div class="toggle"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 模块: Step (滑块) -->
+            <div class="module-item">
+                <div class="module-main">
+                    <span class="module-name">Step</span>
+                    <div class="module-right">
+                        <div class="toggle"></div>
+                        <div class="chevron"><svg viewBox="0 0 24 24"><path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z"/></svg></div>
+                    </div>
+                </div>
+                <div class="module-settings">
+                    <div class="settings-inner">
+                        <div class="setting-row">
+                            <span class="setting-label">Height</span>
+                            <span class="setting-value">2.5m</span>
+                        </div>
+                        <div class="slider-track">
+                            <div class="slider-fill" style="width: 40%;"></div>
+                            <div class="slider-thumb" style="left: 40%;"></div>
+                            <input type="range" min="1" max="5" step="0.1" value="2.5" oninput="updateSlider(this, 'm')">
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 卡片 3：Render -->
+    <div class="drag-card">
+        <div class="drag-header">
+            <div class="drag-title">
+                <svg style="fill: #85E89D;" viewBox="0 0 24 24"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg>
+                Render
+            </div>
+        </div>
+        <div class="module-list">
+            <!-- 模块: ESP (多选框) -->
+            <div class="module-item active expanded">
+                <div class="module-main">
+                    <span class="module-name">ESP</span>
+                    <div class="module-right">
+                        <div class="toggle"></div>
+                        <div class="chevron"><svg viewBox="0 0 24 24"><path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z"/></svg></div>
+                    </div>
+                </div>
+                <div class="module-settings">
+                    <div class="settings-inner">
+                        <div class="setting-row">
+                            <span class="setting-label">Show Box</span>
+                            <div class="checkbox checked" onclick="toggleCheckbox(this)">
+                                <svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
+                            </div>
+                        </div>
+                        <div class="setting-row">
+                            <span class="setting-label">Show Health</span>
+                            <div class="checkbox" onclick="toggleCheckbox(this)">
+                                <svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 模块: Tracers -->
+            <div class="module-item active">
+                <div class="module-main">
+                    <span class="module-name">Tracers</span>
+                    <div class="module-right">
+                        <div class="toggle"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // === 拖拽系统逻辑 ===
+        const cards = document.querySelectorAll('.drag-card');
+        cards.forEach(card => {
+            const header = card.querySelector('.drag-header');
+            let isDragging = false, startX, startY, initialLeft, initialTop;
+
+            // 置顶层级
+            card.addEventListener('mousedown', () => {
+                cards.forEach(c => c.style.zIndex = "1");
+                card.style.zIndex = "100";
+            });
+
+            header.addEventListener('mousedown', (e) => {
+                // 点中标题栏才能拖拽
+                isDragging = true;
+                card.classList.add('dragging');
+                
+                startX = e.clientX;
+                startY = e.clientY;
+                
+                const rect = card.getBoundingClientRect();
+                initialLeft = rect.left;
+                initialTop = rect.top;
+                
+                card.style.transform = 'none';
+                card.style.left = initialLeft + 'px';
+                card.style.top = initialTop + 'px';
+                card.style.animation = 'none';
+            });
+
+            document.addEventListener('mousemove', (e) => {
+                if (!isDragging) return;
+                card.style.left = (initialLeft + (e.clientX - startX)) + 'px';
+                card.style.top = (initialTop + (e.clientY - startY)) + 'px';
+            });
+
+            document.addEventListener('mouseup', () => {
+                if (isDragging) {
+                    isDragging = false;
+                    card.classList.remove('dragging');
+                }
+            });
+        });
+
+        // === 模块交互逻辑 ===
+        document.querySelectorAll('.module-item').forEach(item => {
+            const mainRow = item.querySelector('.module-main');
+            const chevron = item.querySelector('.chevron');
+
+            // 点击开关或名字
+            mainRow.addEventListener('mousedown', (e) => {
+                if (e.target.closest('.chevron') || e.target.closest('.module-settings')) return;
+                if (e.button !== 0) return; 
+
+                item.classList.toggle('active');
+                // 如果关了，自动收起设置
+                if (!item.classList.contains('active')) {
+                    item.classList.remove('expanded');
+                }
+            });
+
+            // 点击箭头展开
+            if (chevron) {
+                chevron.addEventListener('mousedown', (e) => {
+                    e.stopPropagation();
+                    if (e.button !== 0) return;
+                    if (!item.classList.contains('active')) item.classList.add('active');
+                    item.classList.toggle('expanded');
+                });
+            }
+        });
+
+        // === 控件逻辑 ===
+        
+        // 1. 滑块
+        function updateSlider(input, unit) {
+            const valDisplay = input.closest('.settings-inner').querySelector('.setting-value');
+            valDisplay.innerText = input.value + unit;
+
+            const min = parseFloat(input.min), max = parseFloat(input.max);
+            const percent = ((parseFloat(input.value) - min) / (max - min)) * 100;
+            const track = input.parentElement;
+            track.querySelector('.slider-fill').style.width = percent + '%';
+            track.querySelector('.slider-thumb').style.left = percent + '%';
+        }
+
+        // 2. 下拉菜单
+        function toggleDropdown(el, event) {
+            event.stopPropagation(); 
+            document.querySelectorAll('.dropdown').forEach(d => { if(d !== el) d.classList.remove('open'); });
+            el.classList.toggle('open');
+        }
+
+        function selectDropdown(el, option) {
+            const container = el.closest('.dropdown');
+            container.querySelector('.drop-text').innerText = option;
+            container.classList.remove('open');
+            container.querySelectorAll('.dropdown-item').forEach(item => {
+                item.classList.toggle('selected', item.innerText === option);
+            });
+        }
+
+        // 3. 多选框
+        function toggleCheckbox(el) {
+            el.classList.toggle('checked');
+        }
+
+        // 点击空白关闭下拉
+        document.addEventListener('click', () => {
+            document.querySelectorAll('.dropdown').forEach(d => d.classList.remove('open'));
+        });
+
+        // 屏蔽右键菜单
+        document.addEventListener('contextmenu', e => e.preventDefault());
+    </script>
+</body>
+</html>

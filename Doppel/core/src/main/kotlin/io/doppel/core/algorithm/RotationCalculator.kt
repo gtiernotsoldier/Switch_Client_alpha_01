@@ -1,10 +1,11 @@
 package io.doppel.core.algorithm
 
 import io.doppel.contract.model.Hitbox
+import io.doppel.contract.util.Directions
 import io.doppel.contract.util.Vec2
 import io.doppel.contract.util.Vec3
 import kotlin.random.Random
-import io.doppel.core.math.PortableMath
+import io.doppel.contract.math.PortableMath
 import io.doppel.contract.rng.DefaultRandomSource
 import io.doppel.contract.rng.RandomSource
 import io.doppel.contract.strategy.aim.AimStrategy
@@ -693,14 +694,7 @@ object RotationCalculator {
      * Used by knockback angle checks (JumpReset) and movement direction computation
      * (ConditionChecker).
      */
-    fun yawToDirection(yaw: Float): Vec3 {
-        val yawRad = PortableMath.toRadians(yaw.toDouble())
-        return Vec3(
-            -PortableMath.sin(yawRad),
-            0.0,
-            PortableMath.cos(yawRad)
-        )
-    }
+    fun yawToDirection(yaw: Float): Vec3 = Directions.fromYaw(yaw)
 
     /**
      * The fraction of the remaining gap to cover in one step, under the reference clients' speed model.

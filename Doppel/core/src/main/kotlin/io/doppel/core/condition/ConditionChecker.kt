@@ -7,7 +7,7 @@ import io.doppel.contract.logging.CoreLogger
 import io.doppel.contract.model.PlayerState
 import io.doppel.contract.model.TargetState
 import io.doppel.contract.option.TriggerOptions
-import io.doppel.core.math.PortableMath
+import io.doppel.contract.math.PortableMath
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.max

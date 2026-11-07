@@ -3,7 +3,7 @@ package io.doppel.core.strategy.velocity
 import io.doppel.contract.util.Vec3
 import kotlin.math.sqrt
 import kotlin.random.Random
-import io.doppel.core.math.PortableMath
+import io.doppel.contract.math.PortableMath
 import io.doppel.contract.strategy.velocity.VelocityMode
 
 /** Which movement keys one brace tick should hold. */

@@ -1,6 +1,6 @@
 package io.doppel.core.strategy.movement
 
-import io.doppel.core.math.PortableMath
+import io.doppel.contract.math.PortableMath
 
 
 /**

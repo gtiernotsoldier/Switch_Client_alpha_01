@@ -5,7 +5,7 @@ import io.doppel.contract.util.Vec3
 import io.doppel.contract.rng.DefaultRandomSource
 import io.doppel.contract.rng.RandomSource
 import io.doppel.contract.strategy.tap.Side
-import io.doppel.core.math.PortableMath
+import io.doppel.contract.math.PortableMath
 
 /**
  * Pure decision layer for ADTap (A/D strafe-pattern automation).

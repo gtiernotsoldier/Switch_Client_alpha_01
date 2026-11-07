@@ -3,7 +3,7 @@ package io.doppel.core.strategy.movement
 import kotlin.math.abs
 import kotlin.math.sqrt
 import kotlin.math.max
-import io.doppel.core.math.PortableMath
+import io.doppel.contract.math.PortableMath
 
 /**
  * StrafeCorrector — decides which **one** of the player's own movement keys to damp.

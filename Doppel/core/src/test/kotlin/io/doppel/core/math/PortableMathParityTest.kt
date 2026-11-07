@@ -1,5 +1,6 @@
 package io.doppel.core.math
 
+import io.doppel.contract.math.PortableMath
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
 import java.io.File

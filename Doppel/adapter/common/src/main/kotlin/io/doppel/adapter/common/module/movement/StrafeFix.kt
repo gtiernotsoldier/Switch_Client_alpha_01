@@ -1,6 +1,6 @@
 package io.doppel.adapter.common.module.movement
 
-import io.doppel.core.algorithm.RotationCalculator
+import io.doppel.contract.util.Directions
 import io.doppel.contract.model.PlayerState
 import io.doppel.contract.model.TargetState
 import io.doppel.contract.util.Vec3
@@ -43,7 +43,7 @@ object StrafeFix : Module("StrafeFix", Category.MOVEMENT) {
         if (speed < 0.01) return
 
         // Compute corrected direction from current yaw
-        val facing = RotationCalculator.yawToDirection(player.rotation.yaw)
+        val facing = Directions.fromYaw(player.rotation.yaw)
         // Perpendicular vector (rotate 90° CCW): (-facingZ, facingX)
         val strafeX = -facing.z
         val strafeZ = facing.x

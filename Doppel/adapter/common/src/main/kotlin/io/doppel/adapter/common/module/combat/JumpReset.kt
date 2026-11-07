@@ -4,7 +4,7 @@ import io.doppel.core.condition.ConditionChecker
 import io.doppel.contract.model.PlayerState
 import io.doppel.contract.model.TargetState
 import io.doppel.contract.model.VelocityContext
-import io.doppel.core.algorithm.RotationCalculator
+import io.doppel.contract.util.Directions
 import io.doppel.contract.util.Vec3
 import io.doppel.adapter.common.api.EventBridge
 import io.doppel.adapter.common.module.Module
@@ -207,7 +207,7 @@ object JumpReset : Module("JumpReset", Category.COMBAT) {
         val hSpeed = sqrt(motion.x * motion.x + motion.z * motion.z)
         if (hSpeed < 0.001) return false
 
-        val facing = RotationCalculator.yawToDirection(player.rotation.yaw)
+        val facing = Directions.fromYaw(player.rotation.yaw)
         // Knockback SOURCE = reverse of motion (attacker direction).
         val srcX = -motion.x / hSpeed
         val srcZ = -motion.z / hSpeed

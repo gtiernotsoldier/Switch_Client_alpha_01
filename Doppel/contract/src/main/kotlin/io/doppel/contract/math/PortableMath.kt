@@ -1,4 +1,4 @@
-package io.doppel.core.math
+package io.doppel.contract.math
 
 /**
  * `sin`, `cos`, `atan`, `atan2`, `acos` — one implementation, both languages.
@@ -26,7 +26,7 @@ package io.doppel.core.math
  *
  * ## What this does instead
  *
- * `io.doppel.core.math.PortableMath` and `core-rs/src/trig.rs` are both
+ * `io.doppel.contract.math.PortableMath` and `core-rs/src/trig.rs` are both
  * transcriptions of the same fdlibm routines (FreeBSD `lib/msun`, as carried by
  * musl). Java guarantees strict IEEE-754 evaluation — JLS 15.4 forbids
  * intermediate extended precision and forbids contracting `a*b+c` into an FMA —

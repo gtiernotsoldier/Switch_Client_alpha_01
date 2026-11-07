@@ -95,7 +95,7 @@ object CoreSupervisor {
             stub = s
             CoreLink.stub = s
             running = true
-            CoreLogger.info("[CoreSupervisor] core ${p.pid()} on $endpoint, seed=$seed")
+            CoreLogger.info("[CoreSupervisor] core started on $endpoint, seed=$seed")
             startWatchdog(p, s)
             true
         } catch (e: Exception) {

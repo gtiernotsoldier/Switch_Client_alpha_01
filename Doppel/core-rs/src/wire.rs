@@ -122,6 +122,8 @@ pub enum Module {
     Tap = 5,
     Combat = 6,
     Reach = 7,
+    /// Player-family modules (no combat objectives): currently Eagle only.
+    Player = 8,
 }
 
 impl Module {
@@ -134,6 +136,7 @@ impl Module {
             5 => Module::Tap,
             6 => Module::Combat,
             7 => Module::Reach,
+            8 => Module::Player,
             _ => return None,
         })
     }

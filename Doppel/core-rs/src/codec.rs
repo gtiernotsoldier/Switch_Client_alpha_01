@@ -864,6 +864,14 @@ pub mod op {
     /// reach: `intersect_box(min_x, min_y, min_z, max_x, max_y, max_z,
     ///          ox, oy, oz, dx, dy, dz)` → bool.
     pub const REACH_INTERSECT: u8 = 0;
+
+    /// player/eagle: `tick(on_edge, settings_met, sneak_key_held, min_delay,
+    ///               max_delay)` → packed flags.
+    ///
+    /// The hold delay and the "we own the sneak" bit live in the core; only the
+    /// three predicates and the roll bounds ride on the request, because both
+    /// are things only the game side can see (edge query, pitch gate, real key).
+    pub const PLAYER_EAGLE_TICK: u8 = 0;
 }
 
 /// Maps a side to the wire's 0/1.
@@ -952,6 +960,7 @@ pub fn known_ops(module: Module) -> &'static [u8] {
             op::CBT_DECIDE,
         ],
         Module::Reach => &[op::REACH_INTERSECT],
+        Module::Player => &[op::PLAYER_EAGLE_TICK],
         Module::Velocity => &[op::VEL_BRACE, op::VEL_DELAY_ENQUEUE, op::VEL_DELAY_PUMP],
         _ => &[],
     }

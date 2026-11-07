@@ -4,6 +4,7 @@
 pub mod aim;
 pub mod combat;
 pub mod click;
+pub mod eagle;
 pub mod movement;
 pub mod reach;
 pub mod tap;

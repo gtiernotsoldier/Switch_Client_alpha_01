@@ -20,6 +20,7 @@ use crate::rng::Pcg32;
 use crate::strategy::aim::{self, AimConfig, AimState};
 use crate::strategy::click::{self, ClickConfig, ClickState, CooldownClickConfig, CritState};
 use crate::strategy::combat::{self, BlockArbiterState, PredictorConfig, PredictorState, RangeGateConfig, RangeGateState};
+use crate::strategy::eagle;
 use crate::strategy::movement::{self, SocdResolver};
 use crate::strategy::reach;
 use crate::strategy::tap::{self, TapStateMachine};
@@ -57,6 +58,9 @@ pub struct Session {
     pub rng_click: Pcg32,
     pub rng_tap: Pcg32,
     pub rng_combat: Pcg32,
+    /// Eagle's hold-delay roll. Its own stream for the same reason as the rest:
+    /// toggling another module must not move this one's sequence.
+    pub rng_player: Pcg32,
     pub config: VelocityConfig,
     pub velocity: velocity::State,
 
@@ -75,6 +79,9 @@ pub struct Session {
     pub predictor: PredictorState,
     pub range_config: RangeGateConfig,
     pub range_state: RangeGateState,
+
+    /// Eagle: the sneak-ownership bit and the release countdown.
+    pub eagle: eagle::State,
 
     pub ticks: u64,
     pub decisions: u64,
@@ -107,6 +114,7 @@ impl Session {
             rng_click: Pcg32::new(seed),
             rng_tap: Pcg32::new(seed),
             rng_combat: Pcg32::new(seed),
+            rng_player: Pcg32::new(seed),
             config: VelocityConfig::default(),
             velocity: velocity::State::new(),
             aim_config: AimConfig::default(),
@@ -120,6 +128,7 @@ impl Session {
             predictor: PredictorState::default(),
             range_config: RangeGateConfig::default(),
             range_state: RangeGateState { engaged: false },
+            eagle: eagle::State::default(),
             ticks: 0,
             decisions: 0,
             degraded: 0,
@@ -178,6 +187,9 @@ impl Session {
             }
             // Reach keeps nothing between calls; the geometry is in the request.
             Module::Reach => {}
+            // Eagle forgets its ownership: a sneak held across a disable/enable
+            // would otherwise be released by a module that no longer owns it.
+            Module::Player => self.eagle = eagle::State::default(),
         }
         Frame::new(Kind::Reset, frame.header.seq, frame.header.tick, module)
     }
@@ -213,8 +225,9 @@ impl Session {
                 self.predictor = PredictorState::default();
             }),
             // Movement and reach have no configuration: every argument rides on
-            // the request, so there is nothing to latch.
-            Module::Movement | Module::Reach => Ok(()),
+            // the request, so there is nothing to latch. Eagle is the same — its
+            // only settings are the roll bounds, which ride on each tick.
+            Module::Movement | Module::Reach | Module::Player => Ok(()),
         };
         match result {
             Ok(()) => Frame::new(Kind::Config, frame.header.seq, frame.header.tick, module),
@@ -241,6 +254,7 @@ impl Session {
             Module::Tap => self.on_tap(frame, len),
             Module::Combat => self.on_combat(frame, len),
             Module::Reach => self.on_reach(frame, len),
+            Module::Player => self.on_player(frame, len),
         }
     }
 
@@ -817,6 +831,68 @@ impl Session {
             Err(_) => self.degrade(frame),
         }
     }
+
+    /// Eagle's sneak machine, one call per tick.
+    ///
+    /// The three predicates are the ones only the game side can answer (edge
+    /// query, pitch gate, real key state). The ownership bit and the countdown
+    /// are core state, so they are not on the wire — the reply is packed flags
+    /// instead: bit0 press, bit1 release, bit2 `auto_sneak_active` (the stub
+    /// needs it to tell its own sneak from the player's).
+    fn on_player(&mut self, frame: &Frame, len: usize) -> Frame {
+        let req = match codec::decode_generic(&frame.payload, len) {
+            Ok(r) => r,
+            Err(s) => return self.bad(frame, s),
+        };
+        let seq = frame.header.seq;
+        let tick = frame.header.tick;
+        let run = || -> Result<Frame, Status> {
+            match req.op {
+                op::PLAYER_EAGLE_TICK => {
+                    let input = eagle::Input {
+                        on_edge: req.bool(0)?,
+                        settings_met: req.bool(1)?,
+                        sneak_key_held: req.bool(2)?,
+                    };
+                    // Kotlin's `Random.nextInt(lo, hi + 1)`: the caller already
+                    // normalised min/max, but an inverted pair must clamp rather
+                    // than panic inside the draw.
+                    let (lo, hi) = {
+                        let a = req.i32(3)?;
+                        let b = req.i32(4)?;
+                        if a <= b {
+                            (a, b)
+                        } else {
+                            (b, a)
+                        }
+                    };
+                    let state = self.eagle;
+                    let rng = &mut self.rng_player;
+                    let (d, next) = eagle::tick(state, input, &mut || rng.random_int(lo, hi));
+                    self.eagle = next;
+                    let flags = (d.press as u8)
+                        | ((d.release as u8) << 1)
+                        | ((next.auto_sneak_active as u8) << 2);
+                    Ok(codec::encode_scalar(
+                        seq,
+                        tick,
+                        Module::Player,
+                        WireAction::Scalar,
+                        flags as f64,
+                    ))
+                }
+                _ => Err(Status::BadPayload),
+            }
+        };
+        match catch_unwind(AssertUnwindSafe(run)) {
+            Ok(Ok(f)) => {
+                self.decisions += 1;
+                f
+            }
+            Ok(Err(s)) => self.bad(frame, s),
+            Err(_) => self.degrade(frame),
+        }
+    }
 }
 
 pub fn decode_snapshot(buf: &[u8], len: usize) -> Result<VelocityContext, Status> {
@@ -1126,6 +1202,100 @@ mod tests {
         }
         let bytes = f.encode();
         (bytes.to_vec(), SLOT_SNAPSHOT)
+    }
+
+    /// A player-family request: the velocity snapshot with an op byte and five
+    /// f64 arguments appended, which is exactly what `decode_generic` expects.
+    fn eagle_frame(seq: u32, on_edge: bool, settings_met: bool, sneak_held: bool, lo: i32, hi: i32) -> Frame {
+        let (snap, len) = write_snapshot([0.0; 3], 0, 0);
+        let mut f = Frame::new(Kind::Snapshot, seq, 100, Module::Player);
+        let total = {
+            let p = f.payload_mut();
+            p[..len].copy_from_slice(&snap[32..32 + len]);
+            let mut w = Writer::new(&mut p[len..]);
+            w.u8(op::PLAYER_EAGLE_TICK);
+            w.u8(5);
+            w.f64(on_edge as u8 as f64);
+            w.f64(settings_met as u8 as f64);
+            w.f64(sneak_held as u8 as f64);
+            w.f64(lo as f64);
+            w.f64(hi as f64);
+            len + w.pos()
+        };
+        f.set_len(total);
+        f
+    }
+
+    /// The scalar answer sits at offset 4 in the decision payload (after
+    /// action, reason and flags), stored as f64 — reading its low byte would
+    /// only ever return zero for the small integers packed here.
+    fn eagle_flags(f: &Frame) -> u32 {
+        assert_eq!(f.header.kind, Kind::Decision, "expected a decision, got {:?}", f.header.kind);
+        let mut r = Reader::new(&f.payload[4..12]);
+        let v = r.f64().expect("scalar answer");
+        v as u32
+    }
+
+    #[test]
+    fn eagle_presses_on_the_first_edge_and_keeps_ownership() {
+        let mut s = Session::new(1, 42);
+        let f = s.handle(&eagle_frame(1, true, true, false, 3, 3));
+        let flags = eagle_flags(&f);
+        assert_eq!(flags & 0b001, 1, "press");
+        assert_eq!(flags & 0b100, 4, "the core owns the sneak now");
+        assert_eq!(s.eagle.unsneak_delay_ticks, 3);
+
+        // Still on the edge: no second press, delay unchanged.
+        let f = s.handle(&eagle_frame(2, true, true, false, 3, 3));
+        assert_eq!(eagle_flags(&f) & 0b001, 0);
+        assert_eq!(s.eagle.unsneak_delay_ticks, 3);
+    }
+
+    #[test]
+    fn eagle_counts_the_delay_down_off_the_edge_and_releases() {
+        let mut s = Session::new(1, 42);
+        s.handle(&eagle_frame(1, true, true, false, 1, 1));
+        assert_eq!(s.eagle.unsneak_delay_ticks, 1);
+
+        let f = s.handle(&eagle_frame(2, false, true, false, 1, 1));
+        assert_eq!(eagle_flags(&f) & 0b010, 0, "still holding");
+        assert_eq!(s.eagle.unsneak_delay_ticks, 0);
+
+        let f = s.handle(&eagle_frame(3, false, true, false, 1, 1));
+        assert_eq!(eagle_flags(&f) & 0b010, 2, "release");
+        assert!(!s.eagle.auto_sneak_active);
+    }
+
+    #[test]
+    fn eagle_reset_forgets_a_held_sneak() {
+        let mut s = Session::new(1, 42);
+        s.handle(&eagle_frame(1, true, true, false, 3, 3));
+        assert!(s.eagle.auto_sneak_active);
+
+        let mut r = Frame::new(Kind::Reset, 2, 100, Module::Player);
+        r.set_len(0);
+        s.handle(&r);
+        assert!(!s.eagle.auto_sneak_active);
+        assert_eq!(s.eagle.unsneak_delay_ticks, 0);
+    }
+
+    #[test]
+    fn eagle_never_rolls_while_idle() {
+        // Same seed, one session idles for five ticks first: the delay armed on
+        // the first edge must still be the first draw of its stream. If an idle
+        // tick consumed a value the two would disagree, and the difference would
+        // only show up as a slightly wrong hold a few hundred ticks later.
+        let mut a = Session::new(1, 7);
+        for i in 0..5 {
+            a.handle(&eagle_frame(i, false, true, false, 1, 5));
+        }
+        a.handle(&eagle_frame(9, true, true, false, 1, 5));
+
+        let mut b = Session::new(1, 7);
+        b.handle(&eagle_frame(0, true, true, false, 1, 5));
+
+        assert_eq!(a.eagle.unsneak_delay_ticks, b.eagle.unsneak_delay_ticks);
+        assert_eq!(a.rng_player.next_u32(), b.rng_player.next_u32());
     }
 
     #[test]

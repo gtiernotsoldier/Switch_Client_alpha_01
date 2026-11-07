@@ -319,12 +319,17 @@ core 进程（doppel-core.exe，Rust；游戏内存与注入器里都没有它�
 
 ### 9.5 P6 v2：core 独立进程（2026-11 决定）
 
-> **实施状态（2026-11-07）**：垂直切片已落地并通过测试 —— wire v1 编解码、
+> **实施状态（2026-11-07 完成）**：垂直切片已落地并通过测试 —— wire v1 编解码、
 > TCP loopback 传输、握手与种子协商、会话状态驻留 core 侧、velocity 三种模式 +
 > KnockbackDelay、条件引擎全量移植、1 ms deadline 降级、panic 兜底、
 > Kotlin↔Rust 2000 tick 位级对拍、500 tick 进程级端到端、真实链路延迟基准。
-> 字节表与运行手册见 **[IPC-PROTOCOL.md](IPC-PROTOCOL.md)**；其余模块（aim / click /
-> combat / movement / reach）尚未移植。
+> 字节表与运行手册见 **[IPC-PROTOCOL.md](IPC-PROTOCOL.md)**。
+>
+> **全部模块已移植完毕**：aim / click / combat / movement / reach / autoblock / tap /
+> velocity 均改走 `ipc/Strategies.kt`，adapter 侧不再出现任何 `io.doppel.core` 引用，
+> `agent.jar` 内 `io/doppel/core/` 类数为 **0**（CI 有守卫，回退会直接失败）。
+> 代价是必然的：**没有 `doppel-core` 进程在跑时，这 15 个模块一动不动**——不是降级，
+> 是完全不动作。启动顺序因此变成「先 core，后游戏」，injector 负责拉起 core。
 
 P6 从「进程内 JNI（DLL 随 agent 加载进游戏进程）」改为「**独立 core 进程 + 游戏侧薄桩**」。
 决定的三条理由，按重要性排：

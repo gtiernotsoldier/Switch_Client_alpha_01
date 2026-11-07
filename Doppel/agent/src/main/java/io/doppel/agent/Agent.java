@@ -11,6 +11,7 @@ import java.util.Properties;
 // agent.jar already bundles adapter:forge:v1_8_9 and adapter:common
 import io.doppel.adapter.forge.v1_8_9.ForgeBootstrap;
 import io.doppel.adapter.common.AgentBridge;
+import io.doppel.adapter.common.mapping.MappingContext;
 
 /**
  * Sandwich Architecture - Java Agent Entry Point

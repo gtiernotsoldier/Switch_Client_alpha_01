@@ -1,4 +1,4 @@
-package io.doppel.agent;
+package io.doppel.adapter.common.mapping;
 
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;

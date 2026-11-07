@@ -8,6 +8,8 @@ import java.util.Map;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
+import io.doppel.adapter.common.mapping.MappingContext;
+
 /**
  * Mapping file loader for cross-version compatibility
  * Loads JSON mapping files based on platform and version

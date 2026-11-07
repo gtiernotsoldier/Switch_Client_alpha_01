@@ -5,7 +5,7 @@ import io.doppel.adapter.common.api.IEventBridge
 import io.doppel.contract.model.*
 import io.doppel.contract.util.Vec2
 import io.doppel.contract.util.Vec3
-import io.doppel.agent.MappingContext
+import io.doppel.adapter.common.mapping.MappingContext
 import net.minecraft.client.MinecraftClient
 import org.lwjgl.glfw.GLFW
 import io.doppel.contract.strategy.click.OnItemUse

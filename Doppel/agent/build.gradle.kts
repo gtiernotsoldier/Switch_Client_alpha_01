@@ -20,7 +20,10 @@ dependencies {
     implementation(project(":contract"))
     implementation(project(":ipc"))
     implementation(project(":safety"))
-    implementation(project(":core"))
+    // No :core here. MappingContext — the one class agent needed — now lives in
+    // adapter:common under io.doppel.adapter.common.mapping; nothing else in agent
+    // refers to io.doppel.core. Keeping this line made agent.jar a fat jar of the
+    // algorithm package for a single reflection helper.
     implementation(project(":adapter:common"))
     implementation(project(":adapter:forge:v1_8_9"))
 

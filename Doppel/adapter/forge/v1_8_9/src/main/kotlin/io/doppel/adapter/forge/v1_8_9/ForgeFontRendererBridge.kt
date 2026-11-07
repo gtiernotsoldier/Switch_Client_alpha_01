@@ -1,7 +1,7 @@
 package io.doppel.adapter.forge.v1_8_9
 
 import io.doppel.adapter.common.render.FontRendererBridge
-import io.doppel.agent.MappingContext
+import io.doppel.adapter.common.mapping.MappingContext
 import io.doppel.contract.logging.CoreLogger
 
 /**

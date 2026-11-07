@@ -7,7 +7,7 @@ import io.netty.channel.ChannelPromise
 import io.doppel.adapter.common.api.EventBridge
 import io.doppel.contract.logging.CoreLogger
 import io.doppel.contract.util.Vec3
-import io.doppel.agent.MappingContext
+import io.doppel.adapter.common.mapping.MappingContext
 import io.doppel.contract.model.PlatformCommand
 
 /**

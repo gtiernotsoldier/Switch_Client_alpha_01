@@ -84,8 +84,8 @@ jvm:
       $entries = & jar tf $jar.FullName
       # ASM replaced Javassist: without it bundled, Transformer dies with
       # NoClassDefFoundError the moment the agent is attached.
-      foreach ($need in @("io/doppel/adapter/common/api/EventBridge", "io/doppel/core/model/PlayerState",
-                          "io/doppel/adapter/forge/v1_8_9/ForgeBootstrap", "io/doppel/agent/MappingContext",
+      foreach ($need in @("io/doppel/adapter/common/api/EventBridge", "io/doppel/contract/model/PlayerState",
+                          "io/doppel/adapter/forge/v1_8_9/ForgeBootstrap", "io/doppel/adapter/common/mapping/MappingContext",
                           "io/doppel/agent/RenderBridge", "org/objectweb/asm/ClassReader")) {
         if (-not ($entries | Select-String -SimpleMatch $need)) { Write-Error "$need is missing from the fat jar"; exit 1 }
       }

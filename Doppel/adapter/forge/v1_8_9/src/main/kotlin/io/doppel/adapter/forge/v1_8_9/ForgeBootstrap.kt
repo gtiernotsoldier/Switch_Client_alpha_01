@@ -22,7 +22,7 @@ import io.doppel.adapter.common.hud.HudStateWriter
 import io.doppel.adapter.common.render.OverlayRenderer
 import io.doppel.adapter.common.render.RenderContext
 import io.doppel.contract.logging.CoreLogger
-import io.doppel.agent.MappingContext
+import io.doppel.adapter.common.mapping.MappingContext
 import io.doppel.contract.util.Vec3
 import io.doppel.ipc.Frame
 

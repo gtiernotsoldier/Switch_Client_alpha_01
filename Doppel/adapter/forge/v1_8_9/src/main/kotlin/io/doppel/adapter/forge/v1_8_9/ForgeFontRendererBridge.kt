@@ -2,7 +2,7 @@ package io.doppel.adapter.forge.v1_8_9
 
 import io.doppel.adapter.common.render.FontRendererBridge
 import io.doppel.agent.MappingContext
-import io.doppel.core.logging.CoreLogger
+import io.doppel.contract.logging.CoreLogger
 
 /**
  * Forge 1.8.9 implementation of [FontRendererBridge].

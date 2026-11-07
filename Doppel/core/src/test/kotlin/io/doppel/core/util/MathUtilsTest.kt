@@ -2,6 +2,7 @@ package io.doppel.core.util
 
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
+import io.doppel.contract.util.MathUtils
 
 class MathUtilsTest {
 

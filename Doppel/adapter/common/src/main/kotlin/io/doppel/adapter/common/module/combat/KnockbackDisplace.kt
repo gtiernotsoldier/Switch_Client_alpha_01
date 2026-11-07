@@ -1,7 +1,7 @@
 package io.doppel.adapter.common.module.combat
 
-import io.doppel.core.model.PlayerState
-import io.doppel.core.model.TargetState
+import io.doppel.contract.model.PlayerState
+import io.doppel.contract.model.TargetState
 import io.doppel.adapter.common.api.EventBridge
 import io.doppel.adapter.common.module.Module
 import io.doppel.adapter.common.module.Category
@@ -10,6 +10,7 @@ import io.doppel.adapter.common.option.choices
 import io.doppel.adapter.common.option.float
 import io.doppel.adapter.common.option.int
 import kotlin.random.Random
+import io.doppel.contract.strategy.click.WeaponType
 
 /**
  * KnockbackDisplace Module (Slinky Knockback Displace, 1.8 exclusive).
@@ -75,7 +76,7 @@ object KnockbackDisplace : Module("KnockbackDisplace", Category.COMBAT) {
         }
         if (flickRemainingTicks <= 0) return
         // Weapon condition (checked with the current held item).
-        if (weaponOnly && player.weaponType == io.doppel.core.strategy.click.WeaponType.OTHER) {
+        if (weaponOnly && player.weaponType == io.doppel.contract.strategy.click.WeaponType.OTHER) {
             flickRemainingTicks = 0
             flickYawOffset = 0f
             return

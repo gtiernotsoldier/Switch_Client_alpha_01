@@ -6,6 +6,8 @@ import io.doppel.adapter.common.module.Module
 import io.doppel.adapter.common.option.float
 import io.doppel.adapter.common.render.RenderContext
 import kotlin.math.sqrt
+import io.doppel.contract.model.PlayerState
+import io.doppel.contract.model.TargetState
 
 /**
  * Speedometer — a lightweight plain-number HUD showing:
@@ -63,7 +65,7 @@ object Speedometer : Module("Speedometer", Category.VISUAL) {
     /** Low-pass filter state to smooth out per-tick position jitter. */
     private var smoothedSpeed = 0f
 
-    private val tickListener: (io.doppel.core.model.PlayerState, io.doppel.core.model.TargetState?) -> Unit = { p, _ ->
+    private val tickListener: (io.doppel.contract.model.PlayerState, io.doppel.contract.model.TargetState?) -> Unit = { p, _ ->
         if (enabled) {
             // Measure speed from POSITION DISPLACEMENT over time, NOT Entity.motionX/Z.
             // field_70159_w (motionX) decays instantly each tick and reads ~walk speed even when

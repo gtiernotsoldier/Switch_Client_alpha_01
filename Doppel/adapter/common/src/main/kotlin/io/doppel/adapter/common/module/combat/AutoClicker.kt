@@ -1,19 +1,19 @@
 package io.doppel.adapter.common.module.combat
 
-import io.doppel.core.model.PlayerState
-import io.doppel.core.model.TargetState
-import io.doppel.core.option.ClickMode
-import io.doppel.core.strategy.click.ClickConfig
-import io.doppel.core.strategy.click.ClickInput
-import io.doppel.core.strategy.click.ClickOperatingMode
-import io.doppel.core.strategy.click.ClickResult
-import io.doppel.core.strategy.click.ClickStrategy
-import io.doppel.core.strategy.click.CooldownClickConfig
-import io.doppel.core.strategy.click.CooldownClickMode
+import io.doppel.contract.model.PlayerState
+import io.doppel.contract.model.TargetState
+import io.doppel.contract.option.ClickMode
+import io.doppel.contract.strategy.click.ClickConfig
+import io.doppel.contract.strategy.click.ClickInput
+import io.doppel.contract.strategy.click.ClickOperatingMode
+import io.doppel.contract.strategy.click.ClickResult
+import io.doppel.contract.strategy.click.ClickStrategy
+import io.doppel.contract.strategy.click.CooldownClickConfig
+import io.doppel.contract.strategy.click.CooldownClickMode
 import io.doppel.core.strategy.click.CooldownClickStrategy
-import io.doppel.core.strategy.click.CritMode
+import io.doppel.contract.strategy.click.CritMode
 import io.doppel.core.strategy.click.ProbabilisticClickStrategy
-import io.doppel.core.strategy.click.WeaponType
+import io.doppel.contract.strategy.click.WeaponType
 import io.doppel.adapter.common.api.EventBridge
 import io.doppel.adapter.common.module.HudLineProvider
 import io.doppel.adapter.common.module.Module
@@ -23,6 +23,9 @@ import io.doppel.adapter.common.option.boolean
 import io.doppel.adapter.common.option.choices
 import io.doppel.adapter.common.option.float
 import io.doppel.adapter.common.option.triggerOptions
+import io.doppel.contract.strategy.click.CritState
+import io.doppel.contract.strategy.click.OnItemUse
+import io.doppel.contract.strategy.click.WeaponFilter
 
 /**
  * AutoClicker Module
@@ -110,7 +113,7 @@ object AutoClicker : Module("AutoClicker", Category.COMBAT), HudLineProvider {
     private val state18 = ClickStrategy.State()
     // 1.9+
     private val strategy19 = CooldownClickStrategy()
-    private val state19 = CooldownClickStrategy.CritState()
+    private val state19 = CritState()
 
     // ========== Tick Listener Reference ==========
     private var tickListener: ((PlayerState, TargetState?) -> Unit)? = null

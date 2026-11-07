@@ -2,10 +2,10 @@ package io.doppel.adapter.forge.v1_8_9
 
 import io.doppel.adapter.common.api.EventBridge
 import io.doppel.adapter.common.api.IStateExtractor
-import io.doppel.core.model.*
-import io.doppel.core.strategy.click.WeaponType
-import io.doppel.core.util.Vec2
-import io.doppel.core.util.Vec3
+import io.doppel.contract.model.*
+import io.doppel.contract.strategy.click.WeaponType
+import io.doppel.contract.util.Vec2
+import io.doppel.contract.util.Vec3
 import io.doppel.agent.MappingContext
 
 /**

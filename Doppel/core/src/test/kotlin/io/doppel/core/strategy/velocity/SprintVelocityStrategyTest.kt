@@ -1,18 +1,21 @@
 package io.doppel.core.strategy.velocity
 
-import io.doppel.core.model.Hitbox
-import io.doppel.core.model.PlayerState
-import io.doppel.core.model.TargetState
-import io.doppel.core.model.VelocityContext
-import io.doppel.core.strategy.click.WeaponType
-import io.doppel.core.util.Vec2
-import io.doppel.core.util.Vec3
+import io.doppel.contract.model.Hitbox
+import io.doppel.contract.model.PlayerState
+import io.doppel.contract.model.TargetState
+import io.doppel.contract.model.VelocityContext
+import io.doppel.contract.strategy.click.WeaponType
+import io.doppel.contract.util.Vec2
+import io.doppel.contract.util.Vec3
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import io.doppel.contract.strategy.velocity.VelocityConfig
+import io.doppel.contract.strategy.velocity.VelocityMode
+import io.doppel.contract.strategy.velocity.VelocityStrategy
 
 /**
  * The SPRINT mode window — the part the adapter polls once per tick.

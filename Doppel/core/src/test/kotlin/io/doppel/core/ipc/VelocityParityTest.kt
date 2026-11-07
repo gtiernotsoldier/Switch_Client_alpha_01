@@ -1,18 +1,19 @@
 package io.doppel.core.ipc
 
-import io.doppel.core.model.PlayerState
-import io.doppel.core.model.VelocityContext
-import io.doppel.core.strategy.click.WeaponType
+import io.doppel.contract.model.PlayerState
+import io.doppel.contract.model.VelocityContext
+import io.doppel.contract.strategy.click.WeaponType
 import io.doppel.core.strategy.velocity.LegitVelocityStrategy
-import io.doppel.core.strategy.velocity.VelocityConfig
-import io.doppel.core.strategy.velocity.VelocityResult
-import io.doppel.core.strategy.velocity.VelocityStrategy
-import io.doppel.core.util.Vec2
-import io.doppel.core.util.Vec3
+import io.doppel.contract.strategy.velocity.VelocityConfig
+import io.doppel.contract.strategy.velocity.VelocityResult
+import io.doppel.contract.strategy.velocity.VelocityStrategy
+import io.doppel.contract.util.Vec2
+import io.doppel.contract.util.Vec3
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.io.File
+import io.doppel.core.rng.DecisionRng
 
 /**
  * The switch criterion from PROTECTION.md 9.5.5, made executable.

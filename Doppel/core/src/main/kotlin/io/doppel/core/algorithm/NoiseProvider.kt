@@ -1,6 +1,6 @@
 package io.doppel.core.algorithm
 
-import io.doppel.core.util.Vec2
+import io.doppel.contract.util.Vec2
 import kotlin.random.Random
 
 /**

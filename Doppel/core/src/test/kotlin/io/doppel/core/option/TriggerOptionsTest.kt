@@ -2,6 +2,7 @@ package io.doppel.core.option
 
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
+import io.doppel.contract.option.TriggerOptions
 
 class TriggerOptionsTest {
 

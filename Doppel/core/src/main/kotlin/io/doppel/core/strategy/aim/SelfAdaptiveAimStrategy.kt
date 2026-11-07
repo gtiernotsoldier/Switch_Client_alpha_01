@@ -1,12 +1,18 @@
 package io.doppel.core.strategy.aim
 
+import io.doppel.contract.strategy.aim.AimConfig
 import io.doppel.core.algorithm.RotationCalculator
 import io.doppel.core.condition.ConditionChecker
-import io.doppel.core.model.Hitbox
-import io.doppel.core.model.PlayerState
-import io.doppel.core.model.TargetState
-import io.doppel.core.util.Vec3
+import io.doppel.contract.model.Hitbox
+import io.doppel.contract.model.PlayerState
+import io.doppel.contract.model.TargetState
+import io.doppel.contract.util.Vec3
 import kotlin.math.abs
+import io.doppel.contract.rng.DefaultRandomSource
+import io.doppel.contract.rng.RandomSource
+import io.doppel.contract.strategy.aim.AimInput
+import io.doppel.contract.strategy.aim.AimResult
+import io.doppel.contract.strategy.aim.AimStrategy
 
 /**
  * SelfAdaptive aim strategy.
@@ -53,7 +59,7 @@ class SelfAdaptiveAimStrategy : AimStrategy {
         state: AdaptiveState,
         player: PlayerState,
         target: TargetState?,
-        random: io.doppel.core.ipc.RandomSource = io.doppel.core.ipc.DefaultRandomSource
+        random: io.doppel.contract.rng.RandomSource = io.doppel.contract.rng.DefaultRandomSource
     ): AimResult {
         // 1. Null guard
         if (target == null) {

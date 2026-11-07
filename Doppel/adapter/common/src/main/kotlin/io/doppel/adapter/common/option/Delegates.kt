@@ -1,7 +1,7 @@
 package io.doppel.adapter.common.option
 
-import io.doppel.core.option.TriggerOptions
-import io.doppel.core.option.ProbabilityOption
+import io.doppel.contract.option.TriggerOptions
+import io.doppel.contract.option.ProbabilityOption
 import kotlin.properties.ReadWriteProperty
 import kotlin.reflect.KProperty
 

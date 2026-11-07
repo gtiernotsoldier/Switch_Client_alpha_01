@@ -4,6 +4,7 @@ import io.doppel.adapter.common.api.EventBridge
 import io.doppel.adapter.common.option.ConfigManager
 import io.doppel.adapter.common.option.OptionMeta
 import io.doppel.adapter.common.option.OptionType
+import io.doppel.contract.logging.CoreLogger
 
 /**
  * Base class for all modules.
@@ -102,14 +103,14 @@ abstract class Module(
     fun enable() {
         if (enabled) return
         enabled = true
-        io.doppel.core.logging.CoreLogger.info("[Module] ENABLE $name (${category.name})")
+        io.doppel.contract.logging.CoreLogger.info("[Module] ENABLE $name (${category.name})")
         onEnable()
     }
 
     fun disable() {
         if (!enabled) return
         enabled = false
-        io.doppel.core.logging.CoreLogger.info("[Module] DISABLE $name (${category.name})")
+        io.doppel.contract.logging.CoreLogger.info("[Module] DISABLE $name (${category.name})")
         onDisable()
         // Return every synthetic-key claim this module holds. Done here, not in each onDisable(),
         // so a module cannot forget: a stale OWNED claim would keep winning the key arbitration

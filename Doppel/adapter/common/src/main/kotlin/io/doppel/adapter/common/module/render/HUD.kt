@@ -17,8 +17,9 @@ import io.doppel.adapter.common.option.string
 import io.doppel.adapter.common.option.ConfigManager
 import io.doppel.adapter.common.option.OptionMeta
 import io.doppel.adapter.common.option.OptionType
-import io.doppel.core.model.PlayerState
-import io.doppel.core.model.TargetState
+import io.doppel.contract.model.PlayerState
+import io.doppel.contract.model.TargetState
+import io.doppel.contract.logging.CoreLogger
 
 /**
  * HUD — transparent in-game module status list (Doppel style).
@@ -246,7 +247,7 @@ object HUD : Module("HUD", Category.VISUAL) {
     /** Rebuild the line list. Cheap; called on enable / config change / toggle. */
     fun refreshLines() {
         if (!enabled) {
-            io.doppel.core.logging.CoreLogger.warn("[HUD] refreshLines skipped — HUD not enabled")
+            io.doppel.contract.logging.CoreLogger.warn("[HUD] refreshLines skipped — HUD not enabled")
             return
         }
         val notice = liveNoticeRow()
@@ -280,7 +281,7 @@ object HUD : Module("HUD", Category.VISUAL) {
         hudEntries = entries
         val names = entries.drop(1).joinToString(" | ") { it.name }
         EventBridge.hudTextLine = if (names.isNotEmpty()) "Doppel | $names" else "Doppel"
-        io.doppel.core.logging.CoreLogger.info("[HUD] refreshLines: ${entries.size} entries, enabled=$enabled")
+        io.doppel.contract.logging.CoreLogger.info("[HUD] refreshLines: ${entries.size} entries, enabled=$enabled")
     }
 
     /**

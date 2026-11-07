@@ -1,5 +1,6 @@
 package io.doppel.core.strategy.combat
 
+
 /**
  * AutoBlock's Adaptive mode — one decision out of several signals.
  *

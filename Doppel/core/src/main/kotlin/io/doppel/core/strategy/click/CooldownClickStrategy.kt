@@ -1,6 +1,17 @@
 package io.doppel.core.strategy.click
 
 import io.doppel.core.condition.ConditionChecker
+import io.doppel.contract.model.PlayerState
+import io.doppel.contract.rng.DefaultRandomSource
+import io.doppel.contract.rng.RandomSource
+import io.doppel.contract.strategy.click.ClickInput
+import io.doppel.contract.strategy.click.ClickResult
+import io.doppel.contract.strategy.click.ClickStrategy
+import io.doppel.contract.strategy.click.CooldownClickConfig
+import io.doppel.contract.strategy.click.CooldownClickMode
+import io.doppel.contract.strategy.click.CritMode
+import io.doppel.contract.strategy.click.CritPhase
+import io.doppel.contract.strategy.click.CritState
 
 /**
  * 1.9+ cooldown-based click strategy with critical hit support.
@@ -47,7 +58,7 @@ import io.doppel.core.condition.ConditionChecker
  *
  * Uses a simplified two-phase sequence: `SMART_STOP_SPRINT → SMART_RESTORE`.
  */
-class CooldownClickStrategy : ClickStrategy<CooldownClickConfig, CooldownClickStrategy.CritState> {
+class CooldownClickStrategy : ClickStrategy<CooldownClickConfig, CritState> {
 
     override fun execute(
         config: CooldownClickConfig,
@@ -67,7 +78,7 @@ class CooldownClickStrategy : ClickStrategy<CooldownClickConfig, CooldownClickSt
         config: CooldownClickConfig,
         state: CritState,
         input: ClickInput,
-        random: io.doppel.core.ipc.RandomSource = io.doppel.core.ipc.DefaultRandomSource
+        random: io.doppel.contract.rng.RandomSource = io.doppel.contract.rng.DefaultRandomSource
     ): ClickResult {
         val player = input.player
         val target = input.target
@@ -142,7 +153,7 @@ class CooldownClickStrategy : ClickStrategy<CooldownClickConfig, CooldownClickSt
     private fun startCritSequence(
         config: CooldownClickConfig,
         state: CritState,
-        player: io.doppel.core.model.PlayerState,
+        player: io.doppel.contract.model.PlayerState,
         input: ClickInput
     ): ClickResult {
         if (config.critStopSprint && player.isSprinting) {
@@ -165,7 +176,7 @@ class CooldownClickStrategy : ClickStrategy<CooldownClickConfig, CooldownClickSt
     private fun smartCritDecision(
         config: CooldownClickConfig,
         state: CritState,
-        player: io.doppel.core.model.PlayerState,
+        player: io.doppel.contract.model.PlayerState,
         input: ClickInput
     ): ClickResult {
         // Already in crit position — click for a natural crit
@@ -188,7 +199,7 @@ class CooldownClickStrategy : ClickStrategy<CooldownClickConfig, CooldownClickSt
         config: CooldownClickConfig,
         state: CritState,
         input: ClickInput,
-        random: io.doppel.core.ipc.RandomSource
+        random: io.doppel.contract.rng.RandomSource
     ): ClickResult {
         return when (state.critPhase) {
             // ---- ON mode phases ----
@@ -275,7 +286,7 @@ class CooldownClickStrategy : ClickStrategy<CooldownClickConfig, CooldownClickSt
 
     // ---- Helpers ----
 
-    private fun sampleLegitDelay(random: io.doppel.core.ipc.RandomSource): Int {
+    private fun sampleLegitDelay(random: io.doppel.contract.rng.RandomSource): Int {
         val u = 1f + random.nextFloat() * (4f - 1f)
         return u.toInt().coerceIn(1, 3)
     }
@@ -286,71 +297,5 @@ class CooldownClickStrategy : ClickStrategy<CooldownClickConfig, CooldownClickSt
         state.cooldownReady = false
         state.legitDelayTicks = 0
         state.waitFallTicks = 0
-    }
-
-    // ---- State ----
-
-    /**
-     * Phases of the critical hit state machine.
-     */
-    enum class CritPhase {
-        /** Normal operation, no crit sequence active. */
-        IDLE,
-
-        // -- ON mode phases --
-        /** [ClickResult.StopSprint] emitted, waiting one tick (ON mode). */
-        STOP_SPRINT,
-        /** Waiting for the player to be falling (ON mode). */
-        WAIT_FALL,
-        /** Waiting for attack cooldown to reach threshold (ON mode). */
-        WAIT_COOLDOWN,
-        /** [ClickResult.Click] emitted, about to restore (ON mode). */
-        ATTACK,
-        /** [ClickResult.RestoreSprint] emitted, about to go IDLE (ON mode). */
-        RESTORE,
-
-        // -- SMART mode phases --
-        /** [ClickResult.StopSprint] emitted, will click next tick (SMART mode). */
-        SMART_STOP_SPRINT,
-        /** [ClickResult.Click] emitted, will restore sprint next tick (SMART mode). */
-        SMART_RESTORE
-    }
-
-    /**
-     * Extended state for 1.9+ cooldown clicking with crit support.
-     */
-    class CritState : ClickStrategy.State() {
-        /**
-         * Current phase of the crit state machine.
-         * [CritPhase.IDLE] when no crit sequence is active.
-         */
-        var critPhase: CritPhase = CritPhase.IDLE
-
-        /**
-         * True when the cooldown bar has reached threshold.
-         */
-        var cooldownReady: Boolean = false
-
-        /**
-         * Remaining ticks of LEGIT-mode random delay after cooldown ready.
-         */
-        var legitDelayTicks: Int = 0
-
-        /**
-         * Whether the player was sprinting before we stopped them for crit.
-         */
-        var wasSprintingBeforeCrit: Boolean = false
-
-        /** WAIT_FALL 阶段已等待的 tick 数，用于超时降级。 */
-        var waitFallTicks: Int = 0
-
-        override fun reset() {
-            super.reset()
-            critPhase = CritPhase.IDLE
-            wasSprintingBeforeCrit = false
-            cooldownReady = false
-            legitDelayTicks = 0
-            waitFallTicks = 0
-        }
     }
 }

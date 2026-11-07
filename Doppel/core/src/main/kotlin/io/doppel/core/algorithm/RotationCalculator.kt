@@ -1,10 +1,13 @@
 package io.doppel.core.algorithm
 
-import io.doppel.core.model.Hitbox
-import io.doppel.core.util.Vec2
-import io.doppel.core.util.Vec3
+import io.doppel.contract.model.Hitbox
+import io.doppel.contract.util.Vec2
+import io.doppel.contract.util.Vec3
 import kotlin.random.Random
 import io.doppel.core.math.PortableMath
+import io.doppel.contract.rng.DefaultRandomSource
+import io.doppel.contract.rng.RandomSource
+import io.doppel.contract.strategy.aim.AimStrategy
 
 /**
  * Rotation calculator for aim assist and target tracking.
@@ -197,7 +200,7 @@ object RotationCalculator {
         playerPos: Vec3,
         hitbox: Hitbox,
         lockOnCrosshair: Boolean,
-        random: io.doppel.core.ipc.RandomSource = io.doppel.core.ipc.DefaultRandomSource
+        random: io.doppel.contract.rng.RandomSource = io.doppel.contract.rng.DefaultRandomSource
     ): Vec2 {
         val eyePos = Vec3(playerPos.x, playerPos.y + EYE_HEIGHT, playerPos.z)
         val targetPoint = if (lockOnCrosshair) {
@@ -354,7 +357,7 @@ object RotationCalculator {
         target: Float,
         current: Float,
         diff: Float,
-        random: io.doppel.core.ipc.RandomSource = io.doppel.core.ipc.DefaultRandomSource
+        random: io.doppel.contract.rng.RandomSource = io.doppel.contract.rng.DefaultRandomSource
     ): Float {
         if (diff <= 0f) return current
         var delta = normalizeAngle(target - current)
@@ -374,9 +377,9 @@ object RotationCalculator {
      * @return the current (yawDrift, pitchDrift) to add to the aim angles.
      */
     fun updateNaturalDrift(
-        state: io.doppel.core.strategy.aim.AimStrategy.State,
+        state: io.doppel.contract.strategy.aim.AimStrategy.State,
         offset: Float,
-        random: io.doppel.core.ipc.RandomSource = io.doppel.core.ipc.DefaultRandomSource
+        random: io.doppel.contract.rng.RandomSource = io.doppel.contract.rng.DefaultRandomSource
     ): Pair<Float, Float> {
         if (offset <= 0f) {
             state.driftYaw = 0f
@@ -620,7 +623,7 @@ object RotationCalculator {
     private fun randomInRange(
         min: Double,
         max: Double,
-        random: io.doppel.core.ipc.RandomSource
+        random: io.doppel.contract.rng.RandomSource
     ): Double {
         return min + random.nextDouble() * (max - min)
     }

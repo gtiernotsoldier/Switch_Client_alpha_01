@@ -2,12 +2,13 @@ package io.doppel.adapter.fabric.v1_21
 
 import io.doppel.adapter.common.api.EventBridge
 import io.doppel.adapter.common.api.IEventBridge
-import io.doppel.core.model.*
-import io.doppel.core.util.Vec2
-import io.doppel.core.util.Vec3
+import io.doppel.contract.model.*
+import io.doppel.contract.util.Vec2
+import io.doppel.contract.util.Vec3
 import io.doppel.agent.MappingContext
 import net.minecraft.client.MinecraftClient
 import org.lwjgl.glfw.GLFW
+import io.doppel.contract.strategy.click.OnItemUse
 
 /**
  * Fabric 1.21 event bridge implementation.

@@ -1,11 +1,12 @@
 package io.doppel.core.safety
 
-import io.doppel.core.logging.CoreLogger
-import io.doppel.core.logging.ReplayLogger
-import io.doppel.core.model.ModuleMovementSample
-import io.doppel.core.model.SetbackEvent
-import io.doppel.core.model.SetbackVerdict
-import io.doppel.core.util.Vec3
+import io.doppel.contract.logging.CoreLogger
+import io.doppel.contract.logging.ReplayLogger
+import io.doppel.contract.model.ModuleMovementSample
+import io.doppel.contract.model.SetbackEvent
+import io.doppel.contract.model.SetbackVerdict
+import io.doppel.contract.util.Vec3
+import io.doppel.contract.strategy.Strategy
 
 /**
  * Core-layer setback circuit breaker.

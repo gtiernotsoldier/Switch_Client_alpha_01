@@ -6,6 +6,7 @@ import net.minecraft.network.packet.s2c.play.EntityVelocityUpdateS2CPacket
 import io.doppel.adapter.common.api.EventBridge
 import org.lwjgl.glfw.GLFW
 import org.lwjgl.glfw.GLFWKeyCallbackI
+import io.doppel.contract.model.PlatformCommand
 
 /**
  * Fabric 1.21 bootstrap entry point.
@@ -124,17 +125,17 @@ object FabricBootstrap : ClientModInitializer {
         val command = FabricEventBridge.onVelocityPacket(packet)
 
         when (command) {
-            is io.doppel.core.model.PlatformCommand.ModifyMotion -> {
+            is io.doppel.contract.model.PlatformCommand.ModifyMotion -> {
                 // Motion will be applied by FabricEventBridge.applyMotion()
             }
-            is io.doppel.core.model.PlatformCommand.CancelPacket -> {
+            is io.doppel.contract.model.PlatformCommand.CancelPacket -> {
                 // Cancel the packet - handled by Mixin cancelling the injection
             }
-            is io.doppel.core.model.PlatformCommand.ClickBurst -> {
+            is io.doppel.contract.model.PlatformCommand.ClickBurst -> {
                 // Send click packets
                 sendClickBurst(command.targetId, command.times)
             }
-            is io.doppel.core.model.PlatformCommand.Pass -> {
+            is io.doppel.contract.model.PlatformCommand.Pass -> {
                 // Do nothing, let original motion pass through
             }
             else -> {}

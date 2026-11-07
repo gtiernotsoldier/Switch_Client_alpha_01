@@ -1,8 +1,8 @@
 package io.doppel.adapter.common.api
 
-import io.doppel.core.model.PlayerState
-import io.doppel.core.model.TargetState
-import io.doppel.core.model.CombatContext
+import io.doppel.contract.model.PlayerState
+import io.doppel.contract.model.TargetState
+import io.doppel.contract.model.CombatContext
 
 /**
  * Platform-agnostic state extraction interface.

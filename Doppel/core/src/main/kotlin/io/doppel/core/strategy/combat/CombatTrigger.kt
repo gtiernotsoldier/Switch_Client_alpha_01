@@ -1,8 +1,8 @@
 package io.doppel.core.strategy.combat
 
-import io.doppel.core.model.TargetState
-import io.doppel.core.ipc.DefaultRandomSource
-import io.doppel.core.ipc.RandomSource
+import io.doppel.contract.model.TargetState
+import io.doppel.contract.rng.DefaultRandomSource
+import io.doppel.contract.rng.RandomSource
 
 /**
  * Shared combat trigger logic for modules that fire after landing hits.

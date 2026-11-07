@@ -1,11 +1,11 @@
 package io.doppel.adapter.common.module.combat
 
 import io.doppel.core.condition.ConditionChecker
-import io.doppel.core.logging.CoreLogger
-import io.doppel.core.model.PlayerState
-import io.doppel.core.model.TargetState
+import io.doppel.contract.logging.CoreLogger
+import io.doppel.contract.model.PlayerState
+import io.doppel.contract.model.TargetState
 import io.doppel.core.strategy.autoblock.RangeGate
-import io.doppel.core.strategy.click.WeaponType
+import io.doppel.contract.strategy.click.WeaponType
 import io.doppel.core.strategy.combat.BlockArbiter
 import io.doppel.core.strategy.combat.BlockPredictor
 import io.doppel.adapter.common.api.EventBridge
@@ -17,6 +17,7 @@ import io.doppel.adapter.common.option.float
 import io.doppel.adapter.common.option.int
 import io.doppel.adapter.common.option.triggerOptions
 import kotlin.random.Random
+import io.doppel.contract.option.TriggerOptions
 
 /**
  * AutoBlock Module — 1.8 exclusive (sword blocking).

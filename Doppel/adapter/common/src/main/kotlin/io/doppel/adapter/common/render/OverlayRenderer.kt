@@ -4,6 +4,7 @@ import io.doppel.adapter.common.api.EventBridge
 import io.doppel.adapter.common.module.render.HUD
 import io.doppel.adapter.common.ui.RenderUtils
 import io.doppel.adapter.common.ui.Theme
+import io.doppel.contract.logging.CoreLogger
 
 /**
  * Shared overlay rendering logic — version-agnostic.
@@ -46,7 +47,7 @@ object OverlayRenderer {
         try {
             if (!renderEntryDiagLogged) {
                 renderEntryDiagLogged = true
-                io.doppel.core.logging.CoreLogger.info("[Overlay.render] entered. HUD.enabled=${HUD.enabled}, entries=${HUD.hudEntries.size}")
+                io.doppel.contract.logging.CoreLogger.info("[Overlay.render] entered. HUD.enabled=${HUD.enabled}, entries=${HUD.hudEntries.size}")
             }
             // Setup 2D ortho (origin top-left, y-down)
             g.glMatrixMode(GLConstants.GL_PROJECTION)

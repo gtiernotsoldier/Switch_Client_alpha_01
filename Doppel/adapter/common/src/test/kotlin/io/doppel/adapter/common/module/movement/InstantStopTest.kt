@@ -1,10 +1,10 @@
 package io.doppel.adapter.common.module.movement
 
 import io.doppel.adapter.common.api.EventBridge
-import io.doppel.core.model.PlayerState
-import io.doppel.core.strategy.click.WeaponType
-import io.doppel.core.util.Vec2
-import io.doppel.core.util.Vec3
+import io.doppel.contract.model.PlayerState
+import io.doppel.contract.strategy.click.WeaponType
+import io.doppel.contract.util.Vec2
+import io.doppel.contract.util.Vec3
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue

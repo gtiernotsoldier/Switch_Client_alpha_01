@@ -1,6 +1,9 @@
 rootProject.name = "Doppel"
 
 include(
+    "contract",
+    "ipc",
+    "safety",
     "core",
     "agent",
     "adapter:common",

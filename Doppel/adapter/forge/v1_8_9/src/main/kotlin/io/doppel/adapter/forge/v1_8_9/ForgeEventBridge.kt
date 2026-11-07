@@ -1,13 +1,13 @@
 package io.doppel.adapter.forge.v1_8_9
 
 import io.doppel.adapter.common.api.EventBridge
-import io.doppel.core.logging.CoreLogger
+import io.doppel.contract.logging.CoreLogger
 import io.doppel.adapter.common.api.IEventBridge
 import io.doppel.adapter.common.module.movement.InvMoveRules
-import io.doppel.core.model.*
+import io.doppel.contract.model.*
 import io.doppel.core.strategy.reach.ReachRaycast
-import io.doppel.core.util.Vec2
-import io.doppel.core.util.Vec3
+import io.doppel.contract.util.Vec2
+import io.doppel.contract.util.Vec3
 import io.doppel.agent.MappingContext
 
 /**
@@ -1445,7 +1445,7 @@ object ForgeEventBridge : IEventBridge {
             } else if (EventBridge.freeLookActive && !freelookDeltaSeen) {
                 // One line, once: if the angles stay at zero, this is the place that says so.
                 freelookDeltaSeen = true
-                io.doppel.core.logging.CoreLogger.error(
+                io.doppel.contract.logging.CoreLogger.error(
                     "[Freelook] MouseHelper.deltaX/deltaY both zero — no look input is reaching the camera"
                 )
             }
@@ -1507,7 +1507,7 @@ object ForgeEventBridge : IEventBridge {
 
             if (!freeLookLogged) {
                 freeLookLogged = true
-                io.doppel.core.logging.CoreLogger.info(
+                io.doppel.contract.logging.CoreLogger.info(
                     "[Freelook] camera angles published (yaw=" + EventBridge.freeLookYaw +
                         ", pitch=" + EventBridge.freeLookPitch + "), third-person view = " +
                         (freeLookSavedPerspective ?: -1) + " -> 1"

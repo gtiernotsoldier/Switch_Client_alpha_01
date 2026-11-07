@@ -1,16 +1,21 @@
 package io.doppel.core.ipc
 
-import io.doppel.core.model.PlayerState
-import io.doppel.core.model.TargetState
-import io.doppel.core.model.VelocityContext
-import io.doppel.core.strategy.click.WeaponType
-import io.doppel.core.util.Vec2
-import io.doppel.core.util.Vec3
+import io.doppel.contract.model.PlayerState
+import io.doppel.contract.model.TargetState
+import io.doppel.contract.model.VelocityContext
+import io.doppel.contract.strategy.click.WeaponType
+import io.doppel.contract.util.Vec2
+import io.doppel.contract.util.Vec3
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import io.doppel.contract.model.Hitbox
+import io.doppel.ipc.Frame
+import io.doppel.ipc.Wire
+import io.doppel.ipc.encodeSnapshot
+import io.doppel.ipc.decodeDecision
 
 /**
  * Byte-layout tests. The offsets here are the same table as IPC-PROTOCOL.md and
@@ -50,7 +55,7 @@ class WireTest {
         motionX = 0.0, motionY = 0.0, motionZ = -0.1,
         health = 14f, hurtTime = 4,
         distance = 3.5f,
-        hitbox = io.doppel.core.model.Hitbox(1.2, 63.2, 0.7, 1.8, 65.0, 1.3)
+        hitbox = io.doppel.contract.model.Hitbox(1.2, 63.2, 0.7, 1.8, 65.0, 1.3)
     )
 
     @Test

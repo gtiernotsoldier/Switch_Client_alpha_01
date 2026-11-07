@@ -1,6 +1,6 @@
 package io.doppel.core.algorithm
 
-import io.doppel.core.util.Vec3
+import io.doppel.contract.util.Vec3
 
 /**
  * Vector operations for velocity manipulation.

@@ -1,12 +1,12 @@
 package io.doppel.adapter.common.module.combat
 
-import io.doppel.core.model.PlayerState
-import io.doppel.core.model.TargetState
-import io.doppel.core.option.AimMode
-import io.doppel.core.strategy.aim.AimConfig
-import io.doppel.core.strategy.aim.AimInput
-import io.doppel.core.strategy.aim.AimResult
-import io.doppel.core.strategy.aim.AimStrategy
+import io.doppel.contract.model.PlayerState
+import io.doppel.contract.model.TargetState
+import io.doppel.contract.option.AimMode
+import io.doppel.contract.strategy.aim.AimConfig
+import io.doppel.contract.strategy.aim.AimInput
+import io.doppel.contract.strategy.aim.AimResult
+import io.doppel.contract.strategy.aim.AimStrategy
 import io.doppel.core.strategy.aim.LegitAimStrategy
 import io.doppel.core.strategy.aim.SelfAdaptiveAimStrategy
 import io.doppel.adapter.common.api.EventBridge

@@ -17,6 +17,9 @@ repositories {
 }
 
 dependencies {
+    implementation(project(":contract"))
+    implementation(project(":ipc"))
+    implementation(project(":safety"))
     implementation(project(":core"))
     implementation(project(":adapter:common"))
     implementation(project(":adapter:forge:v1_8_9"))

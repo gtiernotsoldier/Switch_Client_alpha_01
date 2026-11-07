@@ -1,8 +1,8 @@
 package io.doppel.adapter.common.module.combat
 
 import io.doppel.core.condition.ConditionChecker
-import io.doppel.core.model.PlayerState
-import io.doppel.core.model.TargetState
+import io.doppel.contract.model.PlayerState
+import io.doppel.contract.model.TargetState
 import io.doppel.core.strategy.combat.CombatTrigger
 import io.doppel.core.strategy.tap.TapStateMachine
 import io.doppel.adapter.common.api.EventBridge

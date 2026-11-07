@@ -6,6 +6,8 @@ import io.doppel.adapter.common.module.Module
 import io.doppel.adapter.common.option.float
 import io.doppel.adapter.common.render.RenderContext
 import kotlin.math.sqrt
+import io.doppel.contract.model.PlayerState
+import io.doppel.contract.model.TargetState
 
 /**
  * VelocityDisplay — a plain-number HUD showing the player's 3D motion vector (motionX/Y/Z in
@@ -42,7 +44,7 @@ object VelocityDisplay : Module("VelocityDisplay", Category.VISUAL) {
     @Volatile private var vz: Double = 0.0
     @Volatile private var modified: Boolean = false
 
-    private val tickListener: (io.doppel.core.model.PlayerState, io.doppel.core.model.TargetState?) -> Unit = { p, _ ->
+    private val tickListener: (io.doppel.contract.model.PlayerState, io.doppel.contract.model.TargetState?) -> Unit = { p, _ ->
         if (enabled) {
             vx = p.motionX
             vy = p.motionY

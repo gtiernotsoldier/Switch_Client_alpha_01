@@ -1,27 +1,27 @@
 package io.doppel.core.ipc
 
-import io.doppel.core.model.Hitbox
-import io.doppel.core.model.PlayerState
-import io.doppel.core.model.TargetState
-import io.doppel.core.option.AimMode
-import io.doppel.core.strategy.aim.AimConfig
-import io.doppel.core.strategy.aim.AimResult
-import io.doppel.core.strategy.aim.AimStrategy
+import io.doppel.contract.model.Hitbox
+import io.doppel.contract.model.PlayerState
+import io.doppel.contract.model.TargetState
+import io.doppel.contract.option.AimMode
+import io.doppel.contract.strategy.aim.AimConfig
+import io.doppel.contract.strategy.aim.AimResult
+import io.doppel.contract.strategy.aim.AimStrategy
 import io.doppel.core.strategy.aim.LegitAimStrategy
 import io.doppel.core.strategy.autoblock.RangeGate
-import io.doppel.core.strategy.click.ClickConfig
-import io.doppel.core.strategy.click.ClickResult
+import io.doppel.contract.strategy.click.ClickConfig
+import io.doppel.contract.strategy.click.ClickResult
 import io.doppel.core.strategy.click.ProbabilisticClickStrategy
-import io.doppel.core.strategy.click.WeaponType
+import io.doppel.contract.strategy.click.WeaponType
 import io.doppel.core.strategy.combat.BlockArbiter
 import io.doppel.core.strategy.movement.SocdResolver
 import io.doppel.core.strategy.movement.StopTap
 import io.doppel.core.strategy.movement.StrafeCorrector
 import io.doppel.core.strategy.reach.ReachRaycast
-import io.doppel.core.strategy.tap.Side
+import io.doppel.contract.strategy.tap.Side
 import io.doppel.core.strategy.tap.StrafePattern
-import io.doppel.core.util.Vec2
-import io.doppel.core.util.Vec3
+import io.doppel.contract.util.Vec2
+import io.doppel.contract.util.Vec3
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
@@ -33,6 +33,10 @@ import org.junit.jupiter.api.TestInstance
 import org.junit.jupiter.api.Timeout
 import java.io.File
 import java.util.concurrent.TimeUnit
+import io.doppel.contract.strategy.click.ClickStrategy
+import io.doppel.ipc.CoreStub
+import io.doppel.ipc.Endpoint
+import io.doppel.core.rng.DecisionRng
 
 /**
  * Proves the session boundary for every module, not just velocity.
@@ -188,7 +192,7 @@ class ModuleSessionParityTest {
         val stub = stub!!
         val config = ClickConfig()
         val local = ProbabilisticClickStrategy()
-        val state = io.doppel.core.strategy.click.ClickStrategy.State()
+        val state = io.doppel.contract.strategy.click.ClickStrategy.State()
         val rng = DecisionRng(stub.seed)
         val inputs = DecisionRng(0xB2B2_B2B2L)
 

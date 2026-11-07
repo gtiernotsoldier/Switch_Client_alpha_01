@@ -1,15 +1,15 @@
 package io.doppel.adapter.common.module.combat
 
-import io.doppel.core.model.PlayerState
-import io.doppel.core.model.TargetState
-import io.doppel.core.option.ClickMode
-import io.doppel.core.strategy.click.ClickConfig
-import io.doppel.core.strategy.click.ClickInput
-import io.doppel.core.strategy.click.ClickOperatingMode
-import io.doppel.core.strategy.click.ClickResult
-import io.doppel.core.strategy.click.ClickStrategy
-import io.doppel.core.strategy.click.CooldownClickConfig
-import io.doppel.core.strategy.click.CooldownClickMode
+import io.doppel.contract.model.PlayerState
+import io.doppel.contract.model.TargetState
+import io.doppel.contract.option.ClickMode
+import io.doppel.contract.strategy.click.ClickConfig
+import io.doppel.contract.strategy.click.ClickInput
+import io.doppel.contract.strategy.click.ClickOperatingMode
+import io.doppel.contract.strategy.click.ClickResult
+import io.doppel.contract.strategy.click.ClickStrategy
+import io.doppel.contract.strategy.click.CooldownClickConfig
+import io.doppel.contract.strategy.click.CooldownClickMode
 import io.doppel.core.strategy.click.CooldownClickStrategy
 import io.doppel.core.strategy.click.ProbabilisticClickStrategy
 import io.doppel.adapter.common.api.EventBridge
@@ -18,6 +18,8 @@ import io.doppel.adapter.common.module.Category
 import io.doppel.adapter.common.option.choices
 import io.doppel.adapter.common.option.float
 import io.doppel.adapter.common.option.int
+import io.doppel.contract.option.TriggerOptions
+import io.doppel.contract.strategy.click.CritState
 
 /**
  * TriggerBot Module — autonomous attack when crosshair is on target.
@@ -56,7 +58,7 @@ object TriggerBot : Module("TriggerBot", Category.COMBAT) {
     private val strategy18 = ProbabilisticClickStrategy()
     private val state18 = ClickStrategy.State()
     private val strategy19 = CooldownClickStrategy()
-    private val state19 = CooldownClickStrategy.CritState()
+    private val state19 = CritState()
 
     // ========== Tick Listener ==========
     private val tickListener: (PlayerState, TargetState?) -> Unit = { p, t ->
@@ -74,7 +76,7 @@ object TriggerBot : Module("TriggerBot", Category.COMBAT) {
                     clickMode = ClickMode.SINGLE,
                     mode = ClickOperatingMode.LEGIT,
                     disableOnBlock = true,
-                    triggerOptions = io.doppel.core.option.TriggerOptions(chance = 100)
+                    triggerOptions = io.doppel.contract.option.TriggerOptions(chance = 100)
                 ) }
                 val input = ClickInput(player = player, target = target)
                 val result = strategy18.execute(config, state18, input)
@@ -88,7 +90,7 @@ object TriggerBot : Module("TriggerBot", Category.COMBAT) {
                     cooldownThreshold = cooldownThreshold / 100f,
                     cooldownMode = CooldownClickMode.LEGIT,
                     disableOnBlock = true,
-                    triggerOptions = io.doppel.core.option.TriggerOptions(chance = 100)
+                    triggerOptions = io.doppel.contract.option.TriggerOptions(chance = 100)
                 ) }
                 val input = ClickInput(
                     player = player, target = null,

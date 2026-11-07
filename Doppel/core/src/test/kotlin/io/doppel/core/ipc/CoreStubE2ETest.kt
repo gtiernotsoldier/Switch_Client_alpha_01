@@ -1,14 +1,14 @@
 package io.doppel.core.ipc
 
-import io.doppel.core.model.PlayerState
-import io.doppel.core.model.VelocityContext
-import io.doppel.core.strategy.click.WeaponType
+import io.doppel.contract.model.PlayerState
+import io.doppel.contract.model.VelocityContext
+import io.doppel.contract.strategy.click.WeaponType
 import io.doppel.core.strategy.velocity.LegitVelocityStrategy
-import io.doppel.core.strategy.velocity.VelocityConfig
-import io.doppel.core.strategy.velocity.VelocityResult
-import io.doppel.core.strategy.velocity.VelocityStrategy
-import io.doppel.core.util.Vec2
-import io.doppel.core.util.Vec3
+import io.doppel.contract.strategy.velocity.VelocityConfig
+import io.doppel.contract.strategy.velocity.VelocityResult
+import io.doppel.contract.strategy.velocity.VelocityStrategy
+import io.doppel.contract.util.Vec2
+import io.doppel.contract.util.Vec3
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -17,6 +17,9 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Timeout
 import java.io.File
 import java.util.concurrent.TimeUnit
+import io.doppel.ipc.CoreStub
+import io.doppel.ipc.Endpoint
+import io.doppel.core.rng.DecisionRng
 
 /**
  * Full-loop test: spawn the real `doppel-core` binary, connect over TCP exactly

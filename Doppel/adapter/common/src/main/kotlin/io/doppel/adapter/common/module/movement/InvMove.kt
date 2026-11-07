@@ -4,8 +4,8 @@ import io.doppel.adapter.common.api.EventBridge
 import io.doppel.adapter.common.module.Category
 import io.doppel.adapter.common.module.Module
 import io.doppel.adapter.common.option.boolean
-import io.doppel.core.model.PlayerState
-import io.doppel.core.model.TargetState
+import io.doppel.contract.model.PlayerState
+import io.doppel.contract.model.TargetState
 
 /**
  * InvMove (背包行走) — keep walking while a screen (inventory, chest, chat, …) is open.

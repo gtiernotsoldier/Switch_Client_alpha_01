@@ -1,8 +1,9 @@
 package io.doppel.adapter.fabric.v1_21
 
-import io.doppel.core.logging.CoreLogger
-import io.doppel.core.model.PlatformCommand
-import io.doppel.core.util.Vec3
+import io.doppel.contract.logging.CoreLogger
+import io.doppel.contract.model.PlatformCommand
+import io.doppel.contract.util.Vec3
+import io.doppel.contract.model.VelocityContext
 
 /**
  * Mixin target specification for Fabric 1.21 velocity packet interception.

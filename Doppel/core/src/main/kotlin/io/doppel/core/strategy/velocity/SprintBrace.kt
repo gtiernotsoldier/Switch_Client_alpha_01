@@ -1,9 +1,10 @@
 package io.doppel.core.strategy.velocity
 
-import io.doppel.core.util.Vec3
+import io.doppel.contract.util.Vec3
 import kotlin.math.sqrt
 import kotlin.random.Random
 import io.doppel.core.math.PortableMath
+import io.doppel.contract.strategy.velocity.VelocityMode
 
 /** Which movement keys one brace tick should hold. */
 data class BraceKeys(
@@ -23,7 +24,7 @@ data class BraceKeys(
 data class BraceSource(val x: Double, val z: Double)
 
 /**
- * The arithmetic behind [io.doppel.core.strategy.velocity.VelocityMode.SPRINT].
+ * The arithmetic behind [io.doppel.contract.strategy.velocity.VelocityMode.SPRINT].
  *
  * Pure and platform-free: no `EventBridge`, no key names, no packets. The adapter decides *when* to
  * ask and *what* to do with the answer; everything numeric lives here, which is what the module's

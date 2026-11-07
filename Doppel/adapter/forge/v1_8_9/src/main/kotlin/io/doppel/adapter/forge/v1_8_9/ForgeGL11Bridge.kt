@@ -2,7 +2,7 @@ package io.doppel.adapter.forge.v1_8_9
 
 import io.doppel.adapter.common.render.GL11Bridge
 import io.doppel.adapter.common.render.GLConstants
-import io.doppel.core.logging.CoreLogger
+import io.doppel.contract.logging.CoreLogger
 
 /**
  * Forge 1.8.9 (LWJGL2) implementation of [GL11Bridge].

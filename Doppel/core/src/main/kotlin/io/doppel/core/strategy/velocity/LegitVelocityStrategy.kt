@@ -2,9 +2,13 @@ package io.doppel.core.strategy.velocity
 
 import io.doppel.core.algorithm.VectorOperations
 import io.doppel.core.condition.ConditionChecker
-import io.doppel.core.ipc.DefaultRandomSource
-import io.doppel.core.ipc.RandomSource
-import io.doppel.core.model.VelocityContext
+import io.doppel.contract.rng.DefaultRandomSource
+import io.doppel.contract.rng.RandomSource
+import io.doppel.contract.model.VelocityContext
+import io.doppel.contract.model.PlatformCommand
+import io.doppel.contract.strategy.velocity.VelocityConfig
+import io.doppel.contract.strategy.velocity.VelocityResult
+import io.doppel.contract.strategy.velocity.VelocityStrategy
 
 /**
  * Default LEGIT mode velocity strategy.
@@ -31,7 +35,7 @@ import io.doppel.core.model.VelocityContext
  * distribution and rhythm layers, never the physics layer.
  *
  * @param rng the source for both dice. Defaults to unseeded randomness; the replay harness
- *   passes a [io.doppel.core.ipc.DecisionRng] so the same seed reproduces the same sequence —
+ *   passes a [io.doppel.core.rng.DecisionRng] so the same seed reproduces the same sequence —
  *   without this, "same seed, same decisions" (PROTECTION.md 9.5.5) could not be checked at all.
  */
 class LegitVelocityStrategy(
@@ -86,7 +90,7 @@ class LegitVelocityStrategy(
     /**
      * Process queued delayed entries and release those whose time has come.
      * The adapter should call this on every tick and map returned results to
-     * [io.doppel.core.model.PlatformCommand]s.
+     * [io.doppel.contract.model.PlatformCommand]s.
      *
      * @return list of results for packets that are ready to be released.
      */

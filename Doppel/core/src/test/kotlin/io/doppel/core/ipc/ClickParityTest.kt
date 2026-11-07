@@ -1,26 +1,28 @@
 package io.doppel.core.ipc
 
-import io.doppel.core.model.Hitbox
-import io.doppel.core.model.PlayerState
-import io.doppel.core.model.TargetState
-import io.doppel.core.strategy.click.ClickConfig
-import io.doppel.core.strategy.click.ClickInput
-import io.doppel.core.strategy.click.ClickOperatingMode
-import io.doppel.core.strategy.click.ClickResult
-import io.doppel.core.strategy.click.ClickStrategy
-import io.doppel.core.strategy.click.CooldownClickConfig
-import io.doppel.core.strategy.click.CooldownClickMode
+import io.doppel.contract.model.Hitbox
+import io.doppel.contract.model.PlayerState
+import io.doppel.contract.model.TargetState
+import io.doppel.contract.strategy.click.ClickConfig
+import io.doppel.contract.strategy.click.ClickInput
+import io.doppel.contract.strategy.click.ClickOperatingMode
+import io.doppel.contract.strategy.click.ClickResult
+import io.doppel.contract.strategy.click.ClickStrategy
+import io.doppel.contract.strategy.click.CooldownClickConfig
+import io.doppel.contract.strategy.click.CooldownClickMode
 import io.doppel.core.strategy.click.CooldownClickStrategy
-import io.doppel.core.strategy.click.CritMode
+import io.doppel.contract.strategy.click.CritMode
 import io.doppel.core.strategy.click.ProbabilisticClickStrategy
-import io.doppel.core.strategy.click.WeaponType
-import io.doppel.core.option.ClickMode
-import io.doppel.core.util.Vec2
-import io.doppel.core.util.Vec3
+import io.doppel.contract.strategy.click.WeaponType
+import io.doppel.contract.option.ClickMode
+import io.doppel.contract.util.Vec2
+import io.doppel.contract.util.Vec3
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.io.File
+import io.doppel.contract.strategy.click.CritState
+import io.doppel.core.rng.DecisionRng
 
 /**
  * Click parity against the Rust port, replaying `core-rs --emit-golden` fixtures.
@@ -98,9 +100,9 @@ class ClickParityTest {
 
         val st0 = ClickStrategy.State()
         val st1 = ClickStrategy.State()
-        val st2 = CooldownClickStrategy.CritState()
-        val st3 = CooldownClickStrategy.CritState()
-        val st4 = CooldownClickStrategy.CritState()
+        val st2 = CritState()
+        val st3 = CritState()
+        val st4 = CritState()
 
         val rng0 = DecisionRng(seed xor 0x10L)
         val rng1 = DecisionRng(seed xor 0x11L)

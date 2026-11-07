@@ -2,7 +2,7 @@ package io.doppel.adapter.common.webui
 
 import io.doppel.adapter.common.module.ModuleRegistry
 import io.doppel.adapter.common.option.ConfigManager
-import io.doppel.core.logging.CoreLogger
+import io.doppel.contract.logging.CoreLogger
 import java.io.File
 
 /**

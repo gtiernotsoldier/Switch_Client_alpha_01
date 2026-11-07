@@ -1,11 +1,11 @@
 package io.doppel.adapter.common.module.combat
 
 import io.doppel.core.condition.ConditionChecker
-import io.doppel.core.model.PlayerState
-import io.doppel.core.model.TargetState
-import io.doppel.core.model.VelocityContext
+import io.doppel.contract.model.PlayerState
+import io.doppel.contract.model.TargetState
+import io.doppel.contract.model.VelocityContext
 import io.doppel.core.algorithm.RotationCalculator
-import io.doppel.core.util.Vec3
+import io.doppel.contract.util.Vec3
 import io.doppel.adapter.common.api.EventBridge
 import io.doppel.adapter.common.module.Module
 import io.doppel.adapter.common.module.Category
@@ -16,6 +16,7 @@ import io.doppel.adapter.common.option.int
 import io.doppel.adapter.common.option.triggerOptions
 import kotlin.math.sqrt
 import kotlin.random.Random
+import io.doppel.contract.logging.CoreLogger
 
 /**
  * JumpReset Module — automatic jump on knockback to reduce knockback height.
@@ -94,7 +95,7 @@ object JumpReset : Module("JumpReset", Category.COMBAT) {
 
         // Diagnostic: log each knockback arrival + which gate blocks (throttled).
         if (++jrDiag % 3 == 0) {
-            io.doppel.core.logging.CoreLogger.info(
+            io.doppel.contract.logging.CoreLogger.info(
                 "[JumpReset] S12 recv sprint=${player.isSprinting} ground=${player.onGround} " +
                 "fluid=${EventBridge.isInFluid} motion=(${motion.x},${motion.y},${motion.z}) " +
                 "chance=$chance cd=$cooldownMode/$ticksUntilJump"
@@ -104,13 +105,13 @@ object JumpReset : Module("JumpReset", Category.COMBAT) {
         // ---- Internal conditions (not configurable) ----
         // Must be sprinting
         if (!player.isSprinting) {
-            if (++jrDiag % 3 == 0) io.doppel.core.logging.CoreLogger.info("[JumpReset] blocked: not sprinting")
+            if (++jrDiag % 3 == 0) io.doppel.contract.logging.CoreLogger.info("[JumpReset] blocked: not sprinting")
             return
         }
 
         // Must be on ground
         if (!player.onGround) {
-            if (++jrDiag % 3 == 0) io.doppel.core.logging.CoreLogger.info("[JumpReset] blocked: not on ground")
+            if (++jrDiag % 3 == 0) io.doppel.contract.logging.CoreLogger.info("[JumpReset] blocked: not on ground")
             return
         }
 

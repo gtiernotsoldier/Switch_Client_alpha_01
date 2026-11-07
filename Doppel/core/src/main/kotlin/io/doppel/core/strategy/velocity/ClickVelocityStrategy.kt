@@ -1,9 +1,12 @@
 package io.doppel.core.strategy.velocity
 
 import io.doppel.core.condition.ConditionChecker
-import io.doppel.core.model.VelocityContext
-import io.doppel.core.option.RandomRange
-import io.doppel.core.util.Vec3
+import io.doppel.contract.model.VelocityContext
+import io.doppel.contract.option.RandomRange
+import io.doppel.contract.util.Vec3
+import io.doppel.contract.strategy.velocity.VelocityConfig
+import io.doppel.contract.strategy.velocity.VelocityResult
+import io.doppel.contract.strategy.velocity.VelocityStrategy
 
 /**
  * CLICK mode velocity strategy ("Liquid" algorithm).

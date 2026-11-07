@@ -1,7 +1,7 @@
 package io.doppel.adapter.common.module.combat
 
-import io.doppel.core.model.PlatformCommand
-import io.doppel.core.model.VelocityContext
+import io.doppel.contract.model.PlatformCommand
+import io.doppel.contract.model.VelocityContext
 import io.doppel.core.strategy.velocity.KnockbackDelayStrategy
 import io.doppel.adapter.common.api.EventBridge
 import io.doppel.adapter.common.module.Module

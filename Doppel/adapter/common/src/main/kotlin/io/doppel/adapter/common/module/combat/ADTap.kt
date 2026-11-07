@@ -1,8 +1,8 @@
 package io.doppel.adapter.common.module.combat
 
-import io.doppel.core.model.PlayerState
-import io.doppel.core.model.TargetState
-import io.doppel.core.strategy.tap.Side
+import io.doppel.contract.model.PlayerState
+import io.doppel.contract.model.TargetState
+import io.doppel.contract.strategy.tap.Side
 import io.doppel.core.strategy.tap.StrafePattern
 import io.doppel.core.strategy.tap.TapStateMachine
 import io.doppel.adapter.common.api.EventBridge

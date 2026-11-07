@@ -9,7 +9,7 @@ import io.doppel.adapter.common.option.COLOR_MAX
 import io.doppel.adapter.common.option.ConfigManager
 import io.doppel.adapter.common.option.OptionDescriptor
 import io.doppel.adapter.common.option.OptionType
-import io.doppel.core.logging.CoreLogger
+import io.doppel.contract.logging.CoreLogger
 import java.net.InetSocketAddress
 import java.net.URLDecoder
 import java.nio.charset.StandardCharsets

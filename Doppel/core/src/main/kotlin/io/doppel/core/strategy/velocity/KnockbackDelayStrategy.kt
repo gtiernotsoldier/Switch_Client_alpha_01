@@ -1,10 +1,10 @@
 package io.doppel.core.strategy.velocity
 
 import io.doppel.core.condition.ConditionChecker
-import io.doppel.core.model.VelocityContext
-import io.doppel.core.option.TriggerOptions
-import io.doppel.core.strategy.click.WeaponType
-import io.doppel.core.util.Vec3
+import io.doppel.contract.model.VelocityContext
+import io.doppel.contract.option.TriggerOptions
+import io.doppel.contract.strategy.click.WeaponType
+import io.doppel.contract.util.Vec3
 import kotlin.random.Random
 
 /**

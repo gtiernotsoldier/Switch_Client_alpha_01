@@ -1,6 +1,6 @@
 package io.doppel.core.strategy.reach
 
-import io.doppel.core.util.Vec3
+import io.doppel.contract.util.Vec3
 
 /**
  * Core Reach algorithm — the ray/AABB intersection (slab test) used to find the nearest entity an

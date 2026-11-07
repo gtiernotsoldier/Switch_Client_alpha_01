@@ -1,18 +1,11 @@
 package io.doppel.core.strategy.tap
 
-import io.doppel.core.model.TargetState
-import io.doppel.core.util.Vec3
-import io.doppel.core.ipc.DefaultRandomSource
-import io.doppel.core.ipc.RandomSource
+import io.doppel.contract.model.TargetState
+import io.doppel.contract.util.Vec3
+import io.doppel.contract.rng.DefaultRandomSource
+import io.doppel.contract.rng.RandomSource
+import io.doppel.contract.strategy.tap.Side
 import io.doppel.core.math.PortableMath
-
-/** Strafe side for ADTap (keyboard A/D only — never the mouse). */
-enum class Side {
-    LEFT, RIGHT;
-
-    /** The opposite side. */
-    fun flipped(): Side = if (this == LEFT) RIGHT else LEFT
-}
 
 /**
  * Pure decision layer for ADTap (A/D strafe-pattern automation).

@@ -1,12 +1,15 @@
 package io.doppel.adapter.common.api
 
-import io.doppel.core.logging.CoreLogger
-import io.doppel.core.model.PlayerState
-import io.doppel.core.model.TargetState
-import io.doppel.core.model.VelocityContext
-import io.doppel.core.model.PlatformCommand
-import io.doppel.core.util.Vec2
-import io.doppel.core.util.Vec3
+import io.doppel.contract.logging.CoreLogger
+import io.doppel.contract.model.PlayerState
+import io.doppel.contract.model.TargetState
+import io.doppel.contract.model.VelocityContext
+import io.doppel.contract.model.PlatformCommand
+import io.doppel.contract.util.Vec2
+import io.doppel.contract.util.Vec3
+import io.doppel.contract.model.Hitbox
+import io.doppel.contract.strategy.click.OnItemUse
+import io.doppel.ipc.Frame
 
 /**
  * Global EventBridge singleton.
@@ -1257,7 +1260,7 @@ object EventBridge {
     /** Target world point to aim at (updated by the strategy each background tick). */
     @Volatile var desiredTargetWorld: Vec3? = null
     /** Target hitbox (world AABB) — for the per-frame "crosshair inside the box = free" check. */
-    @Volatile var desiredHitbox: io.doppel.core.model.Hitbox? = null
+    @Volatile var desiredHitbox: io.doppel.contract.model.Hitbox? = null
     /** Per-frame yaw interpolation fraction (0..1, set by the strategy). */
     /**
      * How fast the aim may travel, in DEGREES PER SECOND.
@@ -1362,7 +1365,7 @@ object EventBridge {
         var trackingInsideBox = false
         val hitbox = desiredHitbox
         if (hitbox != null) {
-            val aim = io.doppel.core.util.Vec2(currentYaw, currentPitch)
+            val aim = io.doppel.contract.util.Vec2(currentYaw, currentPitch)
             val hit = rotationCalculatorForAim().rayHitPoint(currentEye, aim, hitbox)
             if (hit != null) {
                 if (aimTrackInsideBox) {

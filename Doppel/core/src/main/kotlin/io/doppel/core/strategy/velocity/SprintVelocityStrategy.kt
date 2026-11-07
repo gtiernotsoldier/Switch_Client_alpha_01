@@ -1,8 +1,11 @@
 package io.doppel.core.strategy.velocity
 
 import io.doppel.core.condition.ConditionChecker
-import io.doppel.core.model.VelocityContext
+import io.doppel.contract.model.VelocityContext
 import kotlin.random.Random
+import io.doppel.contract.strategy.velocity.VelocityConfig
+import io.doppel.contract.strategy.velocity.VelocityResult
+import io.doppel.contract.strategy.velocity.VelocityStrategy
 
 /**
  * SPRINT mode velocity strategy — the one mode that never rewrites the packet.

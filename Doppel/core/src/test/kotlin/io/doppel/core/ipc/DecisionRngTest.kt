@@ -3,6 +3,7 @@ package io.doppel.core.ipc
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import io.doppel.core.rng.DecisionRng
 
 /**
  * Pins [DecisionRng] to the same sequence as `core-rs/src/rng.rs`.

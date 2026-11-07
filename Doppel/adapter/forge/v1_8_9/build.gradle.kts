@@ -1,4 +1,7 @@
 dependencies {
+    implementation(project(":contract"))
+    implementation(project(":ipc"))
+    implementation(project(":safety"))
     implementation(project(":core"))
     implementation(project(":adapter:common"))
 

@@ -2,9 +2,9 @@ package io.doppel.adapter.common.module.combat
 
 import io.doppel.adapter.common.api.EventBridge
 import io.doppel.adapter.common.option.ConfigManager
-import io.doppel.core.model.Hitbox
-import io.doppel.core.model.PlayerState
-import io.doppel.core.model.TargetState
+import io.doppel.contract.model.Hitbox
+import io.doppel.contract.model.PlayerState
+import io.doppel.contract.model.TargetState
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse

@@ -1,12 +1,13 @@
 package io.doppel.core.strategy.tap
 
-import io.doppel.core.model.Hitbox
-import io.doppel.core.model.TargetState
-import io.doppel.core.util.Vec3
+import io.doppel.contract.model.Hitbox
+import io.doppel.contract.model.TargetState
+import io.doppel.contract.util.Vec3
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
-import io.doppel.core.ipc.DecisionRng
+import io.doppel.core.rng.DecisionRng
+import io.doppel.contract.strategy.tap.Side
 
 class StrafePatternTest {
 

@@ -5,9 +5,10 @@ import io.netty.channel.ChannelHandlerContext
 import io.netty.channel.ChannelPipeline
 import io.netty.channel.ChannelPromise
 import io.doppel.adapter.common.api.EventBridge
-import io.doppel.core.logging.CoreLogger
-import io.doppel.core.util.Vec3
+import io.doppel.contract.logging.CoreLogger
+import io.doppel.contract.util.Vec3
 import io.doppel.agent.MappingContext
+import io.doppel.contract.model.PlatformCommand
 
 /**
  * Netty channel handler that intercepts incoming velocity-related packets.
@@ -265,11 +266,11 @@ object ForgePacketInterceptor : ChannelDuplexHandler() {
                     if (packetEntityId == playerEntityId) {
                         val command = ForgeEventBridge.onVelocityPacket(msg)
                         when (command) {
-                            is io.doppel.core.model.PlatformCommand.CancelPacket -> return
-                            is io.doppel.core.model.PlatformCommand.ModifyMotion -> {
+                            is io.doppel.contract.model.PlatformCommand.CancelPacket -> return
+                            is io.doppel.contract.model.PlatformCommand.ModifyMotion -> {
                                 ForgeEventBridge.pendingMotion = command.motion
                             }
-                            is io.doppel.core.model.PlatformCommand.ClickBurst -> {
+                            is io.doppel.contract.model.PlatformCommand.ClickBurst -> {
                                 sendClickBurst(command.targetId, command.times)
                                 return
                             }
@@ -293,11 +294,11 @@ object ForgePacketInterceptor : ChannelDuplexHandler() {
             } else if (s27PacketClass.isInstance(msg)) {
                 val command = ForgeEventBridge.onVelocityPacket(msg)
                 when (command) {
-                    is io.doppel.core.model.PlatformCommand.CancelPacket -> return
-                    is io.doppel.core.model.PlatformCommand.ModifyMotion -> {
+                    is io.doppel.contract.model.PlatformCommand.CancelPacket -> return
+                    is io.doppel.contract.model.PlatformCommand.ModifyMotion -> {
                         ForgeEventBridge.pendingMotion = command.motion
                     }
-                    is io.doppel.core.model.PlatformCommand.ClickBurst -> {
+                    is io.doppel.contract.model.PlatformCommand.ClickBurst -> {
                         sendClickBurst(command.targetId, command.times)
                         return
                     }

@@ -1,12 +1,12 @@
 package io.doppel.core.condition
 
 import io.doppel.core.algorithm.RotationCalculator
-import io.doppel.core.ipc.DefaultRandomSource
-import io.doppel.core.ipc.RandomSource
-import io.doppel.core.logging.CoreLogger
-import io.doppel.core.model.PlayerState
-import io.doppel.core.model.TargetState
-import io.doppel.core.option.TriggerOptions
+import io.doppel.contract.rng.DefaultRandomSource
+import io.doppel.contract.rng.RandomSource
+import io.doppel.contract.logging.CoreLogger
+import io.doppel.contract.model.PlayerState
+import io.doppel.contract.model.TargetState
+import io.doppel.contract.option.TriggerOptions
 import io.doppel.core.math.PortableMath
 import kotlin.math.PI
 import kotlin.math.abs
@@ -30,7 +30,7 @@ object ConditionChecker {
      * When target is null and target-based conditions are enabled, they are skipped (don't block).
      *
      * @param rng source for the `chance` roll. Defaults to unseeded randomness, which is
-     *   what production wants; a replay passes a [io.doppel.core.ipc.DecisionRng] so the
+     *   what production wants; a replay passes a [io.doppel.core.rng.DecisionRng] so the
      *   same seed reproduces the same decisions (PROTECTION.md 9.5.5). The parameter has
      *   a default so the fifty existing call sites did not have to change.
      * @return true if the module should activate this tick.

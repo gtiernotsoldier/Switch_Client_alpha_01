@@ -1,9 +1,16 @@
 package io.doppel.core.strategy.click
 
 import io.doppel.core.condition.ConditionChecker
-import io.doppel.core.model.PlayerState
-import io.doppel.core.model.TargetState
-import io.doppel.core.option.ClickMode
+import io.doppel.contract.model.PlayerState
+import io.doppel.contract.model.TargetState
+import io.doppel.contract.option.ClickMode
+import io.doppel.contract.rng.DefaultRandomSource
+import io.doppel.contract.rng.RandomSource
+import io.doppel.contract.strategy.click.ClickConfig
+import io.doppel.contract.strategy.click.ClickInput
+import io.doppel.contract.strategy.click.ClickOperatingMode
+import io.doppel.contract.strategy.click.ClickResult
+import io.doppel.contract.strategy.click.ClickStrategy
 
 /**
  * Default click strategy with probabilistic CPS and distance adjustment.
@@ -36,7 +43,7 @@ class ProbabilisticClickStrategy : ClickStrategy<ClickConfig, ClickStrategy.Stat
         state: ClickStrategy.State,
         player: PlayerState,
         target: TargetState?,
-        random: io.doppel.core.ipc.RandomSource = io.doppel.core.ipc.DefaultRandomSource
+        random: io.doppel.contract.rng.RandomSource = io.doppel.contract.rng.DefaultRandomSource
     ): ClickResult {
         // 1. Block-hit prevention
         if (config.disableOnBlock && player.isMining) {
@@ -90,13 +97,13 @@ class ProbabilisticClickStrategy : ClickStrategy<ClickConfig, ClickStrategy.Stat
     /**
      * Sample a CPS value uniformly within [lo, hi].
      */
-    private fun sampleCpsInRange(lo: Int, hi: Int, random: io.doppel.core.ipc.RandomSource): Int {
+    private fun sampleCpsInRange(lo: Int, hi: Int, random: io.doppel.contract.rng.RandomSource): Int {
         if (lo == hi) return lo
         return lo + (nextUniform(0f, 1f, random) * (hi - lo + 1)).toInt().coerceIn(0, hi - lo)
     }
 
     /** Same shape as `NoiseProvider.nextUniform`, routed through the injectable source. */
-    private fun nextUniform(min: Float, max: Float, random: io.doppel.core.ipc.RandomSource): Float =
+    private fun nextUniform(min: Float, max: Float, random: io.doppel.contract.rng.RandomSource): Float =
         min + random.nextFloat() * (max - min)
 
     /**
@@ -110,7 +117,7 @@ class ProbabilisticClickStrategy : ClickStrategy<ClickConfig, ClickStrategy.Stat
         lo: Int,
         hi: Int,
         distance: Float,
-        random: io.doppel.core.ipc.RandomSource
+        random: io.doppel.contract.rng.RandomSource
     ): Int {
         val adjusted = when {
             distance > 2.5f -> {

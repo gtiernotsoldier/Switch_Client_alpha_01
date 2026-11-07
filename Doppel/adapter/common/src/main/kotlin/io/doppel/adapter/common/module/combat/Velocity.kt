@@ -1,13 +1,13 @@
 package io.doppel.adapter.common.module.combat
 
-import io.doppel.core.model.*
+import io.doppel.contract.model.*
 import io.doppel.core.strategy.velocity.ClickVelocityStrategy
 import io.doppel.core.strategy.velocity.LegitVelocityStrategy
 import io.doppel.core.strategy.velocity.SprintVelocityStrategy
-import io.doppel.core.strategy.velocity.VelocityConfig
-import io.doppel.core.strategy.velocity.VelocityMode
-import io.doppel.core.strategy.velocity.VelocityResult
-import io.doppel.core.strategy.velocity.VelocityStrategy
+import io.doppel.contract.strategy.velocity.VelocityConfig
+import io.doppel.contract.strategy.velocity.VelocityMode
+import io.doppel.contract.strategy.velocity.VelocityResult
+import io.doppel.contract.strategy.velocity.VelocityStrategy
 import io.doppel.adapter.common.api.EventBridge
 import io.doppel.adapter.common.module.HudLineProvider
 import io.doppel.adapter.common.module.Module
@@ -18,6 +18,7 @@ import io.doppel.adapter.common.option.int
 import io.doppel.adapter.common.option.choices
 import io.doppel.adapter.common.option.triggerOptions
 import kotlin.math.roundToInt
+import io.doppel.contract.logging.CoreLogger
 
 /**
  * Velocity Module — knockback reduction.
@@ -340,7 +341,7 @@ object Velocity : Module("Velocity", Category.COMBAT), HudLineProvider {
         EventBridge.recordKnockback(ctx.originalMotion, modSpeed)
         // Diagnostic: confirm the strategy actually produced Modify (HUD color check).
         if (++velDiagCount % 10 == 0) {
-            io.doppel.core.logging.CoreLogger.info(
+            io.doppel.contract.logging.CoreLogger.info(
                 "[Velocity] packet result=${result.javaClass.simpleName} modified=$modified " +
                 "mode=$mode hMin=$horizontalMin hMax=$horizontalMax vMin=$verticalMin vMax=$verticalMax " +
                 "onlyOnHit=$onlyOnHitFrame"

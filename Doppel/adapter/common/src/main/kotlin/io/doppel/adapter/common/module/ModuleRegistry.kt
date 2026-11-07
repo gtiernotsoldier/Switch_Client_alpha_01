@@ -1,7 +1,7 @@
 package io.doppel.adapter.common.module
 
-import io.doppel.core.logging.CoreLogger
-import io.doppel.core.safety.SafetyWrapper
+import io.doppel.contract.logging.CoreLogger
+import io.doppel.safety.SafetyWrapper
 import io.doppel.adapter.common.option.ModuleOptions
 
 /**

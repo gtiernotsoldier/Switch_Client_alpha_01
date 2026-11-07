@@ -6,8 +6,8 @@ import io.doppel.adapter.common.module.Module
 import io.doppel.adapter.common.option.boolean
 import io.doppel.adapter.common.option.float
 import io.doppel.adapter.common.option.int
-import io.doppel.core.model.PlayerState
-import io.doppel.core.model.TargetState
+import io.doppel.contract.model.PlayerState
+import io.doppel.contract.model.TargetState
 import io.doppel.core.strategy.movement.StopTap
 
 /**

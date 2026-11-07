@@ -1,10 +1,10 @@
 package io.doppel.core.condition
 
-import io.doppel.core.model.*
-import io.doppel.core.option.TriggerOptions
-import io.doppel.core.strategy.click.WeaponType
-import io.doppel.core.util.Vec2
-import io.doppel.core.util.Vec3
+import io.doppel.contract.model.*
+import io.doppel.contract.option.TriggerOptions
+import io.doppel.contract.strategy.click.WeaponType
+import io.doppel.contract.util.Vec2
+import io.doppel.contract.util.Vec3
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 

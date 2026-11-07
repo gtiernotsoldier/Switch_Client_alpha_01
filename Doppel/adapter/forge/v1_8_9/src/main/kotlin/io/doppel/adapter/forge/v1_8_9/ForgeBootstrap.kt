@@ -21,8 +21,10 @@ import io.doppel.adapter.common.module.world.FastPlace
 import io.doppel.adapter.common.hud.HudStateWriter
 import io.doppel.adapter.common.render.OverlayRenderer
 import io.doppel.adapter.common.render.RenderContext
-import io.doppel.core.logging.CoreLogger
+import io.doppel.contract.logging.CoreLogger
 import io.doppel.agent.MappingContext
+import io.doppel.contract.util.Vec3
+import io.doppel.ipc.Frame
 
 /**
  * Forge 1.8.9 bootstrap — pure reflection, zero MC/Forge compile dependencies.
@@ -107,7 +109,7 @@ object ForgeBootstrap {
             val now = System.currentTimeMillis()
             if (now - keybindErrorLogged > 10_000) {
                 keybindErrorLogged = now
-                io.doppel.core.logging.CoreLogger.error(
+                io.doppel.contract.logging.CoreLogger.error(
                     "[ForgeBootstrap] keybind poll failed: ${e.javaClass.simpleName}: ${e.message}"
                 )
             }
@@ -337,7 +339,7 @@ object ForgeBootstrap {
                     val posX = MappingContext.getFieldValue(player, "forge:entity_posX") as? Double ?: 0.0
                     val posY = MappingContext.getFieldValue(player, "forge:entity_posY") as? Double ?: 0.0
                     val posZ = MappingContext.getFieldValue(player, "forge:entity_posZ") as? Double ?: 0.0
-                    val eye = io.doppel.core.util.Vec3(posX, posY + 1.62, posZ)
+                    val eye = io.doppel.contract.util.Vec3(posX, posY + 1.62, posZ)
                     EventBridge.drainDesiredRotationFrame(
                         currentYaw = curYaw,
                         currentPitch = curPitch,

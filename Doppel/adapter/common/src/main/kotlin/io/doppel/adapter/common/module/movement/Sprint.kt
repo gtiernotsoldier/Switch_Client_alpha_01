@@ -1,8 +1,8 @@
 package io.doppel.adapter.common.module.movement
 
 import io.doppel.core.condition.ConditionChecker
-import io.doppel.core.model.PlayerState
-import io.doppel.core.model.TargetState
+import io.doppel.contract.model.PlayerState
+import io.doppel.contract.model.TargetState
 import io.doppel.adapter.common.api.EventBridge
 import io.doppel.adapter.common.module.Module
 import io.doppel.adapter.common.module.Category

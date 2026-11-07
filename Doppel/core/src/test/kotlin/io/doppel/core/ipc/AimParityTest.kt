@@ -1,21 +1,22 @@
 package io.doppel.core.ipc
 
-import io.doppel.core.model.Hitbox
-import io.doppel.core.model.PlayerState
-import io.doppel.core.model.TargetState
-import io.doppel.core.strategy.aim.AimConfig
-import io.doppel.core.strategy.aim.AimInput
-import io.doppel.core.strategy.aim.AimResult
-import io.doppel.core.strategy.aim.AimStrategy
+import io.doppel.contract.model.Hitbox
+import io.doppel.contract.model.PlayerState
+import io.doppel.contract.model.TargetState
+import io.doppel.contract.strategy.aim.AimConfig
+import io.doppel.contract.strategy.aim.AimInput
+import io.doppel.contract.strategy.aim.AimResult
+import io.doppel.contract.strategy.aim.AimStrategy
 import io.doppel.core.strategy.aim.LegitAimStrategy
 import io.doppel.core.strategy.aim.SelfAdaptiveAimStrategy
-import io.doppel.core.strategy.click.WeaponType
-import io.doppel.core.util.Vec2
-import io.doppel.core.util.Vec3
+import io.doppel.contract.strategy.click.WeaponType
+import io.doppel.contract.util.Vec2
+import io.doppel.contract.util.Vec3
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.io.File
+import io.doppel.core.rng.DecisionRng
 
 /**
  * Aim parity against the Rust port, replaying `core-rs --emit-golden` fixtures.

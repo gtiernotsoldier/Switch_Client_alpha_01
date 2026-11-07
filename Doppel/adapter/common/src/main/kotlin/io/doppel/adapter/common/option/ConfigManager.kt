@@ -2,8 +2,9 @@ package io.doppel.adapter.common.option
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.databind.SerializationFeature
-import io.doppel.core.logging.CoreLogger
+import io.doppel.contract.logging.CoreLogger
 import java.io.File
+import io.doppel.contract.strategy.Strategy
 
 /**
  * Central configuration registry and hot-load manager.

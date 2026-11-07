@@ -31,6 +31,17 @@ jobs:
         with: { gradle-version: '8.5' }
       - name: JVM IPC tests (includes the process-level parity run)
         run: cd Doppel && gradle :core:test --tests "io.doppel.core.ipc.*" --no-daemon
+      # The e2e test skips itself when no binary is present, so the `jvm` job can
+      # run the whole suite without a Rust toolchain. Here the binary exists by
+      # construction, which means a skip in *this* job is a bug, not a shortcut.
+      - name: Assert the e2e test ran instead of skipping
+        run: |
+          f=Doppel/core/build/test-results/test/TEST-io.doppel.core.ipc.CoreStubE2ETest.xml
+          test -f "$f" || { echo "::error::e2e test produced no report at $f"; exit 1; }
+          if grep -q 'skipped="[1-9]' "$f"; then
+            echo "::error::e2e skipped in the job that builds the binary"; exit 1
+          fi
+          echo "e2e ran: $(grep -o 'tests="[0-9]*"' "$f" | head -1), $(grep -c '<testcase' "$f") case(s)"
 
   # ─── JVM build (core + agent + adapter:common + adapter:forge:v1_8_9 + fat jar) ───
   jvm:

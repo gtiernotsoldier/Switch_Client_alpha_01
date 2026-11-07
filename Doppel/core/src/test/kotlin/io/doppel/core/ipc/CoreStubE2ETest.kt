@@ -12,6 +12,7 @@ import io.doppel.core.util.Vec3
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Timeout
 import java.io.File
@@ -26,21 +27,18 @@ import java.util.concurrent.TimeUnit
  * handshake, seed agreement, config defaults, strategy parity, and the deadline
  * path. The unit tests around it each prove one link; this proves the chain.
  *
- * Skipped-with-a-loud-error rather than silently passing when the Rust binary is
- * missing: a green test that never ran the thing it is named after is worse than
- * a red one.
+ * Skipped when the Rust binary is absent, but never silently: the JUnit report
+ * carries the reason, and the `core-ipc` CI job builds the binary and then
+ * asserts the test *ran* rather than skipped. Without that second check a
+ * mistyped path could leave both jobs green and nothing exercised.
  */
 class CoreStubE2ETest {
 
-    private fun locateCore(): File {
-        val candidates = listOf(
-            File("../core-rs/target/debug/doppel-core"),
-            File("../core-rs/target/release/doppel-core"),
-            File("Doppel/core-rs/target/debug/doppel-core")
-        )
-        return candidates.firstOrNull { it.canExecute() }
-            ?: error("doppel-core not built. Run: cd Doppel/core-rs && cargo build")
-    }
+    private fun locateCore(): File? = listOf(
+        File("../core-rs/target/debug/doppel-core"),
+        File("../core-rs/target/release/doppel-core"),
+        File("Doppel/core-rs/target/debug/doppel-core")
+    ).firstOrNull { it.canExecute() }
 
     private fun player() = PlayerState(
         name = "me",
@@ -80,7 +78,12 @@ class CoreStubE2ETest {
     @Timeout(value = 90, unit = TimeUnit.SECONDS)
     fun `stub and core agree tick for tick over a real socket`() {
         val exe = locateCore()
-        val proc = ProcessBuilder(exe.absolutePath, "--listen", "tcp:127.0.0.1:0", "--seed", "424242")
+        assumeTrue(
+            exe != null,
+            "doppel-core not built — run: cd Doppel/core-rs && cargo build. " +
+                "The `core-ipc` CI job builds it and asserts this test really ran."
+        )
+        val proc = ProcessBuilder(exe!!.absolutePath, "--listen", "tcp:127.0.0.1:0", "--seed", "424242")
             .redirectError(ProcessBuilder.Redirect.INHERIT)
             .start()
 

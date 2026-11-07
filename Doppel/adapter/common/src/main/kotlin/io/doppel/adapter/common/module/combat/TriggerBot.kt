@@ -10,8 +10,6 @@ import io.doppel.contract.strategy.click.ClickResult
 import io.doppel.contract.strategy.click.ClickStrategy
 import io.doppel.contract.strategy.click.CooldownClickConfig
 import io.doppel.contract.strategy.click.CooldownClickMode
-import io.doppel.core.strategy.click.CooldownClickStrategy
-import io.doppel.core.strategy.click.ProbabilisticClickStrategy
 import io.doppel.adapter.common.api.EventBridge
 import io.doppel.adapter.common.module.Module
 import io.doppel.adapter.common.module.Category
@@ -55,9 +53,9 @@ object TriggerBot : Module("TriggerBot", Category.COMBAT) {
     private val cooldownThreshold by int("CooldownThreshold", 100, 50..100, "%")
 
     // ========== Core Strategies ==========
-    private val strategy18 = ProbabilisticClickStrategy()
+    private val strategy18: ClickStrategy<ClickConfig, ClickStrategy.State> = io.doppel.ipc.Strategies.click()
     private val state18 = ClickStrategy.State()
-    private val strategy19 = CooldownClickStrategy()
+    private val strategy19 = io.doppel.ipc.Strategies.cooldownClick()
     private val state19 = CritState()
 
     // ========== Tick Listener ==========

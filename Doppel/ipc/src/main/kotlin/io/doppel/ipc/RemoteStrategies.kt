@@ -95,7 +95,14 @@ class RemoteClickStrategy(
 }
 
 class RemoteCooldownClickStrategy(
-    private val stub: CoreStub,
+    /**
+     * Null when no core session is attached. Kept nullable rather than replaced by
+     * a separate off-line class because the 1.9+ adapter calls [processTick], which
+     * only exists on the concrete type — a `ClickStrategy` reference cannot see it.
+     * Every method below returns [ClickResult.Skip] in that case, same as the
+     * off-line aim/click strategies.
+     */
+    private val stub: CoreStub?,
     private val tick: () -> Int
 ) : ClickStrategy<CooldownClickConfig, CritState> {
 
@@ -109,6 +116,7 @@ class RemoteCooldownClickStrategy(
         input: Any
     ): ClickResult {
         require(input is ClickInput) { "RemoteCooldownClickStrategy expects ClickInput" }
+        val stub = this.stub ?: return ClickResult.Skip
 
         if (config != pushed) {
             stub.pushConfig(Wire.MODULE_CLICK, encodeCooldownClickConfig(config))
@@ -117,4 +125,17 @@ class RemoteCooldownClickStrategy(
 
         return stub.decideClick(input.player, input.target, input.attackCooldown, input.isFalling, tick())
     }
+
+    /**
+     * The 1.9+ adapters call this name rather than [execute]; both mean one tick.
+     * The extra `random` parameter is the in-process RNG and has no meaning here —
+     * the core owns the stream, which is the reason the wire carries a seed.
+     */
+    @Suppress("UNUSED_PARAMETER")
+    fun processTick(
+        config: CooldownClickConfig,
+        state: CritState,
+        input: ClickInput,
+        random: io.doppel.contract.rng.RandomSource = io.doppel.contract.rng.DefaultRandomSource
+    ): ClickResult = execute(config, state, input)
 }

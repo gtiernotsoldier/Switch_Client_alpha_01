@@ -7,8 +7,6 @@ import io.doppel.contract.strategy.aim.AimConfig
 import io.doppel.contract.strategy.aim.AimInput
 import io.doppel.contract.strategy.aim.AimResult
 import io.doppel.contract.strategy.aim.AimStrategy
-import io.doppel.core.strategy.aim.LegitAimStrategy
-import io.doppel.core.strategy.aim.SelfAdaptiveAimStrategy
 import io.doppel.adapter.common.api.EventBridge
 import io.doppel.adapter.common.module.Module
 import io.doppel.adapter.common.module.Category
@@ -101,10 +99,10 @@ object AimAssist : Module("AimAssist", Category.COMBAT) {
     }
 
     // ========== Core Strategies (Algorithm lives here) ==========
-    private val legitStrategy = LegitAimStrategy()
+    private val legitStrategy: AimStrategy = io.doppel.ipc.Strategies.aim()
     private val legitState = AimStrategy.State()
-    private val adaptiveStrategy = SelfAdaptiveAimStrategy()
-    private val adaptiveState = SelfAdaptiveAimStrategy.AdaptiveState()
+    private val adaptiveStrategy: AimStrategy = io.doppel.ipc.Strategies.aim()
+    private val adaptiveState = AimStrategy.State()
 
 
     // ========== Config Builder (shared by all modes) ==========

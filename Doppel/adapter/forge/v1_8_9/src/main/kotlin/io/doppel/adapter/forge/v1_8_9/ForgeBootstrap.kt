@@ -123,6 +123,12 @@ object ForgeBootstrap {
         ForgeEventBridge.registerListeners()
         ForgePacketInterceptor.inject()
 
+        // Before anything is registered: the strategy factory decides local-vs-remote by
+        // looking at CoreLink.stub, and a module that is constructed while the stub is still
+        // null would keep an inert strategy until it is re-enabled. Failure here is not fatal —
+        // it means this machine has no doppel-core binary, and the algorithm modules stay quiet.
+        io.doppel.ipc.CoreSupervisor.start()
+
         ModuleRegistry.registerAll(
             ADTap, AimAssist, AutoBlock, AutoClicker, BlockHit, ClickAssist,
             DelayRemover, HitSelect, JumpReset, KeepSprint, KnockbackDelay, KnockbackDisplace, Reach,

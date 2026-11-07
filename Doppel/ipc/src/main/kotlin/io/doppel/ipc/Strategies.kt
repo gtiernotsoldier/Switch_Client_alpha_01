@@ -1,5 +1,7 @@
 package io.doppel.ipc
 
+import io.doppel.contract.model.PlayerState
+import io.doppel.contract.model.TargetState
 import io.doppel.contract.strategy.aim.AimConfig
 import io.doppel.contract.strategy.aim.AimResult
 import io.doppel.contract.strategy.aim.AimStrategy
@@ -77,6 +79,51 @@ object Strategies {
 
     /** True when a core session is attached; the HUD uses it to say so. */
     val online: Boolean get() = CoreLink.stub != null
+
+    /**
+     * Instant Stop: is the player still sliding in the direction they just released?
+     *
+     * Off-line this answers `false`, and `false` means "do not press the opposite key". That is the
+     * safe direction to fail in: the module stays idle instead of holding a key down on a guess.
+     */
+    fun sliding(
+        player: PlayerState,
+        motionX: Double,
+        motionZ: Double,
+        yaw: Float,
+        releasedForward: Boolean,
+        minSpeed: Double
+    ): Boolean {
+        val stub = CoreLink.stub ?: return false
+        return stub.movementSliding(
+            player, null, motionX, motionZ, yaw, releasedForward, minSpeed, nextTick()
+        ) ?: false
+    }
+
+    /**
+     * Strafe Assist: which movement keys to damp, as `[forward, back, left, right]`.
+     *
+     * Off-line returns null — the caller then leaves the player's own WASD untouched, which is the
+     * same thing an all-false array would do, but without allocating one per tick to say it.
+     */
+    fun strafe(
+        player: PlayerState,
+        target: TargetState?,
+        forward: Boolean,
+        back: Boolean,
+        left: Boolean,
+        right: Boolean,
+        distance: Double,
+        bearingRad: Double,
+        yawDeg: Double,
+        reach: Double
+    ): BooleanArray? {
+        val stub = CoreLink.stub ?: return null
+        return stub.movementStrafe(
+            player, target, forward, back, left, right,
+            distance, bearingRad, yawDeg, reach, nextTick()
+        )
+    }
 }
 
 private object OfflineAim : AimStrategy {

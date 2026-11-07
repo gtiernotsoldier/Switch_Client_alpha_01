@@ -5,6 +5,10 @@ import io.doppel.contract.model.PlayerState
 import io.doppel.contract.strategy.click.WeaponType
 import io.doppel.contract.util.Vec2
 import io.doppel.contract.util.Vec3
+import io.doppel.ipc.CoreLink
+import io.doppel.ipc.CoreStub
+import io.mockk.every
+import io.mockk.mockk
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -16,8 +20,15 @@ import org.junit.jupiter.api.Test
  *
  * These run through the real claim layer, so "the brake is over" means the game's S key is actually
  * released again, which is the failure mode that matters.
+ *
+ * The sliding test itself now lives in the core (it used to be `StopTap.stillSliding`), so what is
+ * under test here is the module's key handling, not the geometry: given the core's verdict, does
+ * the tap start, hold and release correctly? The projection itself is checked against the Rust
+ * implementation in `MovementParityTest`, alongside every other movement decision.
  */
 class InstantStopTest {
+
+    private lateinit var core: CoreStub
 
     @BeforeEach
     fun setUp() {
@@ -26,11 +37,23 @@ class InstantStopTest {
         EventBridge.physicalBackDown = false
         EventBridge.isKeyForwardDown = false
         EventBridge.isKeyBackDown = false
+
+        // Stand-in for the core. For yaw 0 the projection onto the released direction is just the
+        // sign of motionZ, which is all these scenarios ask about.
+        core = mockk(relaxed = true)
+        every { core.movementSliding(any(), any(), any(), any(), any(), any(), any(), any()) } answers {
+            val motionZ = arg<Double>(3)
+            val releasedForward = arg<Boolean>(5)
+            val minSpeed = arg<Double>(6)
+            (if (releasedForward) motionZ else -motionZ) > minSpeed
+        }
+        CoreLink.stub = core
     }
 
     @AfterEach
     fun tearDown() {
         InstantStop.disable()
+        CoreLink.stub = null
         EventBridge.reset()
     }
 

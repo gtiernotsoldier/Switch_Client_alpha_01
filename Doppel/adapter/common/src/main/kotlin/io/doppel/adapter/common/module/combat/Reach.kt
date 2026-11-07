@@ -32,8 +32,9 @@ import kotlin.random.Random
  * generates while the button is down uses the extended trace.
  *
  * Conditions (Raven): weapon-only, moving-only, sprint-only, hit-through-blocks — plus a per-click
- * Chance. All gated through the core [io.doppel.core.strategy.reach.ReachRaycast] (pure algorithm)
- * and the platform `doReachRaycast` (mapping-driven raycast + objectMouseOver overwrite).
+ * Chance. The ray/AABB test itself is `contract.util.Geometry.intersectBox` (pure algorithm);
+ * the platform `doReachRaycast` supplies the mapping-driven entity list and overwrites
+ * `objectMouseOver`.
  */
 object Reach : Module("Reach", Category.COMBAT), HudLineProvider {
 

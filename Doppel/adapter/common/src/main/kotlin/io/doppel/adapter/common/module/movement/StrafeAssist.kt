@@ -7,12 +7,12 @@ import io.doppel.adapter.common.option.boolean
 import io.doppel.adapter.common.option.float
 import io.doppel.contract.model.PlayerState
 import io.doppel.contract.model.TargetState
-import io.doppel.core.strategy.movement.StrafeCorrector
+import io.doppel.ipc.Strategies
 
 /**
  * StrafeAssist — damps the movement keys that make the player easier to track.
  *
- * It does not drive the player. It reads the **physical** WASD, asks [StrafeCorrector] whether
+ * It does not drive the player. It reads the **physical** WASD, asks the core whether
  * releasing exactly one of them would improve the geometry, and — when the answer is clearly yes —
  * suppresses that one key for the tick. The player's input is the baseline; this only removes what
  * the geometry says is counter-productive.
@@ -52,34 +52,28 @@ object StrafeAssist : Module("StrafeAssist", Category.MOVEMENT) {
         if (player.health <= 0f) return
         if (target.distance > reach + 1.5f) return          // far away: nothing worth correcting
 
-        val input = StrafeCorrector.Input(
-            forward = EventBridge.isKeyForwardDown,
-            back = EventBridge.isKeyBackDown,
-            left = EventBridge.isKeyLeftDown,
-            right = EventBridge.isKeyRightDown
-        )
-        if (!input.any) return
+        val forward = EventBridge.isKeyForwardDown
+        val back = EventBridge.isKeyBackDown
+        val left = EventBridge.isKeyLeftDown
+        val right = EventBridge.isKeyRightDown
+        if (!forward && !back && !left && !right) return
 
         val bearing = Math.atan2(
             target.position.z - player.position.z,
             target.position.x - player.position.x
         )
 
-        val correction = StrafeCorrector.correct(
-            input,
-            StrafeCorrector.State(
-                distance = target.distance.toDouble(),
-                bearingRad = bearing,
-                yawDeg = player.rotation.yaw.toDouble(),
-                reach = reach.toDouble()
-            )
-        )
-        if (!correction.changed) return
+        // null = no core session: leave every key alone (same as an all-false verdict).
+        val suppress = Strategies.strafe(
+            player, target, forward, back, left, right,
+            target.distance.toDouble(), bearing,
+            player.rotation.yaw.toDouble(), reach.toDouble()
+        ) ?: return
 
-        if (correction.suppressForward && dampForward) EventBridge.suppressForward(name)
-        if (correction.suppressBack && dampBack) EventBridge.suppressBack(name)
-        if (correction.suppressLeft && dampStrafe) EventBridge.suppressLeft(name)
-        if (correction.suppressRight && dampStrafe) EventBridge.suppressRight(name)
+        if (suppress[0] && dampForward) EventBridge.suppressForward(name)
+        if (suppress[1] && dampBack) EventBridge.suppressBack(name)
+        if (suppress[2] && dampStrafe) EventBridge.suppressLeft(name)
+        if (suppress[3] && dampStrafe) EventBridge.suppressRight(name)
 
         // No markWorked(): suppressing a key produces no visible action, and a per-tick flash
         // would leave the HUD row permanently red — which is worse than no indicator at all.

@@ -8,7 +8,7 @@ import io.doppel.adapter.common.option.float
 import io.doppel.adapter.common.option.int
 import io.doppel.contract.model.PlayerState
 import io.doppel.contract.model.TargetState
-import io.doppel.core.strategy.movement.StopTap
+import io.doppel.ipc.Strategies
 
 /**
  * Instant Stop — brake to a halt when the player lets go of a movement key.
@@ -26,7 +26,7 @@ import io.doppel.core.strategy.movement.StopTap
  *
  * ── When the tap ends
  *
- * Not on a timer alone. [StopTap.stillSliding] projects the current velocity onto the direction
+ * Not on a timer alone. The core's sliding test projects the current velocity onto the direction
  * that was released, and the brake stops the moment that projection reaches zero — otherwise the
  * tap keeps pushing after the player has stopped and starts moving them backwards, which is slower
  * and looks like a stuck key.
@@ -77,26 +77,29 @@ object InstantStop : Module("InstantStop", Category.MOVEMENT) {
             val resumed = if (releasedForward) forward else back
             // Tick cap, wall clock (a stalled tick source must not hold a key), or momentum gone.
             val expired = tick > brakeUntilTick || now > brakeDeadlineNanos
-            val sliding = StopTap.stillSliding(
-                player.motionX, player.motionZ, player.rotation.yaw,
+            val sliding = Strategies.sliding(
+                player, player.motionX, player.motionZ, player.rotation.yaw,
                 releasedForward = releasedForward,
                 minSpeed = minSpeed.toDouble()
             )
             if (resumed || expired || !sliding) release()
         } else if (player.health > 0f) {
-            // Braking a player who is not moving would press a key for nothing — and "released W
-            // while standing still" is the common case for a module like this.
-            val forwardSlides = StopTap.stillSliding(
-                player.motionX, player.motionZ, player.rotation.yaw,
+            // The sliding test is a round trip now, so ask it only on the tick a key is actually
+            // released. Braking a player who is not moving would press a key for nothing, and
+            // "released W while standing still" is the common case for a module like this.
+            val wReleased = onWRelease && prevForward && !forward && !back
+            val sReleased = onSRelease && prevBack && !back && !forward
+            val forwardSlides = wReleased && Strategies.sliding(
+                player, player.motionX, player.motionZ, player.rotation.yaw,
                 releasedForward = true, minSpeed = minSpeed.toDouble()
             )
-            val backSlides = StopTap.stillSliding(
-                player.motionX, player.motionZ, player.rotation.yaw,
+            val backSlides = sReleased && Strategies.sliding(
+                player, player.motionX, player.motionZ, player.rotation.yaw,
                 releasedForward = false, minSpeed = minSpeed.toDouble()
             )
-            if (onWRelease && forwardSlides && prevForward && !forward && !back) {
+            if (forwardSlides) {
                 start(Brake.FORWARD_RELEASED, tick, now)
-            } else if (onSRelease && backSlides && prevBack && !back && !forward) {
+            } else if (backSlides) {
                 start(Brake.BACK_RELEASED, tick, now)
             }
         }

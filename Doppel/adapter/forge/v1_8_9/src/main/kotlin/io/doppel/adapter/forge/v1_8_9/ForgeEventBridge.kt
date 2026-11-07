@@ -5,7 +5,7 @@ import io.doppel.contract.logging.CoreLogger
 import io.doppel.adapter.common.api.IEventBridge
 import io.doppel.adapter.common.module.movement.InvMoveRules
 import io.doppel.contract.model.*
-import io.doppel.core.strategy.reach.ReachRaycast
+import io.doppel.contract.util.Geometry
 import io.doppel.contract.util.Vec2
 import io.doppel.contract.util.Vec3
 import io.doppel.adapter.common.mapping.MappingContext
@@ -731,7 +731,7 @@ object ForgeEventBridge : IEventBridge {
                     val box = MappingContext.invokeMethod(entity, "forge:entity_getEntityBoundingBox") ?: continue
                     val bMin = bbMin(box) ?: continue
                     val bMax = bbMax(box) ?: continue
-                    val t = ReachRaycast.intersectBox(eyes, look, bMin, bMax, reachBlocks) ?: continue
+                    val t = Geometry.intersectBox(eyes, look, bMin, bMax, reachBlocks) ?: continue
                     if (t < bestDist) {
                         bestDist = t
                         bestEntity = entity
@@ -932,7 +932,7 @@ object ForgeEventBridge : IEventBridge {
                     val box = MappingContext.invokeMethod(e, "forge:entity_getEntityBoundingBox") ?: continue
                     val bMin = bbMin(box) ?: continue
                     val bMax = bbMax(box) ?: continue
-                    val t = ReachRaycast.intersectBox(eyes, look, bMin, bMax, reach) ?: continue
+                    val t = Geometry.intersectBox(eyes, look, bMin, bMax, reach) ?: continue
                     if (t < bestT) {
                         bestT = t
                         bestEntity = e

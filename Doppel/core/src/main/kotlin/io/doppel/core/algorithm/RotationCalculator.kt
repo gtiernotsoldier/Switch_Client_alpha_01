@@ -2,6 +2,7 @@ package io.doppel.core.algorithm
 
 import io.doppel.contract.model.Hitbox
 import io.doppel.contract.util.Directions
+import io.doppel.contract.util.Geometry
 import io.doppel.contract.util.Vec2
 import io.doppel.contract.util.Vec3
 import kotlin.random.Random
@@ -223,15 +224,8 @@ object RotationCalculator {
      * Used by NORMAL mode to "lock onto" the exact point the crosshair touches, and by LEGIT
      * to detect whether the crosshair is currently inside the box.
      */
-    fun rayHitPoint(origin: Vec3, aim: Vec2, hitbox: Hitbox): Vec3? {
-        val dir = aimToDirection(aim)
-        val hit = rayAabbEntry(origin, dir, hitbox) ?: return null
-        return Vec3(
-            origin.x + dir.x * hit,
-            origin.y + dir.y * hit,
-            origin.z + dir.z * hit
-        )
-    }
+    fun rayHitPoint(origin: Vec3, aim: Vec2, hitbox: Hitbox): Vec3? =
+        Geometry.rayHitPoint(origin, aim, hitbox)
 
     /**
      * Get the world point + rotation toward the closest point on the box surface to the current
@@ -675,17 +669,7 @@ object RotationCalculator {
     /**
      * Calculate rotation from player position to target position.
      */
-    fun calculateRotation(from: Vec3, to: Vec3): Vec2 {
-        val diffX = to.x - from.x
-        val diffY = to.y - from.y
-        val diffZ = to.z - from.z
-        
-        val distance = kotlin.math.sqrt(diffX * diffX + diffZ * diffZ)
-        val yaw = PortableMath.atan2(diffZ, diffX).toFloat() * (180f / kotlin.math.PI.toFloat()) - 90f
-        val pitch = -(PortableMath.atan2(diffY, distance).toFloat() * (180f / kotlin.math.PI.toFloat()))
-        
-        return Vec2(yaw, pitch)
-    }
+    fun calculateRotation(from: Vec3, to: Vec3): Vec2 = Geometry.calculateRotation(from, to)
 
     /**
      * Convert yaw (degrees, MC convention) to a horizontal unit direction vector.

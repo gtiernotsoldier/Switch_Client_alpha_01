@@ -7,6 +7,7 @@ import io.doppel.contract.model.VelocityContext
 import io.doppel.contract.model.PlatformCommand
 import io.doppel.contract.util.Vec2
 import io.doppel.contract.util.Vec3
+import io.doppel.contract.util.Geometry
 import io.doppel.contract.model.Hitbox
 import io.doppel.contract.strategy.click.OnItemUse
 import io.doppel.ipc.Frame
@@ -1366,7 +1367,7 @@ object EventBridge {
         val hitbox = desiredHitbox
         if (hitbox != null) {
             val aim = io.doppel.contract.util.Vec2(currentYaw, currentPitch)
-            val hit = rotationCalculatorForAim().rayHitPoint(currentEye, aim, hitbox)
+            val hit = Geometry.rayHitPoint(currentEye, aim, hitbox)
             if (hit != null) {
                 if (aimTrackInsideBox) {
                     world = hit
@@ -1397,7 +1398,7 @@ object EventBridge {
             )
         }
         world = smoothAimWorld!!
-        val targetRot = rotationCalculatorForAim().calculateRotation(currentEye, world)
+        val targetRot = Geometry.calculateRotation(currentEye, world)
         val yaw = targetRot.yaw
         val pitch = targetRot.pitch
 
@@ -1460,9 +1461,6 @@ object EventBridge {
         val f = mouseSensitivity * 0.6f + 0.2f
         return f * f * f * 8f * 0.15f
     }
-
-    /** Reference to RotationCalculator (avoid importing it into EventBridge's namespace). */
-    private fun rotationCalculatorForAim() = io.doppel.core.algorithm.RotationCalculator
 
     /** Dead-zone (degrees): stop assisting once this close to the target. */
     private const val DEAD_YAW = 0.2f

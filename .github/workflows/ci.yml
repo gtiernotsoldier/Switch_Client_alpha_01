@@ -7,6 +7,31 @@ on:
     branches: [main]
 
 jobs:
+  # ─── Core process (Rust) + the JVM side of the IPC boundary ───
+  # Both halves have to run in the same job: CoreStubE2ETest spawns the real
+  # doppel-core binary and asserts the two sides decide identically, tick for
+  # tick. Splitting them across jobs would leave the boundary itself untested.
+  core-ipc:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Core unit tests and self-check
+        run: |
+          cd Doppel/core-rs
+          cargo test
+          cargo run -- --selftest
+      - name: Build core binary (the JVM e2e test spawns it)
+        run: cd Doppel/core-rs && cargo build
+      - name: Set up JDK 8
+        uses: actions/setup-java@v4
+        with: { java-version: '8', distribution: 'temurin' }
+      - name: Setup Gradle 8.5
+        uses: gradle/actions/setup-gradle@v4
+        with: { gradle-version: '8.5' }
+      - name: JVM IPC tests (includes the process-level parity run)
+        run: cd Doppel && gradle :core:test --tests "io.doppel.core.ipc.*" --no-daemon
+
   # ─── JVM build (core + agent + adapter:common + adapter:forge:v1_8_9 + fat jar) ───
   jvm:
     runs-on: ubuntu-latest

@@ -2,9 +2,9 @@ package io.doppel.core.strategy.velocity
 
 import io.doppel.core.algorithm.VectorOperations
 import io.doppel.core.condition.ConditionChecker
+import io.doppel.core.ipc.DefaultRandomSource
+import io.doppel.core.ipc.RandomSource
 import io.doppel.core.model.VelocityContext
-import io.doppel.core.option.RandomRange
-import kotlin.random.Random
 
 /**
  * Default LEGIT mode velocity strategy.
@@ -29,8 +29,14 @@ import kotlin.random.Random
  * Note what this does *not* fix. The reduction is still a packet rewrite, so every hit the gate
  * lets through still opens with a first-tick position error of `r × 0.4` blocks. The gate buys the
  * distribution and rhythm layers, never the physics layer.
+ *
+ * @param rng the source for both dice. Defaults to unseeded randomness; the replay harness
+ *   passes a [io.doppel.core.ipc.DecisionRng] so the same seed reproduces the same sequence —
+ *   without this, "same seed, same decisions" (PROTECTION.md 9.5.5) could not be checked at all.
  */
-class LegitVelocityStrategy : VelocityStrategy {
+class LegitVelocityStrategy(
+    private val rng: RandomSource = DefaultRandomSource
+) : VelocityStrategy {
 
     override fun execute(
         config: VelocityConfig,
@@ -52,7 +58,7 @@ class LegitVelocityStrategy : VelocityStrategy {
         val original = ctx.originalMotion
 
         // 1. Unified condition check
-        if (!ConditionChecker.check(config.triggerOptions, player, target)) {
+        if (!ConditionChecker.check(config.triggerOptions, player, target, rng)) {
             return VelocityResult.Pass(original)
         }
 
@@ -65,13 +71,13 @@ class LegitVelocityStrategy : VelocityStrategy {
         // 3. The gate: one chain, two states, no cadence.
         val chance =
             if (state.reduceLastPassed) config.reduceGivenReduced else config.reduceGivenSkipped
-        val passed = Random.nextInt(100) < chance
+        val passed = rng.nextInt(100) < chance
         state.reduceLastPassed = passed
         if (!passed) return VelocityResult.Pass(original)
 
         // 4. Sample and scale
-        val h = RandomRange.sample(config.horizontalMin, config.horizontalMax)
-        val v = RandomRange.sample(config.verticalMin, config.verticalMax)
+        val h = rng.randomFloat(config.horizontalMin, config.horizontalMax)
+        val v = rng.randomFloat(config.verticalMin, config.verticalMax)
         val reduced = VectorOperations.scale(original, h, v, h)
 
         return VelocityResult.Modify(reduced)
@@ -94,8 +100,8 @@ class LegitVelocityStrategy : VelocityStrategy {
             if (currentTick >= entry.releaseTick) {
                 // Re-process with LEGIT logic but skip delay check to avoid re-enqueuing.
                 // We directly scale and emit.
-                val h = RandomRange.sample(config.horizontalMin, config.horizontalMax)
-                val v = RandomRange.sample(config.verticalMin, config.verticalMax)
+                val h = rng.randomFloat(config.horizontalMin, config.horizontalMax)
+                val v = rng.randomFloat(config.verticalMin, config.verticalMax)
                 val reduced = VectorOperations.scale(entry.context.originalMotion, h, v, h)
                 results.add(VelocityResult.Modify(reduced))
                 iterator.remove()

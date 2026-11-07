@@ -1,0 +1,20 @@
+[package]
+name = "doppel-core"
+version = "0.1.0-alpha"
+edition = "2021"
+description = "Doppel core: algorithms and per-session state, out of the game process (PROTECTION.md 9.5 P6 v2)"
+
+[[bin]]
+name = "doppel-core"
+path = "src/main.rs"
+
+[dependencies]
+# Zero third-party deps, same discipline as doppel-injector: the hot path is a
+# fixed-size framed socket hop, and std already has everything it needs.
+
+[profile.release]
+opt-level = 2
+lto = true
+# Must stay "unwind": session.rs catches panics per strategy call (9.5.3).
+# With panic=abort a faulty strategy would take the whole core down.
+panic = "unwind"

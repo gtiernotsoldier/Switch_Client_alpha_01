@@ -1,6 +1,8 @@
 package io.doppel.core.condition
 
 import io.doppel.core.algorithm.RotationCalculator
+import io.doppel.core.ipc.DefaultRandomSource
+import io.doppel.core.ipc.RandomSource
 import io.doppel.core.logging.CoreLogger
 import io.doppel.core.model.PlayerState
 import io.doppel.core.model.TargetState
@@ -22,9 +24,19 @@ object ConditionChecker {
      * Check if all conditions are met for activation.
      * When target is null and target-based conditions are enabled, they are skipped (don't block).
      *
+     * @param rng source for the `chance` roll. Defaults to unseeded randomness, which is
+     *   what production wants; a replay passes a [io.doppel.core.ipc.DecisionRng] so the
+     *   same seed reproduces the same decisions (PROTECTION.md 9.5.5). The parameter has
+     *   a default so the fifty existing call sites did not have to change.
      * @return true if the module should activate this tick.
      */
-    fun check(options: TriggerOptions, player: PlayerState, target: TargetState?): Boolean {
+    @JvmOverloads
+    fun check(
+        options: TriggerOptions,
+        player: PlayerState,
+        target: TargetState?,
+        rng: RandomSource = DefaultRandomSource
+    ): Boolean {
         // Ground/Air checks
         if (options.onlyGround && !player.onGround) {
             CoreLogger.debug("Condition blocked: onlyGround (player in air)")
@@ -108,7 +120,7 @@ object ConditionChecker {
 
         // Chance check
         if (options.chance < 100) {
-            val roll = kotlin.random.Random.nextInt(100)
+            val roll = rng.nextInt(100)
             if (roll >= options.chance) {
                 CoreLogger.debug("Condition blocked: chance ($roll >= ${options.chance})")
                 return false

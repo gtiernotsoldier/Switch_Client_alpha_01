@@ -476,6 +476,37 @@ object Strategies {
     }
 
     /**
+     * SprintReset: should a sprint-reset packet be sent this tick?
+     *
+     * The module supplies the judgements it made (target present, distance
+     * window, unified gate, hurt bit) plus the tuning knobs; the core owns the
+     * rising-edge bit, the hit-count throttle, the target id and the delay
+     * window (including the chance roll). `null` means no answer — the module
+     * then sends nothing.
+     */
+    fun sprintReset(
+        player: PlayerState,
+        target: TargetState?,
+        nowNs: Long,
+        hasTarget: Boolean,
+        inRange: Boolean,
+        gateOk: Boolean,
+        isHurt: Boolean,
+        entityId: Int,
+        chance: Int,
+        hitCount: Int,
+        delayMs: Int,
+        mode: Int
+    ): SprintResetStep? {
+        val stub = CoreLink.stub ?: return null
+        val code = stub.playerSprintReset(
+            player, target, nowNs, hasTarget, inRange, gateOk, isHurt,
+            entityId, chance, hitCount, delayMs, mode, nextTick()
+        ) ?: return null
+        return SprintResetStep.fromCode(code)
+    }
+
+    /**
      * Backtrack: hold position updates this tick?
      *
      * `null` means the core did not answer, and the caller must let the updates
@@ -648,6 +679,17 @@ enum class EaglePlaceStep(val code: Int) {
         /** Unknown codes degrade to NONE: never invent a placement step. */
         @JvmStatic
         fun fromCode(code: Int): EaglePlaceStep? = entries.firstOrNull { it.code == code }
+    }
+}
+
+/** What the core decided for one SprintReset tick. `mode` is the wire mode code. */
+enum class SprintResetStep(val code: Int, val mode: Int) {
+    NONE(0, -1), SEND_NOSTOP(1, 0), SEND_SILENT(2, 1);
+
+    companion object {
+        /** Unknown codes degrade to NONE: never invent a packet burst. */
+        @JvmStatic
+        fun fromCode(code: Int): SprintResetStep? = entries.firstOrNull { it.code == code }
     }
 }
 

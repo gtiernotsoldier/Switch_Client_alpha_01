@@ -921,6 +921,16 @@ pub mod op {
     /// JVM supplies the two judgements (gate + pitch tolerance) and turns the
     /// returned step into a rotation write or a right-click.
     pub const PLAYER_EAGLE_PLACE: u8 = 7;
+
+    /// player/sprint_reset: `tick(now_ns, has_target, in_range, gate_ok,
+    ///                          is_hurt, entity_id, chance, hit_count,
+    ///                          delay_ms, mode)` → step (0 none, 1+mode send).
+    ///
+    /// The rising-edge bit, hit-count throttle, target id and the delayed-send
+    /// deadline are core state; the chance roll rides SprintReset's own RNG
+    /// stream. The JVM supplies the judgements (gate, range, hurt) and turns
+    /// the returned step into a `sendSprintReset` write.
+    pub const PLAYER_SPRINT_RESET: u8 = 8;
 }
 
 /// Maps a side to the wire's 0/1.
@@ -1018,6 +1028,7 @@ pub fn known_ops(module: Module) -> &'static [u8] {
             op::PLAYER_HIT_TICK,
             op::PLAYER_HIT_GATE,
             op::PLAYER_EAGLE_PLACE,
+            op::PLAYER_SPRINT_RESET,
         ],
         Module::Velocity => &[op::VEL_BRACE, op::VEL_DELAY_ENQUEUE, op::VEL_DELAY_PUMP],
         _ => &[],

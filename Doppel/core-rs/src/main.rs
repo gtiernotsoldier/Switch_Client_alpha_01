@@ -1002,6 +1002,7 @@ fn emit_golden(dir: &str) -> Result<(), String> {    use std::fs;
     emit_reach_golden(dir)?;
     emit_click_assist_golden(dir)?;
     emit_hit_select_golden(dir)?;
+    emit_sprint_reset_golden(dir)?;
     Ok(())
 }
 
@@ -1599,5 +1600,103 @@ fn emit_hit_select_golden(dir: &str) -> Result<(), String> {
 
     fs::write(format!("{}/hit_select_input.tsv", dir), input).map_err(|e| e.to_string())?;
     fs::write(format!("{}/hit_select_expected.tsv", dir), expected).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// SprintReset's rising-edge / hit-count throttle / delayed send, replayed
+/// over a synthetic clock. The clock starts at a non-zero origin and advances
+/// 50 ms per tick; a 100 ms delay therefore spans two full ticks, so both the
+/// "armed" and the "fires at the deadline" branches appear in the fixture.
+/// The chance roll is scripted per row (the two sides use different RNGs);
+/// the `rolls` column pins down that a draw happens only at the fire point.
+fn emit_sprint_reset_golden(dir: &str) -> Result<(), String> {
+    use std::fs;
+
+    let mut input = String::new();
+    input.push_str("# doppel-sprint-reset-golden v1\n");
+    input.push_str("idx\tnow_ns\thas_target\tin_range\tgate_ok\tis_hurt\tentity_id\tchance\thit_count\tdelay_ms\tmode\troll\n");
+
+    let mut expected = String::new();
+    expected.push_str("# idx\tstep\tprev_hurt\tlast_target_id\thit_counter\tsending\tsend_at_ns\tpending_mode\trolls\n");
+
+    let mut state = strategy::sprint_reset::State::new();
+    let mut rng = Pcg32::new(0x0000_5EED_5751_0001);
+    let mut now: i64 = 1_000_000_000;
+
+    for i in 0..400 {
+        now += 50_000_000; // 50 ms per tick
+
+        // Independent dice per field. Deriving everything from one `pick`
+        // couples the branches: e.g. `pick % 6 == 0` (delay) implies
+        // `pick % 3 == 0`, which would force `is_hurt` false on exactly the
+        // ticks that need to arm a delayed send, so that branch never fired.
+        let has_target = rng.random_int(0, 99) >= 12;
+        let in_range = rng.random_int(0, 99) >= 15;
+        let gate_ok = rng.random_int(0, 99) >= 20;
+        // Alternate deterministically so a rising edge is guaranteed every
+        // two ticks regardless of how the gates happen to fall.
+        let is_hurt = i % 2 == 0;
+        // Switching targets resets the throttle.
+        let entity_id = if rng.random_int(0, 99) < 8 { 9 } else { 7 };
+        let chance = if rng.random_int(0, 99) < 50 { 100 } else { 60 };
+        let hit_count = if rng.random_int(0, 99) < 25 { 3 } else { 1 };
+        // 100 ms delay spans two 50 ms ticks; 0 exercises the immediate send.
+        let delay_ms = if rng.random_int(0, 99) < 22 { 100 } else { 0 };
+        let mode = if rng.random_int(0, 1) == 1 { 1 } else { 0 };
+        let roll = rng.random_int(0, 99);
+
+        input.push_str(&format!(
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+            i,
+            now,
+            has_target as u8,
+            in_range as u8,
+            gate_ok as u8,
+            is_hurt as u8,
+            entity_id,
+            chance,
+            hit_count,
+            delay_ms,
+            mode,
+            roll
+        ));
+
+        let mut rolls = 0;
+        let (step, next) = strategy::sprint_reset::tick(
+            state,
+            strategy::sprint_reset::Input {
+                now_ns: now,
+                has_target,
+                in_range,
+                gate_ok,
+                is_hurt,
+                entity_id,
+                chance,
+                hit_count,
+                delay_ms,
+                mode,
+            },
+            &mut || {
+                rolls += 1;
+                roll
+            },
+        );
+        state = next;
+        expected.push_str(&format!(
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+            i,
+            step.code(),
+            next.prev_hurt as u8,
+            next.last_target_id,
+            next.hit_counter,
+            next.sending as u8,
+            next.send_at_ns,
+            next.pending_mode,
+            rolls
+        ));
+    }
+
+    fs::write(format!("{}/sprint_reset_input.tsv", dir), input).map_err(|e| e.to_string())?;
+    fs::write(format!("{}/sprint_reset_expected.tsv", dir), expected).map_err(|e| e.to_string())?;
     Ok(())
 }

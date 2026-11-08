@@ -27,6 +27,7 @@ use crate::strategy::eagle_place;
 use crate::strategy::hit_select;
 use crate::strategy::knockback_displace;
 use crate::strategy::reach_sample;
+use crate::strategy::sprint_reset;
 use crate::strategy::movement::{self, SocdResolver};
 use crate::strategy::reach;
 use crate::strategy::tap::{self, TapStateMachine};
@@ -82,6 +83,9 @@ pub struct Session {
     /// consumed only on a CLICK, and must not interleave with the sneak delay
     /// stream (`rng_player`) or a replay of the two would diverge.
     pub rng_eagle_place: Pcg32,
+    /// SprintReset's fire-probability roll. Gate-only draws (chance < 100 and
+    /// only at the fire point) must not interleave with any other module's.
+    pub rng_sprint_reset: Pcg32,
     pub config: VelocityConfig,
     pub velocity: velocity::State,
 
@@ -123,6 +127,10 @@ pub struct Session {
     /// cooldown left before the next placement.
     pub eagle_place: eagle_place::State,
 
+    /// SprintReset: the rising-edge bit, the hit-count throttle, and the
+    /// delayed-send deadline.
+    pub sprint_reset: sprint_reset::State,
+
     pub ticks: u64,
     pub decisions: u64,
     pub degraded: u64,
@@ -161,6 +169,7 @@ impl Session {
             rng_click_assist: Pcg32::new(seed),
             rng_hit_select: Pcg32::new(seed),
             rng_eagle_place: Pcg32::new(seed),
+            rng_sprint_reset: Pcg32::new(seed),
             config: VelocityConfig::default(),
             velocity: velocity::State::new(),
             aim_config: AimConfig::default(),
@@ -181,6 +190,7 @@ impl Session {
             click_assist: click_assist::State::new(),
             hit_select: hit_select::State::new(),
             eagle_place: eagle_place::State::default(),
+            sprint_reset: sprint_reset::State::new(),
             ticks: 0,
             decisions: 0,
             degraded: 0,
@@ -251,6 +261,7 @@ impl Session {
                 self.click_assist = click_assist::State::new();
                 self.hit_select = hit_select::State::new();
                 self.eagle_place = eagle_place::State::default();
+                self.sprint_reset = sprint_reset::State::new();
             }
         }
         Frame::new(Kind::Reset, frame.header.seq, frame.header.tick, module)
@@ -1113,6 +1124,34 @@ impl Session {
                         step.code() as f64,
                     ))
                 }
+                op::PLAYER_SPRINT_RESET => {
+                    let input = sprint_reset::Input {
+                        now_ns: req.arg(0)? as i64,
+                        has_target: req.bool(1)?,
+                        in_range: req.bool(2)?,
+                        gate_ok: req.bool(3)?,
+                        is_hurt: req.bool(4)?,
+                        entity_id: req.i32(5)?,
+                        chance: req.i32(6)?,
+                        hit_count: req.i32(7)?,
+                        delay_ms: req.i32(8)?,
+                        mode: req.i32(9)?,
+                    };
+                    let state = self.sprint_reset;
+                    let rng = &mut self.rng_sprint_reset;
+                    // Kotlin's `Random.nextInt(100)` is [0, 100); the closure is
+                    // invoked only when chance < 100 and all gates passed.
+                    let (step, next) =
+                        sprint_reset::tick(state, input, &mut || rng.random_int(0, 99));
+                    self.sprint_reset = next;
+                    Ok(codec::encode_scalar(
+                        seq,
+                        tick,
+                        Module::Player,
+                        WireAction::Scalar,
+                        step.code() as f64,
+                    ))
+                }
                 _ => Err(Status::BadPayload),
             }
         };
@@ -1617,6 +1656,97 @@ mod tests {
             "a sneak draw must not shift the placement stream"
         );
         assert_eq!(a.rng_eagle_place.next_u32(), b.rng_eagle_place.next_u32());
+    }
+
+    /// A SprintReset request: ten f64 args after the op byte.
+    fn sprint_reset_frame(
+        seq: u32,
+        now_ns: i64,
+        has_target: bool,
+        in_range: bool,
+        gate_ok: bool,
+        is_hurt: bool,
+        entity_id: i32,
+        chance: i32,
+        hit_count: i32,
+        delay_ms: i32,
+        mode: i32,
+    ) -> Frame {
+        let (snap, len) = write_snapshot([0.0; 3], 0, 0);
+        let mut f = Frame::new(Kind::Snapshot, seq, 100, Module::Player);
+        let total = {
+            let p = f.payload_mut();
+            p[..len].copy_from_slice(&snap[32..32 + len]);
+            let mut w = Writer::new(&mut p[len..]);
+            w.u8(op::PLAYER_SPRINT_RESET);
+            w.u8(10);
+            w.f64(now_ns as f64);
+            w.f64(has_target as u8 as f64);
+            w.f64(in_range as u8 as f64);
+            w.f64(gate_ok as u8 as f64);
+            w.f64(is_hurt as u8 as f64);
+            w.f64(entity_id as f64);
+            w.f64(chance as f64);
+            w.f64(hit_count as f64);
+            w.f64(delay_ms as f64);
+            w.f64(mode as f64);
+            len + w.pos()
+        };
+        f.set_len(total);
+        f
+    }
+
+    fn sprint_step(f: &Frame) -> u32 {
+        eagle_flags(f) // same scalar layout: the step code sits at offset 4
+    }
+
+    #[test]
+    fn sprint_reset_round_trips_over_the_wire() {
+        // Full chain: decode_generic → on_player dispatch → sprint_reset::tick →
+        // encode_scalar. chance=100 skips the roll, so a fresh rising edge with
+        // delay=0 sends immediately.
+        let mut s = Session::new(1, 42);
+        // tick 1: hurt low (no edge); tick 2: rising edge -> SEND_NOSTOP.
+        s.handle(&sprint_reset_frame(1, 1_000_000_000, true, true, true, false, 7, 100, 1, 0, 0));
+        let f = s.handle(&sprint_reset_frame(2, 1_050_000_000, true, true, true, true, 7, 100, 1, 0, 0));
+        assert_eq!(sprint_step(&f), 1, "SEND_NOSTOP on the rising edge");
+
+        // A delayed send arms on the edge, then fires at its deadline. Start a
+        // fresh session and use a new target id so the edge is fresh.
+        let mut s2 = Session::new(2, 42);
+        let armed = s2.handle(&sprint_reset_frame(1, 2_000_000_000, true, true, true, true, 9, 100, 1, 100, 1));
+        assert_eq!(sprint_step(&armed), 0, "armed, nothing sent yet");
+        assert!(s2.sprint_reset.sending);
+        let before = s2.handle(&sprint_reset_frame(2, 2_050_000_000, true, true, true, true, 9, 100, 1, 100, 1));
+        assert_eq!(sprint_step(&before), 0, "deadline not reached");
+        let fired = s2.handle(&sprint_reset_frame(3, 2_100_000_000, true, true, true, true, 9, 100, 1, 100, 1));
+        assert_eq!(sprint_step(&fired), 2, "SEND_SILENT fires at the deadline");
+        assert!(!s2.sprint_reset.sending);
+    }
+
+    #[test]
+    fn sprint_reset_no_target_forgets_the_edge() {
+        let mut s = Session::new(1, 42);
+        s.handle(&sprint_reset_frame(1, 1_000_000_000, true, true, true, true, 7, 100, 3, 0, 0));
+        assert!(s.sprint_reset.prev_hurt);
+        s.handle(&sprint_reset_frame(2, 1_050_000_000, false, false, false, false, 7, 100, 3, 0, 0));
+        assert!(!s.sprint_reset.prev_hurt);
+        assert_eq!(s.sprint_reset.last_target_id, -1);
+    }
+
+    #[test]
+    fn sprint_reset_has_its_own_rng_stream() {
+        // An eagle sneak draw must not shift the sprint-reset chance stream.
+        let mut a = Session::new(1, 7);
+        a.handle(&sprint_reset_frame(1, 1_000_000_000, true, true, true, false, 7, 50, 1, 0, 0));
+        a.handle(&sprint_reset_frame(2, 1_050_000_000, true, true, true, true, 7, 50, 1, 0, 0));
+
+        let mut b = Session::new(1, 7);
+        b.handle(&eagle_frame(1, true, true, false, 1, 5)); // one sneak draw (rng_player)
+        b.handle(&sprint_reset_frame(2, 1_000_000_000, true, true, true, false, 7, 50, 1, 0, 0));
+        b.handle(&sprint_reset_frame(3, 1_050_000_000, true, true, true, true, 7, 50, 1, 0, 0));
+
+        assert_eq!(a.rng_sprint_reset.next_u32(), b.rng_sprint_reset.next_u32());
     }
 
     #[test]

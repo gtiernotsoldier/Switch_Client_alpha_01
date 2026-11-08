@@ -771,6 +771,44 @@ class CoreStub(
     }
 
     /**
+     * SprintReset's per-tick reset decision: one call per tick.
+     *
+     * The rising-edge bit, the hit-count throttle, the target id and the
+     * delayed-send deadline (including the chance roll) are core state. This
+     * side sends only the judgements it made (target present, range, gate,
+     * hurt) plus the tuning knobs, and gets back a step code: 0 none,
+     * 1 + mode send (mode 0 Nostop, 1 Silent).
+     *
+     * `null` means the core did not answer. The module then sends no sprint
+     * reset — inventing a packet burst without the core's decision is the one
+     * thing that must never happen by accident.
+     */
+    fun playerSprintReset(
+        player: io.doppel.contract.model.PlayerState,
+        target: io.doppel.contract.model.TargetState?,
+        nowNs: Long,
+        hasTarget: Boolean,
+        inRange: Boolean,
+        gateOk: Boolean,
+        isHurt: Boolean,
+        entityId: Int,
+        chance: Int,
+        hitCount: Int,
+        delayMs: Int,
+        mode: Int,
+        tick: Int
+    ): Int? {
+        val payload = genericRequest(
+            encodeSnapshot(player, target), Ops.PLAYER_SPRINT_RESET,
+            nowNs.toDouble(), b(hasTarget), b(inRange), b(gateOk), b(isHurt),
+            entityId.toDouble(), chance.toDouble(), hitCount.toDouble(),
+            delayMs.toDouble(), mode.toDouble()
+        )
+        val f = roundTrip(Wire.MODULE_PLAYER, payload, tick) ?: return null
+        return decodeScalar(f).toInt()
+    }
+
+    /**
      * Backtrack's hold window: one call per tick.
      *
      * `null` means the core did not answer. The caller must then let the

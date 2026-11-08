@@ -411,6 +411,7 @@ object Ops {
     const val PLAYER_HIT_TICK = 5       // nowNs, canCrit, playerHurtTime, leftDown, hasTarget, targetId, targetHurtTime, counterHit, counterCdMs → counter fires
     const val PLAYER_HIT_GATE = 6       // nowNs, guiOpen, lookingAtBlock, chance, criticals, missedSwing, hasForwardTarget, hurtResistantTime, waitFirstMs, retimeAt, pauseMs → deliver click
     const val PLAYER_EAGLE_PLACE = 7    // gatesOpen, pitchInTolerance, bridgeAssistEnabled, maxWaitTicks, cdMin, cdMax → step (0 none, 1 aim, 2 click, 3 abort)
+    const val PLAYER_SPRINT_RESET = 8   // nowNs, hasTarget, inRange, gateOk, isHurt, entityId, chance, hitCount, delayMs, mode → step (0 none, 1+mode send)
 }
 
 /**

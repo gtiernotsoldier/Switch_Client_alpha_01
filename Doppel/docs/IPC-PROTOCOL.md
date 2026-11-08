@@ -294,6 +294,7 @@ The degraded direction differs per op; see `PROTECTION.md` §9.5.3 for the table
 | Reach sampling gates | `strategy/reach_sample.rs` | `ReachParityTest`, 300 presses |
 | ClickAssist guard chain + 500 ms CPS window | `strategy/click_assist.rs` | `ClickAssistParityTest`, 300 presses |
 | HitSelect windows + click gate | `strategy/hit_select.rs` | `HitSelectParityTest`, 500 interleaved events |
+| SprintReset rising-edge / throttle / delay | `strategy/sprint_reset.rs` | `SprintResetParityTest`, 400 ticks + `CoreStubE2ETest` real-socket round trip |
 
 ### Module request shapes
 
@@ -309,7 +310,7 @@ all look alike and none of which can be checked without counting bytes.
 | Aim | `mouse_dx f32, mouse_dy f32, sensitivity f32` (12 bytes) |
 | Click | `attack_cooldown f32, is_falling u8, pad 3` (8 bytes) |
 | Movement / Tap / Combat / Reach | `op u8, nargs u8, nargs × f64` |
-| Player (8) | `op u8, nargs u8, nargs × f64` — ops 0..7, up to 11 args |
+| Player (8) | `op u8, nargs u8, nargs × f64` — ops 0..8, up to 11 args |
 
 Op ids are append-only, same reasoning as module ids: the stub and the core are
 separate binaries. The tables live beside their decoders in `codec.rs` and are
@@ -347,7 +348,7 @@ modules were enabled and in what order they ran, so toggling aim would quietly
 change click timing.
 
 `Module::Player` (id 8) carries the modules that used to keep their whole
-logic in the jar. Ops 0..7 are append-only like the rest. `PLAYER_HIT_TICK` (5)
+logic in the jar. Ops 0..8 are append-only like the rest. `PLAYER_HIT_TICK` (5)
 and `PLAYER_HIT_GATE` (6) are the only pair that shares **one** state across two
 callers: the tick feeds the target windows, the click gate reads them. The
 adapter asks the gate only when a physical attack is actually being applied —
@@ -370,6 +371,22 @@ closed**: the core needs `gates_open = false` to cancel a pending aim and forget
 its cooldown, otherwise the next opening would resume a stale aim. A missing
 answer means write neither a rotation nor a right-click: a block placed without
 the core's decision cannot be taken back.
+
+`PLAYER_SPRINT_RESET` (8) moves SprintReset's rising-edge bit, hit-count
+throttle, per-target cycle and delayed-send window into the core. The adapter
+sends only the judgements it can make — `has_target`, `in_range`, `gate_ok`
+(the `combatDecide` gate, `mode < 0`), `is_hurt` — plus the clock and the tuning
+knobs, and gets back a step code: 0 none, `1 + mode` send (mode 0 Nostop, 1
+Silent). The `chance` roll is consumed **only** at the fire point and only when
+`chance < 100`, on its own `rng_sprint_reset` stream; the gate call that
+precedes it uses `rng_combat` and does not draw (a `mode < 0` `CBT_DECIDE`
+returns after `condition::check`), so the two round trips per tick do not
+interleave any random stream. A delayed send arms a deadline on the edge and
+fires with the captured mode at that deadline — the whole tick short-circuits
+while armed, exactly as the original JVM timer did. A missing answer means send
+nothing: inventing a C0B/C03 burst without the core's decision is worse than
+missing one. This is the first of the Reset family; `JumpReset` and
+`SuperKnockback` follow the same one-op shape.
 
 `ClickAssistFlag` in `Wire.kt` is the bit layout for `PLAYER_CLICK_ASSIST`'s
 thirteen predicates. It lives beside the op rather than in the module for the

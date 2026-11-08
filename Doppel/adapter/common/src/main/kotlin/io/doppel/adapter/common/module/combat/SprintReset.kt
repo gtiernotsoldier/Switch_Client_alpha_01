@@ -1,6 +1,7 @@
 package io.doppel.adapter.common.module.combat
 
 import io.doppel.ipc.Strategies
+import io.doppel.ipc.SprintResetStep
 import io.doppel.contract.model.PlayerState
 import io.doppel.contract.model.TargetState
 import io.doppel.adapter.common.api.EventBridge
@@ -11,7 +12,6 @@ import io.doppel.adapter.common.option.choices
 import io.doppel.adapter.common.option.float
 import io.doppel.adapter.common.option.int
 import io.doppel.adapter.common.option.triggerOptions
-import kotlin.random.Random
 
 /**
  * SprintReset Module — packet-level sprint state reset for max knockback.
@@ -20,8 +20,16 @@ import kotlin.random.Random
  *   **Nostop**: C0B stop sprinting + start sprinting (explicit server-side reset).
  *   **Silent**: C03 player position packet (implicit movement state refresh).
  *
- * Fires on the rising edge of the target's hurt animation (a fresh hit), so it triggers
- * reliably under 20Hz sampling.
+ * This side holds only **logic judgements + marshalling + platform I/O**:
+ * whether a target exists, whether it is inside the distance window, the
+ * unified gate, and the hurt bit. Everything stateful — the rising-edge bit,
+ * the hit-count throttle, the per-target cycle, the delay window and the
+ * probability roll — lives in the algorithm process. Each tick we marshal the
+ * judgements, the clock value and the tuning knobs into one request; the core
+ * returns a step, and the `when (step)` below turns it into the one platform
+ * write this module owns. No `kotlin.random`, no local time-window judgement
+ * (`nanoTime()` is an input we marshal, like Backtrack/Reach), no cross-tick
+ * counters.
  */
 object SprintReset : Module("SprintReset", Category.COMBAT) {
 
@@ -32,10 +40,9 @@ object SprintReset : Module("SprintReset", Category.COMBAT) {
     private val hitCount by int("HitCount", 1, 1..20, "hits")
 
     /**
-     * Distance window, the same shape as WTap/STap's Range options. Replaces a hardcoded
-     * `target.distance > 3.0f` upper bound. Note this is evaluated on the frame a hit lands, when
-     * the crosshair target is already inside reach, so raising RangeMax has little practical
-     * effect; lowering RangeMin is what would matter, since a min above reach disables the module.
+     * Distance window. Evaluated on the frame a hit lands, when the crosshair
+     * target is already inside reach; lowering RangeMin is what disables the
+     * module. This is a judgement the JVM keeps; the core only sees its result.
      */
     private val rangeMin by float("RangeMin", 0.0f, 0.0f..6.0f, "blocks")
     private val rangeMax by float("RangeMax", 6.0f, 0.0f..6.0f, "blocks")
@@ -55,86 +62,50 @@ object SprintReset : Module("SprintReset", Category.COMBAT) {
         onlyWhenTargetGoesBack = this@SprintReset.onlyWhenTargetGoesBack
     }
 
-    // ========== State ==========
-    private var hitCounter: Int = 0
-    private var sending: Boolean = false
-    private var pendingMode: String = ""
-    private var sendTimeNano: Long = 0L
-
-    // Rising-edge "just hit" detection. The target's hurtTime (hurt animation) jumps > 0 the
-    // instant it's hit and stays > 0 for ~10 ticks; between hits (i-frame window) it returns to
-    // 0 for ~1s. So the 0 -> >0 transition reliably marks a fresh hit even under 20Hz sampling,
-    // unlike the old exact `hurtResistantTime == 10` match (a razor-thin 1-tick window that the
-    // background thread frequently misses).
-    private var prevHurt = false
-    private var lastTargetId: Int = -1
-
     // ========== Tick Listener ==========
     private val tickListener: (PlayerState, TargetState?) -> Unit = { p, t ->
         if (enabled) onTick(p, t)
     }
 
     private fun onTick(player: PlayerState, target: TargetState?) {
-        // Process pending delayed send
-        if (sending) {
-            if (System.nanoTime() >= sendTimeNano) {
-                EventBridge.sendSprintReset(pendingMode)
-                markWorked() // the HUD row flashes on the reset that was actually sent
-                sending = false
+        // ---- Judgements (this side decides nothing beyond these predicates) ----
+        val hasTarget = target != null
+        val inRange = target != null && target.distance >= rangeMin && target.distance <= rangeMax
+        val gateOk = hasTarget && inRange && Strategies.gate(player, target, triggerOptions)
+        val isHurt = target != null && target.hurtTime > 0
+        val entityId = target?.entityId ?: -1
+
+        val step = Strategies.sprintReset(
+            player, target, System.nanoTime(),
+            hasTarget, inRange, gateOk, isHurt, entityId,
+            chance, hitCount, delay, modeCode()
+        )
+
+        // ---- Platform side effect: land the step the core decided ----
+        when (step) {
+            SprintResetStep.SEND_NOSTOP -> {
+                EventBridge.sendSprintReset("Nostop")
+                markWorked() // the HUD row flashes on the reset actually sent
             }
-            return
-        }
-
-        if (target == null) {
-            // No target — reset hit-edge state so a new target's first hit is caught.
-            prevHurt = false
-            lastTargetId = -1
-            return
-        }
-
-        // Reset edge state when switching targets.
-        if (lastTargetId != target.entityId) {
-            lastTargetId = target.entityId
-            prevHurt = false
-            hitCounter = 0
-        }
-
-        // Distance window (was a hardcoded 3-block upper bound).
-        if (target.distance < rangeMin || target.distance > rangeMax) return
-
-        // Condition check
-        if (!Strategies.gate(player, target, triggerOptions)) return
-
-        // Rising-edge "just hit": hurtTime just became > 0 (fresh hit). Reliable at 20Hz.
-        val isHurt = target.hurtTime > 0
-        val justHit = isHurt && !prevHurt
-        prevHurt = isHurt
-        if (!justHit) return
-
-        // Hit-count throttle: fire once every `hitCount` hits.
-        hitCounter++
-        if (hitCounter < hitCount) return
-        hitCounter = 0
-
-        // Probability
-        if (chance < 100 && Random.nextInt(100) >= chance) return
-
-        // Schedule send
-        if (delay > 0) {
-            sendTimeNano = System.nanoTime() + delay * 1_000_000L
-            pendingMode = mode
-            sending = true
-        } else {
-            EventBridge.sendSprintReset(mode)
-            markWorked() // the HUD row flashes on the reset that was actually sent
+            SprintResetStep.SEND_SILENT -> {
+                EventBridge.sendSprintReset("Silent")
+                markWorked()
+            }
+            // NONE / null: no answer from the core — send nothing. Inventing a
+            // packet burst without being told to is the one thing this module
+            // must never do by accident.
+            else -> Unit
         }
     }
 
+    /** Wire mode code shared with the core's step encoding. */
+    private fun modeCode(): Int = if (mode == "Silent") 1 else 0
+
     // ========== Lifecycle ==========
     override fun onEnable() {
-        hitCounter = 0
-        prevHurt = false
-        lastTargetId = -1
+        // A fresh enable must not inherit a rising-edge / throttle / delayed
+        // send the core still believes it owns.
+        Strategies.resetPlayer()
         EventBridge.setSprintResetActive(true)
         EventBridge.registerTickListener(tickListener)
     }
@@ -142,9 +113,6 @@ object SprintReset : Module("SprintReset", Category.COMBAT) {
     override fun onDisable() {
         EventBridge.unregisterTickListener(tickListener)
         EventBridge.setSprintResetActive(false)
-        hitCounter = 0
-        sending = false
-        prevHurt = false
-        lastTargetId = -1
+        Strategies.resetPlayer()
     }
 }

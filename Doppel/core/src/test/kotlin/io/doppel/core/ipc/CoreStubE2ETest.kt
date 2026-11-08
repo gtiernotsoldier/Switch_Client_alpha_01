@@ -222,6 +222,69 @@ class CoreStubE2ETest {
 
     @Test
     @Timeout(value = 60, unit = TimeUnit.SECONDS)
+    fun `sprint reset decisions travel intact over a real socket`() {
+        // The whole path for the SprintReset op: Kotlin marshalling → TCP →
+        // decode_generic → on_player dispatch → sprint_reset::tick →
+        // encode_scalar → decodeScalar. chance=100 skips the draw, so the
+        // step sequence is deterministic across the two different RNGs.
+        val exe = locateCore()
+        assumeTrue(exe != null, "doppel-core not built — run: cd Doppel/core-rs && cargo build")
+        val proc = ProcessBuilder(exe!!.absolutePath, "--listen", "tcp:127.0.0.1:0", "--seed", "424242")
+            .redirectError(ProcessBuilder.Redirect.INHERIT)
+            .start()
+        try {
+            val banner = proc.inputStream.bufferedReader().readLine()
+            assertNotNull(banner, "core produced no LISTEN line")
+            assertTrue(banner!!.startsWith("LISTEN "), "unexpected banner: $banner")
+            val addr = banner.removePrefix("LISTEN ").trim()
+
+            CoreStub(Endpoint.parse("tcp:$addr"), null, deadlineNanos = 20_000_000L).use { stub ->
+                stub.connect()
+                val p = player()
+                var tick = 1
+                var now = 1_000_000_000L
+
+                // hurt low (no edge) -> NONE; rising edge -> SEND_NOSTOP.
+                val idle = stub.playerSprintReset(
+                    p, null, now, true, true, true, false, 7, 100, 1, 0, 0, tick++
+                )
+                assertEquals(0, idle, "no send without a fresh hit")
+                now += 50_000_000L
+                val send = stub.playerSprintReset(
+                    p, null, now, true, true, true, true, 7, 100, 1, 0, 0, tick++
+                )
+                assertEquals(1, send, "SEND_NOSTOP on the rising edge over the socket")
+
+                // A delayed send: new target id so the edge is fresh. It arms
+                // on the edge, stays quiet before the deadline, then fires with
+                // the captured Silent mode at the deadline.
+                now += 50_000_000L
+                val armed = stub.playerSprintReset(
+                    p, null, now, true, true, true, true, 9, 100, 1, 100, 1, tick++
+                )
+                assertEquals(0, armed, "armed, nothing sent yet")
+                now += 50_000_000L
+                val waiting = stub.playerSprintReset(
+                    p, null, now, true, true, true, true, 9, 100, 1, 100, 1, tick++
+                )
+                assertEquals(0, waiting, "still quiet before the deadline")
+                now += 50_000_000L
+                val fired = stub.playerSprintReset(
+                    p, null, now, true, true, true, true, 9, 100, 1, 100, 1, tick
+                )
+                assertEquals(2, fired, "SEND_SILENT fires at the deadline")
+
+                assertEquals(0L, stub.timeouts.get(), "deadline misses on loopback")
+                assertEquals(0L, stub.degradedTicks.get(), "degraded ticks on a healthy run")
+            }
+        } finally {
+            proc.destroyForcibly()
+            proc.waitFor(5, TimeUnit.SECONDS)
+        }
+    }
+
+    @Test
+    @Timeout(value = 60, unit = TimeUnit.SECONDS)
     fun `a dead core degrades instead of throwing`() {
         // Bind, then close: the stub must treat a refused connection as
         // "degrade this tick", never as an exception escaping into the tick loop.

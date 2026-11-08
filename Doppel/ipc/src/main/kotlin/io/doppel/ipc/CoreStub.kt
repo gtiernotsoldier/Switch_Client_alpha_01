@@ -769,6 +769,37 @@ class CoreStub(
         return decodeBool(f)
     }
 
+    /**
+     * KnockbackDisplace: a landed hit. Returns the yaw offset in degrees, or 0
+     * for "no flick".
+     *
+     * The cooldown, the direction and the strafe memory all live in the core;
+     * the adapter only decides when to write and restore the rotation.
+     */
+    fun playerKbdAttack(
+        player: io.doppel.contract.model.PlayerState,
+        target: io.doppel.contract.model.TargetState?,
+        nowNs: Long,
+        direction: Int,
+        useLastStrafe: Boolean,
+        cooldownMs: Int,
+        angle: Float,
+        notTakingKnockback: Boolean,
+        velocityThisTick: Boolean,
+        keyLeft: Boolean,
+        keyRight: Boolean,
+        tick: Int
+    ): Float? {
+        val payload = genericRequest(
+            encodeSnapshot(player, target), Ops.PLAYER_KBD_ATTACK,
+            nowNs.toDouble(), direction.toDouble(), b(useLastStrafe),
+            cooldownMs.toDouble(), angle.toDouble(),
+            b(notTakingKnockback), b(velocityThisTick), b(keyLeft), b(keyRight)
+        )
+        val f = roundTrip(Wire.MODULE_PLAYER, payload, tick) ?: return null
+        return decodeScalar(f).toFloat()
+    }
+
     private fun b(v: Boolean): Double = if (v) 1.0 else 0.0
 
     /**

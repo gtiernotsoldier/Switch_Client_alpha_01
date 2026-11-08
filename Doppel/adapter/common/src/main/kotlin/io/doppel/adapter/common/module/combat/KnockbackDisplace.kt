@@ -1,6 +1,7 @@
 package io.doppel.adapter.common.module.combat
 
 import io.doppel.contract.model.PlayerState
+import io.doppel.ipc.Strategies
 import io.doppel.contract.model.TargetState
 import io.doppel.adapter.common.api.EventBridge
 import io.doppel.adapter.common.module.Module
@@ -9,7 +10,6 @@ import io.doppel.adapter.common.option.boolean
 import io.doppel.adapter.common.option.choices
 import io.doppel.adapter.common.option.float
 import io.doppel.adapter.common.option.int
-import kotlin.random.Random
 import io.doppel.contract.strategy.click.WeaponType
 
 /**
@@ -41,11 +41,24 @@ object KnockbackDisplace : Module("KnockbackDisplace", Category.COMBAT) {
     private val weaponOnly by boolean("WeaponOnly", false)
 
     // ========== State ==========
-    private var lastStrafeLeft = false
-    private var lastFlickNano = 0L
-    /** Non-zero while the one-tick yaw offset should be applied. */
+    /**
+     * The offset the core handed back for this attack.
+     *
+     * The core says *what* the flick is; the timing — one tick, then restore —
+     * is a platform concern and stays here. Non-zero while a flick is queued.
+     */
     private var flickRemainingTicks = 0
     private var flickYawOffset = 0f
+
+    /**
+     * Last tick's player snapshot.
+     *
+     * The attack listener fires on the attack itself, where no state object is
+     * passed in; the snapshot only has to be recent enough to marshal a request,
+     * and a tick-old one is (the core does not read the player for this op).
+     */
+    @Volatile
+    private var latestPlayer: PlayerState? = null
 
     // ========== Listeners ==========
     // Fresh hit (attack landed) → queue the flick.
@@ -57,23 +70,41 @@ object KnockbackDisplace : Module("KnockbackDisplace", Category.COMBAT) {
     }
 
     private fun onAttack() {
-        val now = System.nanoTime()
-        if (now - lastFlickNano < cooldownMs * 1_000_000L) return
-        if (notTakingKnockback && EventBridge.velocityPacketReceivedThisTick) return
-        val dirSign = currentDirection()
-        if (dirSign == 0) return
-        // Queue a one-tick yaw offset (server sees the attacker's yaw at attack time).
-        flickYawOffset = dirSign * angle
+        // Direction, cooldown and the strafe memory all live in the core now, so
+        // one call replaces what used to be three checks and a random pick.
+        val offset = Strategies.kbdAttack(
+            latestPlayer ?: return,
+            null,
+            System.nanoTime(),
+            directionCode(),
+            useLastStrafe,
+            cooldownMs,
+            angle,
+            notTakingKnockback,
+            EventBridge.velocityPacketReceivedThisTick,
+            EventBridge.isKeyLeftDown,
+            EventBridge.isKeyRightDown
+        ) ?: return
+
+        if (offset == 0f) return
+        // Queue a one-tick yaw offset (the server sees the attacker's yaw at attack time).
+        flickYawOffset = offset
         flickRemainingTicks = 1
-        lastFlickNano = now
         markWorked() // the HUD row flashes on the flick that was queued
     }
 
+    /** Wire value for the configured direction. */
+    private fun directionCode(): Int = when (direction) {
+        "Left" -> 0
+        "Right" -> 1
+        "Random" -> 2
+        "Strafe" -> 3
+        "StrafeInverted" -> 4
+        else -> 0
+    }
+
     private fun onTick(player: PlayerState) {
-        // Track the last strafe direction for "use last strafe".
-        if (EventBridge.isKeyLeftDown != EventBridge.isKeyRightDown) {
-            lastStrafeLeft = EventBridge.isKeyLeftDown
-        }
+        latestPlayer = player
         if (flickRemainingTicks <= 0) return
         // Weapon condition (checked with the current held item).
         if (weaponOnly && player.weaponType == io.doppel.contract.strategy.click.WeaponType.OTHER) {
@@ -88,29 +119,9 @@ object KnockbackDisplace : Module("KnockbackDisplace", Category.COMBAT) {
         if (flickRemainingTicks <= 0) flickYawOffset = 0f
     }
 
-    private fun currentDirection(): Int {
-        return when (direction) {
-            "Left" -> 1
-            "Right" -> -1
-            "Random" -> if (Random.nextBoolean()) 1 else -1
-            "Strafe", "StrafeInverted" -> {
-                val left = EventBridge.isKeyLeftDown
-                val right = EventBridge.isKeyRightDown
-                val base = when {
-                    left && !right -> 1
-                    right && !left -> -1
-                    else -> if (useLastStrafe) (if (lastStrafeLeft) 1 else -1) else 0
-                }
-                if (direction == "StrafeInverted") -base else base
-            }
-            else -> 1
-        }
-    }
-
     // ========== Lifecycle ==========
     override fun onEnable() {
-        lastFlickNano = 0L
-        lastStrafeLeft = false
+        Strategies.resetPlayer()
         flickRemainingTicks = 0
         EventBridge.registerAttackListener(attackListener)
         EventBridge.registerTickListener(tickListener)
@@ -119,6 +130,7 @@ object KnockbackDisplace : Module("KnockbackDisplace", Category.COMBAT) {
     override fun onDisable() {
         EventBridge.unregisterAttackListener(attackListener)
         EventBridge.unregisterTickListener(tickListener)
+        Strategies.resetPlayer()
         flickRemainingTicks = 0
         flickYawOffset = 0f
     }

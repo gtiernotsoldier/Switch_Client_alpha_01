@@ -880,6 +880,12 @@ pub mod op {
     /// `now_ns` is the caller's monotonic clock. Only differences are used, so
     /// the two processes never have to agree on an absolute time base.
     pub const PLAYER_BACKTRACK_TICK: u8 = 1;
+
+    /// player/knockback_displace: `attack(now_ns, direction, use_last_strafe,
+    ///                              cooldown_ms, angle, not_taking_knockback,
+    ///                              velocity_this_tick, key_left, key_right)`
+    ///                              → yaw offset in degrees (0 = no flick).
+    pub const PLAYER_KBD_ATTACK: u8 = 2;
 }
 
 /// Maps a side to the wire's 0/1.
@@ -968,7 +974,11 @@ pub fn known_ops(module: Module) -> &'static [u8] {
             op::CBT_DECIDE,
         ],
         Module::Reach => &[op::REACH_INTERSECT],
-        Module::Player => &[op::PLAYER_EAGLE_TICK, op::PLAYER_BACKTRACK_TICK],
+        Module::Player => &[
+            op::PLAYER_EAGLE_TICK,
+            op::PLAYER_BACKTRACK_TICK,
+            op::PLAYER_KBD_ATTACK,
+        ],
         Module::Velocity => &[op::VEL_BRACE, op::VEL_DELAY_ENQUEUE, op::VEL_DELAY_PUMP],
         _ => &[],
     }

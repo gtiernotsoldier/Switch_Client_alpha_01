@@ -478,6 +478,32 @@ object Strategies {
             minDelayMs, maxDelayMs, distance, legacyDistance, mustRelease, nextTick()
         )
     }
+
+    /**
+     * KnockbackDisplace: how far to flick the yaw on a landed hit, in degrees.
+     *
+     * `null` means the core did not answer; the caller must then skip the flick
+     * rather than guess an angle.
+     */
+    fun kbdAttack(
+        player: PlayerState,
+        target: TargetState?,
+        nowNs: Long,
+        direction: Int,
+        useLastStrafe: Boolean,
+        cooldownMs: Int,
+        angle: Float,
+        notTakingKnockback: Boolean,
+        velocityThisTick: Boolean,
+        keyLeft: Boolean,
+        keyRight: Boolean
+    ): Float? {
+        val stub = CoreLink.stub ?: return null
+        return stub.playerKbdAttack(
+            player, target, nowNs, direction, useLastStrafe, cooldownMs, angle,
+            notTakingKnockback, velocityThisTick, keyLeft, keyRight, nextTick()
+        )
+    }
 }
 
 /** What the core decided for one Eagle tick. */

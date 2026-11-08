@@ -997,6 +997,7 @@ fn emit_golden(dir: &str) -> Result<(), String> {    use std::fs;
     emit_movement_golden(dir)?;
     emit_eagle_golden(dir)?;
     emit_backtrack_golden(dir)?;
+    emit_kbd_golden(dir)?;
     Ok(())
 }
 
@@ -1141,5 +1142,87 @@ fn emit_backtrack_golden(dir: &str) -> Result<(), String> {
 
     fs::write(format!("{}/backtrack_input.tsv", dir), input).map_err(|e| e.to_string())?;
     fs::write(format!("{}/backtrack_expected.tsv", dir), expected).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// KnockbackDisplace's flick, replayed over a synthetic attack stream.
+///
+/// Deliberately excludes `Direction::Random`: the Kotlin oracle would have to
+/// share a generator with Pcg32 for that column to mean anything, and the
+/// random branch is covered by the Rust unit test. What is left is the part a
+/// port actually gets wrong — the cooldown boundary, the strafe fallback, and
+/// whether a vetoed attack still spends the cooldown.
+fn emit_kbd_golden(dir: &str) -> Result<(), String> {
+    use std::fs;
+
+    let mut input = String::new();
+    input.push_str("# doppel-kbd-golden v1\n");
+    input.push_str(
+        "idx\tnow_ns\tdirection\tuse_last_strafe\tcooldown_ms\tangle\tnot_taking_kb\tvelocity_tick\tkey_left\tkey_right\n",
+    );
+
+    let mut expected = String::new();
+    expected.push_str("# idx\toffset_bits\n");
+
+    let mut state = strategy::knockback_displace::State::new();
+    let mut rng = Pcg32::new(0x0000_5EED_B0D0_0001);
+    let mut now: i64 = 1_000_000_000;
+
+    for i in 0..300 {
+        // 20 ms per attack: inside the 100 ms cooldown often enough to hit the
+        // boundary from both sides.
+        now += 20_000_000;
+
+        let pick = rng.random_int(0, 99);
+        let direction = match pick % 4 {
+            0 => strategy::knockback_displace::Direction::Left,
+            1 => strategy::knockback_displace::Direction::Right,
+            2 => strategy::knockback_displace::Direction::Strafe,
+            _ => strategy::knockback_displace::Direction::StrafeInverted,
+        };
+        let use_last_strafe = pick % 3 != 0;
+        let cooldown_ms = if pick % 5 == 0 { 0 } else { 100 };
+        let angle = if pick % 2 == 0 { 90.0f32 } else { 45.0f32 };
+        let not_taking_knockback = pick % 7 == 0;
+        let velocity_tick = pick % 9 == 0;
+        let key_left = pick % 6 == 0;
+        let key_right = pick % 6 == 1;
+
+        input.push_str(&format!(
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+            i,
+            now,
+            direction as u8,
+            use_last_strafe as u8,
+            cooldown_ms,
+            angle,
+            not_taking_knockback as u8,
+            velocity_tick as u8,
+            key_left as u8,
+            key_right as u8
+        ));
+
+        let offset = strategy::knockback_displace::attack(
+            &mut state,
+            strategy::knockback_displace::Input {
+                now_ns: now,
+                direction,
+                use_last_strafe,
+                cooldown_ms,
+                angle,
+                not_taking_knockback,
+                velocity_this_tick: velocity_tick,
+                key_left,
+                key_right,
+            },
+            &mut rng,
+        );
+        // Raw bits: the offset is a product of a sign and a float, and a port
+        // that multiplies in a different order lands one ulp away.
+        expected.push_str(&format!("{}\t{:08x}\n", i, offset.to_bits()));
+    }
+
+    fs::write(format!("{}/kbd_input.tsv", dir), input).map_err(|e| e.to_string())?;
+    fs::write(format!("{}/kbd_expected.tsv", dir), expected).map_err(|e| e.to_string())?;
     Ok(())
 }

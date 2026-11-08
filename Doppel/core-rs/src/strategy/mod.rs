@@ -6,6 +6,7 @@ pub mod backtrack;
 pub mod click;
 pub mod combat;
 pub mod eagle;
+pub mod knockback_displace;
 pub mod movement;
 pub mod reach;
 pub mod tap;

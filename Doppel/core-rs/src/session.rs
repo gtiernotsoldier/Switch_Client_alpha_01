@@ -22,6 +22,7 @@ use crate::strategy::click::{self, ClickConfig, ClickState, CooldownClickConfig,
 use crate::strategy::backtrack;
 use crate::strategy::combat::{self, BlockArbiterState, PredictorConfig, PredictorState, RangeGateConfig, RangeGateState};
 use crate::strategy::eagle;
+use crate::strategy::knockback_displace;
 use crate::strategy::movement::{self, SocdResolver};
 use crate::strategy::reach;
 use crate::strategy::tap::{self, TapStateMachine};
@@ -64,6 +65,8 @@ pub struct Session {
     pub rng_player: Pcg32,
     /// Backtrack's window roll: 80..250 ms, re-rolled on every hold.
     pub rng_backtrack: Pcg32,
+    /// KnockbackDisplace's `Random` direction.
+    pub rng_kbd: Pcg32,
     pub config: VelocityConfig,
     pub velocity: velocity::State,
 
@@ -88,6 +91,9 @@ pub struct Session {
 
     /// Backtrack: the hold window and its timestamps.
     pub backtrack: backtrack::State,
+
+    /// KnockbackDisplace: the last flick time and the last strafe side.
+    pub kbd: knockback_displace::State,
 
     pub ticks: u64,
     pub decisions: u64,
@@ -122,6 +128,7 @@ impl Session {
             rng_combat: Pcg32::new(seed),
             rng_player: Pcg32::new(seed),
             rng_backtrack: Pcg32::new(seed),
+            rng_kbd: Pcg32::new(seed),
             config: VelocityConfig::default(),
             velocity: velocity::State::new(),
             aim_config: AimConfig::default(),
@@ -137,6 +144,7 @@ impl Session {
             range_state: RangeGateState { engaged: false },
             eagle: eagle::State::default(),
             backtrack: backtrack::State::new(),
+            kbd: knockback_displace::State::new(),
             ticks: 0,
             decisions: 0,
             degraded: 0,
@@ -202,6 +210,7 @@ impl Session {
             Module::Player => {
                 self.eagle = eagle::State::default();
                 self.backtrack = backtrack::State::new();
+                self.kbd = knockback_displace::State::new();
             }
         }
         Frame::new(Kind::Reset, frame.header.seq, frame.header.tick, module)
@@ -919,6 +928,28 @@ impl Session {
                         Module::Player,
                         WireAction::Bool,
                         hold,
+                    ))
+                }
+                op::PLAYER_KBD_ATTACK => {
+                    let input = knockback_displace::Input {
+                        now_ns: req.arg(0)? as i64,
+                        direction: knockback_displace::Direction::from_u8(req.arg(1)? as u8),
+                        use_last_strafe: req.bool(2)?,
+                        cooldown_ms: req.i32(3)?,
+                        angle: req.f32(4)?,
+                        not_taking_knockback: req.bool(5)?,
+                        velocity_this_tick: req.bool(6)?,
+                        key_left: req.bool(7)?,
+                        key_right: req.bool(8)?,
+                    };
+                    let offset =
+                        knockback_displace::attack(&mut self.kbd, input, &mut self.rng_kbd);
+                    Ok(codec::encode_scalar(
+                        seq,
+                        tick,
+                        Module::Player,
+                        WireAction::Scalar,
+                        offset as f64,
                     ))
                 }
                 _ => Err(Status::BadPayload),

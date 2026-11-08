@@ -288,6 +288,7 @@ The degraded direction differs per op; see `PROTECTION.md` §9.5.3 for the table
 | Six-module session dispatch | `session.rs`, `codec.rs` | `ModuleSessionParityTest`, 1300 round trips |
 | Portable fdlibm (sin/cos/atan/atan2/acos) | `trig.rs`, `PortableMath.kt` | C reference, 1M values, 0 diffs |
 | Eagle sneak machine | `strategy/eagle.rs` | `EagleParityTest`, 300 ticks |
+| Eagle AutoPlace aim/cooldown machine | `strategy/eagle_place.rs` | `EaglePlaceParityTest`, 320 ticks + `CoreStubE2ETest` real-socket round trip |
 | Backtrack hold window | `strategy/backtrack.rs` | `BacktrackParityTest`, 400 ticks |
 | KnockbackDisplace flick | `strategy/knockback_displace.rs` | `KnockbackDisplaceParityTest`, 300 hits |
 | Reach sampling gates | `strategy/reach_sample.rs` | `ReachParityTest`, 300 presses |
@@ -308,7 +309,7 @@ all look alike and none of which can be checked without counting bytes.
 | Aim | `mouse_dx f32, mouse_dy f32, sensitivity f32` (12 bytes) |
 | Click | `attack_cooldown f32, is_falling u8, pad 3` (8 bytes) |
 | Movement / Tap / Combat / Reach | `op u8, nargs u8, nargs × f64` |
-| Player (8) | `op u8, nargs u8, nargs × f64` — ops 0..6, up to 11 args |
+| Player (8) | `op u8, nargs u8, nargs × f64` — ops 0..7, up to 11 args |
 
 Op ids are append-only, same reasoning as module ids: the stub and the core are
 separate binaries. The tables live beside their decoders in `codec.rs` and are
@@ -345,8 +346,8 @@ single shared stream would make one module's decisions depend on which other
 modules were enabled and in what order they ran, so toggling aim would quietly
 change click timing.
 
-`Module::Player` (id 8) carries the six modules that used to keep their whole
-logic in the jar. Ops 0..6 are append-only like the rest. `PLAYER_HIT_TICK` (5)
+`Module::Player` (id 8) carries the modules that used to keep their whole
+logic in the jar. Ops 0..7 are append-only like the rest. `PLAYER_HIT_TICK` (5)
 and `PLAYER_HIT_GATE` (6) are the only pair that shares **one** state across two
 callers: the tick feeds the target windows, the click gate reads them. The
 adapter asks the gate only when a physical attack is actually being applied —
@@ -354,6 +355,21 @@ asking it on every idle frame would mean one round trip per frame and a chance
 roll driven by the frame rate. A missing answer on the gate means *deliver* the
 click; swallowing a real hit without being told to is worse than letting it
 through, so this op's degraded direction is the opposite of Reach's.
+
+`PLAYER_EAGLE_PLACE` (7) is Eagle AutoPlace's aim-first placement machine. The
+adapter sends the two judgements it can make — `gates_open` (`shouldAutoPlace`)
+and `pitch_in_tolerance` (a geometry comparison on the whitelist) — plus
+`bridge_assist_enabled`, `max_wait_ticks` and the cooldown bounds, and gets back
+a step code: 0 none, 1 aim, 2 click, 3 abort. The aim-in-flight flag, the wait
+counter, the cooldown **and its random draw** are core state (one call, one
+round trip); the draw is consumed only on a CLICK, so an idle or cooling-down
+tick never advances the stream. It has its own `rng_eagle_place` stream — the
+sneak machine draws from `rng_player`, and interleaving the two would make a
+replay diverge. The request is sent **every tick even when the gates are
+closed**: the core needs `gates_open = false` to cancel a pending aim and forget
+its cooldown, otherwise the next opening would resume a stale aim. A missing
+answer means write neither a rotation nor a right-click: a block placed without
+the core's decision cannot be taken back.
 
 `ClickAssistFlag` in `Wire.kt` is the bit layout for `PLAYER_CLICK_ASSIST`'s
 thirteen predicates. It lives beside the op rather than in the module for the

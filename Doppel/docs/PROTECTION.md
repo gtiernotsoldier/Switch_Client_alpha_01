@@ -354,8 +354,8 @@ offline **不是 HUD 功能，也不进 Kotlin**。它是外部进程侧对「�
 
 | 件 | 状态 |
 |---|---|
-| 计算 / 算法 / 策略 / RNG / 窗口搬 core | **已落地**（2026-11-08，六模块收尾，CI 守卫 `io/doppel/core/` 类数为 0） |
-| Kotlin 只留判断与编组 | 基本达成，残留见 9.5 |
+| 计算 / 算法 / 策略 / RNG / 窗口搬 core | **已落地**（2026-11-08，六模块收尾 + Eagle autoPlace 时序，CI 守卫 `io/doppel/core/` 类数为 0） |
+| Kotlin 只留判断与编组 | **六模块 + Eagle autoPlace 达成**：新增的 `PLAYER_EAGLE_PLACE` 把 aim 状态机、等待计数、冷却与随机抽样搬进 core，模块只剩门判断、几何容差判断、编组、`when(step)` 落地与平台副作用。其余 10 处 `kotlin.random` 残留见 9.5（显式白名单，本轮不处理） |
 | core 启动权归 injector | **已落地**（2026-11-08）：injector 用 `--port-file` 拉起 core，endpoint 经 `doppel-config.properties` → `Agent.coreInit` → `CoreSupervisor.attach()`；JVM 侧删掉 `locate()` 的隐式扫描与 `ProcessBuilder` 生产路径，`doppel.core.path` 仅作开发/测试回退 |
 | 外部算法进程 ↔ Kotlin 的 wire 沟通 | **已验证**：`CoreSupervisorTest` 模拟 injector 起 core、发布 endpoint、断言 JVM 不 spawn 且一次真实决策往返成功 |
 | offline 作为外部观察点 | **判定依据已就位、显示未做**：injector 是唯一知道「core 有没有被拉起」的实体，`--port-file` 即就绪信号；外部 overlay 据此判断显示与否。不进 Kotlin、不进 `HUD.kt`、不改 state 文件契约 |
@@ -377,8 +377,10 @@ offline **不是 HUD 功能，也不进 Kotlin**。它是外部进程侧对「�
 > velocity 均改走 `ipc/Strategies.kt`；2026-11-08 又补上最后 6 个把完整逻辑留在 jar 里的模块
 > （Eagle / Backtrack / KnockbackDisplace / Reach / ClickAssist / HitSelect）。它们的窗口状态、
 > 门顺序和随机数流全部迁到 `Module::Player`（id 8），adapter 侧只剩**逻辑判断、编组与平台副作用**；
-> 六组 Kotlin↔Rust golden 对拍共 2100 行。adapter 侧不再出现任何 `io.doppel.core` 引用，
-> `agent.jar` 内 `io/doppel/core/` 类数为 **0**（CI 有守卫，回退会直接失败）。
+> 六组 Kotlin↔Rust golden 对拍共 2100 行。2026-11-08 又收尾了 Eagle 的 AutoPlace 时序
+> （aim 状态机 / 等待计数 / 冷却与随机抽样 → `strategy::eagle_place`，第七组 320 tick 对拍，
+> 真实 socket 有 E2E 覆盖），Eagle 遂成为「模块里只有逻辑判断」的样板。adapter 侧不再出现任何
+> `io.doppel.core` 引用，`agent.jar` 内 `io/doppel/core/` 类数为 **0**（CI 有守卫，回退会直接失败）。
 >
 > **HitSelect 是唯一跨线程的一个**：tick 侧喂状态、render 侧在点击时问结果，两个 op 共用
 > 一份 core 状态。为避免每帧一次往返、以及让概率掷骰被帧率驱动，forge 层只在物理攻击
@@ -397,7 +399,8 @@ offline **不是 HUD 功能，也不进 Kotlin**。它是外部进程侧对「�
 > | core 启动权 | **injector 拉起**（`resource::launch_core()` + `--port-file`），endpoint 经 `doppel-config.properties` 交给 `CoreSupervisor.attach()`；JVM 不再 `ProcessBuilder`，`doppel.core.path` 仅开发/测试回退 | 达成 |
 > | 状态沟通 | 编排权与进程状态归 injector；injector→JVM 的 config 通道承载 endpoint，JVM↔core 双向 wire 承载决策 | 达成最小闭环；overlay 侧的 offline 显示仍待做 |
 > | 几何 | `contract/util/Geometry` + `PortableMath` 留在 jar | **正式豁免**，留在 jar（白名单，见 9.4） |
-> | 残留抖动 | 11 个文件里仍有 `kotlin.random`（ADTap / WTap / STap / BlockHit / AutoBlock / SuperKnockback / JumpReset / SprintReset / Eagle / ForgeEventBridge / ConfigManager）与 Eagle 的 autoPlace 时序 | 按 9.4 判据不合规，但各自带 RNG 流、搬动会碰 `--replay` 对拍，**显式白名单 + 到期复评**，本轮不处理 |
+> | 残留抖动 | 10 个文件里仍有 `kotlin.random`（ADTap / WTap / STap / BlockHit / AutoBlock / SuperKnockback / JumpReset / SprintReset / ForgeEventBridge / ConfigManager） | 按 9.4 判据不合规，但各自带 RNG 流、搬动会碰 `--replay` 对拍，**显式白名单 + 到期复评**，本轮不处理 |
+> | Eagle autoPlace 时序 | **已迁移（2026-11-08）**：aim-in-flight / 等待计数 / 冷却与随机抽样全部进 `strategy::eagle_place`（`PLAYER_EAGLE_PLACE` = 7，独立 `rng_eagle_place` 流）；模块只剩门判断 `shouldAutoPlace`、几何容差判断 `pitchInTolerance`、编组、`when(step)` 落地与平台副作用 | 达成；`EaglePlaceParityTest` 320 tick 对拍，真实 socket 往返有 E2E 覆盖 |
 >
 > 注：`agent.jar` 内的 `CoreStub` / `Strategies` / wire 表本来就会暴露「存在外部算法进程」，
 > 所以把 offline 从 jar 里挪出去**不是防护增强**，只是架构归位与视觉约束。
@@ -476,6 +479,7 @@ tick 边界（50ms 一次）
 | `PLAYER_HIT_GATE` | **放行点击** | 吞掉真实一击比放过去更糟 |
 | `PLAYER_REACH_SAMPLE` | 返回 `0.0`（不扩展） | 凭空扩展距离更糟 |
 | `PLAYER_CLICK_ASSIST` | 返回 `0`（不加点击） | 未经 core 批准不能凭空造一次点击 |
+| `PLAYER_EAGLE_PLACE` | 不写 rotation、不点击 | 未经 core 决策放下的方块收不回来；已持有的右键仍照常释放 |
 | `PLAYER_BACKTRACK_TICK` | `release()` | 宁可放过也不悬着状态 |
 | `Velocity` 同步决策 | `Pass(original motion)` | 见上，`Modify` 不可重放 |
 | 其余 tick 级 op | 本拍无动作 | 状态留在 core，下一拍自然续上 |

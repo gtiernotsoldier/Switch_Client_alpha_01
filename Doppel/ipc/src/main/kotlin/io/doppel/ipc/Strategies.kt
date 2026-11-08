@@ -266,6 +266,7 @@ object Strategies {
     fun resetTap() = reset(Wire.MODULE_TAP)
     fun resetCombat() = reset(Wire.MODULE_COMBAT)
     fun resetVelocity() = reset(Wire.MODULE_VELOCITY)
+    fun resetPlayer() = reset(Wire.MODULE_PLAYER)
 
     /**
      * AutoBlock: is the target inside the gate's distance band?
@@ -423,7 +424,41 @@ object Strategies {
         val stub = CoreLink.stub ?: return emptyList()
         return stub.velocityDelayPump(player, target, nowTick, nextTick()) ?: emptyList()
     }
+
+    /**
+     * Eagle: one tick of the sneak machine.
+     *
+     * `null` means the core did not answer. The caller must then write **no**
+     * key state at all — pressing would leave a sneak nobody owns, releasing
+     * would cancel the player's own.
+     */
+    fun eagleTick(
+        player: PlayerState,
+        target: TargetState?,
+        onEdge: Boolean,
+        settingsMet: Boolean,
+        sneakKeyHeld: Boolean,
+        minDelay: Int,
+        maxDelay: Int
+    ): EagleStep? {
+        val stub = CoreLink.stub ?: return null
+        val flags = stub.playerEagle(
+            player, target, onEdge, settingsMet, sneakKeyHeld, minDelay, maxDelay, nextTick()
+        ) ?: return null
+        return EagleStep(
+            press = flags and 1 != 0,
+            release = flags and 2 != 0,
+            autoSneakActive = flags and 4 != 0
+        )
+    }
 }
+
+/** What the core decided for one Eagle tick. */
+class EagleStep(
+    @JvmField val press: Boolean,
+    @JvmField val release: Boolean,
+    @JvmField val autoSneakActive: Boolean
+)
 
 private object OfflineAim : AimStrategy {
     override val name: String get() = "OfflineAim"

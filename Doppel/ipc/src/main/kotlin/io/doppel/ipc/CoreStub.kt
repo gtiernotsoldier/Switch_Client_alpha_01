@@ -711,6 +711,33 @@ class CoreStub(
         return decodeBool(f)
     }
 
+    /**
+     * Eagle's sneak machine: one call per tick.
+     *
+     * Returns packed flags — bit0 press, bit1 release, bit2 the core owns the
+     * sneak — or null on a miss. A null must mean "write nothing at all": a
+     * stale press would leave the sneak key down with nobody owning it, and a
+     * stale release would cancel a sneak the player is holding by hand.
+     */
+    fun playerEagle(
+        player: io.doppel.contract.model.PlayerState,
+        target: io.doppel.contract.model.TargetState?,
+        onEdge: Boolean,
+        settingsMet: Boolean,
+        sneakKeyHeld: Boolean,
+        minDelay: Int,
+        maxDelay: Int,
+        tick: Int
+    ): Int? {
+        val payload = genericRequest(
+            encodeSnapshot(player, target), Ops.PLAYER_EAGLE_TICK,
+            b(onEdge), b(settingsMet), b(sneakKeyHeld),
+            minDelay.toDouble(), maxDelay.toDouble()
+        )
+        val f = roundTrip(Wire.MODULE_PLAYER, payload, tick) ?: return null
+        return decodeScalar(f).toInt()
+    }
+
     private fun b(v: Boolean): Double = if (v) 1.0 else 0.0
 
     /**

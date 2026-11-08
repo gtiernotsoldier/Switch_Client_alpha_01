@@ -7,6 +7,7 @@ import io.doppel.adapter.common.module.Module
 import io.doppel.adapter.common.module.ModuleRegistry
 import io.doppel.adapter.common.module.Category
 import io.doppel.adapter.common.option.*
+import io.doppel.ipc.Strategies
 import kotlin.random.Random
 
 /**
@@ -19,7 +20,8 @@ import kotlin.random.Random
  *         posY - ((posY % 1.0 == 0.0) ? 1 : 0)
  *     — feet exactly on a block top → the block below; otherwise (slab/stair/snow layer) the block
  *     the feet are inside, i.e. the one actually carrying the player. (Doppel's platform hook does
- *     the edge query; see [EagleLogic] for the state machine that consumes it.)
+ *     the edge query; see `strategy::eagle` in `core-rs` for the state machine that consumes it —
+ *     the Kotlin oracle behind `EagleParityTest` is `io.doppel.core.strategy.player.EagleLogic`.)
  *  2. While the edge holds and its settings are met, the sneak key is pressed ONCE and the release
  *     delay is armed. Off the edge the delay is counted down and only then released.
  *  3. `setSneakState(false)` refuses to release while the player is physically holding the sneak key
@@ -80,9 +82,6 @@ object Eagle : Module("Eagle", Category.PLAYER) {
     /** Whether the sneak we are currently holding was pressed by this module (not by the player). */
     private var autoSneakActive: Boolean = false
 
-    /** Ticks left to keep sneaking after the player left the edge. */
-    private var unsneakDelayTicks: Int = 0
-
     /** Ticks left before the next AutoPlace right-click. */
     private var placeCooldownTicks: Int = 0
 
@@ -100,11 +99,11 @@ object Eagle : Module("Eagle", Category.PLAYER) {
      */
     private var placeUseOwned: Boolean = false
 
-    private val tickListener: (PlayerState, TargetState?) -> Unit = { p, _ ->
-        if (enabled) onTick(p)
+    private val tickListener: (PlayerState, TargetState?) -> Unit = { p, t ->
+        if (enabled) onTick(p, t)
     }
 
-    private fun onTick(player: PlayerState) {
+    private fun onTick(player: PlayerState, target: TargetState?) {
         // Raven: settingsMet() — the pitch gate. Evaluated before the edge so the sneak is released
         // the moment the gate stops being met, exactly like SafeWalk.
         val settingsMet = !onlyWhenLookingDown || player.rotation.pitch >= lookDownThreshold
@@ -121,25 +120,23 @@ object Eagle : Module("Eagle", Category.PLAYER) {
         // edge this tick.
         val onEdge = EventBridge.isOnBlockEdge()
 
-        val decision = EagleLogic.tick(
-            EagleLogic.Input(
-                onEdge = onEdge,
-                settingsMet = settingsMet,
-                sneakKeyHeld = sneakKeyHeld,
-                autoSneakActive = autoSneakActive,
-                unsneakDelayTicks = unsneakDelayTicks
-            ),
-            rollSneakDelay = { Random.nextInt(maxSneakTimeMin, maxSneakTimeMax + 1) }
+        val decision = Strategies.eagleTick(
+            player, target, onEdge, settingsMet, sneakKeyHeld,
+            minOf(maxSneakTimeMin, maxSneakTimeMax),
+            maxOf(maxSneakTimeMin, maxSneakTimeMax)
         )
 
-        if (decision.press) {
-            EventBridge.pressSneak()
-            markWorked() // HUD work flash — the module just acted (a transition, not the steady hold)
+        // No answer means the core is gone. Write nothing at all: pressing would
+        // leave a sneak nobody owns, and releasing would cancel one the player is
+        // holding by hand. A missed hold is recoverable; a stuck key is not.
+        if (decision != null) {
+            if (decision.press) {
+                EventBridge.pressSneak()
+                markWorked() // HUD work flash — the module just acted (a transition, not the steady hold)
+            }
+            if (decision.release) EventBridge.releaseSneak()
+            autoSneakActive = decision.autoSneakActive
         }
-        if (decision.release) EventBridge.releaseSneak()
-
-        autoSneakActive = decision.autoSneakActive
-        unsneakDelayTicks = decision.unsneakDelayTicks
 
         autoPlaceTick(player, onEdge)
     }
@@ -252,8 +249,9 @@ object Eagle : Module("Eagle", Category.PLAYER) {
 
     override fun onEnable() {
         autoSneakActive = false
-        unsneakDelayTicks = 0
         placeCooldownTicks = 0
+        // A fresh enable must not inherit a hold the core still believes it owns.
+        Strategies.resetPlayer()
         EventBridge.registerTickListener(tickListener)
     }
 
@@ -271,94 +269,10 @@ object Eagle : Module("Eagle", Category.PLAYER) {
             EventBridge.syntheticUse = false
             placeUseOwned = false
         }
+        Strategies.resetPlayer()
         autoSneakActive = false
-        unsneakDelayTicks = 0
         placeCooldownTicks = 0
         placeAiming = false
         placeAimTicks = 0
-    }
-}
-
-/**
- * Eagle's per-tick decision, split out of the module so it is pure and unit-testable.
- *
- * Mirrors Raven's `SafeWalk.onPreUpdate` + `setSneakState`:
- *  - settings not met            → release (unless the player holds the key), forget the delay;
- *  - on edge, nothing held       → press once, arm the release delay;
- *  - on edge, player already sneaking (their own key) → hands off, press nothing;
- *  - off edge, still holding     → count the delay down;
- *  - off edge, delay elapsed     → release, unless the player holds the key (Raven's isBindDown
- *                                  guard in setSneakState) — then keep holding and retry next tick.
- */
-object EagleLogic {
-
-    data class Input(
-        /** `onGround && isEdgeOfBlock()` — true when the block under the player's feet is air. */
-        val onEdge: Boolean,
-        /** The module's pitch gate (`OnlyWhenLookingDown`). */
-        val settingsMet: Boolean,
-        /** The player is physically holding the sneak key (a manual sneak we must not fight). */
-        val sneakKeyHeld: Boolean,
-        /** Whether the sneak currently held was pressed by this module. */
-        val autoSneakActive: Boolean,
-        /** Ticks left to keep sneaking after leaving the edge. */
-        val unsneakDelayTicks: Int
-    )
-
-    data class Decision(
-        /** Write the sneak key down this tick. */
-        val press: Boolean,
-        /** Write the sneak key up this tick. */
-        val release: Boolean,
-        val autoSneakActive: Boolean,
-        val unsneakDelayTicks: Int
-    )
-
-    /**
-     * @param rollSneakDelay invoked only when a fresh edge press arms the delay, so the caller's
-     *        randomness never advances while the module is idle.
-     */
-    fun tick(input: Input, rollSneakDelay: () -> Int): Decision {
-        // Gate off → let go immediately (Raven setSneakState(false) on !settingsMet) ...
-        if (!input.settingsMet) {
-            return Decision(
-                press = false,
-                release = input.autoSneakActive && !input.sneakKeyHeld,
-                autoSneakActive = false,
-                unsneakDelayTicks = 0
-            )
-        }
-
-        if (input.onEdge) {
-            // Already holding our own sneak — nothing to write.
-            if (input.autoSneakActive) {
-                return Decision(false, false, true, input.unsneakDelayTicks)
-            }
-            // The player is sneaking on their own: hands off, do not take ownership (so the later
-            // release can never write their key up).
-            if (input.sneakKeyHeld) {
-                return Decision(false, false, false, 0)
-            }
-            return Decision(
-                press = true,
-                release = false,
-                autoSneakActive = true,
-                unsneakDelayTicks = rollSneakDelay().coerceAtLeast(0)
-            )
-        }
-
-        // Off the edge and not holding anything → nothing to do.
-        if (!input.autoSneakActive) {
-            return Decision(false, false, false, 0)
-        }
-        if (input.unsneakDelayTicks > 0) {
-            return Decision(false, false, true, input.unsneakDelayTicks - 1)
-        }
-        // Raven: `if (!sneakState && Utils.isBindDown(keyBindSneak)) return;` — keep holding while
-        // the player holds the key themselves, and retry (with the delay spent) next tick.
-        if (input.sneakKeyHeld) {
-            return Decision(false, false, true, 0)
-        }
-        return Decision(press = false, release = true, autoSneakActive = false, unsneakDelayTicks = 0)
     }
 }

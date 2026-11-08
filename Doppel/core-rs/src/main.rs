@@ -995,5 +995,70 @@ fn emit_golden(dir: &str) -> Result<(), String> {    use std::fs;
     emit_aim_golden(dir, 0x0000_5EED_A1A1_0001)?;
     emit_click_golden(dir, 0x0000_5EED_C11C_0001)?;
     emit_movement_golden(dir)?;
+    emit_eagle_golden(dir)?;
+    Ok(())
+}
+
+/// Eagle's sneak machine, replayed over a fixed input sequence.
+///
+/// The roll is written into the input file instead of being drawn on both
+/// sides: the two RNGs (Pcg32 here, `kotlin.random` there) are not the same
+/// generator, and this fixture is about the state machine, not the stream.
+/// `rolls` in the expected file is the count the machine asked for — a port
+/// that rolls on an idle tick passes every other column and fails this one.
+fn emit_eagle_golden(dir: &str) -> Result<(), String> {
+    use std::fs;
+
+    let mut input = String::new();
+    input.push_str("# doppel-eagle-golden v1\n");
+    input.push_str("idx\ton_edge\tsettings_met\tsneak_held\troll\n");
+
+    let mut expected = String::new();
+    expected.push_str("# idx\tpress\trelease\tauto_active\tdelay\trolls\n");
+
+    let mut state = strategy::eagle::State::default();
+    let mut rng = Pcg32::new(0x0000_5EED_E461_0001);
+
+    for i in 0..300 {
+        // Skewed so every branch is hit: mostly on the edge, occasionally with
+        // the player holding their own key, occasionally with the pitch gate off.
+        let pick = rng.random_int(0, 99);
+        let on_edge = pick % 3 != 0;
+        let settings_met = pick % 11 != 0;
+        let sneak_held = pick % 5 == 0;
+        let roll = rng.random_int(1, 5);
+
+        input.push_str(&format!(
+            "{}\t{}\t{}\t{}\t{}\n",
+            i, on_edge as u8, settings_met as u8, sneak_held as u8, roll
+        ));
+
+        let mut rolls = 0;
+        let (d, next) = strategy::eagle::tick(
+            state,
+            strategy::eagle::Input {
+                on_edge,
+                settings_met,
+                sneak_key_held: sneak_held,
+            },
+            &mut || {
+                rolls += 1;
+                roll
+            },
+        );
+        state = next;
+        expected.push_str(&format!(
+            "{}\t{}\t{}\t{}\t{}\t{}\n",
+            i,
+            d.press as u8,
+            d.release as u8,
+            next.auto_sneak_active as u8,
+            next.unsneak_delay_ticks,
+            rolls
+        ));
+    }
+
+    fs::write(format!("{}/eagle_input.tsv", dir), input).map_err(|e| e.to_string())?;
+    fs::write(format!("{}/eagle_expected.tsv", dir), expected).map_err(|e| e.to_string())?;
     Ok(())
 }

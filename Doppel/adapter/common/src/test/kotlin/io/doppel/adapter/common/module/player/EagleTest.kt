@@ -3,142 +3,69 @@ package io.doppel.adapter.common.module.player
 import io.doppel.adapter.common.api.EventBridge
 import io.doppel.adapter.common.option.ConfigManager
 import io.doppel.contract.model.PlayerState
+import io.doppel.ipc.CoreLink
+import io.doppel.ipc.CoreStub
+import io.mockk.every
+import io.mockk.mockk
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
-import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 
 /**
- * Eagle — Raven's SafeWalk sneak branch.
+ * Eagle's wiring — the part that is still in this process.
  *
- * The decision machine ([EagleLogic]) carries the reference behaviour and is tested exhaustively;
- * the module tests pin the wiring around it (which EventBridge calls the decisions turn into, the
- * HUD work flash, and the state released on disable).
+ * The machine itself now lives in `core-rs` (`strategy::eagle`); its arithmetic
+ * is matched tick-for-tick against the Kotlin oracle in `EagleParityTest`. What
+ * is left here is everything the core cannot do: turning an answer into a key
+ * write, the HUD flash, the manual-sneak guard, and what happens when the core
+ * does not answer at all.
+ *
+ * The stand-in below reproduces the same state machine, so the hold-delay
+ * behaviour is still exercised end to end. It is a deliberate re-implementation
+ * rather than the oracle: if the two ever drift, the golden fixture is what
+ * notices.
  */
 class EagleTest {
 
-    // ================= Pure decision machine =================
-
-    private fun input(
-        onEdge: Boolean = false,
-        settingsMet: Boolean = true,
-        sneakKeyHeld: Boolean = false,
-        autoSneakActive: Boolean = false,
-        unsneakDelayTicks: Int = 0
-    ) = EagleLogic.Input(onEdge, settingsMet, sneakKeyHeld, autoSneakActive, unsneakDelayTicks)
-
-    @Test
-    fun `a fresh edge presses sneak once and arms the hold delay`() {
-        var rolls = 0
-        val d = EagleLogic.tick(input(onEdge = true)) { rolls++; 3 }
-        assertTrue(d.press, "the edge must press sneak")
-        assertFalse(d.release)
-        assertTrue(d.autoSneakActive, "the module now owns the sneak")
-        assertEquals(3, d.unsneakDelayTicks)
-        assertEquals(1, rolls, "the delay is rolled exactly once, when the press happens")
-    }
-
-    @Test
-    fun `holding the edge keeps sneaking without pressing again`() {
-        var rolls = 0
-        val d = EagleLogic.tick(input(onEdge = true, autoSneakActive = true, unsneakDelayTicks = 3)) {
-            rolls++
-            1
-        }
-        assertFalse(d.press, "the key is already down")
-        assertFalse(d.release)
-        assertTrue(d.autoSneakActive)
-        assertEquals(3, d.unsneakDelayTicks, "the delay is not re-armed while the edge holds")
-        assertEquals(0, rolls)
-    }
-
-    @Test
-    fun `leaving the edge keeps the sneak for the armed delay and only then releases`() {
-        // Raven's unsneakDelayTicks countdown: delay-1 remaining ticks of hold, then the release.
-        var d = EagleLogic.tick(input(autoSneakActive = true, unsneakDelayTicks = 2)) { 0 }
-        assertFalse(d.release, "still inside the hold")
-        assertEquals(1, d.unsneakDelayTicks)
-
-        d = EagleLogic.tick(input(autoSneakActive = true, unsneakDelayTicks = 1)) { 0 }
-        assertFalse(d.release, "last held tick")
-        assertEquals(0, d.unsneakDelayTicks)
-
-        d = EagleLogic.tick(input(autoSneakActive = true, unsneakDelayTicks = 0)) { 0 }
-        assertTrue(d.release, "the hold is over")
-        assertFalse(d.autoSneakActive)
-    }
-
-    @Test
-    fun `a zero hold delay releases on the first tick off the edge`() {
-        val d = EagleLogic.tick(input(autoSneakActive = true, unsneakDelayTicks = 0)) { 0 }
-        assertTrue(d.release)
-        assertFalse(d.autoSneakActive)
-        assertEquals(0, d.unsneakDelayTicks)
-    }
-
-    @Test
-    fun `an idle module does nothing off the edge`() {
-        var rolls = 0
-        val d = EagleLogic.tick(input()) { rolls++; 1 }
-        assertFalse(d.press)
-        assertFalse(d.release)
-        assertFalse(d.autoSneakActive)
-        assertEquals(0, rolls)
-    }
-
-    @Test
-    fun `a player sneaking on their own is never fought`() {
-        // Press: the player already holds the key, so the module does not press and does not take
-        // ownership — which is what makes the later release a no-op for their key.
-        val pressed = EagleLogic.tick(input(onEdge = true, sneakKeyHeld = true)) { 5 }
-        assertFalse(pressed.press)
-        assertFalse(pressed.autoSneakActive, "never claim a sneak we did not press")
-        assertFalse(pressed.release)
-
-        // And off the edge it still may not release anything.
-        assertFalse(EagleLogic.tick(input(sneakKeyHeld = true)) { 0 }.release)
-    }
-
-    @Test
-    fun `a held sneak key blocks the release until the player lets go`() {
-        // Raven's `if (!sneakState && Utils.isBindDown(keyBindSneak)) return;`
-        val blocked = EagleLogic.tick(
-            input(sneakKeyHeld = true, autoSneakActive = true, unsneakDelayTicks = 0)
-        ) { 0 }
-        assertFalse(blocked.release, "releasing here would cancel the player's own sneak")
-        assertTrue(blocked.autoSneakActive, "keep holding and retry")
-        assertEquals(0, blocked.unsneakDelayTicks)
-
-        val released = EagleLogic.tick(
-            input(sneakKeyHeld = false, autoSneakActive = true, unsneakDelayTicks = 0)
-        ) { 0 }
-        assertTrue(released.release, "once the player let go, the module releases its own press")
-    }
-
-    @Test
-    fun `failing the settings gate releases immediately and forgets the delay`() {
-        val d = EagleLogic.tick(
-            input(settingsMet = false, onEdge = true, autoSneakActive = true, unsneakDelayTicks = 4)
-        ) { 9 }
-        assertTrue(d.release)
-        assertFalse(d.autoSneakActive)
-        assertEquals(0, d.unsneakDelayTicks)
-    }
-
-    @Test
-    fun `failing the settings gate still spares a key the player holds`() {
-        val d = EagleLogic.tick(input(settingsMet = false, sneakKeyHeld = true, autoSneakActive = true)) { 0 }
-        assertFalse(d.release)
-        assertFalse(d.autoSneakActive, "we let go of ownership but not of their key")
-    }
-
-    // ================= Module wiring =================
+    private lateinit var core: CoreStub
 
     private var onEdge = false
     private var presses = 0
     private var releases = 0
+
+    /** Core-side memory, mirrored so the mock can answer like the real thing. */
+    private var coreOwns = false
+    private var coreDelay = 0
+
+    /**
+     * `strategy::eagle::tick`, packed the way the wire packs it:
+     * bit0 press, bit1 release, bit2 "the core owns the sneak".
+     */
+    private fun step(onEdge: Boolean, settingsMet: Boolean, sneakHeld: Boolean): Int {
+        if (!settingsMet) {
+            val release = coreOwns && !sneakHeld
+            coreOwns = false
+            coreDelay = 0
+            return if (release) 2 else 0
+        }
+        if (onEdge) {
+            if (coreOwns) return 4
+            if (sneakHeld) return 0
+            coreOwns = true
+            coreDelay = 1 // MaxSneakTimeMin == MaxSneakTimeMax == 1 in these tests
+            return 1 or 4
+        }
+        if (!coreOwns) return 0
+        if (coreDelay > 0) {
+            coreDelay--
+            return 4
+        }
+        if (sneakHeld) return 4
+        coreOwns = false
+        return 2
+    }
 
     @BeforeEach
     fun setUp() {
@@ -146,6 +73,17 @@ class EagleTest {
         presses = 0
         releases = 0
         onEdge = false
+        coreOwns = false
+        coreDelay = 0
+
+        core = mockk(relaxed = true)
+        every {
+            core.playerEagle(any(), any(), any(), any(), any(), any(), any(), any())
+        } answers {
+            step(arg(2), arg(3), arg(4))
+        }
+        CoreLink.stub = core
+
         EventBridge.registerEdgeDetector { onEdge }
         EventBridge.registerPressSneakHandler { presses++ }
         EventBridge.registerReleaseSneakHandler { releases++ }
@@ -160,6 +98,7 @@ class EagleTest {
     @AfterEach
     fun tearDown() {
         Eagle.disable()
+        CoreLink.stub = null
         EventBridge.reset()
         // The option store is process-global: put Eagle's declared defaults back for other tests.
         ConfigManager.set("Eagle.MaxSneakTimeMin", 1)
@@ -228,5 +167,36 @@ class EagleTest {
 
         EventBridge.onTick(player(pitch = 60f), null)
         assertEquals(1, presses, "looking down past the threshold engages")
+    }
+
+    @Test
+    fun `a missing answer writes no key state at all`() {
+        // The core is gone mid-session. Pressing would arm a sneak nobody owns;
+        // releasing would cancel one the player is holding by hand. Doing nothing
+        // is the only safe direction, even though it costs the hold.
+        every {
+            core.playerEagle(any(), any(), any(), any(), any(), any(), any(), any())
+        } returns null
+
+        onEdge = true
+        EventBridge.onTick(player(), null)
+
+        assertEquals(0, presses, "no press without an answer")
+        assertEquals(0, releases, "no release without an answer")
+
+        Eagle.disable()
+        assertEquals(0, releases, "and nothing to release on disable either")
+    }
+
+    @Test
+    fun `enabling and disabling both forget the core's sneak state`() {
+        // A hold that survives a disable would be released later by a module that
+        // no longer owns it — the player's own sneak is the thing that gets hit.
+        var resets = 0
+        every { core.reset(any()) } answers { resets++ }
+
+        Eagle.disable()
+        Eagle.enable()
+        assertTrue(resets >= 2, "both transitions must reset the player module, saw $resets")
     }
 }

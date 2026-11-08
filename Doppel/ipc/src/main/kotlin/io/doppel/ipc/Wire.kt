@@ -83,6 +83,7 @@ object Wire {
     const val MODULE_TAP = 5
     const val MODULE_COMBAT = 6
     const val MODULE_REACH = 7
+    const val MODULE_PLAYER = 8
 
     // actions
     const val ACTION_NOOP = 0
@@ -400,6 +401,9 @@ object Ops {
 
     // reach
     const val REACH_INTERSECT = 0   // minX..maxZ, originX..Z, dirX..Z, maxDist
+
+    // player
+    const val PLAYER_EAGLE_TICK = 0 // onEdge, settingsMet, sneakKeyHeld, minDelay, maxDelay → flags
 }
 
 /** Aim's answer, decoded. */

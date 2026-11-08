@@ -18,6 +18,7 @@ use crate::codec::{self, op, ClickConfigKind};
 use crate::model::*;
 use crate::rng::Pcg32;
 use crate::strategy::aim::{self, AimConfig, AimState};
+use crate::strategy::click_assist;
 use crate::strategy::click::{self, ClickConfig, ClickState, CooldownClickConfig, CritState};
 use crate::strategy::backtrack;
 use crate::strategy::combat::{self, BlockArbiterState, PredictorConfig, PredictorState, RangeGateConfig, RangeGateState};
@@ -70,6 +71,8 @@ pub struct Session {
     pub rng_kbd: Pcg32,
     /// Reach's chance roll and distance jitter.
     pub rng_reach: Pcg32,
+    /// ClickAssist's chance roll and `Random` mode.
+    pub rng_click_assist: Pcg32,
     pub config: VelocityConfig,
     pub velocity: velocity::State,
 
@@ -100,6 +103,9 @@ pub struct Session {
 
     /// Reach: the press counter and the cooldown.
     pub reach_sample: reach_sample::State,
+
+    /// ClickAssist: the 500 ms edge history behind the "above 5 CPS" gate.
+    pub click_assist: click_assist::State,
 
     pub ticks: u64,
     pub decisions: u64,
@@ -136,6 +142,7 @@ impl Session {
             rng_backtrack: Pcg32::new(seed),
             rng_kbd: Pcg32::new(seed),
             rng_reach: Pcg32::new(seed),
+            rng_click_assist: Pcg32::new(seed),
             config: VelocityConfig::default(),
             velocity: velocity::State::new(),
             aim_config: AimConfig::default(),
@@ -153,6 +160,7 @@ impl Session {
             backtrack: backtrack::State::new(),
             kbd: knockback_displace::State::new(),
             reach_sample: reach_sample::State::new(),
+            click_assist: click_assist::State::new(),
             ticks: 0,
             decisions: 0,
             degraded: 0,
@@ -220,6 +228,7 @@ impl Session {
                 self.backtrack = backtrack::State::new();
                 self.kbd = knockback_displace::State::new();
                 self.reach_sample = reach_sample::State::new();
+                self.click_assist = click_assist::State::new();
             }
         }
         Frame::new(Kind::Reset, frame.header.seq, frame.header.tick, module)
@@ -985,6 +994,26 @@ impl Session {
                         Module::Player,
                         WireAction::Scalar,
                         d,
+                    ))
+                }
+                op::PLAYER_CLICK_ASSIST => {
+                    let input = click_assist::Input {
+                        now_ns: req.arg(0)? as i64,
+                        flags: req.arg(1)? as u32,
+                        probability: req.i32(2)?,
+                        mode: click_assist::Mode::from_u8(req.arg(3)? as u8),
+                    };
+                    let extra = click_assist::evaluate(
+                        &mut self.click_assist,
+                        input,
+                        &mut self.rng_click_assist,
+                    );
+                    Ok(codec::encode_scalar(
+                        seq,
+                        tick,
+                        Module::Player,
+                        WireAction::Scalar,
+                        extra as f64,
                     ))
                 }
                 _ => Err(Status::BadPayload),

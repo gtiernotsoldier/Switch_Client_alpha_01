@@ -532,6 +532,27 @@ object Strategies {
             hitThroughBlocks, lookingAtBlock, reachMin, reachMax, nextTick()
         )
     }
+
+    /**
+     * ClickAssist: how many extra clicks a physical press earns (0, 1 or 2).
+     *
+     * `null` means the core did not answer; the caller must add nothing.
+     * Guessing here would fire a real OS mouse event on a press the core never
+     * approved.
+     */
+    fun clickAssist(
+        player: PlayerState,
+        target: TargetState?,
+        nowNs: Long,
+        flags: Int,
+        probability: Int,
+        mode: Int
+    ): Int? {
+        val stub = CoreLink.stub ?: return null
+        return stub.playerClickAssist(
+            player, target, nowNs, flags, probability, mode, nextTick()
+        )?.toInt()
+    }
 }
 
 /** What the core decided for one Eagle tick. */
@@ -539,7 +560,9 @@ class EagleStep(
     @JvmField val press: Boolean,
     @JvmField val release: Boolean,
     @JvmField val autoSneakActive: Boolean
-)private object OfflineAim : AimStrategy {
+)
+
+private object OfflineAim : AimStrategy {
     override val name: String get() = "OfflineAim"
     override fun execute(config: AimConfig, state: AimStrategy.State, input: Any) = AimResult.Skip
 }

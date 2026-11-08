@@ -4,6 +4,7 @@
 pub mod aim;
 pub mod backtrack;
 pub mod click;
+pub mod click_assist;
 pub mod combat;
 pub mod eagle;
 pub mod knockback_displace;

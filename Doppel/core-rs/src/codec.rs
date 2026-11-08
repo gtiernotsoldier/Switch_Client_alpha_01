@@ -891,6 +891,14 @@ pub mod op {
     ///                 delay_ms, hit_through_blocks, looking_at_block,
     ///                 reach_min, reach_max)` → distance, or 0 for "leave it alone".
     pub const PLAYER_REACH_SAMPLE: u8 = 3;
+
+    /// player/click_assist: `evaluate(now_ns, flags, probability, mode)`
+    ///                       → extra clicks (0, 1 or 2).
+    ///
+    /// The thirteen predicates travel packed in `flags` — see
+    /// `strategy::click_assist::flags` — because the argument vector tops out
+    /// well below sixteen on a 352-byte payload.
+    pub const PLAYER_CLICK_ASSIST: u8 = 4;
 }
 
 /// Maps a side to the wire's 0/1.
@@ -984,6 +992,7 @@ pub fn known_ops(module: Module) -> &'static [u8] {
             op::PLAYER_BACKTRACK_TICK,
             op::PLAYER_KBD_ATTACK,
             op::PLAYER_REACH_SAMPLE,
+            op::PLAYER_CLICK_ASSIST,
         ],
         Module::Velocity => &[op::VEL_BRACE, op::VEL_DELAY_ENQUEUE, op::VEL_DELAY_PUMP],
         _ => &[],

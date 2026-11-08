@@ -833,6 +833,30 @@ class CoreStub(
         return decodeScalar(f)
     }
 
+    /**
+     * ClickAssist: evaluate one physical press. Returns how many extra clicks
+     * to emit (0, 1 or 2).
+     *
+     * The 500 ms edge history and both rolls live in the core; the caller only
+     * reports the thirteen predicates as a bit field and the configured mode.
+     */
+    fun playerClickAssist(
+        player: io.doppel.contract.model.PlayerState,
+        target: io.doppel.contract.model.TargetState?,
+        nowNs: Long,
+        flags: Int,
+        probability: Int,
+        mode: Int,
+        tick: Int
+    ): Double? {
+        val payload = genericRequest(
+            encodeSnapshot(player, target), Ops.PLAYER_CLICK_ASSIST,
+            nowNs.toDouble(), flags.toDouble(), probability.toDouble(), mode.toDouble()
+        )
+        val f = roundTrip(Wire.MODULE_PLAYER, payload, tick) ?: return null
+        return decodeScalar(f)
+    }
+
     private fun b(v: Boolean): Double = if (v) 1.0 else 0.0
 
     /**

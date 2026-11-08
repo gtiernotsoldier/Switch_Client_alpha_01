@@ -407,6 +407,31 @@ object Ops {
     const val PLAYER_BACKTRACK_TICK = 1 // nowNs, modern, pulse, smart, minMs, maxMs, distance, legacyDistance, mustRelease → bool
     const val PLAYER_KBD_ATTACK = 2     // nowNs, direction, useLastStrafe, cooldownMs, angle, notTakingKb, velocityTick, keyLeft, keyRight → degrees
     const val PLAYER_REACH_SAMPLE = 3   // nowNs, conditionsOk, guiOpen, chance, hitPer, delayMs, hitThroughBlocks, lookingAtBlock, min, max → distance
+    const val PLAYER_CLICK_ASSIST = 4   // nowNs, flags, probability, mode → extra clicks (0..2)
+}
+
+/**
+ * Bit layout shared with `strategy::click_assist::flags` on the Rust side.
+ *
+ * Kept next to the op that carries it, not in the module: two layouts would
+ * disagree about which bit means `onlyAimingEntity`, and that disagreement
+ * would show up as extra clicks on presses that should have been ignored —
+ * with nothing in the logs to explain it.
+ */
+object ClickAssistFlag {
+    const val RIGHT_BUTTON = 1 shl 0
+    const val GUI_OPEN = 1 shl 1
+    const val USING_ITEM = 1 shl 2
+    const val BLOCKING = 1 shl 3
+    const val IS_WEAPON = 1 shl 4
+    const val HAS_TARGET = 1 shl 5
+    const val LOOKING_AT_BLOCK = 1 shl 6
+    const val LEFT_ENABLED = 1 shl 7
+    const val RIGHT_ENABLED = 1 shl 8
+    const val WEAPONS_ONLY = 1 shl 9
+    const val ONLY_AIMING_ENTITY = 1 shl 10
+    const val ONLY_BLOCKS = 1 shl 11
+    const val ABOVE_5_CPS = 1 shl 12
 }
 
 /** Aim's answer, decoded. */

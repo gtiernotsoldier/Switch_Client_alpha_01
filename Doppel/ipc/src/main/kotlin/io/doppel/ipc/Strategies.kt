@@ -504,6 +504,34 @@ object Strategies {
             notTakingKnockback, velocityThisTick, keyLeft, keyRight, nextTick()
         )
     }
+
+    /**
+     * Reach: sample one press.
+     *
+     * `null` means the core did not answer; the caller must leave the press
+     * alone. Extending reach without being told to is the one thing this module
+     * must never do by accident.
+     */
+    fun reachSample(
+        player: PlayerState,
+        target: TargetState?,
+        nowNs: Long,
+        conditionsOk: Boolean,
+        guiOpen: Boolean,
+        chance: Int,
+        hitPer: Int,
+        delayMs: Int,
+        hitThroughBlocks: Boolean,
+        lookingAtBlock: Boolean,
+        reachMin: Float,
+        reachMax: Float
+    ): Double? {
+        val stub = CoreLink.stub ?: return null
+        return stub.playerReachSample(
+            player, target, nowNs, conditionsOk, guiOpen, chance, hitPer, delayMs,
+            hitThroughBlocks, lookingAtBlock, reachMin, reachMax, nextTick()
+        )
+    }
 }
 
 /** What the core decided for one Eagle tick. */

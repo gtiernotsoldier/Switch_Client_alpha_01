@@ -2,6 +2,7 @@ package io.doppel.adapter.common.module.combat
 
 import io.doppel.contract.model.PlayerState
 import io.doppel.contract.model.TargetState
+import io.doppel.ipc.Strategies
 import io.doppel.contract.strategy.click.WeaponType
 import io.doppel.adapter.common.api.EventBridge
 import io.doppel.adapter.common.module.HudLineProvider
@@ -11,7 +12,6 @@ import io.doppel.adapter.common.option.boolean
 import io.doppel.adapter.common.option.float
 import io.doppel.adapter.common.option.int
 import io.doppel.adapter.common.option.triggerOptions
-import kotlin.random.Random
 
 /**
  * Reach — dynamically extend attack range (Raven raycast model).
@@ -78,10 +78,15 @@ object Reach : Module("Reach", Category.COMBAT), HudLineProvider {
     private var prevLeft = false
     /** Distance currently applied for this press, or 0.0 when no extension is active. */
     private var armedReach = 0.0
-    /** Presses counted so far; the extension fires when this reaches hitPer. */
-    private var clickCount = 0
-    /** Timestamp of the last extension, for the Delay cooldown. */
-    private var lastExtendNano = 0L
+
+    /**
+     * Last tick's player snapshot.
+     *
+     * The advisor runs on the render thread, where no state object is handed in.
+     * A tick-old snapshot is enough: the request only needs a well-formed frame,
+     * and the core does not read the player for this op.
+     */
+    @Volatile private var latestPlayer: PlayerState? = null
 
     /**
      * Player-dependent gates (weapon / moving / sprint), refreshed on the 20Hz tick where a
@@ -111,34 +116,32 @@ object Reach : Module("Reach", Category.COMBAT), HudLineProvider {
 
     /** Apply the gates once per press; returns the distance to use, or 0.0 to skip this press. */
     private fun sampleReach(): Double {
-        if (!conditionsOk) return 0.0
-        // A screen is open: the player is not fighting, and clicks are handled by the GUI.
-        if (EventBridge.isGuiOpen) return 0.0
-        if (chance < 100 && Random.nextInt(100) >= chance) return 0.0
+        // Every gate, the throttle and the cooldown live in the core now; this
+        // side supplies the inputs and decides nothing.
+        val d = Strategies.reachSample(
+            latestPlayer ?: return 0.0,
+            null,
+            System.nanoTime(),
+            conditionsOk,
+            EventBridge.isGuiOpen,
+            chance,
+            hitPer,
+            delayMs,
+            hitThroughBlocks,
+            EventBridge.isLookingAtBlock,
+            reachMin,
+            reachMax
+        ) ?: return 0.0
 
-        // HitPer throttle: extend only every N presses.
-        clickCount++
-        if (clickCount < hitPer) return 0.0
-        clickCount = 0
-
-        // Delay cooldown: skip if we extended too recently.
-        val now = System.nanoTime()
-        if (delayMs > 0 && now - lastExtendNano < delayMs * 1_000_000L) return 0.0
-
-        // Hit-through-blocks: skip extension when the crosshair currently hits a block.
-        if (!hitThroughBlocks && EventBridge.isLookingAtBlock) return 0.0
-
-        lastExtendNano = now
-        markWorked() // the HUD row flashes on the attack whose reach was actually extended
-        return if (reachMax > reachMin) {
-            (reachMin + Random.nextFloat() * (reachMax - reachMin)).toDouble()
-        } else {
-            reachMin.toDouble()
-        }
+        // A missing answer leaves the press alone: extending reach without being
+        // told to is the one thing this module must never do by accident.
+        if (d > 0.0) markWorked() // the HUD row flashes on the press it actually extended
+        return d
     }
 
     // ========== Tick Listener (player-dependent gates only) ==========
     private val tickListener: (PlayerState, TargetState?) -> Unit = { p, _ ->
+        latestPlayer = p
         conditionsOk = enabled &&
             (!weaponOnly || p.weaponType != WeaponType.OTHER) &&
             (!movingOnly || p.isMoving) &&
@@ -149,9 +152,8 @@ object Reach : Module("Reach", Category.COMBAT), HudLineProvider {
     override fun onEnable() {
         prevLeft = false
         armedReach = 0.0
-        clickCount = 0
-        lastExtendNano = 0L
         conditionsOk = true
+        Strategies.resetPlayer()
         EventBridge.registerTickListener(tickListener)
         EventBridge.registerReachFrameAdvisor(frameAdvisor)
     }
@@ -161,7 +163,8 @@ object Reach : Module("Reach", Category.COMBAT), HudLineProvider {
         EventBridge.registerReachFrameAdvisor(null)
         prevLeft = false
         armedReach = 0.0
-        clickCount = 0
         conditionsOk = false
+        latestPlayer = null
+        Strategies.resetPlayer()
     }
 }

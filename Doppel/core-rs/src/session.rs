@@ -23,6 +23,7 @@ use crate::strategy::backtrack;
 use crate::strategy::combat::{self, BlockArbiterState, PredictorConfig, PredictorState, RangeGateConfig, RangeGateState};
 use crate::strategy::eagle;
 use crate::strategy::knockback_displace;
+use crate::strategy::reach_sample;
 use crate::strategy::movement::{self, SocdResolver};
 use crate::strategy::reach;
 use crate::strategy::tap::{self, TapStateMachine};
@@ -67,6 +68,8 @@ pub struct Session {
     pub rng_backtrack: Pcg32,
     /// KnockbackDisplace's `Random` direction.
     pub rng_kbd: Pcg32,
+    /// Reach's chance roll and distance jitter.
+    pub rng_reach: Pcg32,
     pub config: VelocityConfig,
     pub velocity: velocity::State,
 
@@ -94,6 +97,9 @@ pub struct Session {
 
     /// KnockbackDisplace: the last flick time and the last strafe side.
     pub kbd: knockback_displace::State,
+
+    /// Reach: the press counter and the cooldown.
+    pub reach_sample: reach_sample::State,
 
     pub ticks: u64,
     pub decisions: u64,
@@ -129,6 +135,7 @@ impl Session {
             rng_player: Pcg32::new(seed),
             rng_backtrack: Pcg32::new(seed),
             rng_kbd: Pcg32::new(seed),
+            rng_reach: Pcg32::new(seed),
             config: VelocityConfig::default(),
             velocity: velocity::State::new(),
             aim_config: AimConfig::default(),
@@ -145,6 +152,7 @@ impl Session {
             eagle: eagle::State::default(),
             backtrack: backtrack::State::new(),
             kbd: knockback_displace::State::new(),
+            reach_sample: reach_sample::State::new(),
             ticks: 0,
             decisions: 0,
             degraded: 0,
@@ -211,6 +219,7 @@ impl Session {
                 self.eagle = eagle::State::default();
                 self.backtrack = backtrack::State::new();
                 self.kbd = knockback_displace::State::new();
+                self.reach_sample = reach_sample::State::new();
             }
         }
         Frame::new(Kind::Reset, frame.header.seq, frame.header.tick, module)
@@ -950,6 +959,32 @@ impl Session {
                         Module::Player,
                         WireAction::Scalar,
                         offset as f64,
+                    ))
+                }
+                op::PLAYER_REACH_SAMPLE => {
+                    let input = reach_sample::Input {
+                        now_ns: req.arg(0)? as i64,
+                        conditions_ok: req.bool(1)?,
+                        gui_open: req.bool(2)?,
+                        chance: req.i32(3)?,
+                        hit_per: req.i32(4)?,
+                        delay_ms: req.i32(5)?,
+                        hit_through_blocks: req.bool(6)?,
+                        looking_at_block: req.bool(7)?,
+                        reach_min: req.f32(8)?,
+                        reach_max: req.f32(9)?,
+                    };
+                    let d = reach_sample::sample(
+                        &mut self.reach_sample,
+                        input,
+                        &mut self.rng_reach,
+                    );
+                    Ok(codec::encode_scalar(
+                        seq,
+                        tick,
+                        Module::Player,
+                        WireAction::Scalar,
+                        d,
                     ))
                 }
                 _ => Err(Status::BadPayload),

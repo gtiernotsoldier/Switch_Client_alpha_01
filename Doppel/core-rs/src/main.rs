@@ -998,6 +998,7 @@ fn emit_golden(dir: &str) -> Result<(), String> {    use std::fs;
     emit_eagle_golden(dir)?;
     emit_backtrack_golden(dir)?;
     emit_kbd_golden(dir)?;
+    emit_reach_golden(dir)?;
     Ok(())
 }
 
@@ -1224,5 +1225,83 @@ fn emit_kbd_golden(dir: &str) -> Result<(), String> {
 
     fs::write(format!("{}/kbd_input.tsv", dir), input).map_err(|e| e.to_string())?;
     fs::write(format!("{}/kbd_expected.tsv", dir), expected).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Reach's sampling gates, with the randomness held still.
+///
+/// `chance` is always 100 and `reach_min == reach_max`, which is exactly the
+/// path where the function draws nothing from the RNG. That makes the fixture a
+/// test of the gate order — throttle, cooldown, blocks — rather than of the two
+/// generators agreeing, which they cannot be made to do.
+fn emit_reach_golden(dir: &str) -> Result<(), String> {
+    use std::fs;
+
+    let mut input = String::new();
+    input.push_str("# doppel-reach-golden v1\n");
+    input.push_str(
+        "idx\tnow_ns\tconditions_ok\tgui_open\tchance\thit_per\tdelay_ms\thit_through_blocks\tlooking_at_block\treach_min\treach_max\n",
+    );
+
+    let mut expected = String::new();
+    expected.push_str("# idx\tdistance_bits\n");
+
+    let mut state = strategy::reach_sample::State::new();
+    let mut rng = Pcg32::new(0x0000_5EED_EAC4_0001);
+    let mut now: i64 = 1_000_000_000;
+
+    for i in 0..300 {
+        now += 120_000_000; // 120 ms between presses
+
+        let pick = rng.random_int(0, 99);
+        let conditions_ok = pick % 8 != 0;
+        let gui_open = pick % 17 == 0;
+        let hit_per = match pick % 5 {
+            0 => 1,
+            1 => 2,
+            2 => 3,
+            _ => 1,
+        };
+        let delay_ms = if pick % 3 == 0 { 250 } else { 0 };
+        let hit_through_blocks = pick % 4 != 0;
+        let looking_at_block = pick % 6 == 0;
+        let reach_min = 3.0f32;
+
+        input.push_str(&format!(
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+            i,
+            now,
+            conditions_ok as u8,
+            gui_open as u8,
+            100,
+            hit_per,
+            delay_ms,
+            hit_through_blocks as u8,
+            looking_at_block as u8,
+            reach_min,
+            reach_min
+        ));
+
+        let d = strategy::reach_sample::sample(
+            &mut state,
+            strategy::reach_sample::Input {
+                now_ns: now,
+                conditions_ok,
+                gui_open,
+                chance: 100,
+                hit_per,
+                delay_ms,
+                hit_through_blocks,
+                looking_at_block,
+                reach_min,
+                reach_max: reach_min,
+            },
+            &mut rng,
+        );
+        expected.push_str(&format!("{}\t{:016x}\n", i, d.to_bits()));
+    }
+
+    fs::write(format!("{}/reach_input.tsv", dir), input).map_err(|e| e.to_string())?;
+    fs::write(format!("{}/reach_expected.tsv", dir), expected).map_err(|e| e.to_string())?;
     Ok(())
 }

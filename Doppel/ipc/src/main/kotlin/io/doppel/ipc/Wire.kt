@@ -406,6 +406,7 @@ object Ops {
     const val PLAYER_EAGLE_TICK = 0     // onEdge, settingsMet, sneakKeyHeld, minDelay, maxDelay → flags
     const val PLAYER_BACKTRACK_TICK = 1 // nowNs, modern, pulse, smart, minMs, maxMs, distance, legacyDistance, mustRelease → bool
     const val PLAYER_KBD_ATTACK = 2     // nowNs, direction, useLastStrafe, cooldownMs, angle, notTakingKb, velocityTick, keyLeft, keyRight → degrees
+    const val PLAYER_REACH_SAMPLE = 3   // nowNs, conditionsOk, guiOpen, chance, hitPer, delayMs, hitThroughBlocks, lookingAtBlock, min, max → distance
 }
 
 /** Aim's answer, decoded. */

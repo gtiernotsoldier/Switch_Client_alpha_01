@@ -886,6 +886,11 @@ pub mod op {
     ///                              velocity_this_tick, key_left, key_right)`
     ///                              → yaw offset in degrees (0 = no flick).
     pub const PLAYER_KBD_ATTACK: u8 = 2;
+
+    /// player/reach: `sample(now_ns, conditions_ok, gui_open, chance, hit_per,
+    ///                 delay_ms, hit_through_blocks, looking_at_block,
+    ///                 reach_min, reach_max)` → distance, or 0 for "leave it alone".
+    pub const PLAYER_REACH_SAMPLE: u8 = 3;
 }
 
 /// Maps a side to the wire's 0/1.
@@ -978,6 +983,7 @@ pub fn known_ops(module: Module) -> &'static [u8] {
             op::PLAYER_EAGLE_TICK,
             op::PLAYER_BACKTRACK_TICK,
             op::PLAYER_KBD_ATTACK,
+            op::PLAYER_REACH_SAMPLE,
         ],
         Module::Velocity => &[op::VEL_BRACE, op::VEL_DELAY_ENQUEUE, op::VEL_DELAY_PUMP],
         _ => &[],

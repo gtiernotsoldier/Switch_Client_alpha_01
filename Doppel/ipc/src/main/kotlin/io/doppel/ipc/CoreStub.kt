@@ -800,6 +800,39 @@ class CoreStub(
         return decodeScalar(f).toFloat()
     }
 
+    /**
+     * Reach: sample one press. Returns the distance to use, or 0.0 to leave the
+     * press alone.
+     *
+     * The throttle counter and the cooldown live in the core; the caller only
+     * reports the gates and the configured range.
+     */
+    fun playerReachSample(
+        player: io.doppel.contract.model.PlayerState,
+        target: io.doppel.contract.model.TargetState?,
+        nowNs: Long,
+        conditionsOk: Boolean,
+        guiOpen: Boolean,
+        chance: Int,
+        hitPer: Int,
+        delayMs: Int,
+        hitThroughBlocks: Boolean,
+        lookingAtBlock: Boolean,
+        reachMin: Float,
+        reachMax: Float,
+        tick: Int
+    ): Double? {
+        val payload = genericRequest(
+            encodeSnapshot(player, target), Ops.PLAYER_REACH_SAMPLE,
+            nowNs.toDouble(), b(conditionsOk), b(guiOpen),
+            chance.toDouble(), hitPer.toDouble(), delayMs.toDouble(),
+            b(hitThroughBlocks), b(lookingAtBlock),
+            reachMin.toDouble(), reachMax.toDouble()
+        )
+        val f = roundTrip(Wire.MODULE_PLAYER, payload, tick) ?: return null
+        return decodeScalar(f)
+    }
+
     private fun b(v: Boolean): Double = if (v) 1.0 else 0.0
 
     /**

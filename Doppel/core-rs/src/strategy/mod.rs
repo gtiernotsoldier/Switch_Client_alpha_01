@@ -9,5 +9,6 @@ pub mod eagle;
 pub mod knockback_displace;
 pub mod movement;
 pub mod reach;
+pub mod reach_sample;
 pub mod tap;
 pub mod velocity;

@@ -54,12 +54,9 @@ object Strategies {
      * reads the tick for logic, so a plain counter is enough — it does not have
      * to agree with the game's tick counter.
      */
-    private var sequence = 0
+    private val sequence = java.util.concurrent.atomic.AtomicInteger(0)
 
-    private fun nextTick(): Int {
-        sequence += 1
-        return sequence
-    }
+    private fun nextTick(): Int = sequence.incrementAndGet()
 
     fun aim(): AimStrategy {
         val stub = CoreLink.stub ?: return OfflineAim
@@ -552,6 +549,61 @@ object Strategies {
         return stub.playerClickAssist(
             player, target, nowNs, flags, probability, mode, nextTick()
         )?.toInt()
+    }
+
+    /**
+     * HitSelect, tick half. `null` means the core did not answer; the adapter
+     * must then simply not fire a counter-attack this tick.
+     */
+    fun hitTick(
+        player: PlayerState,
+        target: TargetState?,
+        nowNs: Long,
+        canCrit: Boolean,
+        playerHurtTime: Int,
+        leftMouseDown: Boolean,
+        hasTarget: Boolean,
+        targetId: Int,
+        targetHurtTime: Int,
+        counterHit: Boolean,
+        counterCdMs: Int
+    ): Boolean? {
+        val stub = CoreLink.stub ?: return null
+        return stub.playerHitTick(
+            player, target, nowNs, canCrit, playerHurtTime, leftMouseDown,
+            hasTarget, targetId, targetHurtTime, counterHit, counterCdMs, nextTick()
+        )
+    }
+
+    /**
+     * HitSelect, gate half.
+     *
+     * `null` means the core did not answer; the caller must **deliver** the
+     * click. Swallowing a click without being told to is the one thing this
+     * module must never do by accident — the safe direction here is the
+     * opposite of Reach's.
+     */
+    fun hitGate(
+        player: PlayerState,
+        target: TargetState?,
+        nowNs: Long,
+        guiOpen: Boolean,
+        lookingAtBlock: Boolean,
+        chance: Int,
+        criticals: Boolean,
+        missedSwing: Int,
+        hasForwardTarget: Boolean,
+        forwardHurtResistantTime: Int,
+        waitFirstMs: Int,
+        retimeAt: Int,
+        pauseMs: Int
+    ): Boolean? {
+        val stub = CoreLink.stub ?: return null
+        return stub.playerHitGate(
+            player, target, nowNs, guiOpen, lookingAtBlock, chance, criticals,
+            missedSwing, hasForwardTarget, forwardHurtResistantTime,
+            waitFirstMs, retimeAt, pauseMs, nextTick()
+        )
     }
 }
 

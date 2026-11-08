@@ -857,6 +857,67 @@ class CoreStub(
         return decodeScalar(f)
     }
 
+    /**
+     * HitSelect, tick half: feed the target view and refresh the windows.
+     * Returns whether CounterHit should fire this tick; the one-tick pulse
+     * itself is a platform concern and stays in the adapter.
+     */
+    fun playerHitTick(
+        player: io.doppel.contract.model.PlayerState,
+        target: io.doppel.contract.model.TargetState?,
+        nowNs: Long,
+        canCrit: Boolean,
+        playerHurtTime: Int,
+        leftMouseDown: Boolean,
+        hasTarget: Boolean,
+        targetId: Int,
+        targetHurtTime: Int,
+        counterHit: Boolean,
+        counterCdMs: Int,
+        tick: Int
+    ): Boolean? {
+        val payload = genericRequest(
+            encodeSnapshot(player, target), Ops.PLAYER_HIT_TICK,
+            nowNs.toDouble(), b(canCrit), playerHurtTime.toDouble(), b(leftMouseDown),
+            b(hasTarget), targetId.toDouble(), targetHurtTime.toDouble(),
+            b(counterHit), counterCdMs.toDouble()
+        )
+        val f = roundTrip(Wire.MODULE_PLAYER, payload, tick) ?: return null
+        return decodeBool(f)
+    }
+
+    /**
+     * HitSelect, gate half: one click. Returns whether the click should be
+     * delivered. The windows it reads were opened by [playerHitTick] on the
+     * same session.
+     */
+    fun playerHitGate(
+        player: io.doppel.contract.model.PlayerState,
+        target: io.doppel.contract.model.TargetState?,
+        nowNs: Long,
+        guiOpen: Boolean,
+        lookingAtBlock: Boolean,
+        chance: Int,
+        criticals: Boolean,
+        missedSwing: Int,
+        hasForwardTarget: Boolean,
+        forwardHurtResistantTime: Int,
+        waitFirstMs: Int,
+        retimeAt: Int,
+        pauseMs: Int,
+        tick: Int
+    ): Boolean? {
+        val payload = genericRequest(
+            encodeSnapshot(player, target), Ops.PLAYER_HIT_GATE,
+            nowNs.toDouble(), b(guiOpen), b(lookingAtBlock), chance.toDouble(),
+            b(criticals), missedSwing.toDouble(), b(hasForwardTarget),
+            forwardHurtResistantTime.toDouble(), waitFirstMs.toDouble(),
+            retimeAt.toDouble(), pauseMs.toDouble()
+        )
+        val f = roundTrip(Wire.MODULE_PLAYER, payload, tick) ?: return null
+        return decodeBool(f)
+    }
+
     private fun b(v: Boolean): Double = if (v) 1.0 else 0.0
 
     /**

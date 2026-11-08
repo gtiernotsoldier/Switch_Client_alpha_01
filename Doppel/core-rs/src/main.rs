@@ -1000,6 +1000,7 @@ fn emit_golden(dir: &str) -> Result<(), String> {    use std::fs;
     emit_kbd_golden(dir)?;
     emit_reach_golden(dir)?;
     emit_click_assist_golden(dir)?;
+    emit_hit_select_golden(dir)?;
     Ok(())
 }
 
@@ -1392,5 +1393,135 @@ fn emit_click_assist_golden(dir: &str) -> Result<(), String> {
 
     fs::write(format!("{}/click_assist_input.tsv", dir), input).map_err(|e| e.to_string())?;
     fs::write(format!("{}/click_assist_expected.tsv", dir), expected).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// HitSelect's two ops, interleaved over one shared state.
+///
+/// This is the only fixture that is a *mixed* stream: the gate reads windows
+/// that the tick half opened, so splitting them into two independent fixtures
+/// would let a port pass while giving each op its own state. The clock starts
+/// at a non-zero origin and the windows use a -1 sentinel, so an uninitialised
+/// window cannot masquerade as one opened at the epoch.
+///
+/// The two rolls are scripted per gate row rather than drawn from Pcg32: the
+/// Kotlin oracle cannot share a generator with Rust, and a fixture that
+/// depended on one would test the RNG instead of the gate order.
+fn emit_hit_select_golden(dir: &str) -> Result<(), String> {
+    use std::fs;
+
+    let mut input = String::new();
+    input.push_str("# doppel-hit-select-golden v1\n");
+    input.push_str(
+        "idx\tkind\tnow_ns\tcan_crit\tplayer_hurt_time\tleft_mouse_down\thas_target\ttarget_id\ttarget_hurt_time\tcounter_hit\tcounter_cd_ms\tgui_open\tlooking_at_block\tchance\tcriticals\tmissed_swing\thas_forward_target\tforward_hurt_resistant_time\twait_first_ms\tretime_at\tpause_ms\troll1\troll2\n",
+    );
+
+    let mut expected = String::new();
+    expected.push_str("# idx\tresult\n");
+
+    let mut state = strategy::hit_select::State::new();
+    let mut rng = Pcg32::new(0x0000_5EED_4175_0001);
+    let mut now: i64 = 1_000_000_000;
+
+    for i in 0..500 {
+        now += 50_000_000; // 50 ms per event
+        let pick = rng.random_int(0, 99);
+        // Ticks a little less often than clicks, so windows are opened and
+        // then queried from both sides of their boundaries.
+        let kind = if pick % 5 < 2 { 0 } else { 1 };
+
+        let can_crit = pick % 3 != 0;
+        let player_hurt_time = if pick % 7 == 0 { 5 } else { 0 };
+        let left_mouse_down = pick % 4 == 0;
+        let has_target = pick % 9 != 0;
+        let target_id = if pick % 11 == 0 { 8 } else { 7 };
+        let target_hurt_time = if pick % 6 == 0 { 5 } else { 0 };
+        let counter_hit = pick % 3 != 0;
+        let counter_cd_ms = 300;
+
+        let gui_open = pick % 23 == 0;
+        let looking_at_block = pick % 19 == 0;
+        let chance = if pick % 2 == 0 { 100 } else { 50 };
+        let criticals = pick % 4 == 0;
+        let missed_swing = if pick % 5 == 0 { 60 } else { 0 };
+        let has_forward_target = pick % 7 != 0;
+        let forward_hurt_resistant_time = if pick % 6 == 0 { 8 } else { 0 };
+        let wait_first_ms = if pick % 3 == 0 { 500 } else { 0 };
+        let retime_at = 3;
+        let pause_ms = if pick % 4 == 0 { 500 } else { 0 };
+
+        let roll1 = rng.random_int(0, 99);
+        let roll2 = rng.random_int(0, 99);
+
+        input.push_str(&format!(
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+            i,
+            kind,
+            now,
+            can_crit as u8,
+            player_hurt_time,
+            left_mouse_down as u8,
+            has_target as u8,
+            target_id,
+            target_hurt_time,
+            counter_hit as u8,
+            counter_cd_ms,
+            gui_open as u8,
+            looking_at_block as u8,
+            chance,
+            criticals as u8,
+            missed_swing,
+            has_forward_target as u8,
+            forward_hurt_resistant_time,
+            wait_first_ms,
+            retime_at,
+            pause_ms,
+            roll1,
+            roll2
+        ));
+
+        let result = if kind == 0 {
+            strategy::hit_select::tick(
+                &mut state,
+                strategy::hit_select::TickInput {
+                    now_ns: now,
+                    can_crit,
+                    player_hurt_time,
+                    left_mouse_down,
+                    has_target,
+                    target_id,
+                    target_hurt_time,
+                    counter_hit,
+                    counter_cd_ms,
+                },
+            )
+        } else {
+            let gate = strategy::hit_select::GateInput {
+                now_ns: now,
+                gui_open,
+                looking_at_block,
+                chance,
+                criticals,
+                missed_swing,
+                has_forward_target,
+                forward_hurt_resistant_time,
+                wait_first_ms,
+                retime_at,
+                pause_ms,
+            };
+            let rolls = [roll1, roll2];
+            let mut k = 0usize;
+            let mut roll = || {
+                let v = rolls[k.min(1)];
+                k += 1;
+                v
+            };
+            strategy::hit_select::gate(&state, gate, &mut roll)
+        };
+        expected.push_str(&format!("{}\t{}\n", i, result as u8));
+    }
+
+    fs::write(format!("{}/hit_select_input.tsv", dir), input).map_err(|e| e.to_string())?;
+    fs::write(format!("{}/hit_select_expected.tsv", dir), expected).map_err(|e| e.to_string())?;
     Ok(())
 }

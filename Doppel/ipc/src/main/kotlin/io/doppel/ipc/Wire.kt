@@ -408,6 +408,8 @@ object Ops {
     const val PLAYER_KBD_ATTACK = 2     // nowNs, direction, useLastStrafe, cooldownMs, angle, notTakingKb, velocityTick, keyLeft, keyRight → degrees
     const val PLAYER_REACH_SAMPLE = 3   // nowNs, conditionsOk, guiOpen, chance, hitPer, delayMs, hitThroughBlocks, lookingAtBlock, min, max → distance
     const val PLAYER_CLICK_ASSIST = 4   // nowNs, flags, probability, mode → extra clicks (0..2)
+    const val PLAYER_HIT_TICK = 5       // nowNs, canCrit, playerHurtTime, leftDown, hasTarget, targetId, targetHurtTime, counterHit, counterCdMs → counter fires
+    const val PLAYER_HIT_GATE = 6       // nowNs, guiOpen, lookingAtBlock, chance, criticals, missedSwing, hasForwardTarget, hurtResistantTime, waitFirstMs, retimeAt, pauseMs → deliver click
 }
 
 /**

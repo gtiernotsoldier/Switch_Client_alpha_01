@@ -7,6 +7,7 @@ pub mod click;
 pub mod click_assist;
 pub mod combat;
 pub mod eagle;
+pub mod hit_select;
 pub mod knockback_displace;
 pub mod movement;
 pub mod reach;

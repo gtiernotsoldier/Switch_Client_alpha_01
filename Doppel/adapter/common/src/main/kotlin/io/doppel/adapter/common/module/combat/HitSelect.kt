@@ -7,6 +7,7 @@ import io.doppel.adapter.common.module.Module
 import io.doppel.adapter.common.module.Category
 import io.doppel.adapter.common.option.boolean
 import io.doppel.adapter.common.option.int
+import io.doppel.ipc.Strategies
 
 /**
  * HitSelect — click selector. Decides whether an attack click is worth landing; a click that is
@@ -20,28 +21,18 @@ import io.doppel.adapter.common.option.int
  *  - Raven XD: "Pause/Active" gate with a preference (move speed / knockback reduction / criticals),
  *    a delay and a chance, consumed by AutoClicker and KillAura.
  *
- * Rules, all evaluated on the MAIN THREAD at the click frame (the platform calls the gate from
- * applySyntheticInput, so the decision is made when the click happens, not on the 20Hz tick):
+ * The guard chain, the three time windows and both rolls now live in the core. This module is the
+ * only one whose decision is split across two threads, so it sends two kinds of request:
+ *  - on the 20Hz tick it reports the target view and refreshes the windows;
+ *  - at the click it packs the predicates and asks whether to deliver it.
+ * Both mutate one state in the core. A hit is "confirmed" when the target's hurtTime rises between
+ * two ticks — the server-confirmed signal, same as raven-bs's server attack time.
  *
- *   1. A screen is open, or the crosshair is on a block: always pass. Mining and placing must not
- *      be disturbed, and block interaction is not an attack.
- *   2. [Criticals] on: only pass while a critical hit is possible (vanilla: airborne and falling).
- *   3. The target is still invulnerable ([RetimeAt]): hold. Landing a hit inside the i-frame window
- *      does nothing on the server, which is the waste this module exists to avoid.
- *   4. [Pause] ms after we confirmed a hit on the target: hold. This is the burst window — it lets
- *      the target's invulnerability run out before the next click instead of mashing into it.
- *   5. [WaitFirst] ms after a newly acquired target: hold, so the opening hit is not thrown away
- *      while the aim is still settling.
- *   6. [Chance] gates how often the selector applies at all (100 = always).
- *   7. [MissedSwing] gates clicks that hit nothing (raven-bs's "Missed swings" cancel rate).
+ * A missing answer on the gate means **deliver** the click. Swallowing a real hit without being
+ * told to is worse than letting one through, so the safe direction here is the opposite of Reach's.
  *
- * A hit is "confirmed" when the target's hurtTime rises between two ticks — the server-confirmed
- * signal, same as raven-bs's server attack time. Predicting it from our own clicks was the old
- * design's weakness: the gate is consulted every frame, so it cannot tell a click from an idle
- * frame without a real signal.
- *
- * [CounterHit] is kept from the previous implementation: when we take a hit while not clicking,
- * fire one automatic counter-attack (cooldown-gated).
+ * The one-tick synthetic-attack pulse for [counterHit] is a platform concern and stays here: the
+ * core says *whether* to fire, this side holds the key for one tick and releases it on the next.
  */
 object HitSelect : Module("HitSelect", Category.COMBAT) {
 
@@ -65,7 +56,7 @@ object HitSelect : Module("HitSelect", Category.COMBAT) {
     /** Only land clicks that can crit (airborne + falling). */
     private val criticals by boolean("Criticals", false)
 
-    /** Probability that the selector applies to a click at all (lower = more clicks pass). */
+    /** Probability that the selector applies to a click at all (100 = always). */
     private val chance by int("Chance", 100, 0..100, "%")
 
     /**
@@ -80,23 +71,17 @@ object HitSelect : Module("HitSelect", Category.COMBAT) {
     private val counterCdMs by int("CounterCD", 300, 0..1000, "ms")
 
     // ========== State ==========
-    /** nanoTime of the last confirmed hit on the current target (burst window). */
-    @Volatile private var lastConfirmedHitNano: Long = 0L
-    /** nanoTime when the current target was first seen (WaitFirst window). */
-    @Volatile private var targetFirstSeenNano: Long = 0L
-    /** Id of the target the windows belong to; a change restarts them. */
-    @Volatile private var trackedTargetId: Int = -1
-    /** Previous tick's target hurtTime, for the server-confirmed hit edge. */
-    @Volatile private var prevTargetHurtTime: Int = 0
-    /** Whether a critical hit is possible right now, refreshed on the tick. */
-    @Volatile private var canCritNow: Boolean = false
+    /**
+     * Last tick's player snapshot.
+     *
+     * The gate fires on the render thread, where no state object is handed in;
+     * a tick-old snapshot is enough to marshal the request, and the core does
+     * not read the player for either op.
+     */
+    @Volatile private var latestPlayer: PlayerState? = null
 
-    /** Last time CounterHit fired. */
-    private var lastCounterNano: Long = 0L
-    /** Synthetic counter-attack pulse: set for one tick, then cleared. */
+    /** Set for one tick while a synthetic counter-attack is held down. */
     private var counterPulse: Boolean = false
-    /** Shared RNG (the gate runs on the render thread, the tick listener on the tick thread). */
-    private val rng = java.util.concurrent.ThreadLocalRandom.current()
 
     // ========== Main-thread attack gate ==========
     private val gate: () -> Boolean = {
@@ -113,76 +98,59 @@ object HitSelect : Module("HitSelect", Category.COMBAT) {
     }
 
     private fun evaluateGate(): Boolean {
-        // 1. Never swallow clicks while a screen is open or the crosshair is on a block: block
-        //    interaction (mining, placing) is not an attack and must keep working.
-        if (EventBridge.isGuiOpen) return true
-        if (EventBridge.isLookingAtBlock) return true
-
-        // 6. Chance: skip the selector entirely for this click.
-        if (chance < 100 && rng.nextInt(100) >= chance) return true
-
-        // 2. Criticals only.
-        if (criticals && !canCritNow) return false
-
-        val target = EventBridge.getForwardRayTarget()
-        if (target == null) {
-            // Nothing on the forward ray: this click would only animate. raven-bs scores these as
-            // missed swings and can cancel them by a separate rate (default off here).
-            return !(missedSwing > 0 && rng.nextInt(100) < missedSwing)
-        }
-
-        // 5. Wait for the first hit on a newly acquired target.
-        if (waitFirstMs > 0 && System.nanoTime() - targetFirstSeenNano < waitFirstMs * 1_000_000L) return false
-
-        // 3. Still invulnerable: the hit would be discarded by the server.
-        if (target.hurtResistantTime > retimeAt) return false
-
-        // 4. Burst window after our own confirmed hit.
-        if (pauseMs > 0 && System.nanoTime() - lastConfirmedHitNano < pauseMs * 1_000_000L) return false
-
-        return true
+        // No snapshot yet: deliver rather than swallow. Adding a click gate on
+        // a press the core never saw is the one thing this module must not do.
+        val player = latestPlayer ?: return true
+        val forward = EventBridge.getForwardRayTarget()
+        return Strategies.hitGate(
+            player,
+            forward,
+            System.nanoTime(),
+            EventBridge.isGuiOpen,
+            EventBridge.isLookingAtBlock,
+            chance,
+            criticals,
+            missedSwing,
+            forward != null,
+            forward?.hurtResistantTime ?: 0,
+            waitFirstMs,
+            retimeAt,
+            pauseMs
+        ) ?: true // core unreachable → deliver
     }
 
-    // ========== Tick listener (target tracking + CounterHit) ==========
+    // ========== Tick listener (state feed + CounterHit pulse) ==========
     private val startListener: (PlayerState, TargetState?) -> Unit = { p, t ->
+        latestPlayer = p
         if (enabled) onStartTick(p, t)
     }
 
     private fun onStartTick(player: PlayerState, target: TargetState?) {
-        // Refresh the crit test from real player state (vanilla canCriticalHit, approximated: the
-        // game also requires not in water / on a ladder / blindness, none of which are in
-        // PlayerState today).
-        canCritNow = player.motionY < 0.0 && !player.onGround
-
-        if (target == null) {
-            trackedTargetId = -1
-            prevTargetHurtTime = 0
-            counterPulse = false
-            EventBridge.syntheticAttack = false
-            return
-        }
-
-        val now = System.nanoTime()
-        if (target.id != trackedTargetId) {
-            // New target: restart both windows and do not inherit the previous target's hurt state.
-            trackedTargetId = target.id
-            targetFirstSeenNano = now
-            lastConfirmedHitNano = 0L
-            prevTargetHurtTime = target.hurtTime
-        }
-        // Server-confirmed hit: the target's hurtTime rose since the previous tick.
-        if (target.hurtTime > prevTargetHurtTime) lastConfirmedHitNano = now
-        prevTargetHurtTime = target.hurtTime
-
-        // CounterHit: eat a hit while not clicking → answer it once.
+        // Release last tick's pulse before asking for a new one, exactly as the
+        // in-process version did.
         if (counterPulse) {
             EventBridge.syntheticAttack = false
             counterPulse = false
         }
-        if (counterHit && !EventBridge.isLeftMousePhysicallyDown && player.hurtTime > 0 &&
-            now - lastCounterNano >= counterCdMs * 1_000_000L
-        ) {
-            lastCounterNano = now
+        if (target == null) {
+            EventBridge.syntheticAttack = false
+        }
+
+        val fire = Strategies.hitTick(
+            player,
+            target,
+            System.nanoTime(),
+            canCrit = player.motionY < 0.0 && !player.onGround,
+            playerHurtTime = player.hurtTime,
+            leftMouseDown = EventBridge.isLeftMousePhysicallyDown,
+            hasTarget = target != null,
+            targetId = target?.id ?: -1,
+            targetHurtTime = target?.hurtTime ?: 0,
+            counterHit = counterHit,
+            counterCdMs = counterCdMs
+        ) ?: return // no answer → no counter-attack this tick
+
+        if (fire) {
             EventBridge.syntheticAttack = true
             markWorked() // the HUD row flashes while it is counter-hitting
             counterPulse = true
@@ -191,13 +159,10 @@ object HitSelect : Module("HitSelect", Category.COMBAT) {
 
     // ========== Lifecycle ==========
     override fun onEnable() {
-        lastConfirmedHitNano = 0L
-        targetFirstSeenNano = 0L
-        trackedTargetId = -1
-        prevTargetHurtTime = 0
-        canCritNow = false
-        lastCounterNano = 0L
+        latestPlayer = null
         counterPulse = false
+        // Windows the core still remembers belong to the previous activation.
+        Strategies.resetPlayer()
         EventBridge.registerAttackGateProvider(gate)
         EventBridge.registerStartTickListener(startListener)
     }
@@ -207,7 +172,7 @@ object HitSelect : Module("HitSelect", Category.COMBAT) {
         EventBridge.registerAttackGateProvider(null)
         EventBridge.syntheticAttack = false
         counterPulse = false
-        trackedTargetId = -1
-        lastConfirmedHitNano = 0L
+        latestPlayer = null
+        Strategies.resetPlayer()
     }
 }

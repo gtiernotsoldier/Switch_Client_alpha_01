@@ -275,6 +275,12 @@ tick boundary (50 ms)
 | Tap / combat / reach ports | `strategy/{tap,combat,reach}.rs` | 20 Rust unit tests |
 | Six-module session dispatch | `session.rs`, `codec.rs` | `ModuleSessionParityTest`, 1300 round trips |
 | Portable fdlibm (sin/cos/atan/atan2/acos) | `trig.rs`, `PortableMath.kt` | C reference, 1M values, 0 diffs |
+| Eagle sneak machine | `strategy/eagle.rs` | `EagleParityTest`, 300 ticks |
+| Backtrack hold window | `strategy/backtrack.rs` | `BacktrackParityTest`, 400 ticks |
+| KnockbackDisplace flick | `strategy/knockback_displace.rs` | `KnockbackDisplaceParityTest`, 300 hits |
+| Reach sampling gates | `strategy/reach_sample.rs` | `ReachParityTest`, 300 presses |
+| ClickAssist guard chain + 500 ms CPS window | `strategy/click_assist.rs` | `ClickAssistParityTest`, 300 presses |
+| HitSelect windows + click gate | `strategy/hit_select.rs` | `HitSelectParityTest`, 500 interleaved events |
 
 ### Module request shapes
 
@@ -290,6 +296,7 @@ all look alike and none of which can be checked without counting bytes.
 | Aim | `mouse_dx f32, mouse_dy f32, sensitivity f32` (12 bytes) |
 | Click | `attack_cooldown f32, is_falling u8, pad 3` (8 bytes) |
 | Movement / Tap / Combat / Reach | `op u8, nargs u8, nargs × f64` |
+| Player (8) | `op u8, nargs u8, nargs × f64` — ops 0..6, up to 11 args |
 
 Op ids are append-only, same reasoning as module ids: the stub and the core are
 separate binaries. The tables live beside their decoders in `codec.rs` and are
@@ -325,6 +332,22 @@ Each module owns **its own RNG stream**, all seeded from the session seed. A
 single shared stream would make one module's decisions depend on which other
 modules were enabled and in what order they ran, so toggling aim would quietly
 change click timing.
+
+`Module::Player` (id 8) carries the six modules that used to keep their whole
+logic in the jar. Ops 0..6 are append-only like the rest. `PLAYER_HIT_TICK` (5)
+and `PLAYER_HIT_GATE` (6) are the only pair that shares **one** state across two
+callers: the tick feeds the target windows, the click gate reads them. The
+adapter asks the gate only when a physical attack is actually being applied —
+asking it on every idle frame would mean one round trip per frame and a chance
+roll driven by the frame rate. A missing answer on the gate means *deliver* the
+click; swallowing a real hit without being told to is worse than letting it
+through, so this op's degraded direction is the opposite of Reach's.
+
+`ClickAssistFlag` in `Wire.kt` is the bit layout for `PLAYER_CLICK_ASSIST`'s
+thirteen predicates. It lives beside the op rather than in the module for the
+same reason as `write_trigger`: two layouts would disagree about which bit means
+`onlyAimingEntity`, and that disagreement would show up as extra clicks with
+nothing in the logs to explain it.
 
 ### Not done (deliberately out of this slice)
 

@@ -899,6 +899,18 @@ pub mod op {
     /// `strategy::click_assist::flags` — because the argument vector tops out
     /// well below sixteen on a 352-byte payload.
     pub const PLAYER_CLICK_ASSIST: u8 = 4;
+
+    /// player/hit_select: `tick(now_ns, can_crit, player_hurt_time,
+    ///                         left_mouse_down, has_target, target_id,
+    ///                         target_hurt_time, counter_hit, counter_cd_ms)`
+    ///                         → whether CounterHit fires this tick.
+    pub const PLAYER_HIT_TICK: u8 = 5;
+
+    /// player/hit_select: `gate(now_ns, gui_open, looking_at_block, chance,
+    ///                         criticals, missed_swing, has_forward_target,
+    ///                         forward_hurt_resistant_time, wait_first_ms,
+    ///                         retime_at, pause_ms)` → deliver the click.
+    pub const PLAYER_HIT_GATE: u8 = 6;
 }
 
 /// Maps a side to the wire's 0/1.
@@ -993,6 +1005,8 @@ pub fn known_ops(module: Module) -> &'static [u8] {
             op::PLAYER_KBD_ATTACK,
             op::PLAYER_REACH_SAMPLE,
             op::PLAYER_CLICK_ASSIST,
+            op::PLAYER_HIT_TICK,
+            op::PLAYER_HIT_GATE,
         ],
         Module::Velocity => &[op::VEL_BRACE, op::VEL_DELAY_ENQUEUE, op::VEL_DELAY_PUMP],
         _ => &[],

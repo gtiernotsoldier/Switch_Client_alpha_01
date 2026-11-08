@@ -23,6 +23,7 @@ use crate::strategy::click::{self, ClickConfig, ClickState, CooldownClickConfig,
 use crate::strategy::backtrack;
 use crate::strategy::combat::{self, BlockArbiterState, PredictorConfig, PredictorState, RangeGateConfig, RangeGateState};
 use crate::strategy::eagle;
+use crate::strategy::hit_select;
 use crate::strategy::knockback_displace;
 use crate::strategy::reach_sample;
 use crate::strategy::movement::{self, SocdResolver};
@@ -73,6 +74,9 @@ pub struct Session {
     pub rng_reach: Pcg32,
     /// ClickAssist's chance roll and `Random` mode.
     pub rng_click_assist: Pcg32,
+    /// HitSelect's `chance` and `missedSwing` rolls. Gate-only: the tick half
+    /// never draws, so the stream's order is the order clicks arrived in.
+    pub rng_hit_select: Pcg32,
     pub config: VelocityConfig,
     pub velocity: velocity::State,
 
@@ -106,6 +110,9 @@ pub struct Session {
 
     /// ClickAssist: the 500 ms edge history behind the "above 5 CPS" gate.
     pub click_assist: click_assist::State,
+
+    /// HitSelect: the target windows shared by the tick and the click gate.
+    pub hit_select: hit_select::State,
 
     pub ticks: u64,
     pub decisions: u64,
@@ -143,6 +150,7 @@ impl Session {
             rng_kbd: Pcg32::new(seed),
             rng_reach: Pcg32::new(seed),
             rng_click_assist: Pcg32::new(seed),
+            rng_hit_select: Pcg32::new(seed),
             config: VelocityConfig::default(),
             velocity: velocity::State::new(),
             aim_config: AimConfig::default(),
@@ -161,6 +169,7 @@ impl Session {
             kbd: knockback_displace::State::new(),
             reach_sample: reach_sample::State::new(),
             click_assist: click_assist::State::new(),
+            hit_select: hit_select::State::new(),
             ticks: 0,
             decisions: 0,
             degraded: 0,
@@ -229,6 +238,7 @@ impl Session {
                 self.kbd = knockback_displace::State::new();
                 self.reach_sample = reach_sample::State::new();
                 self.click_assist = click_assist::State::new();
+                self.hit_select = hit_select::State::new();
             }
         }
         Frame::new(Kind::Reset, frame.header.seq, frame.header.tick, module)
@@ -533,6 +543,52 @@ impl Session {
                         req.arg(4)?,
                     );
                     Ok(codec::encode_bool(seq, tick, Module::Movement, WireAction::Bool, v))
+                }
+                op::PLAYER_HIT_TICK => {
+                    let input = hit_select::TickInput {
+                        now_ns: req.arg(0)? as i64,
+                        can_crit: req.bool(1)?,
+                        player_hurt_time: req.i32(2)?,
+                        left_mouse_down: req.bool(3)?,
+                        has_target: req.bool(4)?,
+                        target_id: req.i32(5)?,
+                        target_hurt_time: req.i32(6)?,
+                        counter_hit: req.bool(7)?,
+                        counter_cd_ms: req.i32(8)?,
+                    };
+                    let fire = hit_select::tick(&mut self.hit_select, input);
+                    Ok(codec::encode_bool(
+                        seq,
+                        tick,
+                        Module::Player,
+                        WireAction::Bool,
+                        fire,
+                    ))
+                }
+                op::PLAYER_HIT_GATE => {
+                    let input = hit_select::GateInput {
+                        now_ns: req.arg(0)? as i64,
+                        gui_open: req.bool(1)?,
+                        looking_at_block: req.bool(2)?,
+                        chance: req.i32(3)?,
+                        criticals: req.bool(4)?,
+                        missed_swing: req.i32(5)?,
+                        has_forward_target: req.bool(6)?,
+                        forward_hurt_resistant_time: req.i32(7)?,
+                        wait_first_ms: req.i32(8)?,
+                        retime_at: req.i32(9)?,
+                        pause_ms: req.i32(10)?,
+                    };
+                    let rng = &mut self.rng_hit_select;
+                    let mut roll = || rng.random_int(0, 99);
+                    let pass = hit_select::gate(&self.hit_select, input, &mut roll);
+                    Ok(codec::encode_bool(
+                        seq,
+                        tick,
+                        Module::Player,
+                        WireAction::Bool,
+                        pass,
+                    ))
                 }
                 _ => Err(Status::BadPayload),
             }

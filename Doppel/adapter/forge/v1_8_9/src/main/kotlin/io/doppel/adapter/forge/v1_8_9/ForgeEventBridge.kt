@@ -1278,7 +1278,12 @@ object ForgeEventBridge : IEventBridge {
                 // attackAllowed (HitSelect) can force the attack key OFF to swallow clicks
                 // that would land inside the target's i-frame window (wasted hits). Decided on
                 // the main thread at this exact frame via the attack-gate provider.
-                val gateAllowed = EventBridge.currentAttackGate()
+                // The gate now crosses into the core, so asking it on every
+                // idle frame would mean a round trip per frame and a chance
+                // roll driven by the frame rate. Only a physical attack needs
+                // an answer; synthetic attacks (AutoClicker/CounterHit) are
+                // never swallowed anyway.
+                val gateAllowed = !physicalAttack || EventBridge.currentAttackGate()
                 val effectiveAttack = EventBridge.syntheticAttack || (physicalAttack && gateAllowed)
                 keybindingPressedField?.setBoolean(keyBindAttack, effectiveAttack)
                 // Keep the physical mouse buffer reflecting the real button for the Keystrokes

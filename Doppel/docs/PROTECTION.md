@@ -326,10 +326,25 @@ core 进程（doppel-core.exe，Rust；游戏内存与注入器里都没有它�
 > 字节表与运行手册见 **[IPC-PROTOCOL.md](IPC-PROTOCOL.md)**。
 >
 > **全部模块已移植完毕**：aim / click / combat / movement / reach / autoblock / tap /
-> velocity 均改走 `ipc/Strategies.kt`，adapter 侧不再出现任何 `io.doppel.core` 引用，
+> velocity 均改走 `ipc/Strategies.kt`；2026-11-08 又补上最后 6 个把完整逻辑留在 jar 里的模块
+> （Eagle / Backtrack / KnockbackDisplace / Reach / ClickAssist / HitSelect）。它们的窗口状态、
+> 门顺序和随机数流全部迁到 `Module::Player`（id 8），adapter 侧只剩编组与平台副作用；
+> 六组 Kotlin↔Rust golden 对拍共 2100 行。adapter 侧不再出现任何 `io.doppel.core` 引用，
 > `agent.jar` 内 `io/doppel/core/` 类数为 **0**（CI 有守卫，回退会直接失败）。
-> 代价是必然的：**没有 `doppel-core` 进程在跑时，这 15 个模块一动不动**——不是降级，
+>
+> **HitSelect 是唯一跨线程的一个**：tick 侧喂状态、render 侧在点击时问结果，两个 op 共用
+> 一份 core 状态。为避免每帧一次往返、以及让概率掷骰被帧率驱动，forge 层只在物理攻击
+> 成立时才问 gate；core 没回答时一律**放行**点击（吞掉真实一击比放过去更糟），与 Reach
+> 的「没回答就不扩展」方向相反。
+>
+> 代价是必然的：**没有 `doppel-core` 进程在跑时，这些模块一动不动**——不是降级，
 > 是完全不动作。启动顺序因此变成「先 core，后游戏」，injector 负责拉起 core。
+>
+> **9.4 的「只有编组和转发」尚未完全兑现**：jar 里仍留着 `contract/util/Geometry` 与
+> `PortableMath`（帧级纯函数，走 IPC 会破坏瞄准手感）、Eagle 的 autoPlace 放方块时序，
+> 以及 9 个模块里共 **24 处** `kotlin.random` 时长/概率抖动（STap / WTap / ADTap /
+> BlockHit / AutoBlock 等）。它们不是 `io.doppel.core` 的类，但反编译仍可读；是否继续
+> 外移待定。
 
 P6 从「进程内 JNI（DLL 随 agent 加载进游戏进程）」改为「**独立 core 进程 + 游戏侧薄桩**」。
 决定的三条理由，按重要性排：

@@ -9,8 +9,7 @@ import io.doppel.adapter.common.option.float
 import io.doppel.adapter.common.option.int
 import io.doppel.contract.model.PlayerState
 import io.doppel.contract.model.TargetState
-import kotlin.math.max
-import kotlin.random.Random
+import io.doppel.ipc.Strategies
 
 /**
  * Backtrack — hold the newest entity position updates, so what you see (and reach for) is where the
@@ -58,73 +57,64 @@ object Backtrack : Module("Backtrack", Category.COMBAT) {
     /** Legacy: hold while the target is this close. */
     private val distance by float("Distance", 3.5f, 0f..6f, "blocks", modes = arrayOf("Legacy"))
 
-    private var holdStartNano: Long = 0L
-    private var pauseUntilNano: Long = 0L
-    private var windowNanos: Long = 150_000_000L
+    /** Last tick's answer, only so a new hold can flash the HUD once. */
+    private var holding: Boolean = false
 
     private val tickListener: (PlayerState, TargetState?) -> Unit = { p, t ->
         if (enabled) onTick(p, t)
     }
 
     private fun onTick(player: PlayerState, target: TargetState?) {
-        val now = System.nanoTime()
-
         // Never held through any of these — the reference's "do not delay" list, in this client's terms.
         val mustRelease = EventBridge.isGuiOpen || player.health <= 0f || player.hurtTime > 0
 
-        val inRange = when (mode) {
-            "Legacy" -> target != null && target.distance <= distance
-            else -> target != null && (!smart || target.distance <= 6f)
-        }
+        // The window itself lives in the core: it is rolled, expired and paused
+        // there. This side only reports the clock and the conditions.
+        val hold = Strategies.backtrackTick(
+            player,
+            target,
+            System.nanoTime(),
+            modern = mode != "Legacy",
+            pulse = style == "Pulse",
+            smart = smart,
+            minDelayMs = minDelay,
+            maxDelayMs = maxDelay,
+            distance = target?.distance ?: -1f,
+            legacyDistance = distance,
+            mustRelease = mustRelease
+        )
 
-        if (mustRelease || !inRange) {
+        // No answer: let the updates through. Holding is the state that can
+        // desync the view, so the safe direction when the core is unreachable is
+        // not to hold at all.
+        if (hold == null) {
             release()
             return
         }
 
-        // Pulse: after a window closes, stay quiet for the same length before the next hold.
-        if (mode == "Modern" && style == "Pulse" && now < pauseUntilNano) {
-            release()
-            return
-        }
-
-        if (holdStartNano == 0L) {
-            holdStartNano = now
-            if (mode == "Modern") {
-                // A fresh window every time: an evenly spaced hold is the one thing a real connection
-                // never produces, and it is also what makes a pattern detectable.
-                val lo = minOf(minDelay, maxDelay)
-                val hi = maxOf(minDelay, maxDelay)
-                windowNanos = Random.nextInt(lo, hi + 1).toLong() * 1_000_000L
-            } else {
-                windowNanos = 250_000_000L
-            }
-            markWorked() // starting a hold is the work; the steady state is not
-        }
-        EventBridge.backtrackActive = true
-
-        if (now - holdStartNano >= windowNanos) {
-            release()
-            if (mode == "Modern" && style == "Pulse") pauseUntilNano = now + windowNanos
-        }
+        if (hold && !holding) markWorked() // starting a hold is the work; the steady state is not
+        holding = hold
+        EventBridge.backtrackActive = hold
     }
 
     private fun release() {
-        if (holdStartNano != 0L) holdStartNano = 0L
+        holding = false
         // The flag going false is what makes the platform deliver everything it held, in order.
         EventBridge.backtrackActive = false
     }
 
     override fun onEnable() {
-        holdStartNano = 0L
-        pauseUntilNano = 0L
-        windowNanos = 150_000_000L
+        holding = false
         EventBridge.backtrackActive = false
+        // A hold the core still remembers would keep packets queued for a module
+        // that now believes it is holding nothing.
+        Strategies.resetPlayer()
         EventBridge.registerTickListener(tickListener)
     }
 
     override fun onDisable() {
         EventBridge.unregisterTickListener(tickListener)
+        Strategies.resetPlayer()
         release()
     }
 }

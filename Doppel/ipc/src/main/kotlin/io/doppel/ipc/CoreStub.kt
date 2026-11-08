@@ -738,6 +738,37 @@ class CoreStub(
         return decodeScalar(f).toInt()
     }
 
+    /**
+     * Backtrack's hold window: one call per tick.
+     *
+     * `null` means the core did not answer. The caller must then let the
+     * updates through — holding is the state that can desync the view, so the
+     * safe direction when the core is unreachable is not to hold at all.
+     */
+    fun playerBacktrack(
+        player: io.doppel.contract.model.PlayerState,
+        target: io.doppel.contract.model.TargetState?,
+        nowNs: Long,
+        modern: Boolean,
+        pulse: Boolean,
+        smart: Boolean,
+        minDelayMs: Int,
+        maxDelayMs: Int,
+        distance: Float,
+        legacyDistance: Float,
+        mustRelease: Boolean,
+        tick: Int
+    ): Boolean? {
+        val payload = genericRequest(
+            encodeSnapshot(player, target), Ops.PLAYER_BACKTRACK_TICK,
+            nowNs.toDouble(), b(modern), b(pulse), b(smart),
+            minDelayMs.toDouble(), maxDelayMs.toDouble(),
+            distance.toDouble(), legacyDistance.toDouble(), b(mustRelease)
+        )
+        val f = roundTrip(Wire.MODULE_PLAYER, payload, tick) ?: return null
+        return decodeBool(f)
+    }
+
     private fun b(v: Boolean): Double = if (v) 1.0 else 0.0
 
     /**

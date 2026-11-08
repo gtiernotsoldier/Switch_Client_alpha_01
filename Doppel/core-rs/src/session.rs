@@ -19,6 +19,7 @@ use crate::model::*;
 use crate::rng::Pcg32;
 use crate::strategy::aim::{self, AimConfig, AimState};
 use crate::strategy::click::{self, ClickConfig, ClickState, CooldownClickConfig, CritState};
+use crate::strategy::backtrack;
 use crate::strategy::combat::{self, BlockArbiterState, PredictorConfig, PredictorState, RangeGateConfig, RangeGateState};
 use crate::strategy::eagle;
 use crate::strategy::movement::{self, SocdResolver};
@@ -61,6 +62,8 @@ pub struct Session {
     /// Eagle's hold-delay roll. Its own stream for the same reason as the rest:
     /// toggling another module must not move this one's sequence.
     pub rng_player: Pcg32,
+    /// Backtrack's window roll: 80..250 ms, re-rolled on every hold.
+    pub rng_backtrack: Pcg32,
     pub config: VelocityConfig,
     pub velocity: velocity::State,
 
@@ -82,6 +85,9 @@ pub struct Session {
 
     /// Eagle: the sneak-ownership bit and the release countdown.
     pub eagle: eagle::State,
+
+    /// Backtrack: the hold window and its timestamps.
+    pub backtrack: backtrack::State,
 
     pub ticks: u64,
     pub decisions: u64,
@@ -115,6 +121,7 @@ impl Session {
             rng_tap: Pcg32::new(seed),
             rng_combat: Pcg32::new(seed),
             rng_player: Pcg32::new(seed),
+            rng_backtrack: Pcg32::new(seed),
             config: VelocityConfig::default(),
             velocity: velocity::State::new(),
             aim_config: AimConfig::default(),
@@ -129,6 +136,7 @@ impl Session {
             range_config: RangeGateConfig::default(),
             range_state: RangeGateState { engaged: false },
             eagle: eagle::State::default(),
+            backtrack: backtrack::State::new(),
             ticks: 0,
             decisions: 0,
             degraded: 0,
@@ -189,7 +197,12 @@ impl Session {
             Module::Reach => {}
             // Eagle forgets its ownership: a sneak held across a disable/enable
             // would otherwise be released by a module that no longer owns it.
-            Module::Player => self.eagle = eagle::State::default(),
+            // Backtrack drops its window for the same reason — a hold that spans
+            // a toggle would keep packets queued for a module that is off.
+            Module::Player => {
+                self.eagle = eagle::State::default();
+                self.backtrack = backtrack::State::new();
+            }
         }
         Frame::new(Kind::Reset, frame.header.seq, frame.header.tick, module)
     }
@@ -879,6 +892,33 @@ impl Session {
                         Module::Player,
                         WireAction::Scalar,
                         flags as f64,
+                    ))
+                }
+                op::PLAYER_BACKTRACK_TICK => {
+                    let input = backtrack::Input {
+                        // f64 holds nanosecond timestamps exactly to ~0.1 ns at the
+                        // magnitudes System.nanoTime() produces, so the round trip
+                        // costs at most an ulp — far below the 80 ms window.
+                        now_ns: req.arg(0)? as i64,
+                        modern: req.bool(1)?,
+                        pulse: req.bool(2)?,
+                        smart: req.bool(3)?,
+                        min_delay_ms: req.i32(4)?,
+                        max_delay_ms: req.i32(5)?,
+                        distance: req.f32(6)?,
+                        legacy_distance: req.f32(7)?,
+                        must_release: req.bool(8)?,
+                    };
+                    let rng = &mut self.rng_backtrack;
+                    let hold = backtrack::tick(&mut self.backtrack, input, &mut |lo, hi| {
+                        rng.random_int(lo, hi)
+                    });
+                    Ok(codec::encode_bool(
+                        seq,
+                        tick,
+                        Module::Player,
+                        WireAction::Bool,
+                        hold,
                     ))
                 }
                 _ => Err(Status::BadPayload),

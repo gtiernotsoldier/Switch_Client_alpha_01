@@ -2,8 +2,9 @@
 //! (config, state, input, rng) with no I/O and no platform types.
 
 pub mod aim;
-pub mod combat;
+pub mod backtrack;
 pub mod click;
+pub mod combat;
 pub mod eagle;
 pub mod movement;
 pub mod reach;

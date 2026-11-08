@@ -996,6 +996,7 @@ fn emit_golden(dir: &str) -> Result<(), String> {    use std::fs;
     emit_click_golden(dir, 0x0000_5EED_C11C_0001)?;
     emit_movement_golden(dir)?;
     emit_eagle_golden(dir)?;
+    emit_backtrack_golden(dir)?;
     Ok(())
 }
 
@@ -1060,5 +1061,85 @@ fn emit_eagle_golden(dir: &str) -> Result<(), String> {
 
     fs::write(format!("{}/eagle_input.tsv", dir), input).map_err(|e| e.to_string())?;
     fs::write(format!("{}/eagle_expected.tsv", dir), expected).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Backtrack's hold window, replayed over a synthetic clock.
+///
+/// The clock advances 50 ms per tick from a non-zero origin so that a sentinel
+/// of 0 (`hold_start_ns == 0`, which the first Kotlin version used) would show
+/// up as *held since the epoch* rather than as a silent no-op. The roll is
+/// scripted per row for the same reason as Eagle's: the two sides do not share
+/// a generator, and this fixture is about the window, not the draw.
+fn emit_backtrack_golden(dir: &str) -> Result<(), String> {
+    use std::fs;
+
+    let mut input = String::new();
+    input.push_str("# doppel-backtrack-golden v1\n");
+    input.push_str(
+        "idx\tnow_ns\tmodern\tpulse\tsmart\tmin_ms\tmax_ms\tdistance\tlegacy_distance\tmust_release\troll_ms\n",
+    );
+
+    let mut expected = String::new();
+    expected.push_str("# idx\thold\n");
+
+    let mut state = strategy::backtrack::State::new();
+    let mut rng = Pcg32::new(0x0000_5EED_BACC_0001);
+    let mut now: i64 = 1_000_000_000;
+
+    for i in 0..400 {
+        now += 50_000_000;
+
+        let pick = rng.random_int(0, 99);
+        let modern = pick % 7 != 0;
+        let pulse = pick % 3 == 0;
+        let smart = pick % 5 != 0;
+        let min_ms = 80;
+        let max_ms = 250;
+        let has_target = pick % 4 != 0;
+        let distance = if has_target {
+            (pick % 70) as f32 / 10.0
+        } else {
+            -1.0
+        };
+        let legacy_distance = 3.5f32;
+        let must_release = pick % 13 == 0;
+        let roll_ms = rng.random_int(min_ms, max_ms);
+
+        input.push_str(&format!(
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+            i,
+            now,
+            modern as u8,
+            pulse as u8,
+            smart as u8,
+            min_ms,
+            max_ms,
+            distance,
+            legacy_distance,
+            must_release as u8,
+            roll_ms
+        ));
+
+        let hold = strategy::backtrack::tick(
+            &mut state,
+            strategy::backtrack::Input {
+                now_ns: now,
+                modern,
+                pulse,
+                smart,
+                min_delay_ms: min_ms,
+                max_delay_ms: max_ms,
+                distance,
+                legacy_distance,
+                must_release,
+            },
+            &mut |_, _| roll_ms,
+        );
+        expected.push_str(&format!("{}\t{}\n", i, hold as u8));
+    }
+
+    fs::write(format!("{}/backtrack_input.tsv", dir), input).map_err(|e| e.to_string())?;
+    fs::write(format!("{}/backtrack_expected.tsv", dir), expected).map_err(|e| e.to_string())?;
     Ok(())
 }

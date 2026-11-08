@@ -872,6 +872,14 @@ pub mod op {
     /// three predicates and the roll bounds ride on the request, because both
     /// are things only the game side can see (edge query, pitch gate, real key).
     pub const PLAYER_EAGLE_TICK: u8 = 0;
+
+    /// player/backtrack: `tick(now_ns, modern, pulse, smart, min_delay_ms,
+    ///                     max_delay_ms, distance, legacy_distance,
+    ///                     must_release)` → bool (hold this tick).
+    ///
+    /// `now_ns` is the caller's monotonic clock. Only differences are used, so
+    /// the two processes never have to agree on an absolute time base.
+    pub const PLAYER_BACKTRACK_TICK: u8 = 1;
 }
 
 /// Maps a side to the wire's 0/1.
@@ -960,7 +968,7 @@ pub fn known_ops(module: Module) -> &'static [u8] {
             op::CBT_DECIDE,
         ],
         Module::Reach => &[op::REACH_INTERSECT],
-        Module::Player => &[op::PLAYER_EAGLE_TICK],
+        Module::Player => &[op::PLAYER_EAGLE_TICK, op::PLAYER_BACKTRACK_TICK],
         Module::Velocity => &[op::VEL_BRACE, op::VEL_DELAY_ENQUEUE, op::VEL_DELAY_PUMP],
         _ => &[],
     }

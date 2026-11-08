@@ -451,6 +451,33 @@ object Strategies {
             autoSneakActive = flags and 4 != 0
         )
     }
+
+    /**
+     * Backtrack: hold position updates this tick?
+     *
+     * `null` means the core did not answer, and the caller must let the updates
+     * through. Holding is the state that can desync the view; not holding is
+     * merely vanilla.
+     */
+    fun backtrackTick(
+        player: PlayerState,
+        target: TargetState?,
+        nowNs: Long,
+        modern: Boolean,
+        pulse: Boolean,
+        smart: Boolean,
+        minDelayMs: Int,
+        maxDelayMs: Int,
+        distance: Float,
+        legacyDistance: Float,
+        mustRelease: Boolean
+    ): Boolean? {
+        val stub = CoreLink.stub ?: return null
+        return stub.playerBacktrack(
+            player, target, nowNs, modern, pulse, smart,
+            minDelayMs, maxDelayMs, distance, legacyDistance, mustRelease, nextTick()
+        )
+    }
 }
 
 /** What the core decided for one Eagle tick. */
@@ -458,9 +485,7 @@ class EagleStep(
     @JvmField val press: Boolean,
     @JvmField val release: Boolean,
     @JvmField val autoSneakActive: Boolean
-)
-
-private object OfflineAim : AimStrategy {
+)private object OfflineAim : AimStrategy {
     override val name: String get() = "OfflineAim"
     override fun execute(config: AimConfig, state: AimStrategy.State, input: Any) = AimResult.Skip
 }

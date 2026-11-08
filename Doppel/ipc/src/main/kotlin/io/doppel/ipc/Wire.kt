@@ -403,7 +403,8 @@ object Ops {
     const val REACH_INTERSECT = 0   // minX..maxZ, originX..Z, dirX..Z, maxDist
 
     // player
-    const val PLAYER_EAGLE_TICK = 0 // onEdge, settingsMet, sneakKeyHeld, minDelay, maxDelay → flags
+    const val PLAYER_EAGLE_TICK = 0     // onEdge, settingsMet, sneakKeyHeld, minDelay, maxDelay → flags
+    const val PLAYER_BACKTRACK_TICK = 1 // nowNs, modern, pulse, smart, minMs, maxMs, distance, legacyDistance, mustRelease → bool
 }
 
 /** Aim's answer, decoded. */

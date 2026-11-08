@@ -23,11 +23,11 @@ import kotlin.random.Random
  *
  * State machine managed by the core (`TAP_TICK` / `TAP_BEGIN`).
  * Only activates while the player is holding W ([PlayerState.isMovingForward]).
+ *
+ * Combat triggering uses the 1.8 CombatTrigger pipeline only — the 1.9+
+ * cooldown-bar variant was removed as redundant.
  */
 object WTap : Module("WTap", Category.COMBAT) {
-
-    // ========== Version Selection ==========
-    var combatVersion by choices("CombatVersion", arrayOf("1.8", "1.9+"))
 
     // ========== Shared Configuration ==========
     private val chance by int("Chance", 100, 0..100, "%")
@@ -50,7 +50,9 @@ object WTap : Module("WTap", Category.COMBAT) {
         onlyWhenTargetGoesBack = this@WTap.onlyWhenTargetGoesBack
     }
 
-    // ========== 1.8 Configuration ==========
+    // ========== CombatTrigger configuration (1.8 mechanics) ==========
+    // The "18" suffixes are historical: the 1.9+ variant these were paired
+    // with was removed, but the keys are kept so existing configs still load.
     private val eventType by choices("EventType", arrayOf("POST", "PRE"))
     private val actionMin18 by int("ActionMsMin18", 25, 1..500, "ms")
     private val actionMax18 by int("ActionMsMax18", 55, 1..500, "ms")
@@ -58,11 +60,6 @@ object WTap : Module("WTap", Category.COMBAT) {
     private val onceEveryMax by int("OnceEveryMax", 1, 1..10)
     private val postDelayMin by int("PostDelayMin", 25, 0..500, "ms")
     private val postDelayMax by int("PostDelayMax", 55, 0..500, "ms")
-
-    // ========== 1.9+ Configuration ==========
-    private val cooldownThreshold by float("CooldownThreshold", 1.0f, 0.5f..1.0f, "%")
-    private val actionMin19 by int("ActionMsMin19", 15, 1..500, "ms")
-    private val actionMax19 by int("ActionMsMax19", 30, 1..500, "ms")
 
     // ========== Core State Machine ==========
     // Phase and both deadlines live in the core; this module keeps only what it must release.
@@ -128,15 +125,11 @@ object WTap : Module("WTap", Category.COMBAT) {
         if (target.health <= 0f) { hitCounter = 0; return }
         if (onlyPlayers && target.name.isEmpty()) { hitCounter = 0; return }
 
-        // Route by version
-        when (combatVersion) {
-            "1.8" -> evaluate18(player, target, now)
-            "1.9+" -> evaluate19(player, target, now)
-        }
+        evaluate18(player, target, now)
     }
 
     // ================================================================
-    // 1.8 — CombatTrigger pipeline
+    // CombatTrigger pipeline (1.8 mechanics)
     // ================================================================
     private fun evaluate18(player: PlayerState, target: TargetState, now: Long) {
         // Gate and trigger in one call: they share the core's random stream, and asking twice
@@ -168,32 +161,12 @@ object WTap : Module("WTap", Category.COMBAT) {
     }
 
     // ================================================================
-    // 1.9+ — Cooldown-based triggering
-    // ================================================================
-    private fun evaluate19(player: PlayerState, target: TargetState, now: Long) {
-        if (!EventBridge.isLeftMousePhysicallyDown) return
-
-        val cooldown = player.attackCooldownProgress
-        if (cooldown < cooldownThreshold) return
-
-        if (!Strategies.gate(player, target, triggerOptions)) return
-
-        if (chance < 100 && Random.nextInt(100) >= chance) return
-
-        startTap(player, target, now)
-    }
-
-    // ================================================================
     // Execution
     // ================================================================
     private fun startTap(player: PlayerState, target: TargetState?, nowNs: Long) {
         ownW(false)                           // release W for the tap
         markWorked()                          // HUD work flash — the module just acted
-        val ms = when (combatVersion) {
-            "1.8" -> Random.nextInt(actionMin18, actionMax18 + 1)
-            "1.9+" -> Random.nextInt(actionMin19, actionMax19 + 1)
-            else -> 40
-        }
+        val ms = Random.nextInt(actionMin18, actionMax18 + 1)
         Strategies.tapBegin(player, target, nowNs, ms, postDelay = false)
     }
 

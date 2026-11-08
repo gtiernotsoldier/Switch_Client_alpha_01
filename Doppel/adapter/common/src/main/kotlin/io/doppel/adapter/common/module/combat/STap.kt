@@ -22,15 +22,14 @@ import kotlin.random.Random
  *
  * State machine managed by the core (`TAP_TICK` / `TAP_BEGIN`).
  * Only activates while holding W ([PlayerState.isMovingForward]).
+ *
+ * Combat triggering uses the 1.8 CombatTrigger pipeline only — the 1.9+
+ * low-frequency stutter variant was removed as redundant.
  */
 object STap : Module("STap", Category.COMBAT) {
 
-    // ========== Version Selection ==========
-    var combatVersion by choices("CombatVersion", arrayOf("1.8", "1.9+"))
-
     // ========== Shared Configuration ==========
     private val chance18 by int("Chance18", 100, 0..100, "%")
-    private val chance19 by int("Chance19", 50, 0..100, "%")
     private val rangeMin by float("RangeMin", 0.0f, 0.0f..6.0f, "blocks")
     private val rangeMax by float("RangeMax", 3.0f, 0.0f..6.0f, "blocks")
     private val onlyPlayers by boolean("OnlyPlayers", false)
@@ -50,7 +49,9 @@ object STap : Module("STap", Category.COMBAT) {
         onlyWhenTargetGoesBack = this@STap.onlyWhenTargetGoesBack
     }
 
-    // ========== 1.8 Configuration ==========
+    // ========== CombatTrigger configuration (1.8 mechanics) ==========
+    // The "18" suffixes are historical: the 1.9+ variant these were paired
+    // with was removed, but the keys are kept so existing configs still load.
     private val eventType by choices("EventType", arrayOf("POST", "PRE"))
     private val actionMin18 by int("ActionMsMin18", 25, 1..500, "ms")
     private val actionMax18 by int("ActionMsMax18", 55, 1..500, "ms")
@@ -58,12 +59,6 @@ object STap : Module("STap", Category.COMBAT) {
     private val onceEveryMax by int("OnceEveryMax", 1, 1..10)
     private val postDelayMin by int("PostDelayMin", 10, 0..500, "ms")
     private val postDelayMax by int("PostDelayMax", 40, 0..500, "ms")
-
-    // ========== 1.9+ Configuration ==========
-    private val actionMin19 by int("ActionMsMin19", 10, 1..20, "ms")
-    private val actionMax19 by int("ActionMsMax19", 15, 1..20, "ms")
-    private val onceEvery19Min by int("OnceEvery19Min", 2, 1..10)
-    private val onceEvery19Max by int("OnceEvery19Max", 3, 1..10)
 
     // ========== Core State Machine ==========
     private var hitCounter: Int = 0
@@ -122,19 +117,12 @@ object STap : Module("STap", Category.COMBAT) {
         if (target.health <= 0f) { hitCounter = 0; return }
         if (onlyPlayers && target.name.isEmpty()) { hitCounter = 0; return }
 
-        // 1.8 runs the gate inside the trigger — one round trip, one random stream. 1.9 has no
-        // trigger to merge it with, so it asks on its own.
-        when (combatVersion) {
-            "1.8" -> evaluate18(player, target, now)
-            "1.9+" -> {
-                if (!Strategies.gate(player, target, triggerOptions)) return
-                evaluate19(player, target, now)
-            }
-        }
+        // The gate runs inside the trigger — one round trip, one random stream.
+        evaluate18(player, target, now)
     }
 
     // ================================================================
-    // 1.8 — CombatTrigger pipeline
+    // CombatTrigger pipeline (1.8 mechanics)
     // ================================================================
     private fun evaluate18(player: PlayerState, target: TargetState, now: Long) {
         // hurtGate = false: fire on the attack itself, not the target's i-frame window (20 Hz
@@ -164,43 +152,19 @@ object STap : Module("STap", Category.COMBAT) {
     }
 
     // ================================================================
-    // 1.9+ — Low-frequency micro-stutter
-    // ================================================================
-    private fun evaluate19(player: PlayerState, target: TargetState?, now: Long) {
-        if (!EventBridge.isLeftMousePhysicallyDown) return
-
-        if (Random.nextInt(100) >= chance19) return
-
-        hitCounter++
-        if (hitCounter < hitThreshold) return
-        hitCounter = 0
-        hitThreshold = Random.nextInt(onceEvery19Min, onceEvery19Max + 1).coerceAtLeast(1)
-
-        startTap(player, target, now)
-    }
-
-    // ================================================================
     // Execution
     // ================================================================
     private fun startTap(player: PlayerState, target: TargetState?, nowNs: Long) {
         ownS(true)                         // press S for the tap
         markWorked()                      // HUD work flash — the module just acted
-        val ms = when (combatVersion) {
-            "1.8" -> Random.nextInt(actionMin18, actionMax18 + 1)
-            "1.9+" -> Random.nextInt(actionMin19, actionMax19 + 1)
-            else -> 40
-        }
+        val ms = Random.nextInt(actionMin18, actionMax18 + 1)
         Strategies.tapBegin(player, target, nowNs, ms, postDelay = false)
     }
 
     // ========== Lifecycle ==========
     override fun onEnable() {
         hitCounter = 0
-        hitThreshold = when (combatVersion) {
-            "1.8" -> Random.nextInt(onceEveryMin, onceEveryMax + 1).coerceAtLeast(1)
-            "1.9+" -> Random.nextInt(onceEvery19Min, onceEvery19Max + 1).coerceAtLeast(1)
-            else -> 1
-        }
+        hitThreshold = Random.nextInt(onceEveryMin, onceEveryMax + 1).coerceAtLeast(1)
         ownS(EventBridge.physicalBackDown)
         EventBridge.registerTickListener(tickListener)
     }

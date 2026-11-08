@@ -86,7 +86,7 @@ object FabricBootstrap : ClientModInitializer {
         EventBridge.isKeyBackDown = client.options.backKey.isPressed
         EventBridge.isKeyLeftDown = client.options.leftKey.isPressed
         EventBridge.isKeyRightDown = client.options.rightKey.isPressed
-        // Physical mouse button states (ClickAssist, WTap 1.9+)
+        // Physical mouse button states (ClickAssist, BlockHit, HitSelect, KeepSprint)
         EventBridge.isLeftMousePhysicallyDown =
             GLFW.glfwGetMouseButton(window.handle, GLFW.GLFW_MOUSE_BUTTON_LEFT) == GLFW.GLFW_PRESS
         EventBridge.isRightMousePhysicallyDown =

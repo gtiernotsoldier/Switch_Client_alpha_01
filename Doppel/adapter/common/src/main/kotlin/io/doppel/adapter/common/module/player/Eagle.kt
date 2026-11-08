@@ -7,8 +7,8 @@ import io.doppel.adapter.common.module.Module
 import io.doppel.adapter.common.module.ModuleRegistry
 import io.doppel.adapter.common.module.Category
 import io.doppel.adapter.common.option.*
+import io.doppel.ipc.EaglePlaceStep
 import io.doppel.ipc.Strategies
-import kotlin.random.Random
 
 /**
  * Eagle — auto-sneak on a block edge. Port of Raven's SafeWalk sneak branch.
@@ -82,20 +82,14 @@ object Eagle : Module("Eagle", Category.PLAYER) {
     /** Whether the sneak we are currently holding was pressed by this module (not by the player). */
     private var autoSneakActive: Boolean = false
 
-    /** Ticks left before the next AutoPlace right-click. */
-    private var placeCooldownTicks: Int = 0
-
-    /** Whether an aim is in flight — waiting for the view to reach the bridging angle. */
-    private var placeAiming: Boolean = false
-
-    /** Ticks spent waiting for that aim to arrive. */
-    private var placeAimTicks: Int = 0
-
     /**
      * Whether the right-click currently held is the one AutoPlace pressed.
      *
      * On the platform side `syntheticUse` is a **held** button — it is OR-ed into the right mouse
      * button every frame — so it has to be released again, and only by whoever pressed it.
+     * This is a platform-ownership flag (who must release a real key), not decision
+     * state: the aim-in-flight flag, the wait counter and the cooldown live in the
+     * core. See `strategy::eagle_place` in `core-rs`.
      */
     private var placeUseOwned: Boolean = false
 
@@ -144,15 +138,17 @@ object Eagle : Module("Eagle", Category.PLAYER) {
     /**
      * Bridging placement: while on an edge **and** sneaking, click the block in front of the feet.
      *
-     * The aim and the click are deliberately NOT the same tick. The first version set the rotation and
-     * clicked immediately, so the click went wherever the view already pointed — placements kept
-     * happening without ever looking down, which is what the user saw. Here the module asks for the
-     * bridging angle, waits until the view has actually arrived inside [placeTolerance], and only then
-     * clicks; if it does not arrive within [PLACE_MAX_AIM_TICKS] it gives up without clicking.
+     * This side only makes judgements (the gate, the pitch tolerance), marshals
+     * them, and turns the core's [EaglePlaceStep] into platform writes. The
+     * aim-first timing — asking for the bridging angle, waiting for the view to
+     * arrive inside [placeTolerance], giving up after [PLACE_MAX_AIM_TICKS],
+     * cooldown between placements and its random draw — is `strategy::eagle_place`
+     * in `core-rs`, matched tick-for-tick by `EaglePlaceParityTest`.
      *
-     * BridgeAssist owns the view while it is on: AutoPlace never writes the rotation in that case. If
-     * BridgeAssist already holds the bridging angle the click goes ahead (they cooperate); if it does
-     * not, AutoPlace stands down rather than fighting it for the camera — the other half of the report.
+     * AIM and CLICK are deliberately not the same tick: a click only goes out
+     * once the view is already at the angle. BridgeAssist owning the view makes
+     * the core stand down rather than fight for the camera, unless it already
+     * holds the bridging angle (then the click goes ahead — they cooperate).
      */
     private fun autoPlaceTick(player: PlayerState, onEdge: Boolean) {
         // Release last tick's placement click FIRST. `EventBridge.syntheticUse` is not a one-shot: the
@@ -164,78 +160,51 @@ object Eagle : Module("Eagle", Category.PLAYER) {
             placeUseOwned = false
         }
 
+        // ---- Judgements (stay in the module) --------------------------------
+        // The gate and the pitch tolerance are pure predicates over things only
+        // the game side can see (the edge query, the real sneak key, the view).
         val sneaking = player.isSneaking || autoSneakActive
-        if (!shouldAutoPlace(enabled, autoPlace, onEdge, sneaking)) {
-            // Any gate closing cancels a pending aim: never click after the reason to click is gone.
-            placeAiming = false
-            placeAimTicks = 0
-            placeCooldownTicks = 0
-            return
-        }
-
-        if (!placeAiming && placeCooldownTicks > 0) {
-            placeCooldownTicks--
-            return
-        }
-
+        val gatesOpen = shouldAutoPlace(enabled, autoPlace, onEdge, sneaking)
+        val pitchInTolerance = pitchInTolerance(
+            player.rotation.pitch, placePitch.toFloat(), placeTolerance.toFloat()
+        )
         val bridgeAssistEnabled = ModuleRegistry.get("BridgeAssist")?.enabled == true
-        when (
-            placeDecision(
-                currentPitch = player.rotation.pitch,
-                targetPitch = placePitch.toFloat(),
-                tolerance = placeTolerance.toFloat(),
-                waitedTicks = placeAimTicks,
-                maxWaitTicks = PLACE_MAX_AIM_TICKS,
-                bridgeAssistEnabled = bridgeAssistEnabled
-            )
-        ) {
-            PlaceStep.AIM -> {
-                // Ask for the bridging angle and wait for it to actually arrive.
+
+        // ---- Ask the core ---------------------------------------------------
+        // The aim-in-flight flag, the wait counter, the cooldown AND its random
+        // draw all live in the core on one RNG stream. This side sends the two
+        // judgements and the tuning knobs, and gets back a single step. Every
+        // tick sends a request even when the gates are closed: the core needs
+        // `gatesOpen = false` to cancel a pending aim and forget its cooldown.
+        val step = Strategies.eaglePlace(
+            player, null,
+            gatesOpen, pitchInTolerance, bridgeAssistEnabled,
+            PLACE_MAX_AIM_TICKS,
+            minOf(placeTicksMin, placeTicksMax), maxOf(placeTicksMin, placeTicksMax)
+        ) ?: return // no answer: neither aim nor click — a stray block is unrecoverable
+
+        // ---- Platform side effects (stay in the module) ---------------------
+        when (step) {
+            EaglePlaceStep.AIM ->
+                // Ask for the bridging angle; the core counts the waiting ticks.
                 EventBridge.setPlayerRotation(player.rotation.yaw, placePitch.toFloat())
-                placeAiming = true
-                placeAimTicks++
-            }
-            PlaceStep.CLICK -> {
+            EaglePlaceStep.CLICK -> {
                 EventBridge.syntheticUse = true
                 placeUseOwned = true
                 markWorked() // the HUD row flashes on the placement, like every other acting module
-                placeAiming = false
-                placeAimTicks = 0
-                placeCooldownTicks = Random.nextInt(placeTicksMin, placeTicksMax + 1)
             }
-            PlaceStep.ABORT -> {
-                placeAiming = false
-                placeAimTicks = 0
-                // Retry soon, but only ever through the same aim-first path — never a click without the
-                // aim. One tick keeps a bridging rhythm instead of stalling for a whole cooldown.
-                placeCooldownTicks = 1
-            }
+            EaglePlaceStep.ABORT, EaglePlaceStep.NONE -> Unit // no write this tick
         }
     }
 
     /**
-     * AutoPlace's per-tick decision, pure so the rule is testable.
-     *
-     * CLICK only when the view is already inside the tolerance of the bridging angle — that is what
-     * stops a placement from firing at the horizon. AIM asks for the angle and keeps waiting, but only
-     * while BridgeAssist is not the one holding the view; ABORT gives up without clicking.
+     * A geometry comparison the JVM keeps (Geometry is an explicit whitelist,
+     * see `PROTECTION.md` 9.4): is the view already inside the tolerance of the
+     * bridging angle? Pure judgement, no state — the timing decisions that used
+     * to sit beside it (`waitedTicks`, cooldown, the random draw) are in the core.
      */
-    internal fun placeDecision(
-        currentPitch: Float,
-        targetPitch: Float,
-        tolerance: Float,
-        waitedTicks: Int,
-        maxWaitTicks: Int,
-        bridgeAssistEnabled: Boolean
-    ): PlaceStep {
-        if (kotlin.math.abs(currentPitch - targetPitch) <= tolerance) return PlaceStep.CLICK
-        if (waitedTicks >= maxWaitTicks) return PlaceStep.ABORT
-        if (bridgeAssistEnabled) return PlaceStep.ABORT
-        return PlaceStep.AIM
-    }
-
-    /** What AutoPlace should do this tick — see [placeDecision]. */
-    internal enum class PlaceStep { AIM, CLICK, ABORT }
+    internal fun pitchInTolerance(currentPitch: Float, targetPitch: Float, tolerance: Float): Boolean =
+        kotlin.math.abs(currentPitch - targetPitch) <= tolerance
 
     /** How many ticks an aim may take before AutoPlace gives up on it (no click without the aim). */
     private const val PLACE_MAX_AIM_TICKS = 3
@@ -249,8 +218,9 @@ object Eagle : Module("Eagle", Category.PLAYER) {
 
     override fun onEnable() {
         autoSneakActive = false
-        placeCooldownTicks = 0
-        // A fresh enable must not inherit a hold the core still believes it owns.
+        // A fresh enable must not inherit a hold the core still believes it owns,
+        // nor a placement aim/cooldown left over from the previous activation —
+        // resetPlayer() resets the core's eagle + eagle_place state.
         Strategies.resetPlayer()
         EventBridge.registerTickListener(tickListener)
     }
@@ -271,8 +241,5 @@ object Eagle : Module("Eagle", Category.PLAYER) {
         }
         Strategies.resetPlayer()
         autoSneakActive = false
-        placeCooldownTicks = 0
-        placeAiming = false
-        placeAimTicks = 0
     }
 }

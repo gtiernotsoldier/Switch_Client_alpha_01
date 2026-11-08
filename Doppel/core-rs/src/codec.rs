@@ -911,6 +911,16 @@ pub mod op {
     ///                         forward_hurt_resistant_time, wait_first_ms,
     ///                         retime_at, pause_ms)` → deliver the click.
     pub const PLAYER_HIT_GATE: u8 = 6;
+
+    /// player/eagle: `place_tick(gates_open, pitch_in_tolerance,
+    ///               bridge_assist_enabled, max_wait_ticks, cooldown_min,
+    ///               cooldown_max)` → step (0 none, 1 aim, 2 click, 3 abort).
+    ///
+    /// The aim-in-flight flag, aim ticks and the placement cooldown are core
+    /// state; the cooldown draw rides on Eagle AutoPlace's own RNG stream. The
+    /// JVM supplies the two judgements (gate + pitch tolerance) and turns the
+    /// returned step into a rotation write or a right-click.
+    pub const PLAYER_EAGLE_PLACE: u8 = 7;
 }
 
 /// Maps a side to the wire's 0/1.
@@ -1007,6 +1017,7 @@ pub fn known_ops(module: Module) -> &'static [u8] {
             op::PLAYER_CLICK_ASSIST,
             op::PLAYER_HIT_TICK,
             op::PLAYER_HIT_GATE,
+            op::PLAYER_EAGLE_PLACE,
         ],
         Module::Velocity => &[op::VEL_BRACE, op::VEL_DELAY_ENQUEUE, op::VEL_DELAY_PUMP],
         _ => &[],

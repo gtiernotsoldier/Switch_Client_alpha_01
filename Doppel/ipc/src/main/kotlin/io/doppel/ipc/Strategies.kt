@@ -450,6 +450,32 @@ object Strategies {
     }
 
     /**
+     * Eagle AutoPlace: one tick of the aim-first placement machine.
+     *
+     * The module supplies the two judgements it made (the gate and whether the
+     * view is inside the tolerance) plus the cooldown bounds; the core owns the
+     * aim state and the random cooldown. `null` means no answer — the module
+     * then writes neither a rotation nor a right-click.
+     */
+    fun eaglePlace(
+        player: PlayerState,
+        target: TargetState?,
+        gatesOpen: Boolean,
+        pitchInTolerance: Boolean,
+        bridgeAssistEnabled: Boolean,
+        maxWaitTicks: Int,
+        cooldownMin: Int,
+        cooldownMax: Int
+    ): EaglePlaceStep? {
+        val stub = CoreLink.stub ?: return null
+        val code = stub.playerEaglePlace(
+            player, target, gatesOpen, pitchInTolerance, bridgeAssistEnabled,
+            maxWaitTicks, cooldownMin, cooldownMax, nextTick()
+        ) ?: return null
+        return EaglePlaceStep.fromCode(code)
+    }
+
+    /**
      * Backtrack: hold position updates this tick?
      *
      * `null` means the core did not answer, and the caller must let the updates
@@ -613,6 +639,17 @@ class EagleStep(
     @JvmField val release: Boolean,
     @JvmField val autoSneakActive: Boolean
 )
+
+/** What the core decided for one Eagle AutoPlace tick. */
+enum class EaglePlaceStep(val code: Int) {
+    NONE(0), AIM(1), CLICK(2), ABORT(3);
+
+    companion object {
+        /** Unknown codes degrade to NONE: never invent a placement step. */
+        @JvmStatic
+        fun fromCode(code: Int): EaglePlaceStep? = entries.firstOrNull { it.code == code }
+    }
+}
 
 private object OfflineAim : AimStrategy {
     override val name: String get() = "OfflineAim"

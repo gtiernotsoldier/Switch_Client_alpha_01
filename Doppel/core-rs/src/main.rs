@@ -996,6 +996,7 @@ fn emit_golden(dir: &str) -> Result<(), String> {    use std::fs;
     emit_click_golden(dir, 0x0000_5EED_C11C_0001)?;
     emit_movement_golden(dir)?;
     emit_eagle_golden(dir)?;
+    emit_eagle_place_golden(dir)?;
     emit_backtrack_golden(dir)?;
     emit_kbd_golden(dir)?;
     emit_reach_golden(dir)?;
@@ -1065,6 +1066,81 @@ fn emit_eagle_golden(dir: &str) -> Result<(), String> {
 
     fs::write(format!("{}/eagle_input.tsv", dir), input).map_err(|e| e.to_string())?;
     fs::write(format!("{}/eagle_expected.tsv", dir), expected).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Eagle AutoPlace's aim-first placement machine, replayed over a fixed input
+/// sequence. The cooldown roll is scripted per row (as in the sneak fixture):
+/// Pcg32 and `kotlin.random` are different generators, so the column that
+/// catches a porting mistake is `rolls` — a port that draws while cooling down
+/// or aiming advances the stream and diverges on the first click after it.
+fn emit_eagle_place_golden(dir: &str) -> Result<(), String> {
+    use std::fs;
+
+    let mut input = String::new();
+    input.push_str("# doppel-eagle-place-golden v1\n");
+    input.push_str("idx\tgates_open\tpitch_ok\tbridge_assist\tmax_wait\tcd_min\tcd_max\troll\n");
+
+    let mut expected = String::new();
+    expected.push_str("# idx\tstep\taiming\taim_ticks\tcooldown\trolls\n");
+
+    let mut state = strategy::eagle_place::State::default();
+    let mut rng = Pcg32::new(0x0000_5EED_EA12_0001);
+
+    for i in 0..320 {
+        // Skewed so every branch is hit: gates mostly open, the view arrives
+        // on roughly a third of ticks, BridgeAssist occasionally owns the view.
+        let pick = rng.random_int(0, 99);
+        let gates_open = pick % 7 != 0;
+        let pitch_ok = pick % 3 == 0;
+        let bridge_assist = pick % 11 == 0;
+        let max_wait = 3;
+        let cd_min = 1;
+        let cd_max = 3;
+        let roll = rng.random_int(cd_min, cd_max);
+
+        input.push_str(&format!(
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+            i,
+            gates_open as u8,
+            pitch_ok as u8,
+            bridge_assist as u8,
+            max_wait,
+            cd_min,
+            cd_max,
+            roll
+        ));
+
+        let mut rolls = 0;
+        let (step, next) = strategy::eagle_place::tick(
+            state,
+            strategy::eagle_place::Input {
+                gates_open,
+                pitch_in_tolerance: pitch_ok,
+                bridge_assist_enabled: bridge_assist,
+                max_wait_ticks: max_wait,
+                cooldown_min: cd_min,
+                cooldown_max: cd_max,
+            },
+            &mut || {
+                rolls += 1;
+                roll
+            },
+        );
+        state = next;
+        expected.push_str(&format!(
+            "{}\t{}\t{}\t{}\t{}\t{}\n",
+            i,
+            step.code(),
+            next.aiming as u8,
+            next.aim_ticks,
+            next.cooldown_ticks,
+            rolls
+        ));
+    }
+
+    fs::write(format!("{}/eagle_place_input.tsv", dir), input).map_err(|e| e.to_string())?;
+    fs::write(format!("{}/eagle_place_expected.tsv", dir), expected).map_err(|e| e.to_string())?;
     Ok(())
 }
 

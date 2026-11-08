@@ -170,6 +170,58 @@ class CoreStubE2ETest {
 
     @Test
     @Timeout(value = 60, unit = TimeUnit.SECONDS)
+    fun `eagle place decisions travel intact over a real socket`() {
+        // The unit tests cover the strategy and the wire codec separately; this
+        // one proves the whole path for the newest player op: Kotlin marshalling
+        // → TCP → decode_generic → on_player dispatch → eagle_place::tick →
+        // encode_scalar → decodeScalar. The step sequence is checked against the
+        // Kotlin oracle using the same scripted cooldown roll (the two RNGs are
+        // different generators, so the draw itself is not compared).
+        val exe = locateCore()
+        assumeTrue(exe != null, "doppel-core not built — run: cd Doppel/core-rs && cargo build")
+        val proc = ProcessBuilder(exe!!.absolutePath, "--listen", "tcp:127.0.0.1:0", "--seed", "424242")
+            .redirectError(ProcessBuilder.Redirect.INHERIT)
+            .start()
+        try {
+            val banner = proc.inputStream.bufferedReader().readLine()
+            assertNotNull(banner, "core produced no LISTEN line")
+            assertTrue(banner!!.startsWith("LISTEN "), "unexpected banner: $banner")
+            val addr = banner.removePrefix("LISTEN ").trim()
+
+            CoreStub(Endpoint.parse("tcp:$addr"), null, deadlineNanos = 20_000_000L).use { stub ->
+                stub.connect()
+                val p = player()
+                var tick = 1
+
+                // A pitch already at the angle clicks and arms a cooldown.
+                val click = stub.playerEaglePlace(p, null, true, true, false, 3, 2, 2, tick++)
+                assertEquals(2, click, "CLICK over the socket")
+
+                // Cooling down: NONE, no rotation and no click.
+                val cooling = stub.playerEaglePlace(p, null, true, false, false, 3, 2, 2, tick++)
+                assertEquals(0, cooling, "NONE while cooling")
+
+                // Spend the remaining cooldown, then AIM.
+                stub.playerEaglePlace(p, null, true, false, false, 3, 2, 2, tick++)
+                val aim = stub.playerEaglePlace(p, null, true, false, false, 3, 2, 2, tick++)
+                assertEquals(1, aim, "AIM once the cooldown is spent")
+
+                // A closed gate cancels the pending aim and forgets the cooldown.
+                stub.playerEaglePlace(p, null, false, false, false, 3, 2, 2, tick++)
+                val clickAgain = stub.playerEaglePlace(p, null, true, true, false, 3, 2, 2, tick)
+                assertEquals(2, clickAgain, "CLICK again after the reset")
+
+                assertEquals(0L, stub.timeouts.get(), "deadline misses on loopback")
+                assertEquals(0L, stub.degradedTicks.get(), "degraded ticks on a healthy run")
+            }
+        } finally {
+            proc.destroyForcibly()
+            proc.waitFor(5, TimeUnit.SECONDS)
+        }
+    }
+
+    @Test
+    @Timeout(value = 60, unit = TimeUnit.SECONDS)
     fun `a dead core degrades instead of throwing`() {
         // Bind, then close: the stub must treat a refused connection as
         // "degrade this tick", never as an exception escaping into the tick loop.

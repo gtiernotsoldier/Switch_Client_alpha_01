@@ -739,6 +739,38 @@ class CoreStub(
     }
 
     /**
+     * Eagle AutoPlace's placement step: one call per tick.
+     *
+     * The aim-in-flight flag, the ticks spent waiting and the placement
+     * cooldown (including its random draw) are core state. This side sends the
+     * two judgements it made (gate + pitch tolerance) and the cooldown bounds,
+     * and gets back a step code: 0 none, 1 aim, 2 click, 3 abort.
+     *
+     * `null` means the core did not answer. The module then writes no rotation
+     * and no right-click — starting an aim or placing a block without the
+     * core's decision is the one thing that must never happen by accident.
+     */
+    fun playerEaglePlace(
+        player: io.doppel.contract.model.PlayerState,
+        target: io.doppel.contract.model.TargetState?,
+        gatesOpen: Boolean,
+        pitchInTolerance: Boolean,
+        bridgeAssistEnabled: Boolean,
+        maxWaitTicks: Int,
+        cooldownMin: Int,
+        cooldownMax: Int,
+        tick: Int
+    ): Int? {
+        val payload = genericRequest(
+            encodeSnapshot(player, target), Ops.PLAYER_EAGLE_PLACE,
+            b(gatesOpen), b(pitchInTolerance), b(bridgeAssistEnabled),
+            maxWaitTicks.toDouble(), cooldownMin.toDouble(), cooldownMax.toDouble()
+        )
+        val f = roundTrip(Wire.MODULE_PLAYER, payload, tick) ?: return null
+        return decodeScalar(f).toInt()
+    }
+
+    /**
      * Backtrack's hold window: one call per tick.
      *
      * `null` means the core did not answer. The caller must then let the

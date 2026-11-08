@@ -23,6 +23,7 @@ use crate::strategy::click::{self, ClickConfig, ClickState, CooldownClickConfig,
 use crate::strategy::backtrack;
 use crate::strategy::combat::{self, BlockArbiterState, PredictorConfig, PredictorState, RangeGateConfig, RangeGateState};
 use crate::strategy::eagle;
+use crate::strategy::eagle_place;
 use crate::strategy::hit_select;
 use crate::strategy::knockback_displace;
 use crate::strategy::reach_sample;
@@ -77,6 +78,10 @@ pub struct Session {
     /// HitSelect's `chance` and `missedSwing` rolls. Gate-only: the tick half
     /// never draws, so the stream's order is the order clicks arrived in.
     pub rng_hit_select: Pcg32,
+    /// Eagle AutoPlace's placement cooldown draw. Its own stream: the draw is
+    /// consumed only on a CLICK, and must not interleave with the sneak delay
+    /// stream (`rng_player`) or a replay of the two would diverge.
+    pub rng_eagle_place: Pcg32,
     pub config: VelocityConfig,
     pub velocity: velocity::State,
 
@@ -113,6 +118,10 @@ pub struct Session {
 
     /// HitSelect: the target windows shared by the tick and the click gate.
     pub hit_select: hit_select::State,
+
+    /// Eagle AutoPlace: the aim in flight, the ticks spent waiting, and the
+    /// cooldown left before the next placement.
+    pub eagle_place: eagle_place::State,
 
     pub ticks: u64,
     pub decisions: u64,
@@ -151,6 +160,7 @@ impl Session {
             rng_reach: Pcg32::new(seed),
             rng_click_assist: Pcg32::new(seed),
             rng_hit_select: Pcg32::new(seed),
+            rng_eagle_place: Pcg32::new(seed),
             config: VelocityConfig::default(),
             velocity: velocity::State::new(),
             aim_config: AimConfig::default(),
@@ -170,6 +180,7 @@ impl Session {
             reach_sample: reach_sample::State::new(),
             click_assist: click_assist::State::new(),
             hit_select: hit_select::State::new(),
+            eagle_place: eagle_place::State::default(),
             ticks: 0,
             decisions: 0,
             degraded: 0,
@@ -239,6 +250,7 @@ impl Session {
                 self.reach_sample = reach_sample::State::new();
                 self.click_assist = click_assist::State::new();
                 self.hit_select = hit_select::State::new();
+                self.eagle_place = eagle_place::State::default();
             }
         }
         Frame::new(Kind::Reset, frame.header.seq, frame.header.tick, module)
@@ -1072,6 +1084,35 @@ impl Session {
                         extra as f64,
                     ))
                 }
+                op::PLAYER_EAGLE_PLACE => {
+                    let input = eagle_place::Input {
+                        gates_open: req.bool(0)?,
+                        pitch_in_tolerance: req.bool(1)?,
+                        bridge_assist_enabled: req.bool(2)?,
+                        max_wait_ticks: req.i32(3)?,
+                        cooldown_min: req.i32(4)?,
+                        cooldown_max: req.i32(5)?,
+                    };
+                    // Kotlin's `Random.nextInt(lo, hi + 1)`: normalise an
+                    // inverted pair here rather than panic inside the draw.
+                    let (lo, hi) = {
+                        let a = input.cooldown_min;
+                        let b = input.cooldown_max;
+                        if a <= b { (a, b) } else { (b, a) }
+                    };
+                    let state = self.eagle_place;
+                    let rng = &mut self.rng_eagle_place;
+                    let (step, next) =
+                        eagle_place::tick(state, input, &mut || rng.random_int(lo, hi));
+                    self.eagle_place = next;
+                    Ok(codec::encode_scalar(
+                        seq,
+                        tick,
+                        Module::Player,
+                        WireAction::Scalar,
+                        step.code() as f64,
+                    ))
+                }
                 _ => Err(Status::BadPayload),
             }
         };
@@ -1487,6 +1528,95 @@ mod tests {
 
         assert_eq!(a.eagle.unsneak_delay_ticks, b.eagle.unsneak_delay_ticks);
         assert_eq!(a.rng_player.next_u32(), b.rng_player.next_u32());
+    }
+
+    /// An Eagle AutoPlace request: six f64 args after the op byte.
+    fn eagle_place_frame(
+        seq: u32,
+        gates_open: bool,
+        pitch_ok: bool,
+        bridge_assist: bool,
+        max_wait: i32,
+        cd_min: i32,
+        cd_max: i32,
+    ) -> Frame {
+        let (snap, len) = write_snapshot([0.0; 3], 0, 0);
+        let mut f = Frame::new(Kind::Snapshot, seq, 100, Module::Player);
+        let total = {
+            let p = f.payload_mut();
+            p[..len].copy_from_slice(&snap[32..32 + len]);
+            let mut w = Writer::new(&mut p[len..]);
+            w.u8(op::PLAYER_EAGLE_PLACE);
+            w.u8(6);
+            w.f64(gates_open as u8 as f64);
+            w.f64(pitch_ok as u8 as f64);
+            w.f64(bridge_assist as u8 as f64);
+            w.f64(max_wait as f64);
+            w.f64(cd_min as f64);
+            w.f64(cd_max as f64);
+            len + w.pos()
+        };
+        f.set_len(total);
+        f
+    }
+
+    fn place_step(f: &Frame) -> u32 {
+        eagle_flags(f) // same scalar layout: the step code sits at offset 4
+    }
+
+    #[test]
+    fn eagle_place_round_trips_over_the_wire() {
+        // Full chain: decode_generic → on_player dispatch → eagle_place::tick →
+        // encode_scalar. A pitch already at the angle clicks and arms a cooldown.
+        let mut s = Session::new(1, 42);
+        let f = s.handle(&eagle_place_frame(1, true, true, false, 3, 1, 3));
+        assert_eq!(place_step(&f), 2, "CLICK");
+        assert!(s.eagle_place.cooldown_ticks >= 1 && s.eagle_place.cooldown_ticks <= 3);
+
+        // Cooling down: NONE, and the cooldown counts down without a new draw.
+        let cd = s.eagle_place.cooldown_ticks;
+        let f = s.handle(&eagle_place_frame(2, true, false, false, 3, 1, 3));
+        assert_eq!(place_step(&f), 0, "NONE while cooling");
+        assert_eq!(s.eagle_place.cooldown_ticks, cd - 1);
+
+        // A closed gate cancels a pending aim and forgets the cooldown. Start
+        // from a fresh session so no cooldown from the click above is in the way.
+        let mut s2 = Session::new(1, 42);
+        let f = s2.handle(&eagle_place_frame(1, true, false, false, 3, 1, 3));
+        assert_eq!(place_step(&f), 1, "AIM");
+        assert!(s2.eagle_place.aiming);
+        let f = s2.handle(&eagle_place_frame(2, false, false, false, 3, 1, 3));
+        assert_eq!(place_step(&f), 0);
+        assert_eq!(s2.eagle_place, eagle_place::State::default());
+    }
+
+    #[test]
+    fn eagle_place_reset_forgets_a_pending_aim() {
+        let mut s = Session::new(1, 42);
+        s.handle(&eagle_place_frame(1, true, false, false, 3, 1, 3));
+        assert!(s.eagle_place.aiming);
+
+        let mut r = Frame::new(Kind::Reset, 2, 100, Module::Player);
+        r.set_len(0);
+        s.handle(&r);
+        assert_eq!(s.eagle_place, eagle_place::State::default());
+    }
+
+    #[test]
+    fn eagle_place_has_its_own_rng_stream() {
+        // A sneak edge press must not move the placement cooldown stream, and
+        // vice versa: the two are separate decisions on separate streams.
+        let mut a = Session::new(1, 7);
+        a.handle(&eagle_place_frame(1, true, true, false, 3, 1, 5)); // one placement draw
+        let mut b = Session::new(1, 7);
+        b.handle(&eagle_frame(1, true, true, false, 1, 5)); // one sneak draw
+        b.handle(&eagle_place_frame(2, true, true, false, 3, 1, 5));
+
+        assert_eq!(
+            a.eagle_place.cooldown_ticks, b.eagle_place.cooldown_ticks,
+            "a sneak draw must not shift the placement stream"
+        );
+        assert_eq!(a.rng_eagle_place.next_u32(), b.rng_eagle_place.next_u32());
     }
 
     #[test]

@@ -554,6 +554,35 @@ class CoreStub(
         roundTrip(Wire.MODULE_TAP, payload, tick)
     }
 
+    /**
+     * WTap / STap range sampling. One packed scalar carries the post-delay,
+     * the tap duration and the initial hit threshold; [io.doppel.ipc.TapSample]
+     * unpacks it. Null when no core is attached — callers then do nothing
+     * rather than acting on a local guess.
+     */
+    fun tapSample(
+        tapOp: Int,
+        player: io.doppel.contract.model.PlayerState,
+        target: io.doppel.contract.model.TargetState?,
+        kind: Int,
+        postDelayMin: Int,
+        postDelayMax: Int,
+        actionMin: Int,
+        actionMax: Int,
+        onceEveryMin: Int,
+        onceEveryMax: Int,
+        tick: Int
+    ): Double? {
+        val payload = genericRequest(
+            encodeSnapshot(player, target), tapOp,
+            kind.toDouble(), postDelayMin.toDouble(), postDelayMax.toDouble(),
+            actionMin.toDouble(), actionMax.toDouble(),
+            onceEveryMin.toDouble(), onceEveryMax.toDouble()
+        )
+        val f = roundTrip(Wire.MODULE_TAP, payload, tick) ?: return null
+        return decodeScalar(f)
+    }
+
     fun combatTrigger(
         player: io.doppel.contract.model.PlayerState,
         target: io.doppel.contract.model.TargetState?,

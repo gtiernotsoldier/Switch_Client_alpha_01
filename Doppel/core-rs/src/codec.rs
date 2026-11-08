@@ -837,6 +837,15 @@ pub mod op {
     /// tap: `random_side()` → side. Draws from `rng_tap`, so a module that mixes
     /// this with seven_tap_side keeps one stream.
     pub const TAP_RANDOM: u8 = 6;
+    /// tap/wtap: `sample(kind, post_delay_min, post_delay_max, action_min,
+    ///           action_max, once_every_min, once_every_max)` → packed scalar.
+    /// The three uniform draws (post-delay, tap duration, initial hit
+    /// threshold) that used to run through `kotlin.random.Random` on the JVM.
+    /// `kind`: 0 fire point, 1 duration only, 2 initial threshold.
+    pub const TAP_WTAP_SAMPLE: u8 = 7;
+    /// tap/stap: identical shape, but its own RNG stream so the two modules
+    /// cannot shift each other's replay.
+    pub const TAP_STAP_SAMPLE: u8 = 8;
 
     /// combat: `trigger_evaluate(mode, hurt_resistant, max_hurt, counter,
     ///          threshold, per_min, per_max, chance, hurt_gate)` → fire.
@@ -1032,6 +1041,8 @@ pub fn known_ops(module: Module) -> &'static [u8] {
             op::TAP_TICK,
             op::TAP_POST_DELAY,
             op::TAP_BEGIN,
+            op::TAP_WTAP_SAMPLE,
+            op::TAP_STAP_SAMPLE,
         ],
         Module::Combat => &[
             op::CBT_TRIGGER,

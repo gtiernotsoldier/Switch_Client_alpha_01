@@ -12,7 +12,6 @@ import io.doppel.adapter.common.option.choices
 import io.doppel.adapter.common.option.float
 import io.doppel.adapter.common.option.int
 import io.doppel.adapter.common.option.triggerOptions
-import kotlin.random.Random
 
 /**
  * STap Module — brief S-key press during forward movement for sudden stops.
@@ -25,6 +24,11 @@ import kotlin.random.Random
  *
  * Combat triggering uses the 1.8 CombatTrigger pipeline only — the 1.9+
  * low-frequency stutter variant was removed as redundant.
+ *
+ * This module keeps only judgements (physical keys, target guards, the
+ * CombatTrigger verdict), marshalling and the platform writes. The three
+ * uniform range draws (post-delay, tap duration, initial hit threshold) run in
+ * the core on STap's own RNG stream; no `kotlin.random` remains here.
  */
 object STap : Module("STap", Category.COMBAT) {
 
@@ -61,8 +65,19 @@ object STap : Module("STap", Category.COMBAT) {
     private val postDelayMax by int("PostDelayMax", 40, 0..500, "ms")
 
     // ========== Core State Machine ==========
+    // Phase, deadlines and all three range draws live in the core. The
+    // counter/threshold pair is written back by the core's CombatTrigger
+    // verdict and merely marshalled back on the next tick.
     private var hitCounter: Int = 0
     private var hitThreshold: Int = 1
+
+    /** Ask STap's own core RNG stream for the configured range draws. */
+    private fun sample(kind: Int, player: PlayerState, target: TargetState?) =
+        Strategies.stapSample(
+            player, target, kind,
+            postDelayMin, postDelayMax, actionMin18, actionMax18,
+            onceEveryMin, onceEveryMax
+        )
 
     /**
      * Claim S with OWNED semantics — same reasoning as WTap: the tap works by the physical S being
@@ -88,7 +103,12 @@ object STap : Module("STap", Category.COMBAT) {
         val t = Strategies.tapTick(player, target, now)
         when (t.event) {
             TapTick.END_TAP -> ownS(false)
-            TapTick.SHOULD_START_TAP -> startTap(player, target, now)
+            TapTick.SHOULD_START_TAP -> {
+                // A post-delay just elapsed. The duration is a core draw; a
+                // missing answer means "do not tap" rather than a local guess.
+                val s = sample(Strategies.TapSampleKind.ACTION, player, target)
+                if (s != null) startTap(player, target, now, s.actionMs)
+            }
             else -> {}
         }
 
@@ -143,28 +163,31 @@ object STap : Module("STap", Category.COMBAT) {
         hitThreshold = decision.threshold
         if (!decision.fire) return
 
-        val pd = Random.nextInt(postDelayMin, postDelayMax + 1)
-        if (pd > 0) {
-            Strategies.tapBegin(player, target, now, pd, postDelay = true)
+        // Fire point: draw the post-delay and the duration in the core. A
+        // non-zero post-delay arms a delayed start; zero starts the tap now.
+        val s = sample(Strategies.TapSampleKind.POST_DELAY_OR_START, player, target) ?: return
+        if (s.postDelayMs > 0) {
+            Strategies.tapBegin(player, target, now, s.postDelayMs, postDelay = true)
         } else {
-            startTap(player, target, now)
+            startTap(player, target, now, s.actionMs)
         }
     }
 
     // ================================================================
-    // Execution
+    // Execution (platform writes only)
     // ================================================================
-    private fun startTap(player: PlayerState, target: TargetState?, nowNs: Long) {
+    private fun startTap(player: PlayerState, target: TargetState?, nowNs: Long, actionMs: Int) {
         ownS(true)                         // press S for the tap
         markWorked()                      // HUD work flash — the module just acted
-        val ms = Random.nextInt(actionMin18, actionMax18 + 1)
-        Strategies.tapBegin(player, target, nowNs, ms, postDelay = false)
+        Strategies.tapBegin(player, target, nowNs, actionMs, postDelay = false)
     }
 
     // ========== Lifecycle ==========
     override fun onEnable() {
         hitCounter = 0
-        hitThreshold = Random.nextInt(onceEveryMin, onceEveryMax + 1).coerceAtLeast(1)
+        // Seed the throttle from the core's stream. Off-line, keep 1 — the
+        // same value the module used before any tap could be computed.
+        hitThreshold = sample(Strategies.TapSampleKind.INIT, PlayerState.EMPTY, null)?.threshold ?: 1
         ownS(EventBridge.physicalBackDown)
         EventBridge.registerTickListener(tickListener)
     }

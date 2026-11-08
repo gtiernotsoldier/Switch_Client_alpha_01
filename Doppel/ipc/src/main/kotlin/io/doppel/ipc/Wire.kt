@@ -391,6 +391,8 @@ object Ops {
     const val TAP_POST_DELAY = 4    // nowNs, delayMs
     const val TAP_BEGIN = 5         // nowNs, durationMs
     const val TAP_RANDOM = 6        // (no args) → side
+    const val TAP_WTAP_SAMPLE = 7   // kind, postDelayMin/Max, actionMin/Max, onceEveryMin/Max → packed scalar
+    const val TAP_STAP_SAMPLE = 8   // same shape, own RNG stream
 
     // combat
     const val CBT_TRIGGER = 0       // mode, hurtResistant, maxHurt, counter, threshold, perMin, perMax, chance, hurtGate

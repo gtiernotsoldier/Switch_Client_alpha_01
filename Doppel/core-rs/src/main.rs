@@ -1005,6 +1005,7 @@ fn emit_golden(dir: &str) -> Result<(), String> {    use std::fs;
     emit_sprint_reset_golden(dir)?;
     emit_jump_reset_golden(dir)?;
     emit_super_knockback_golden(dir)?;
+    emit_tap_sample_golden(dir)?;
     Ok(())
 }
 
@@ -1897,5 +1898,75 @@ fn emit_super_knockback_golden(dir: &str) -> Result<(), String> {
 
     fs::write(format!("{}/super_knockback_input.tsv", dir), input).map_err(|e| e.to_string())?;
     fs::write(format!("{}/super_knockback_expected.tsv", dir), expected).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// WTap / STap range sampling, replayed over a fixed input sequence.
+///
+/// The rolls are scripted per row: Pcg32 and `kotlin.random` are different
+/// generators, and `draws` in the expected file is what catches a port that
+/// draws for a degenerate range, draws a value its kind does not use, or
+/// draws them in the wrong order.
+fn emit_tap_sample_golden(dir: &str) -> Result<(), String> {
+    use std::fs;
+
+    let mut input = String::new();
+    input.push_str("# doppel-tap-sample-golden v1\n");
+    input.push_str("# idx\tkind\tpost_delay_min\tpost_delay_max\taction_min\taction_max\tonce_every_min\tonce_every_max\troll1\troll2\n");
+
+    let mut expected = String::new();
+    expected.push_str("# idx\tcode\tpost_delay_ms\taction_ms\tthreshold\tdraws\n");
+
+    let mut rng = Pcg32::new(0x0000_5EED_7A90_0001);
+
+    for i in 0..500 {
+        let kind = rng.random_int(0, 2);
+        // Occasionally make a range degenerate (min == max) or inverted so the
+        // no-draw / normalisation branches are exercised on both sides.
+        let pd_min = rng.random_int(0, 60);
+        let pd_max = if rng.random_int(0, 9) == 0 { pd_min } else { rng.random_int(0, 60) };
+        let ac_min = rng.random_int(1, 80);
+        let ac_max = if rng.random_int(0, 9) == 0 { ac_min } else { rng.random_int(1, 80) };
+        let oe_min = rng.random_int(1, 4);
+        let oe_max = if rng.random_int(0, 9) == 0 { oe_min } else { rng.random_int(1, 4) };
+        let roll1 = rng.random_int(0, 99);
+        let roll2 = rng.random_int(0, 99);
+
+        input.push_str(&format!(
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+            i, kind, pd_min, pd_max, ac_min, ac_max, oe_min, oe_max, roll1, roll2
+        ));
+
+        let script = [roll1, roll2];
+        let mut rolls = script.into_iter();
+        let mut draws = 0;
+        let out = strategy::tap_sample::sample(
+            strategy::tap_sample::Input {
+                kind: strategy::tap_sample::Kind::from_code(kind).unwrap(),
+                post_delay_min: pd_min,
+                post_delay_max: pd_max,
+                action_min: ac_min,
+                action_max: ac_max,
+                once_every_min: oe_min,
+                once_every_max: oe_max,
+            },
+            &mut |_, _| {
+                draws += 1;
+                rolls.next().unwrap_or(0)
+            },
+        );
+        expected.push_str(&format!(
+            "{}\t{}\t{}\t{}\t{}\t{}\n",
+            i,
+            strategy::tap_sample::pack(out),
+            out.post_delay_ms,
+            out.action_ms,
+            out.threshold,
+            draws
+        ));
+    }
+
+    fs::write(format!("{}/tap_sample_input.tsv", dir), input).map_err(|e| e.to_string())?;
+    fs::write(format!("{}/tap_sample_expected.tsv", dir), expected).map_err(|e| e.to_string())?;
     Ok(())
 }

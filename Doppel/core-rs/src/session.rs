@@ -30,6 +30,7 @@ use crate::strategy::knockback_displace;
 use crate::strategy::reach_sample;
 use crate::strategy::sprint_reset;
 use crate::strategy::super_knockback;
+use crate::strategy::tap_sample;
 use crate::strategy::movement::{self, SocdResolver};
 use crate::strategy::reach;
 use crate::strategy::tap::{self, TapStateMachine};
@@ -66,6 +67,11 @@ pub struct Session {
     pub rng_aim: Pcg32,
     pub rng_click: Pcg32,
     pub rng_tap: Pcg32,
+    /// WTap / STap range draws. Each module owns one stream so a WTap tap can
+    /// never shift STap's replay (and neither can touch `rng_tap`, which the
+    /// side-selection ops still use).
+    pub rng_wtap: Pcg32,
+    pub rng_stap: Pcg32,
     pub rng_combat: Pcg32,
     /// Eagle's hold-delay roll. Its own stream for the same reason as the rest:
     /// toggling another module must not move this one's sequence.
@@ -178,6 +184,8 @@ impl Session {
             rng_aim: Pcg32::new(seed),
             rng_click: Pcg32::new(seed),
             rng_tap: Pcg32::new(seed),
+            rng_wtap: Pcg32::new(seed),
+            rng_stap: Pcg32::new(seed),
             rng_combat: Pcg32::new(seed),
             rng_player: Pcg32::new(seed),
             rng_backtrack: Pcg32::new(seed),
@@ -742,6 +750,34 @@ impl Session {
                 op::TAP_BEGIN => {
                     self.tap.begin_tap(req.arg(0)? as i64, req.i32(1)?);
                     Ok(codec::encode_scalar(seq, tick, Module::Tap, WireAction::NoOp, 0.0))
+                }
+                op::TAP_WTAP_SAMPLE | op::TAP_STAP_SAMPLE => {
+                    let kind = tap_sample::Kind::from_code(req.i32(0)?)
+                        .ok_or(Status::BadPayload)?;
+                    let input = tap_sample::Input {
+                        kind,
+                        post_delay_min: req.i32(1)?,
+                        post_delay_max: req.i32(2)?,
+                        action_min: req.i32(3)?,
+                        action_max: req.i32(4)?,
+                        once_every_min: req.i32(5)?,
+                        once_every_max: req.i32(6)?,
+                    };
+                    let rng = if req.op == op::TAP_WTAP_SAMPLE {
+                        &mut self.rng_wtap
+                    } else {
+                        &mut self.rng_stap
+                    };
+                    // Kotlin's `Random.nextInt(min, max + 1)` is inclusive on
+                    // both ends; `random_int` is the same closed interval.
+                    let out = tap_sample::sample(input, &mut |lo, hi| rng.random_int(lo, hi));
+                    Ok(codec::encode_scalar(
+                        seq,
+                        tick,
+                        Module::Tap,
+                        WireAction::Scalar,
+                        tap_sample::pack(out) as f64,
+                    ))
                 }
                 _ => Err(Status::BadPayload),
             }
@@ -2094,6 +2130,73 @@ mod tests {
             a.rng_super_knockback.next_u32(),
             b.rng_super_knockback.next_u32()
         );
+    }
+
+    /// A WTap / STap range-sampling request: seven f64 args after the op byte.
+    #[allow(clippy::too_many_arguments)]
+    fn tap_sample_frame(
+        seq: u32,
+        op: u8,
+        kind: i32,
+        pd_min: i32,
+        pd_max: i32,
+        ac_min: i32,
+        ac_max: i32,
+        oe_min: i32,
+        oe_max: i32,
+    ) -> Frame {
+        let (snap, len) = write_snapshot([0.0; 3], 0, 0);
+        let mut f = Frame::new(Kind::Snapshot, seq, 100, Module::Tap);
+        let total = {
+            let p = f.payload_mut();
+            p[..len].copy_from_slice(&snap[32..32 + len]);
+            let mut w = Writer::new(&mut p[len..]);
+            w.u8(op);
+            w.u8(7);
+            w.f64(kind as f64);
+            w.f64(pd_min as f64);
+            w.f64(pd_max as f64);
+            w.f64(ac_min as f64);
+            w.f64(ac_max as f64);
+            w.f64(oe_min as f64);
+            w.f64(oe_max as f64);
+            len + w.pos()
+        };
+        f.set_len(total);
+        f
+    }
+
+    #[test]
+    fn tap_sample_round_trips_over_the_wire() {
+        // Full chain: decode_generic → on_tap dispatch → tap_sample::sample →
+        // encode_scalar. Degenerate ranges are deterministic (no RNG draw), so
+        // the packed code is stable across the two different generators.
+        let mut s = Session::new(1, 42);
+        let f = s.handle(&tap_sample_frame(1, op::TAP_WTAP_SAMPLE, 0, 0, 0, 40, 40, 1, 1));
+        assert_eq!(jump_step(&f), 40 * 1024, "post-delay 0, duration 40");
+
+        let a = s.handle(&tap_sample_frame(2, op::TAP_WTAP_SAMPLE, 1, 0, 0, 25, 25, 1, 1));
+        assert_eq!(jump_step(&a), 25 * 1024, "ACTION draws only the duration");
+
+        let i = s.handle(&tap_sample_frame(3, op::TAP_STAP_SAMPLE, 2, 0, 0, 0, 0, 3, 3));
+        assert_eq!(jump_step(&i), 3 * 1024 * 1024, "INIT seeds the threshold");
+    }
+
+    #[test]
+    fn wtap_and_stap_own_independent_rng_streams() {
+        let mut a = Session::new(1, 7);
+        a.handle(&tap_sample_frame(1, op::TAP_WTAP_SAMPLE, 0, 0, 60, 1, 80, 1, 4));
+        a.handle(&tap_sample_frame(2, op::TAP_WTAP_SAMPLE, 0, 0, 60, 1, 80, 1, 4));
+
+        let mut b = Session::new(1, 7);
+        // An STap draw interleaved between two WTap draws must not shift the
+        // WTap stream — that is the whole point of two separate Pcg32s.
+        b.handle(&tap_sample_frame(1, op::TAP_STAP_SAMPLE, 0, 0, 60, 1, 80, 1, 4));
+        b.handle(&tap_sample_frame(2, op::TAP_WTAP_SAMPLE, 0, 0, 60, 1, 80, 1, 4));
+        b.handle(&tap_sample_frame(3, op::TAP_WTAP_SAMPLE, 0, 0, 60, 1, 80, 1, 4));
+
+        assert_eq!(a.rng_wtap.next_u32(), b.rng_wtap.next_u32(), "STap must not shift the WTap stream");
+        assert_ne!(a.rng_stap.next_u32(), b.rng_stap.next_u32(), "STap drew once in b");
     }
 
     #[test]

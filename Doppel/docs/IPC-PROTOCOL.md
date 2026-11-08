@@ -297,6 +297,7 @@ The degraded direction differs per op; see `PROTECTION.md` §9.5.3 for the table
 | SprintReset rising-edge / throttle / delay | `strategy/sprint_reset.rs` | `SprintResetParityTest`, 400 ticks + `CoreStubE2ETest` real-socket round trip |
 | JumpReset knock / pump cooldown + delayed jump | `strategy/jump_reset.rs` | `JumpResetParityTest`, 500 events + `CoreStubE2ETest` real-socket round trip |
 | SuperKnockback phase machine / throttle / force sequence | `strategy/super_knockback.rs` | `SuperKnockbackParityTest`, 500 ticks + `CoreStubE2ETest` real-socket round trip |
+| WTap / STap range draws (post-delay, duration, threshold) | `strategy/tap_sample.rs` | `TapSampleParityTest`, 500 rows + `CoreStubE2ETest` real-socket round trip |
 
 ### Module request shapes
 
@@ -336,6 +337,19 @@ Sent on enable and on disable. Skipping it does not fail loudly: a stale
 tap timer fires an instantaneous key press on the first tick back, and a stale
 velocity gate biases the next hit's probability. All three look like "the module
 misbehaves after being toggled" and none of them point at the queue.
+
+`TAP_WTAP_SAMPLE` (7) and `TAP_STAP_SAMPLE` (8) are the WTap / STap range
+draws that used to run through `kotlin.random.Random` on the JVM. The module
+marshals the six configured endpoints (`postDelayMin/Max`, `actionMin/Max`,
+`onceEveryMin/Max`) plus a `kind` (0 fire point, 1 the state machine said
+"start now" — duration only, 2 module enable — initial hit threshold only),
+and the core answers one packed scalar: post-delay in the low 10 bits, the tap
+duration in the next 10, the threshold above that. Degenerate ranges (min ≥
+max) normalise instead of drawing, so a kind that never uses a field leaves it
+zero and its stream untouched. The two ops own **separate** streams
+(`rng_wtap` / `rng_stap`) so one module's tap can never shift the other's
+replay, and neither touches `rng_tap`, which the side-selection ops still use.
+A missing answer degrades to "do not tap" — never a local guess.
 
 Combat's `CBT_DECIDE` (op 4) is the one op that merges two questions — the
 condition gate and the trigger — into a single request. They have to share a

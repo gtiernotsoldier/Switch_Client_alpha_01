@@ -19,6 +19,7 @@ import java.io.File
 import java.util.concurrent.TimeUnit
 import io.doppel.ipc.CoreStub
 import io.doppel.ipc.Endpoint
+import io.doppel.ipc.Ops
 import io.doppel.core.rng.DecisionRng
 
 /**
@@ -397,6 +398,60 @@ class CoreStubE2ETest {
                     p, null, now, true, false, true, true, 7, 100, 1, 100, 2, false, false, tick
                 )
                 assertEquals(96, fired, "SNEAK_PACKET fires at the deadline")
+
+                assertEquals(0L, stub.timeouts.get(), "deadline misses on loopback")
+                assertEquals(0L, stub.degradedTicks.get(), "degraded ticks on a healthy run")
+            }
+        } finally {
+            proc.destroyForcibly()
+            proc.waitFor(5, TimeUnit.SECONDS)
+        }
+    }
+
+    @Test
+    @Timeout(value = 60, unit = TimeUnit.SECONDS)
+    fun `tap range samples travel intact over a real socket`() {
+        // The whole path for the WTap / STap sampling op: Kotlin marshalling →
+        // TCP → decode_generic → on_tap dispatch → tap_sample::sample →
+        // encode_scalar → decodeScalar. Degenerate ranges draw nothing, so the
+        // packed codes are deterministic across the two different RNGs.
+        val exe = locateCore()
+        assumeTrue(exe != null, "doppel-core not built — run: cd Doppel/core-rs && cargo build")
+        val proc = ProcessBuilder(exe!!.absolutePath, "--listen", "tcp:127.0.0.1:0", "--seed", "424242")
+            .redirectError(ProcessBuilder.Redirect.INHERIT)
+            .start()
+        try {
+            val banner = proc.inputStream.bufferedReader().readLine()
+            assertNotNull(banner, "core produced no LISTEN line")
+            assertTrue(banner!!.startsWith("LISTEN "), "unexpected banner: $banner")
+            val addr = banner.removePrefix("LISTEN ").trim()
+
+            CoreStub(Endpoint.parse("tcp:$addr"), null, deadlineNanos = 20_000_000L).use { stub ->
+                stub.connect()
+                val p = player()
+                var tick = 1
+
+                val fire = stub.tapSample(
+                    Ops.TAP_WTAP_SAMPLE, p, null, 0, 0, 0, 40, 40, 1, 1, tick++
+                )
+                assertEquals(40 * 1024.0, fire!!, "post-delay 0, duration 40 over the socket")
+
+                val action = stub.tapSample(
+                    Ops.TAP_STAP_SAMPLE, p, null, 1, 0, 0, 25, 25, 1, 1, tick++
+                )
+                assertEquals(25 * 1024.0, action!!, "ACTION draws only the duration")
+
+                val init = stub.tapSample(
+                    Ops.TAP_WTAP_SAMPLE, p, null, 2, 0, 0, 0, 0, 3, 3, tick++
+                )
+                assertEquals((3 * 1024 * 1024).toDouble(), init!!, "INIT seeds the threshold")
+
+                // A real random range still lands inside the configured band.
+                val random = stub.tapSample(
+                    Ops.TAP_STAP_SAMPLE, p, null, 1, 0, 0, 10, 20, 1, 1, tick
+                )!!
+                val ms = (random.toInt() / 1024) % 1024
+                assertTrue(ms in 10..20, "duration stays in [10, 20], got $ms")
 
                 assertEquals(0L, stub.timeouts.get(), "deadline misses on loopback")
                 assertEquals(0L, stub.degradedTicks.get(), "degraded ticks on a healthy run")

@@ -226,6 +226,70 @@ object Strategies {
         stub.tapBegin(player, target, nowNs, durationMs, postDelay, nextTick())
     }
 
+    object TapSampleKind {
+        /** Fire point: draw the post-delay and the tap duration. */
+        const val POST_DELAY_OR_START = 0
+        /** The core's state machine said "start the tap now": duration only. */
+        const val ACTION = 1
+        /** Module enabled: seed the throttle with a random hit threshold. */
+        const val INIT = 2
+    }
+
+    /**
+     * WTap / STap range sampling — the three uniform draws that used to run
+     * through `kotlin.random.Random` on the JVM. Off-line answers null, and
+     * null means "do not tap": a local guess would be a different module.
+     */
+    fun tapSample(
+        tapOp: Int,
+        player: PlayerState,
+        target: TargetState?,
+        kind: Int,
+        postDelayMin: Int,
+        postDelayMax: Int,
+        actionMin: Int,
+        actionMax: Int,
+        onceEveryMin: Int,
+        onceEveryMax: Int
+    ): TapSample? {
+        val stub = CoreLink.stub ?: return null
+        val v = stub.tapSample(
+            tapOp, player, target, kind, postDelayMin, postDelayMax,
+            actionMin, actionMax, onceEveryMin, onceEveryMax, nextTick()
+        ) ?: return null
+        return TapSample.fromCode(v.toInt())
+    }
+
+    fun wtapSample(
+        player: PlayerState,
+        target: TargetState?,
+        kind: Int,
+        postDelayMin: Int,
+        postDelayMax: Int,
+        actionMin: Int,
+        actionMax: Int,
+        onceEveryMin: Int,
+        onceEveryMax: Int
+    ): TapSample? = tapSample(
+        Ops.TAP_WTAP_SAMPLE, player, target, kind,
+        postDelayMin, postDelayMax, actionMin, actionMax, onceEveryMin, onceEveryMax
+    )
+
+    fun stapSample(
+        player: PlayerState,
+        target: TargetState?,
+        kind: Int,
+        postDelayMin: Int,
+        postDelayMax: Int,
+        actionMin: Int,
+        actionMax: Int,
+        onceEveryMin: Int,
+        onceEveryMax: Int
+    ): TapSample? = tapSample(
+        Ops.TAP_STAP_SAMPLE, player, target, kind,
+        postDelayMin, postDelayMax, actionMin, actionMax, onceEveryMin, onceEveryMax
+    )
+
     /** Tap side from target motion, or null when there is no target (or no core). */
     fun tapChase(player: PlayerState, target: TargetState?, yaw: Float, leadTicks: Int): Int? {
         val stub = CoreLink.stub ?: return null
@@ -827,6 +891,26 @@ class SuperKnockbackStep(
     @JvmField val sprint: SuperKnockbackSprintStep,
     @JvmField val fire: SuperKnockbackFireStep
 )
+
+/** WTap / STap range draws, unpacked from one scalar (base-1024 packing). */
+class TapSample(
+    @JvmField val postDelayMs: Int,
+    @JvmField val actionMs: Int,
+    @JvmField val threshold: Int
+) {
+    companion object {
+        @JvmStatic
+        fun fromCode(code: Int): TapSample = TapSample(
+            code % 1024,
+            (code / 1024) % 1024,
+            code / (1024 * 1024)
+        )
+
+        @JvmStatic
+        fun pack(postDelayMs: Int, actionMs: Int, threshold: Int): Int =
+            postDelayMs + 1024 * actionMs + 1024 * 1024 * threshold
+    }
+}
 
 private object OfflineAim : AimStrategy {
     override val name: String get() = "OfflineAim"

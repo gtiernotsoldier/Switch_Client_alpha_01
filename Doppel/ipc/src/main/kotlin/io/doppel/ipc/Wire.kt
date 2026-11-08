@@ -528,7 +528,7 @@ fun decodeBool(f: Frame): Boolean {
 }
 
 /**
- * Packs [TriggerOptions]'s thirteen booleans into the bit field the core's
+ * Packs [TriggerOptions]'s fourteen booleans into the bit field the core's
  * `trigger_from_packed` reads.
  *
  * The bit order is the one `write_trigger` uses for the config frames. Two layouts would
@@ -550,6 +550,7 @@ fun encodeTriggerFlags(o: TriggerOptions): Double {
     if (o.disableOnMine) f = f or (1 shl 10)
     if (o.onlyOnClick) f = f or (1 shl 11)
     if (o.disabledInAir) f = f or (1 shl 12)
+    if (o.onlySprint) f = f or (1 shl 13)
     return f.toDouble()
 }
 
@@ -624,6 +625,7 @@ private fun putTrigger(b: ByteBuffer, t: io.doppel.contract.option.TriggerOption
     if (t.disableOnMine) f = f or (1 shl 10)
     if (t.onlyOnClick) f = f or (1 shl 11)
     if (t.disabledInAir) f = f or (1 shl 12)
+    if (t.onlySprint) f = f or (1 shl 13)
     b.putShort(f.toShort())
     b.putFloat(t.minDistance)
     b.putFloat(t.maxDistance)

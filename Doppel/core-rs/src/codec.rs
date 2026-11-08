@@ -115,6 +115,9 @@ pub fn write_trigger(w: &mut Writer, t: &TriggerOptions) {
     if t.disabled_in_air {
         f |= 1 << 12;
     }
+    if t.only_sprint {
+        f |= 1 << 13;
+    }
     w.u16(f);
     w.f32(t.min_distance);
     w.f32(t.max_distance);
@@ -140,6 +143,7 @@ pub fn read_trigger(r: &mut Reader) -> Result<TriggerOptions, Status> {
     t.disable_on_mine = f & (1 << 10) != 0;
     t.only_on_click = f & (1 << 11) != 0;
     t.disabled_in_air = f & (1 << 12) != 0;
+    t.only_sprint = f & (1 << 13) != 0;
     t.min_distance = r.f32()?;
     t.max_distance = r.f32()?;
     t.chance = r.i32()?;
@@ -178,6 +182,7 @@ pub fn trigger_from_packed(
     t.disable_on_mine = f & (1 << 10) != 0;
     t.only_on_click = f & (1 << 11) != 0;
     t.disabled_in_air = f & (1 << 12) != 0;
+    t.only_sprint = f & (1 << 13) != 0;
     t.min_distance = min_distance as f32;
     t.max_distance = max_distance as f32;
     t.chance = chance as i32;
@@ -1132,6 +1137,7 @@ mod tests {
         let mut t = TriggerOptions::default();
         t.only_ground = true;
         t.only_strafe = true;
+        t.only_sprint = true;
         t.only_when_target_approaches = true;
         t.on_look = true;
         t.disabled_in_air = true;
@@ -1160,6 +1166,7 @@ mod tests {
         assert_eq!(from_request.only_move_forward, t.only_move_forward);
         assert_eq!(from_request.only_move_backward, t.only_move_backward);
         assert_eq!(from_request.only_strafe, t.only_strafe);
+        assert_eq!(from_request.only_sprint, t.only_sprint);
         assert_eq!(
             from_request.only_when_target_goes_back,
             t.only_when_target_goes_back
@@ -1221,6 +1228,9 @@ mod tests {
         }
         if t.disabled_in_air {
             f |= 1 << 12;
+        }
+        if t.only_sprint {
+            f |= 1 << 13;
         }
         f as f64
     }

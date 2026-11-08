@@ -69,6 +69,7 @@ object SuperKnockback : Module("SuperKnockback", Category.COMBAT) {
     private val onlyMove by boolean("OnlyMove", true)
     private val onlyMoveForward by boolean("OnlyMoveForward", true)
     private val onlyWhenTargetGoesBack by boolean("OnlyWhenTargetGoesBack", false)
+    private val onlySprint by boolean("OnlySprint", false)
 
     private val triggerOptions by triggerOptions("Trigger") {
         onlyGround = this@SuperKnockback.onlyGround
@@ -76,6 +77,7 @@ object SuperKnockback : Module("SuperKnockback", Category.COMBAT) {
         onlyMove = this@SuperKnockback.onlyMove
         onlyMoveForward = this@SuperKnockback.onlyMoveForward
         onlyWhenTargetGoesBack = this@SuperKnockback.onlyWhenTargetGoesBack
+        onlySprint = this@SuperKnockback.onlySprint
     }
 
     // ========== Platform pulse (not a decision state) ==========

@@ -1918,7 +1918,7 @@ fn emit_keep_sprint_golden(dir: &str) -> Result<(), String> {
 
     let mut input = String::new();
     input.push_str("# doppel-keep-sprint-golden v1\n");
-    input.push_str("# idx\tnow_ns\ttick\tlocal_sprinting\tattacking\ttarget_alive\tforward\tforward_override\n");
+    input.push_str("# idx\tnow_ns\ttick\tlocal_sprinting\tattacking\ttarget_alive\tforward\tforward_override\trequire_sprinting\n");
 
     let mut expected = String::new();
     expected.push_str("# idx\tcode\thold_until_tick\thold_deadline_ns\tlast_handled_tick\tlast_sprint_seen_ns\n");
@@ -1945,9 +1945,12 @@ fn emit_keep_sprint_golden(dir: &str) -> Result<(), String> {
         // release path. A tap owning W is rare but present.
         let forward = rng.random_int(0, 9) >= 1;
         let forward_override = rng.random_int(0, 99) < 8;
+        // OnlySprint toggles mid-run, so the fixture covers both the memory
+        // window and the strict live-sample path on the same state machine.
+        let require_sprinting = rng.random_int(0, 3) == 0;
 
         input.push_str(&format!(
-            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
             i,
             now,
             tick,
@@ -1955,7 +1958,8 @@ fn emit_keep_sprint_golden(dir: &str) -> Result<(), String> {
             attacking as u8,
             target_alive as u8,
             forward as u8,
-            forward_override as u8
+            forward_override as u8,
+            require_sprinting as u8
         ));
 
         let (code, next) = strategy::keep_sprint::frame(
@@ -1968,6 +1972,7 @@ fn emit_keep_sprint_golden(dir: &str) -> Result<(), String> {
                 target_alive,
                 forward,
                 forward_override,
+                require_sprinting,
             },
         );
         state = next;

@@ -168,6 +168,10 @@ pub struct Input {
     pub forward: bool,
     /// A tap module currently owns W (it resets sprint on purpose).
     pub forward_override: bool,
+    /// The module's `OnlySprint` switch. When set, the two-dispatch sprint
+    /// memory is ignored and the claim is only asserted on a *live* sprint
+    /// sample — the player must actually be sprinting this frame.
+    pub require_sprinting: bool,
 }
 
 /// One render frame. Mirrors the original `onRenderFrame` order: latch,
@@ -209,9 +213,17 @@ pub fn frame(state: State, input: Input) -> (i32, State) {
         // Preserve a sprint, never create one: the sample said sprinting, or
         // it said so within the last ~2 dispatches. Without this gate a
         // player standing still and clicking would be put into sprint.
-        let sprint_was_on = input.local_sprinting
-            || (s.last_sprint_seen_ns != 0
-                && input.now_ns - s.last_sprint_seen_ns <= SPRINT_MEMORY_NANOS);
+        // `OnlySprint` narrows this from "sprinting, or sprinting a moment ago"
+        // to "sprinting right now". The memory window stays for the default
+        // case: it exists to absorb the one-dispatch gap between the attack
+        // clearing the flag and the key re-asserting it inside the same tick.
+        let sprint_was_on = if input.require_sprinting {
+            input.local_sprinting
+        } else {
+            input.local_sprinting
+                || (s.last_sprint_seen_ns != 0
+                    && input.now_ns - s.last_sprint_seen_ns <= SPRINT_MEMORY_NANOS)
+        };
         // Sprint is fed by forward input; with W released the flag is on its
         // way out anyway, and a tap module owning W is resetting sprint on
         // purpose — re-asserting would undo the reset it just paid for.
@@ -243,6 +255,7 @@ mod tests {
             target_alive: true,
             forward: true,
             forward_override: false,
+            require_sprinting: false,
         }
     }
 
@@ -368,6 +381,31 @@ mod tests {
             },
         );
         assert_eq!(unpack_assert(code), AssertStep::Assert.code());
+    }
+
+    #[test]
+    fn only_sprint_ignores_the_latch() {
+        // Same shape as the latch test, with the module's OnlySprint switch
+        // on: the two-dispatch memory is dropped, so an attack frame that is
+        // not sprinting *right now* asserts nothing.
+        let (_, s) = frame(
+            State::new(),
+            Input {
+                attacking: false,
+                local_sprinting: true,
+                ..input()
+            },
+        );
+        let (code, _) = frame(
+            s,
+            Input {
+                now_ns: 1_000_000_000 + 60_000_000,
+                local_sprinting: false,
+                require_sprinting: true,
+                ..input()
+            },
+        );
+        assert_eq!(unpack_assert(code), AssertStep::None.code());
     }
 
     #[test]

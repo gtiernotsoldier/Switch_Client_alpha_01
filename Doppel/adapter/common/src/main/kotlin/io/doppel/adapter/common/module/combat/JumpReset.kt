@@ -60,12 +60,23 @@ object JumpReset : Module("JumpReset", Category.COMBAT) {
     private val onlyMoveForward by boolean("OnlyMoveForward", false)
     private val onlyWhenTargetGoesBack by boolean("OnlyWhenTargetGoesBack", false)
 
+    /**
+     * Defaults to true, which is what this module has always required: a knockback reset
+     * jump only has meaning while sprinting (the sprint knockback is the one being reset).
+     * Turning it off lets the reset fire from a standing hit too — a deliberate choice,
+     * not an accident, so it is a switch rather than a hardcoded predicate.
+     */
+    private val onlySprint by boolean("OnlySprint", true)
+    private val onlyOnClick by boolean("OnlyOnClick", false)
+
     private val triggerOptions by triggerOptions("Trigger") {
         onlyGround = onlyPlane
         onlyCurrentView = onlyTargeting
         onlyMove = this@JumpReset.onlyMove
         onlyMoveForward = this@JumpReset.onlyMoveForward
         onlyWhenTargetGoesBack = this@JumpReset.onlyWhenTargetGoesBack
+        onlySprint = this@JumpReset.onlySprint
+        onlyOnClick = this@JumpReset.onlyOnClick
     }
 
     // ========== Event listeners ==========
@@ -88,7 +99,11 @@ object JumpReset : Module("JumpReset", Category.COMBAT) {
         // there is deliberately no hurtTime gate here (see the original
         // LiquidBounce port: on the Netty thread hurtTime reads 0 or a stale
         // value, and the exact ==9 frame was essentially never sampled).
-        val internalOk = player.isSprinting && player.onGround &&
+        // Sprint is no longer part of this hardcoded chain — it is a user-facing switch
+        // now (OnlySprint, default true), and it lives in the unified gate below. The
+        // gate checks it before the chance roll, so a non-sprinting hit still consumes
+        // no RNG draw, exactly as the old short-circuit did.
+        val internalOk = player.onGround &&
             !EventBridge.isInFluid && isKnockbackFromFront(player, ctx.originalMotion)
         // Short-circuit: a failed internal condition never asks the unified
         // gate, exactly as the original chain of early returns did.

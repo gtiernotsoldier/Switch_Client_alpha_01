@@ -51,6 +51,7 @@ class KeepSprintTest {
     private var marshalledTargetAlive = false
     private var marshalledForward = false
     private var marshalledOverride = false
+    private var marshalledOnlySprint = false
 
     @BeforeEach
     fun setUp() {
@@ -64,12 +65,13 @@ class KeepSprintTest {
         marshalledTargetAlive = false
         marshalledForward = false
         marshalledOverride = false
+        marshalledOnlySprint = false
 
         core = mockk(relaxed = true)
         // playerKeepSprint: player, target, nowNs, tick, localSprinting,
-        // attacking, targetAlive, forward, forwardOverride, tickId
+        // attacking, targetAlive, forward, forwardOverride, requireSprinting, tickId
         every {
-            core.playerKeepSprint(any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
+            core.playerKeepSprint(any(), any(), any(), any(), any(), any(), any(), any(), any(), any(), any())
         } answers {
             coreCalls++
             marshalledTick = arg(3)
@@ -78,6 +80,7 @@ class KeepSprintTest {
             marshalledTargetAlive = arg(6)
             marshalledForward = arg(7)
             marshalledOverride = arg(8)
+            marshalledOnlySprint = arg(9)
             answer
         }
         CoreLink.stub = core

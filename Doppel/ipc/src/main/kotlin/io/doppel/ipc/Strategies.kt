@@ -768,12 +768,13 @@ object Strategies {
         attacking: Boolean,
         targetAlive: Boolean,
         forward: Boolean,
-        forwardOverride: Boolean
+        forwardOverride: Boolean,
+        requireSprinting: Boolean
     ): KeepSprintStep? {
         val stub = CoreLink.stub ?: return null
         val code = stub.playerKeepSprint(
             player, target, nowNs, tick, localSprinting, attacking,
-            targetAlive, forward, forwardOverride, nextTick()
+            targetAlive, forward, forwardOverride, requireSprinting, nextTick()
         ) ?: return null
         return KeepSprintStep(
             hold = KeepSprintHold.fromCode(code and 0xF)

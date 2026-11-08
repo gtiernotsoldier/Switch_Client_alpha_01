@@ -205,7 +205,7 @@ human-interaction frequency; a delta protocol would be more code than it saves.
 `0 only_ground`, `1 only_air`, `2 only_move`, `3 only_move_forward`,
 `4 only_move_backward`, `5 only_strafe`, `6 only_when_target_goes_back`,
 `7 only_when_target_approaches`, `8 on_look`, `9 only_current_view`,
-`10 disable_on_mine`, `11 only_on_click`, `12 disabled_in_air`.
+`10 disable_on_mine`, `11 only_on_click`, `12 disabled_in_air`, `13 only_sprint`.
 
 ## 7. Session, seed, determinism
 
@@ -498,6 +498,12 @@ tick, so a held button is a new attack every 50 ms). The adapter marshals
 seven arguments — `now_ns`, `tick`, `local_sprinting`, `attacking` (physical
 OR synthetic), `target_alive`, `forward`, `forward_override` — and turns the
 answer into the sprint-claim / C0B writes.
+
+An eighth argument, `require_sprinting`, carries the module's `OnlySprint`
+switch: it drops the 120 ms latch and demands a live sprint sample on the
+attack frame. The latch exists for the opposite case (a sample that flipped
+between two dispatches), so the two cannot both be on — hence a boolean
+rather than another knob.
 
 The answer is packed the same way SuperKnockback's is, with one deliberate
 difference: the low nibble is a hold **status** (0 dead, 1 live, 2 release),

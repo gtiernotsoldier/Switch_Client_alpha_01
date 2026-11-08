@@ -51,6 +51,9 @@ pub fn check(
     if options.only_strafe && !is_strafing(player) {
         return Some("onlyStrafe");
     }
+    if options.only_sprint && !player.is_sprinting() {
+        return Some("onlySprint");
+    }
 
     // Target-based checks are skipped when there is no target — "no target" is
     // not the same as "target failed the condition", and the original code is
@@ -233,6 +236,18 @@ mod tests {
         o.only_ground = true;
         let mut rng = Pcg32::new(1);
         assert_eq!(check(&o, &p, None, &mut rng), Some("onlyGround"));
+    }
+
+    #[test]
+    fn sprint_gate_blocks_when_not_sprinting() {
+        let mut o = TriggerOptions::default();
+        o.only_sprint = true;
+        let mut rng = Pcg32::new(1);
+        assert_eq!(check(&o, &player(0.0), None, &mut rng), Some("onlySprint"));
+
+        let mut p = player(0.0);
+        p.flags |= F_SPRINTING;
+        assert_eq!(check(&o, &p, None, &mut rng), None);
     }
 
     #[test]

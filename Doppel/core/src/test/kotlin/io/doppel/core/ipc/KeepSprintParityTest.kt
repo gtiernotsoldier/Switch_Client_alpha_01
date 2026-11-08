@@ -60,7 +60,8 @@ class KeepSprintParityTest {
                     attacking = row[4] == "1",
                     targetAlive = row[5] == "1",
                     forward = row[6] == "1",
-                    forwardOverride = row[7] == "1"
+                    forwardOverride = row[7] == "1",
+                    requireSprinting = row[8] == "1"
                 )
             )
 

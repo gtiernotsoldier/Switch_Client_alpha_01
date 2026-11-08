@@ -1034,12 +1034,13 @@ class CoreStub(
         targetAlive: Boolean,
         forward: Boolean,
         forwardOverride: Boolean,
+        requireSprinting: Boolean,
         tickId: Int
     ): Int? {
         val payload = genericRequest(
             encodeSnapshot(player, target), Ops.PLAYER_KEEPSPRINT,
             nowNs.toDouble(), tick.toDouble(), b(localSprinting), b(attacking),
-            b(targetAlive), b(forward), b(forwardOverride)
+            b(targetAlive), b(forward), b(forwardOverride), b(requireSprinting)
         )
         val f = roundTrip(Wire.MODULE_PLAYER, payload, tickId) ?: return null
         return decodeScalar(f).toInt()

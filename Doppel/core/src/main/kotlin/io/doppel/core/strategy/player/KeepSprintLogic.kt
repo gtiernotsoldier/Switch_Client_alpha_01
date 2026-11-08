@@ -73,7 +73,9 @@ object KeepSprintLogic {
         val attacking: Boolean,
         val targetAlive: Boolean,
         val forward: Boolean,
-        val forwardOverride: Boolean
+        val forwardOverride: Boolean,
+        /** The module's `OnlySprint`: require a live sprint sample, no memory window. */
+        val requireSprinting: Boolean = false
     )
 
     data class Decision(val code: Int, val state: State)
@@ -109,8 +111,12 @@ object KeepSprintLogic {
         // ---- Assert evaluation ----
         var assert = Assert.NONE
         if (input.attacking && input.tick != s.lastHandledTick && input.targetAlive) {
-            val sprintWasOn = input.localSprinting ||
-                (s.lastSprintSeenNs != 0L && input.nowNs - s.lastSprintSeenNs <= SPRINT_MEMORY_NANOS)
+            val sprintWasOn = if (input.requireSprinting) {
+                input.localSprinting
+            } else {
+                input.localSprinting ||
+                    (s.lastSprintSeenNs != 0L && input.nowNs - s.lastSprintSeenNs <= SPRINT_MEMORY_NANOS)
+            }
             if (sprintWasOn && input.forward && !input.forwardOverride) {
                 s = s.copy(
                     lastHandledTick = input.tick,

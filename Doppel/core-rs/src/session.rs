@@ -1388,6 +1388,7 @@ impl Session {
                         target_alive: req.bool(4)?,
                         forward: req.bool(5)?,
                         forward_override: req.bool(6)?,
+                        require_sprinting: req.bool(7)?,
                     };
                     // No roll: KeepSprint has no randomness, so there is no
                     // RNG stream to advance — the answer is a pure function
@@ -1603,6 +1604,7 @@ pub fn decode_config(buf: &[u8], len: usize) -> Result<VelocityConfig, Status> {
             disable_on_mine: tf & (1 << 10) != 0,
             only_on_click: tf & (1 << 11) != 0,
             disabled_in_air: tf & (1 << 12) != 0,
+            only_sprint: tf & (1 << 13) != 0,
             min_distance,
             max_distance,
             chance: trigger_chance,

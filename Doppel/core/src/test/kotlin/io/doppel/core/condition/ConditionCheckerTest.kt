@@ -128,6 +128,19 @@ class ConditionCheckerTest {
         assertTrue(ConditionChecker.check(TriggerOptions(onlyStrafe = true), player, null))
     }
 
+    // ── 1.8b onlySprint ──
+
+    @Test
+    fun `onlySprint - passes when sprinting`() {
+        val player = groundPlayer().copy(isSprinting = true)
+        assertTrue(ConditionChecker.check(TriggerOptions(onlySprint = true), player, null))
+    }
+
+    @Test
+    fun `onlySprint - blocks when not sprinting`() {
+        assertFalse(ConditionChecker.check(TriggerOptions(onlySprint = true), groundPlayer(), null))
+    }
+
     // ── 1.9 onlyWhenTargetGoesBack ──
 
     @Test

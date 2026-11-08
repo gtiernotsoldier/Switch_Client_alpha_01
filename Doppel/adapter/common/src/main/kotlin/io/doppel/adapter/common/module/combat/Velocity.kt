@@ -128,13 +128,15 @@ object Velocity : Module("Velocity", Category.COMBAT), HudLineProvider {
     // The check itself lives in the core's legit path; this only feeds the config.
     private val onlyOnHitFrame by boolean("OnlyOnHitFrame", false)
 
-    // ========== Condition flags (six independent toggles) ==========
+    // ========== Condition flags (eight independent toggles) ==========
     private val onlyMove by boolean("OnlyMove", false)
     private val onlyMoveForward by boolean("OnlyMoveForward", false)
     private val onlyWhenTargetGoesBack by boolean("OnlyWhenTargetGoesBack", false)
     private val onlyGround by boolean("OnlyGround", true)
     private val onlyCurrentView by boolean("OnlyCurrentView", false)
     private val disabledInAir by boolean("DisabledInAir", true)
+    private val onlySprint by boolean("OnlySprint", false)
+    private val onlyOnClick by boolean("OnlyOnClick", false)
 
     // ========== Unified trigger engine ==========
     private val triggerOptions by triggerOptions("Trigger") {
@@ -144,6 +146,8 @@ object Velocity : Module("Velocity", Category.COMBAT), HudLineProvider {
         onlyGround = this@Velocity.onlyGround
         onlyCurrentView = this@Velocity.onlyCurrentView
         disabledInAir = this@Velocity.disabledInAir
+        onlySprint = this@Velocity.onlySprint
+        onlyOnClick = this@Velocity.onlyOnClick
     }
 
     // ========== Click mode config ==========

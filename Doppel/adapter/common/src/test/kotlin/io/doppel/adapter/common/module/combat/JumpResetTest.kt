@@ -160,11 +160,24 @@ class JumpResetTest {
 
     @Test
     fun `a failed internal condition short-circuits the unified gate`() {
-        knock(sprintingPlayer(sprinting = false))
+        knock(sprintingPlayer(onGround = false))
 
-        assertFalse(lastGatesOpen, "a non-sprinting player closes the gates")
+        assertFalse(lastGatesOpen, "an airborne player closes the gates")
         assertEquals(0, gateCalls, "a failed internal condition never asks the gate")
         assertEquals(0, jumps, "closed gates never jump")
+    }
+
+    @Test
+    fun `sprint is a gate condition now, not a pre-gate short circuit`() {
+        // OnlySprint became a user-facing switch, so the check moved into the
+        // unified gate. The gate is asked on a non-sprinting knock; it is the
+        // gate's answer, not an early return here, that closes the gates.
+        gateOk = false
+        knock(sprintingPlayer(sprinting = false))
+
+        assertFalse(lastGatesOpen)
+        assertEquals(1, gateCalls, "a non-sprinting knock still asks the gate")
+        assertEquals(0, jumps, "a closed gate never jumps")
     }
 
     @Test

@@ -53,6 +53,7 @@ object SprintReset : Module("SprintReset", Category.COMBAT) {
     private val onlyMove by boolean("OnlyMove", false)
     private val onlyMoveForward by boolean("OnlyMoveForward", false)
     private val onlyWhenTargetGoesBack by boolean("OnlyWhenTargetGoesBack", false)
+    private val onlySprint by boolean("OnlySprint", false)
 
     private val triggerOptions by triggerOptions("Trigger") {
         onlyGround = this@SprintReset.onlyGround
@@ -60,6 +61,7 @@ object SprintReset : Module("SprintReset", Category.COMBAT) {
         onlyMove = this@SprintReset.onlyMove
         onlyMoveForward = this@SprintReset.onlyMoveForward
         onlyWhenTargetGoesBack = this@SprintReset.onlyWhenTargetGoesBack
+        onlySprint = this@SprintReset.onlySprint
     }
 
     // ========== Tick Listener ==========

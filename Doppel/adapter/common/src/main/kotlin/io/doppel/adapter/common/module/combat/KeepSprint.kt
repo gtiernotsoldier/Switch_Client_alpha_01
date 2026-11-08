@@ -3,6 +3,7 @@ package io.doppel.adapter.common.module.combat
 import io.doppel.adapter.common.module.Module
 import io.doppel.adapter.common.module.Category
 import io.doppel.adapter.common.api.EventBridge
+import io.doppel.adapter.common.option.boolean
 import io.doppel.contract.model.PlayerState
 import io.doppel.ipc.KeepSprintAssert
 import io.doppel.ipc.KeepSprintHold
@@ -99,6 +100,17 @@ import io.doppel.ipc.Strategies
 object KeepSprint : Module("KeepSprint", Category.COMBAT) {
 
     /**
+     * Only assert while the player is actually sprinting *right now*.
+     *
+     * Off by default: the core keeps a two-dispatch sprint memory, because on 1.8 the
+     * attack clears the sprint flag and the held W key re-asserts it inside the same
+     * tick — without that memory the assert would read "not sprinting" on the very hit
+     * it is supposed to repair. Turning this on drops the memory and requires a live
+     * sample, which is what "only sprinting" is supposed to mean to a user.
+     */
+    private val onlySprint by boolean("OnlySprint", false)
+
+    /**
      * Called from the platform render loop (MC main thread) every frame
      * (ForgeBootstrap: `KeepSprint.onRenderFrame(mc)`).
      *
@@ -134,7 +146,8 @@ object KeepSprint : Module("KeepSprint", Category.COMBAT) {
                 attacking,
                 targetAlive,
                 EventBridge.isKeyForwardActive,
-                EventBridge.syntheticForwardOverride
+                EventBridge.syntheticForwardOverride,
+                onlySprint
             )
 
             // No answer: give any claim we still hold back. An unclaimed state means "no opinion",

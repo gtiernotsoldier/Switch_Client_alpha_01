@@ -434,7 +434,7 @@ class CoreStubE2ETest {
 
                 // A landed swing while sprinting: hold LIVE + assert, 0x11.
                 val asserted = stub.playerKeepSprint(
-                    p, null, now, 10, true, true, true, true, false, tickId++
+                    p, null, now, 10, true, true, true, true, false, false, tickId++
                 )
                 assertEquals(0x11, asserted, "ASSERT travels in the high nibble with a live hold")
 
@@ -442,14 +442,14 @@ class CoreStubE2ETest {
                 // tick): the dedup keeps the assert quiet, the hold is live.
                 now += 4_000_000L
                 val deduped = stub.playerKeepSprint(
-                    p, null, now, 10, true, true, true, true, false, tickId++
+                    p, null, now, 10, true, true, true, true, false, false, tickId++
                 )
                 assertEquals(0x01, deduped, "one assert per tick, hold still live")
 
                 // Two dispatches later the hold expires: RELEASE.
                 now += 100_000_000L
                 val released = stub.playerKeepSprint(
-                    p, null, now, 12, true, false, true, true, false, tickId++
+                    p, null, now, 12, true, false, true, true, false, false, tickId++
                 )
                 assertEquals(0x02, released, "the dispatch window releases the hold")
 
@@ -458,12 +458,12 @@ class CoreStubE2ETest {
                 // the deadline).
                 now += 4_000_000L
                 val reArmed = stub.playerKeepSprint(
-                    p, null, now, 12, true, true, true, true, false, tickId++
+                    p, null, now, 12, true, true, true, true, false, false, tickId++
                 )
                 assertEquals(0x11, reArmed, "the assert re-arms the hold")
                 now += 160_000_000L
                 val stalled = stub.playerKeepSprint(
-                    p, null, now, 12, true, false, true, true, false, tickId
+                    p, null, now, 12, true, false, true, true, false, false, tickId
                 )
                 assertEquals(0x02, stalled, "the wall-clock backstop ends a stalled hold")
 

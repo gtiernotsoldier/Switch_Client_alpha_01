@@ -11,6 +11,7 @@ data class TriggerOptions(
     val onlyMoveForward: Boolean = false,
     val onlyMoveBackward: Boolean = false,
     val onlyStrafe: Boolean = false,
+    val onlySprint: Boolean = false,
     val onlyWhenTargetGoesBack: Boolean = false,
     val onlyWhenTargetApproaches: Boolean = false,
     val onLook: Boolean = false,
@@ -33,6 +34,7 @@ data class TriggerOptions(
         var onlyMoveForward: Boolean = false
         var onlyMoveBackward: Boolean = false
         var onlyStrafe: Boolean = false
+        var onlySprint: Boolean = false
         var onlyWhenTargetGoesBack: Boolean = false
         var onlyWhenTargetApproaches: Boolean = false
         var onLook: Boolean = false
@@ -54,6 +56,7 @@ data class TriggerOptions(
             onlyMoveForward = onlyMoveForward,
             onlyMoveBackward = onlyMoveBackward,
             onlyStrafe = onlyStrafe,
+            onlySprint = onlySprint,
             onlyWhenTargetGoesBack = onlyWhenTargetGoesBack,
             onlyWhenTargetApproaches = onlyWhenTargetApproaches,
             onLook = onLook,

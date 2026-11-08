@@ -73,6 +73,10 @@ object ConditionChecker {
             CoreLogger.debug("Condition blocked: onlyStrafe")
             return false
         }
+        if (options.onlySprint && !player.isSprinting) {
+            CoreLogger.debug("Condition blocked: onlySprint")
+            return false
+        }
 
         // Target-based checks — skip when target is null
         if (target != null) {

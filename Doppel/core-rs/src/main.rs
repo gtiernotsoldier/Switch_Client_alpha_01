@@ -1003,6 +1003,7 @@ fn emit_golden(dir: &str) -> Result<(), String> {    use std::fs;
     emit_click_assist_golden(dir)?;
     emit_hit_select_golden(dir)?;
     emit_sprint_reset_golden(dir)?;
+    emit_jump_reset_golden(dir)?;
     Ok(())
 }
 
@@ -1698,5 +1699,101 @@ fn emit_sprint_reset_golden(dir: &str) -> Result<(), String> {
 
     fs::write(format!("{}/sprint_reset_input.tsv", dir), input).map_err(|e| e.to_string())?;
     fs::write(format!("{}/sprint_reset_expected.tsv", dir), expected).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// JumpReset's knock/pump event stream, replayed over a synthetic clock.
+///
+/// A knock runs on the velocity thread, a pump once per client tick; they
+/// interleave here exactly as they do across the wire, sharing one State. The
+/// clock advances 50 ms per event and a 100 ms delay therefore spans two
+/// events, so an armed jump can be seen firing on a later pump. The chance
+/// roll is scripted per knock row (the two RNGs differ); the `rolls` column
+/// proves a pump never draws and a gated/ignored knock never draws either.
+fn emit_jump_reset_golden(dir: &str) -> Result<(), String> {
+    use std::fs;
+
+    let mut input = String::new();
+    input.push_str("# doppel-jump-reset-golden v1\n");
+    input.push_str("# idx\tkind\tnow_ns\tgates_open\tchance\tcooldown_mode\tticks_until\thits_until\tdelay_ms\troll\n");
+
+    let mut expected = String::new();
+    expected.push_str("# idx\tstep\tcooldown_counter\tpending\tdeadline_ns\trolls\n");
+
+    let mut state = strategy::jump_reset::State::new();
+    let mut rng = Pcg32::new(0x0000_5EED_4A11_0001);
+    let mut now: i64 = 1_000_000_000;
+
+    for i in 0..500 {
+        now += 50_000_000; // 50 ms per event
+        let pick = rng.random_int(0, 99);
+        // Pumps are a bit more frequent than knocks, so the Ticks cooldown
+        // actually accumulates between two knockback packets.
+        let kind = if pick % 5 < 3 { 1 } else { 0 }; // 1 = pump, 0 = knock
+
+        let gates_open = rng.random_int(0, 99) >= 20;
+        let chance = if rng.random_int(0, 1) == 1 { 100 } else { 60 };
+        let cooldown_mode = if rng.random_int(0, 1) == 1 { 1 } else { 0 };
+        let ticks_until = [0, 2, 4][rng.random_int(0, 2) as usize];
+        let hits_until = [1, 2, 3][rng.random_int(0, 2) as usize];
+        let delay_ms = if rng.random_int(0, 99) < 30 { 100 } else { 0 };
+        let roll = rng.random_int(0, 99);
+
+        input.push_str(&format!(
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+            i,
+            kind,
+            now,
+            gates_open as u8,
+            chance,
+            cooldown_mode,
+            ticks_until,
+            hits_until,
+            delay_ms,
+            roll
+        ));
+
+        let mut rolls = 0;
+        let (step, next) = if kind == 0 {
+            strategy::jump_reset::knock(
+                state,
+                strategy::jump_reset::KnockInput {
+                    gates_open,
+                    now_ns: now,
+                    chance,
+                    cooldown_mode: strategy::jump_reset::CooldownMode::from_code(cooldown_mode),
+                    ticks_until,
+                    hits_until,
+                    delay_ms,
+                },
+                &mut || {
+                    rolls += 1;
+                    roll
+                },
+            )
+        } else {
+            strategy::jump_reset::pump(
+                state,
+                strategy::jump_reset::PumpInput {
+                    now_ns: now,
+                    cooldown_mode: strategy::jump_reset::CooldownMode::from_code(cooldown_mode),
+                    ticks_until,
+                },
+            )
+        };
+        state = next;
+        expected.push_str(&format!(
+            "{}\t{}\t{}\t{}\t{}\t{}\n",
+            i,
+            step.code(),
+            next.cooldown_counter,
+            next.pending as u8,
+            next.deadline_ns,
+            rolls
+        ));
+    }
+
+    fs::write(format!("{}/jump_reset_input.tsv", dir), input).map_err(|e| e.to_string())?;
+    fs::write(format!("{}/jump_reset_expected.tsv", dir), expected).map_err(|e| e.to_string())?;
     Ok(())
 }

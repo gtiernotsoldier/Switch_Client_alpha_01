@@ -809,6 +809,61 @@ class CoreStub(
     }
 
     /**
+     * JumpReset knock: one call per knockback packet (velocity/Netty thread).
+     *
+     * The JVM has already combined every internal condition and the unified
+     * gate into `gatesOpen`; the core owns the probability roll, the cooldown
+     * counter (Ticks / ReceivedHits), and the delayed-jump deadline. Returns a
+     * step code: 0 = no immediate jump (gates closed, chance rejected,
+     * cooldown not met, or a jump was armed for a later tick), 1 = jump now.
+     *
+     * `null` means the core did not answer — the caller queues no jump.
+     */
+    fun playerJumpKnock(
+        player: io.doppel.contract.model.PlayerState,
+        target: io.doppel.contract.model.TargetState?,
+        gatesOpen: Boolean,
+        nowNs: Long,
+        chance: Int,
+        cooldownMode: Int,
+        ticksUntil: Int,
+        hitsUntil: Int,
+        delayMs: Int,
+        tick: Int
+    ): Int? {
+        val payload = genericRequest(
+            encodeSnapshot(player, target), Ops.PLAYER_JUMP_KNOCK,
+            b(gatesOpen), nowNs.toDouble(), chance.toDouble(),
+            cooldownMode.toDouble(), ticksUntil.toDouble(), hitsUntil.toDouble(),
+            delayMs.toDouble()
+        )
+        val f = roundTrip(Wire.MODULE_PLAYER, payload, tick) ?: return null
+        return decodeScalar(f).toInt()
+    }
+
+    /**
+     * JumpReset pump: one call per client tick (main thread). Advances the
+     * Ticks cooldown and fires a delayed jump at its deadline. Never draws.
+     *
+     * `null` means the core did not answer — the caller queues no jump.
+     */
+    fun playerJumpPump(
+        player: io.doppel.contract.model.PlayerState,
+        target: io.doppel.contract.model.TargetState?,
+        nowNs: Long,
+        cooldownMode: Int,
+        ticksUntil: Int,
+        tick: Int
+    ): Int? {
+        val payload = genericRequest(
+            encodeSnapshot(player, target), Ops.PLAYER_JUMP_PUMP,
+            nowNs.toDouble(), cooldownMode.toDouble(), ticksUntil.toDouble()
+        )
+        val f = roundTrip(Wire.MODULE_PLAYER, payload, tick) ?: return null
+        return decodeScalar(f).toInt()
+    }
+
+    /**
      * Backtrack's hold window: one call per tick.
      *
      * `null` means the core did not answer. The caller must then let the

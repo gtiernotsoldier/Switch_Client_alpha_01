@@ -507,6 +507,57 @@ object Strategies {
     }
 
     /**
+     * JumpReset knock half: one knockback packet, on the velocity (Netty) thread.
+     *
+     * `gatesOpen` is the module's combined judgement — the internal conditions
+     * (sprinting / on ground / not in fluid), the front-angle geometry check and
+     * the unified gate. The core owns the chance roll, the cooldown counter
+     * (Ticks / ReceivedHits) and the delayed-jump deadline. `null` means no
+     * answer — the caller then queues no jump.
+     *
+     * Both halves share one core state, so a knock can arm a jump that a later
+     * pump fires; the pump never draws, which is why the two are separate ops.
+     */
+    fun jumpKnock(
+        player: PlayerState,
+        target: TargetState?,
+        gatesOpen: Boolean,
+        nowNs: Long,
+        chance: Int,
+        cooldownMode: Int,
+        ticksUntil: Int,
+        hitsUntil: Int,
+        delayMs: Int
+    ): JumpResetStep? {
+        val stub = CoreLink.stub ?: return null
+        val code = stub.playerJumpKnock(
+            player, target, gatesOpen, nowNs, chance, cooldownMode,
+            ticksUntil, hitsUntil, delayMs, nextTick()
+        ) ?: return null
+        return JumpResetStep.fromCode(code)
+    }
+
+    /**
+     * JumpReset pump half: one client tick, on the main thread. Advances the
+     * Ticks cooldown and fires a delayed jump at its deadline. Never draws.
+     *
+     * `null` means no answer — the caller then queues no jump.
+     */
+    fun jumpPump(
+        player: PlayerState,
+        target: TargetState?,
+        nowNs: Long,
+        cooldownMode: Int,
+        ticksUntil: Int
+    ): JumpResetStep? {
+        val stub = CoreLink.stub ?: return null
+        val code = stub.playerJumpPump(
+            player, target, nowNs, cooldownMode, ticksUntil, nextTick()
+        ) ?: return null
+        return JumpResetStep.fromCode(code)
+    }
+
+    /**
      * Backtrack: hold position updates this tick?
      *
      * `null` means the core did not answer, and the caller must let the updates
@@ -690,6 +741,17 @@ enum class SprintResetStep(val code: Int, val mode: Int) {
         /** Unknown codes degrade to NONE: never invent a packet burst. */
         @JvmStatic
         fun fromCode(code: Int): SprintResetStep? = entries.firstOrNull { it.code == code }
+    }
+}
+
+/** What the core decided for one JumpReset half. */
+enum class JumpResetStep(val code: Int) {
+    NONE(0), JUMP(1);
+
+    companion object {
+        /** Unknown codes degrade to NONE: never invent a jump. */
+        @JvmStatic
+        fun fromCode(code: Int): JumpResetStep? = entries.firstOrNull { it.code == code }
     }
 }
 

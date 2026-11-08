@@ -1,6 +1,7 @@
 package io.doppel.adapter.common.module.combat
 
 import io.doppel.ipc.Strategies
+import io.doppel.ipc.JumpResetStep
 import io.doppel.contract.model.PlayerState
 import io.doppel.contract.model.TargetState
 import io.doppel.contract.model.VelocityContext
@@ -11,30 +12,35 @@ import io.doppel.adapter.common.module.Module
 import io.doppel.adapter.common.module.Category
 import io.doppel.adapter.common.option.boolean
 import io.doppel.adapter.common.option.choices
-import io.doppel.adapter.common.option.float
 import io.doppel.adapter.common.option.int
 import io.doppel.adapter.common.option.triggerOptions
 import kotlin.math.sqrt
-import kotlin.random.Random
-import io.doppel.contract.logging.CoreLogger
 
 /**
  * JumpReset Module — automatic jump on knockback to reduce knockback height.
  *
  * Detects incoming velocity packets (S12PacketEntityVelocity, S27PacketExplosion)
- * via [EventBridge.registerVelocityNotifier]. When knockback is received:
- * 1. Checks internal conditions (angle ≤ 120°, sprinting, hurtTime == 9, not in fluid).
- * 2. Checks configurable conditions via [ConditionChecker].
- * 3. Probability roll + cooldown check.
- * 4. Optional delay timer (resets on new knockback).
- * 5. Queues a jump via [EventBridge.queueJump] — the main thread presses the jump key, so MC's own
- *    tick performs the jump and the Keystrokes HUD reflects it.
+ * via [EventBridge.registerVelocityNotifier] and queues a jump via
+ * [EventBridge.queueJump] — the main thread presses the jump key, so MC's own
+ * tick performs the jump and the Keystrokes HUD reflects it.
+ *
+ * This side holds only **logic judgements + marshalling + platform I/O**:
+ *  - the internal conditions (sprinting / on ground / not in fluid),
+ *  - the front-angle geometry check (whitelisted frame-level geometry),
+ *  - the unified gate,
+ *  - the final "still sprinting at jump time" judgement,
+ *  - and the single `queueJump` platform write.
+ *
+ * Everything stateful lives in the algorithm process: the chance roll, the
+ * cooldown counter (Ticks / ReceivedHits), and the pending delayed jump with
+ * its deadline. The two halves — `knock` on the velocity thread and `pump` on
+ * the client tick — are two ops sharing one core state; the pump never draws.
+ * No `kotlin.random`, no local time-window judgement (`System.nanoTime()` is
+ * an input we marshal, like SprintReset/Backtrack/Reach), no cross-tick counters.
  *
  * Cooldown modes:
- * - Ticks: wait N server ticks between jumps (ticksUntilJump, default 4).
- * - ReceivedHits: jump after receiving N hits (hitsUntilJump, default 2).
- *
- * Only activates while player is sprinting and on ground.
+ * - Ticks: wait N client ticks between jumps (ticksUntilJump, default 4).
+ * - ReceivedHits: jump after receiving N knockbacks (hitsUntilJump, default 2).
  */
 object JumpReset : Module("JumpReset", Category.COMBAT) {
 
@@ -43,7 +49,7 @@ object JumpReset : Module("JumpReset", Category.COMBAT) {
     private val ticksUntilJump by int("TicksUntilJump", 4, 0..20, "ticks")
     private val hitsUntilJump by int("HitsUntilJump", 2, 0..5)
 
-    // ========== Timing & Probability ==========
+    // ========== Timing & Probability (inputs to the core, not local state) ==========
     private val delay by int("Delay", 0, 0..500, "ms")
     private val chance by int("Chance", 100, 0..100, "%")
 
@@ -62,153 +68,80 @@ object JumpReset : Module("JumpReset", Category.COMBAT) {
         onlyWhenTargetGoesBack = this@JumpReset.onlyWhenTargetGoesBack
     }
 
-    // ========== Internal State ==========
-    private var knockbackMotion: Vec3? = null
-    private var knockbackPlayer: PlayerState? = null
-    private var knockbackTarget: TargetState? = null
-    private var delayEndNano: Long = 0L
-    private var cooldownCounter: Int = 0
-    private var jumpPending: Boolean = false
-
-    // ========== Velocity Notifier ==========
+    // ========== Event listeners ==========
     private val velocityNotifier: (VelocityContext) -> Unit = { ctx ->
         if (enabled) onKnockback(ctx)
     }
 
-    private val tickListener: (PlayerState, TargetState?) -> Unit = { _, _ ->
-        // Only used for Ticks cooldown counting (increment each tick)
-        if (enabled && cooldownMode == "Ticks" && cooldownCounter < ticksUntilJump) {
-            cooldownCounter++
-        }
-        // Process delayed jump
-        if (enabled && jumpPending) processPendingJump()
+    private val tickListener: (PlayerState, TargetState?) -> Unit = { p, t ->
+        if (enabled) onTick(p, t)
     }
 
-    // ========== Knockback Handler ==========
-    /** Throttle for the JumpReset trigger diagnostic. */
-    @Volatile private var jrDiag = 0
-
+    // ========== Knockback half (velocity / Netty thread) ==========
     private fun onKnockback(ctx: VelocityContext) {
         val player = ctx.player
         val target = ctx.target
-        val motion = ctx.originalMotion
 
-        // Diagnostic: log each knockback arrival + which gate blocks (throttled).
-        if (++jrDiag % 3 == 0) {
-            io.doppel.contract.logging.CoreLogger.info(
-                "[JumpReset] S12 recv sprint=${player.isSprinting} ground=${player.onGround} " +
-                "fluid=${EventBridge.isInFluid} motion=(${motion.x},${motion.y},${motion.z}) " +
-                "chance=$chance cd=$cooldownMode/$ticksUntilJump"
-            )
-        }
+        // ---- Judgements (this side decides nothing beyond these predicates) ----
+        // The internal conditions are not configurable: the S12 knockback
+        // packet is the authoritative "I was hit + knocked back" signal, so
+        // there is deliberately no hurtTime gate here (see the original
+        // LiquidBounce port: on the Netty thread hurtTime reads 0 or a stale
+        // value, and the exact ==9 frame was essentially never sampled).
+        val internalOk = player.isSprinting && player.onGround &&
+            !EventBridge.isInFluid && isKnockbackFromFront(player, ctx.originalMotion)
+        // Short-circuit: a failed internal condition never asks the unified
+        // gate, exactly as the original chain of early returns did.
+        val gatesOpen = internalOk && Strategies.gate(player, target, triggerOptions)
 
-        // ---- Internal conditions (not configurable) ----
-        // Must be sprinting
-        if (!player.isSprinting) {
-            if (++jrDiag % 3 == 0) io.doppel.contract.logging.CoreLogger.info("[JumpReset] blocked: not sprinting")
-            return
-        }
+        val step = Strategies.jumpKnock(
+            player, target, gatesOpen, System.nanoTime(),
+            chance, cooldownModeCode(), ticksUntilJump, hitsUntilJump, delay
+        )
 
-        // Must be on ground
-        if (!player.onGround) {
-            if (++jrDiag % 3 == 0) io.doppel.contract.logging.CoreLogger.info("[JumpReset] blocked: not on ground")
-            return
-        }
-
-        // NOTE: no hurtTime gate here. The S12 knockback packet (this handler's trigger) is the
-        // authoritative "I was hit + knocked back" signal. The old `hurtTime == 9` check was ported
-        // from LiquidBounce's main-thread tick semantics, but here the packet arrives on the Netty
-        // thread before the main thread applies the damage, so hurtTime reads 0 (or a stale value)
-        // and the exact ==9 frame is essentially never sampled -> JumpReset never fired. Direction A:
-        // trust the packet; remove the hurtTime gate entirely.
-
-        // Must not be in water/lava/web
-        if (EventBridge.isInFluid) return
-
-        // Angle: knockback direction vs player facing ≤ 120°
-        if (!isKnockbackFromFront(player, motion)) return
-
-        // ---- Configurable conditions ----
-        if (!Strategies.gate(player, target, triggerOptions)) return
-
-        // ---- Probability ----
-        if (chance < 100 && Random.nextInt(100) >= chance) return
-
-        // ---- Cooldown check ----
-        when (cooldownMode) {
-            "Ticks" -> {
-                if (cooldownCounter < ticksUntilJump) return
-            }
-            "ReceivedHits" -> {
-                cooldownCounter++
-                if (cooldownCounter < hitsUntilJump) return
-            }
-        }
-
-        // ---- Schedule jump ----
-        // Reset past cooldown state
-        cooldownCounter = 0
-
-        knockbackMotion = motion
-        knockbackPlayer = player
-        knockbackTarget = target
-        jumpPending = true
-
-        if (delay > 0) {
-            delayEndNano = System.nanoTime() + delay * 1_000_000L
-        } else {
-            executeJump()
-        }
+        // ---- Platform side effect: land the step the core decided ----
+        if (step == JumpResetStep.JUMP && stillSprinting(player)) queueJump()
     }
 
-    // ========== Delayed Jump Processing ==========
-    private fun processPendingJump() {
-        if (System.nanoTime() >= delayEndNano) {
-            executeJump()
-        }
+    // ========== Pump half (client tick / main thread) ==========
+    private fun onTick(player: PlayerState, target: TargetState?) {
+        val step = Strategies.jumpPump(
+            player, target, System.nanoTime(), cooldownModeCode(), ticksUntilJump
+        )
+
+        // The final judgement stays here and uses *this* frame's player, not a
+        // snapshot cached at knockback time: a delayed jump must not fire once
+        // the player has stopped sprinting or left the ground. The core owns
+        // "whether to jump"; the module owns "whether we still may".
+        if (step == JumpResetStep.JUMP && stillSprinting(player)) queueJump()
     }
 
-    /**
-     * Execute the jump: trigger jump action and reset all state.
-     * This is called either immediately (delay=0) or after the delay timer.
-     */
-    private fun executeJump() {
-        if (!jumpPending) return
-
-        // Verify player is still sprinting + on ground at jump time
-        val player = knockbackPlayer
-        if (player != null && (!player.isSprinting || !player.onGround)) {
-            resetState()
-            return
-        }
-
+    /** The one platform write this module owns. */
+    private fun queueJump() {
         EventBridge.queueJump()
-        markWorked() // the HUD row flashes on the jump it actually asked for
-
-        // Reset after execution — cooldownCounter must be reset here because
-        // ticks continue incrementing it during the delay period.
-        cooldownCounter = 0
-        resetState()
+        markWorked() // the HUD row flashes on the jump actually asked for
     }
 
-    // ========== Angle Check ==========
+    /** Final "at jump time" judgement, kept on the JVM side. */
+    private fun stillSprinting(player: PlayerState): Boolean =
+        player.isSprinting && player.onGround
+
+    /** Wire cooldown-mode code: 0 Ticks, 1 ReceivedHits. */
+    private fun cooldownModeCode(): Int = if (cooldownMode == "ReceivedHits") 1 else 0
+
+    // ========== Angle Check (frame-level geometry, explicit whitelist) ==========
     /**
      * Knockback must come from roughly the FRONT of where the player is FACING (the attacker is in
      * front of the crosshair). The knockback SOURCE direction is the reverse of the motion vector
      * (-motion): when the attacker is in front, the player is knocked BACKWARD, so motion points away
      * from facing and the source (-motion) points toward facing. Accept dot(facing, -motionUnit) >=
      * -0.5 (a 120° cone centered on the facing direction).
-     *
-     * Rationale (user's call): the LiquidBounce "jump" mode check (knockback vs MOVEMENT direction,
-     * 180° cone) is a downside in practice — it misfires during strafe/off-axis movement. Facing the
-     * attacker (crosshair on target) is the real advantage case: facing the hit source should jump.
      */
     private fun isKnockbackFromFront(player: PlayerState, motion: Vec3): Boolean {
         val hSpeed = sqrt(motion.x * motion.x + motion.z * motion.z)
         if (hSpeed < 0.001) return false
 
         val facing = Directions.fromYaw(player.rotation.yaw)
-        // Knockback SOURCE = reverse of motion (attacker direction).
         val srcX = -motion.x / hSpeed
         val srcZ = -motion.z / hSpeed
         return (facing.x * srcX + facing.z * srcZ) >= -0.5
@@ -216,8 +149,9 @@ object JumpReset : Module("JumpReset", Category.COMBAT) {
 
     // ========== Lifecycle ==========
     override fun onEnable() {
-        cooldownCounter = 0
-        jumpPending = false
+        // A fresh enable must not inherit a cooldown counter or a pending
+        // delayed jump the core still believes it owns.
+        Strategies.resetPlayer()
         EventBridge.registerVelocityNotifier(velocityNotifier)
         EventBridge.registerTickListener(tickListener)
     }
@@ -225,13 +159,6 @@ object JumpReset : Module("JumpReset", Category.COMBAT) {
     override fun onDisable() {
         EventBridge.unregisterVelocityNotifier(velocityNotifier)
         EventBridge.unregisterTickListener(tickListener)
-        resetState()
-    }
-
-    private fun resetState() {
-        knockbackMotion = null
-        knockbackPlayer = null
-        knockbackTarget = null
-        jumpPending = false
+        Strategies.resetPlayer()
     }
 }

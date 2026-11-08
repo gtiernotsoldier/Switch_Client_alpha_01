@@ -25,6 +25,7 @@ use crate::strategy::combat::{self, BlockArbiterState, PredictorConfig, Predicto
 use crate::strategy::eagle;
 use crate::strategy::eagle_place;
 use crate::strategy::hit_select;
+use crate::strategy::jump_reset;
 use crate::strategy::knockback_displace;
 use crate::strategy::reach_sample;
 use crate::strategy::sprint_reset;
@@ -86,6 +87,10 @@ pub struct Session {
     /// SprintReset's fire-probability roll. Gate-only draws (chance < 100 and
     /// only at the fire point) must not interleave with any other module's.
     pub rng_sprint_reset: Pcg32,
+    /// JumpReset's chance roll. Drawn only on a knock that cleared its gates,
+    /// never on a pump tick — the velocity and tick threads must not be able
+    /// to shift each other's stream by scheduling differences.
+    pub rng_jump_reset: Pcg32,
     pub config: VelocityConfig,
     pub velocity: velocity::State,
 
@@ -131,6 +136,10 @@ pub struct Session {
     /// delayed-send deadline.
     pub sprint_reset: sprint_reset::State,
 
+    /// JumpReset: the cooldown counter and the armed delayed jump. Shared by
+    /// the velocity (knock) and tick (pump) call sites.
+    pub jump_reset: jump_reset::State,
+
     pub ticks: u64,
     pub decisions: u64,
     pub degraded: u64,
@@ -170,6 +179,7 @@ impl Session {
             rng_hit_select: Pcg32::new(seed),
             rng_eagle_place: Pcg32::new(seed),
             rng_sprint_reset: Pcg32::new(seed),
+            rng_jump_reset: Pcg32::new(seed),
             config: VelocityConfig::default(),
             velocity: velocity::State::new(),
             aim_config: AimConfig::default(),
@@ -191,6 +201,7 @@ impl Session {
             hit_select: hit_select::State::new(),
             eagle_place: eagle_place::State::default(),
             sprint_reset: sprint_reset::State::new(),
+            jump_reset: jump_reset::State::new(),
             ticks: 0,
             decisions: 0,
             degraded: 0,
@@ -262,6 +273,7 @@ impl Session {
                 self.hit_select = hit_select::State::new();
                 self.eagle_place = eagle_place::State::default();
                 self.sprint_reset = sprint_reset::State::new();
+                self.jump_reset = jump_reset::State::new();
             }
         }
         Frame::new(Kind::Reset, frame.header.seq, frame.header.tick, module)
@@ -1152,6 +1164,48 @@ impl Session {
                         step.code() as f64,
                     ))
                 }
+                op::PLAYER_JUMP_KNOCK => {
+                    let input = jump_reset::KnockInput {
+                        gates_open: req.bool(0)?,
+                        now_ns: req.arg(1)? as i64,
+                        chance: req.i32(2)?,
+                        cooldown_mode: jump_reset::CooldownMode::from_code(req.i32(3)?),
+                        ticks_until: req.i32(4)?,
+                        hits_until: req.i32(5)?,
+                        delay_ms: req.i32(6)?,
+                    };
+                    let state = self.jump_reset;
+                    let rng = &mut self.rng_jump_reset;
+                    // Kotlin's `Random.nextInt(100)` is [0, 100); the closure
+                    // is invoked only when chance < 100 and the gates passed.
+                    let (step, next) =
+                        jump_reset::knock(state, input, &mut || rng.random_int(0, 99));
+                    self.jump_reset = next;
+                    Ok(codec::encode_scalar(
+                        seq,
+                        tick,
+                        Module::Player,
+                        WireAction::Scalar,
+                        step.code() as f64,
+                    ))
+                }
+                op::PLAYER_JUMP_PUMP => {
+                    let input = jump_reset::PumpInput {
+                        now_ns: req.arg(0)? as i64,
+                        cooldown_mode: jump_reset::CooldownMode::from_code(req.i32(1)?),
+                        ticks_until: req.i32(2)?,
+                    };
+                    // No roll: the pump half only advances the clock.
+                    let (step, next) = jump_reset::pump(self.jump_reset, input);
+                    self.jump_reset = next;
+                    Ok(codec::encode_scalar(
+                        seq,
+                        tick,
+                        Module::Player,
+                        WireAction::Scalar,
+                        step.code() as f64,
+                    ))
+                }
                 _ => Err(Status::BadPayload),
             }
         };
@@ -1747,6 +1801,143 @@ mod tests {
         b.handle(&sprint_reset_frame(3, 1_050_000_000, true, true, true, true, 7, 50, 1, 0, 0));
 
         assert_eq!(a.rng_sprint_reset.next_u32(), b.rng_sprint_reset.next_u32());
+    }
+
+    /// A JumpReset knock request: seven f64 args after the op byte.
+    fn jump_knock_frame(
+        seq: u32,
+        gates_open: bool,
+        now_ns: i64,
+        chance: i32,
+        cooldown_mode: i32,
+        ticks_until: i32,
+        hits_until: i32,
+        delay_ms: i32,
+    ) -> Frame {
+        let (snap, len) = write_snapshot([0.0; 3], 0, 0);
+        let mut f = Frame::new(Kind::Snapshot, seq, 100, Module::Player);
+        let total = {
+            let p = f.payload_mut();
+            p[..len].copy_from_slice(&snap[32..32 + len]);
+            let mut w = Writer::new(&mut p[len..]);
+            w.u8(op::PLAYER_JUMP_KNOCK);
+            w.u8(7);
+            w.f64(gates_open as u8 as f64);
+            w.f64(now_ns as f64);
+            w.f64(chance as f64);
+            w.f64(cooldown_mode as f64);
+            w.f64(ticks_until as f64);
+            w.f64(hits_until as f64);
+            w.f64(delay_ms as f64);
+            len + w.pos()
+        };
+        f.set_len(total);
+        f
+    }
+
+    /// A JumpReset pump request: three f64 args after the op byte.
+    fn jump_pump_frame(seq: u32, now_ns: i64, cooldown_mode: i32, ticks_until: i32) -> Frame {
+        let (snap, len) = write_snapshot([0.0; 3], 0, 0);
+        let mut f = Frame::new(Kind::Snapshot, seq, 100, Module::Player);
+        let total = {
+            let p = f.payload_mut();
+            p[..len].copy_from_slice(&snap[32..32 + len]);
+            let mut w = Writer::new(&mut p[len..]);
+            w.u8(op::PLAYER_JUMP_PUMP);
+            w.u8(3);
+            w.f64(now_ns as f64);
+            w.f64(cooldown_mode as f64);
+            w.f64(ticks_until as f64);
+            len + w.pos()
+        };
+        f.set_len(total);
+        f
+    }
+
+    fn jump_step(f: &Frame) -> u32 {
+        eagle_flags(f) // same scalar layout: the step code sits at offset 4
+    }
+
+    #[test]
+    fn jump_reset_knock_and_pump_round_trip_over_the_wire() {
+        // Full chain: decode_generic → on_player dispatch → jump_reset::knock /
+        // pump → encode_scalar. chance=100 skips the draw; ReceivedHits with
+        // hits_until=1 reaches the fire point immediately.
+        let mut s = Session::new(1, 42);
+        let fired = s.handle(&jump_knock_frame(1, true, 1_000_000_000, 100, 1, 0, 1, 0));
+        assert_eq!(jump_step(&fired), 1, "JUMP now over the wire");
+        assert_eq!(s.jump_reset.cooldown_counter, 0);
+
+        // A delayed jump arms on knock and fires at its deadline on pump. Both
+        // halves share the same session state.
+        let mut s2 = Session::new(2, 42);
+        let armed = s2.handle(&jump_knock_frame(1, true, 1_000_000_000, 100, 1, 0, 1, 100));
+        assert_eq!(jump_step(&armed), 0, "armed, nothing yet");
+        assert!(s2.jump_reset.pending);
+        assert_eq!(
+            s2.jump_reset.deadline_ns,
+            1_000_000_000 + 100 * 1_000_000
+        );
+
+        let before = s2.handle(&jump_pump_frame(2, 1_050_000_000, 0, 4));
+        assert_eq!(jump_step(&before), 0, "deadline not reached");
+        let fired = s2.handle(&jump_pump_frame(3, 1_100_000_000, 0, 4));
+        assert_eq!(jump_step(&fired), 1, "JUMP at the deadline over the wire");
+        assert!(!s2.jump_reset.pending);
+    }
+
+    #[test]
+    fn jump_reset_closed_gates_and_pumps_never_draw() {
+        // A closed gate returns before the roll; pumps never roll at all. Both
+        // must leave the RNG stream exactly where a fresh session has it.
+        let mut a = Session::new(1, 7);
+        a.handle(&jump_knock_frame(1, false, 1_000_000_000, 40, 1, 0, 1, 0));
+        // ReceivedHits mode, so the pump advances no counter either. This
+        // test is about the stream, not the clock: Ticks-mode pumping is
+        // covered by jump_reset_ticks_cooldown_advances_on_pump_only below.
+        a.handle(&jump_pump_frame(2, 1_050_000_000, 1, 4));
+        assert_eq!(a.jump_reset, jump_reset::State::new());
+
+        let mut b = Session::new(1, 7);
+        assert_eq!(
+            a.rng_jump_reset.next_u32(),
+            b.rng_jump_reset.next_u32(),
+            "a closed gate or a pump must not advance the stream"
+        );
+    }
+
+    #[test]
+    fn jump_reset_ticks_cooldown_advances_on_pump_only() {
+        let mut s = Session::new(1, 42);
+        // Fresh state in Ticks mode: a knock is blocked until four pumps.
+        let blocked = s.handle(&jump_knock_frame(1, true, 1_000_000_000, 100, 0, 4, 2, 0));
+        assert_eq!(jump_step(&blocked), 0, "Ticks cooldown not met yet");
+        for i in 0..4 {
+            s.handle(&jump_pump_frame(
+                i + 2,
+                1_000_000_000 + (i as i64 + 1) * 50_000_000,
+                0,
+                4,
+            ));
+        }
+        assert_eq!(s.jump_reset.cooldown_counter, 4);
+        let fired = s.handle(&jump_knock_frame(6, true, 1_250_000_000, 100, 0, 4, 2, 0));
+        assert_eq!(jump_step(&fired), 1, "Ticks cooldown met on the wire");
+        assert_eq!(s.jump_reset.cooldown_counter, 0);
+    }
+
+    #[test]
+    fn jump_reset_has_its_own_rng_stream() {
+        // A sneak draw must not shift the JumpReset chance stream, and vice
+        // versa: the two are separate decisions on separate streams.
+        let mut a = Session::new(1, 7);
+        a.handle(&jump_knock_frame(1, true, 1_000_000_000, 50, 1, 0, 1, 0));
+
+        let mut b = Session::new(1, 7);
+        b.handle(&eagle_frame(1, true, true, false, 1, 5)); // one sneak draw (rng_player)
+        b.handle(&jump_knock_frame(2, true, 1_000_000_000, 50, 1, 0, 1, 0));
+
+        assert_eq!(a.rng_jump_reset.next_u32(), b.rng_jump_reset.next_u32());
     }
 
     #[test]

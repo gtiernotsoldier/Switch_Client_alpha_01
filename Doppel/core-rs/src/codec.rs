@@ -931,6 +931,18 @@ pub mod op {
     /// stream. The JVM supplies the judgements (gate, range, hurt) and turns
     /// the returned step into a `sendSprintReset` write.
     pub const PLAYER_SPRINT_RESET: u8 = 8;
+
+    /// player/jump_reset: two call sites sharing one state.
+    /// `knock(gates_open, now_ns, chance, cooldown_mode, ticks_until,
+    ///        hits_until, delay_ms)` → step (0 none, 1 jump now / armed).
+    /// `pump(now_ns, cooldown_mode, ticks_until)` → step (0 none, 1 jump now).
+    ///
+    /// The velocity thread evaluates the internal conditions + unified gate
+    /// and marshals the single judgement; the core owns the cooldown counter
+    /// (Ticks / ReceivedHits), the delayed jump and the chance roll on its own
+    /// RNG stream. The tick thread only pumps the clock.
+    pub const PLAYER_JUMP_KNOCK: u8 = 9;
+    pub const PLAYER_JUMP_PUMP: u8 = 10;
 }
 
 /// Maps a side to the wire's 0/1.
@@ -1029,6 +1041,8 @@ pub fn known_ops(module: Module) -> &'static [u8] {
             op::PLAYER_HIT_GATE,
             op::PLAYER_EAGLE_PLACE,
             op::PLAYER_SPRINT_RESET,
+            op::PLAYER_JUMP_KNOCK,
+            op::PLAYER_JUMP_PUMP,
         ],
         Module::Velocity => &[op::VEL_BRACE, op::VEL_DELAY_ENQUEUE, op::VEL_DELAY_PUMP],
         _ => &[],

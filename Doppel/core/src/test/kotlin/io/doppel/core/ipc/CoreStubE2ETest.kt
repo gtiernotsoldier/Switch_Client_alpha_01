@@ -285,6 +285,60 @@ class CoreStubE2ETest {
 
     @Test
     @Timeout(value = 60, unit = TimeUnit.SECONDS)
+    fun `jump reset knock and pump decisions travel intact over a real socket`() {
+        // The whole path for the two JumpReset ops: Kotlin marshalling → TCP →
+        // decode_generic → on_player dispatch → jump_reset::knock / pump →
+        // encode_scalar → decodeScalar. chance=100 skips the draw, so the step
+        // sequence is deterministic across the two different RNGs.
+        val exe = locateCore()
+        assumeTrue(exe != null, "doppel-core not built — run: cd Doppel/core-rs && cargo build")
+        val proc = ProcessBuilder(exe!!.absolutePath, "--listen", "tcp:127.0.0.1:0", "--seed", "424242")
+            .redirectError(ProcessBuilder.Redirect.INHERIT)
+            .start()
+        try {
+            val banner = proc.inputStream.bufferedReader().readLine()
+            assertNotNull(banner, "core produced no LISTEN line")
+            assertTrue(banner!!.startsWith("LISTEN "), "unexpected banner: $banner")
+            val addr = banner.removePrefix("LISTEN ").trim()
+
+            CoreStub(Endpoint.parse("tcp:$addr"), null, deadlineNanos = 20_000_000L).use { stub ->
+                stub.connect()
+                val p = player()
+                var tick = 1
+                var now = 1_000_000_000L
+
+                // ReceivedHits, hits_until=1, chance=100, delay=0 → JUMP now.
+                val immediate = stub.playerJumpKnock(p, null, true, now, 100, 1, 0, 1, 0, tick++)
+                assertEquals(1, immediate, "JUMP now over the socket")
+
+                // Closed gates: no jump, and the state stays untouched.
+                now += 50_000_000L
+                val closed = stub.playerJumpKnock(p, null, false, now, 100, 1, 0, 1, 0, tick++)
+                assertEquals(0, closed, "closed gates never jump")
+
+                // A delayed jump arms on knock and fires at its deadline on
+                // pump — the two halves share one core state.
+                now += 50_000_000L
+                val armed = stub.playerJumpKnock(p, null, true, now, 100, 1, 0, 1, 100, tick++)
+                assertEquals(0, armed, "armed, nothing yet")
+                now += 50_000_000L
+                val waiting = stub.playerJumpPump(p, null, now, 0, 4, tick++)
+                assertEquals(0, waiting, "still quiet before the deadline")
+                now += 50_000_000L
+                val fired = stub.playerJumpPump(p, null, now, 0, 4, tick)
+                assertEquals(1, fired, "JUMP at the deadline over the socket")
+
+                assertEquals(0L, stub.timeouts.get(), "deadline misses on loopback")
+                assertEquals(0L, stub.degradedTicks.get(), "degraded ticks on a healthy run")
+            }
+        } finally {
+            proc.destroyForcibly()
+            proc.waitFor(5, TimeUnit.SECONDS)
+        }
+    }
+
+    @Test
+    @Timeout(value = 60, unit = TimeUnit.SECONDS)
     fun `a dead core degrades instead of throwing`() {
         // Bind, then close: the stub must treat a refused connection as
         // "degrade this tick", never as an exception escaping into the tick loop.

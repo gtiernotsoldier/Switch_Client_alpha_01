@@ -9,6 +9,7 @@ pub mod combat;
 pub mod eagle;
 pub mod eagle_place;
 pub mod hit_select;
+pub mod jump_reset;
 pub mod knockback_displace;
 pub mod movement;
 pub mod reach;

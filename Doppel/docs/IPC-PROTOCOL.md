@@ -295,6 +295,7 @@ The degraded direction differs per op; see `PROTECTION.md` §9.5.3 for the table
 | ClickAssist guard chain + 500 ms CPS window | `strategy/click_assist.rs` | `ClickAssistParityTest`, 300 presses |
 | HitSelect windows + click gate | `strategy/hit_select.rs` | `HitSelectParityTest`, 500 interleaved events |
 | SprintReset rising-edge / throttle / delay | `strategy/sprint_reset.rs` | `SprintResetParityTest`, 400 ticks + `CoreStubE2ETest` real-socket round trip |
+| JumpReset knock / pump cooldown + delayed jump | `strategy/jump_reset.rs` | `JumpResetParityTest`, 500 events + `CoreStubE2ETest` real-socket round trip |
 
 ### Module request shapes
 
@@ -310,7 +311,7 @@ all look alike and none of which can be checked without counting bytes.
 | Aim | `mouse_dx f32, mouse_dy f32, sensitivity f32` (12 bytes) |
 | Click | `attack_cooldown f32, is_falling u8, pad 3` (8 bytes) |
 | Movement / Tap / Combat / Reach | `op u8, nargs u8, nargs × f64` |
-| Player (8) | `op u8, nargs u8, nargs × f64` — ops 0..8, up to 11 args |
+| Player (8) | `op u8, nargs u8, nargs × f64` — ops 0..10, up to 11 args |
 
 Op ids are append-only, same reasoning as module ids: the stub and the core are
 separate binaries. The tables live beside their decoders in `codec.rs` and are
@@ -348,7 +349,7 @@ modules were enabled and in what order they ran, so toggling aim would quietly
 change click timing.
 
 `Module::Player` (id 8) carries the modules that used to keep their whole
-logic in the jar. Ops 0..8 are append-only like the rest. `PLAYER_HIT_TICK` (5)
+logic in the jar. Ops 0..10 are append-only like the rest. `PLAYER_HIT_TICK` (5)
 and `PLAYER_HIT_GATE` (6) are the only pair that shares **one** state across two
 callers: the tick feeds the target windows, the click gate reads them. The
 adapter asks the gate only when a physical attack is actually being applied —
@@ -385,8 +386,31 @@ interleave any random stream. A delayed send arms a deadline on the edge and
 fires with the captured mode at that deadline — the whole tick short-circuits
 while armed, exactly as the original JVM timer did. A missing answer means send
 nothing: inventing a C0B/C03 burst without the core's decision is worse than
-missing one. This is the first of the Reset family; `JumpReset` and
-`SuperKnockback` follow the same one-op shape.
+missing one. This is the first of the Reset family.
+
+`PLAYER_JUMP_KNOCK` (9) and `PLAYER_JUMP_PUMP` (10) are the second pair to
+share one state across two callers, but for a different reason than
+HitSelect: JumpReset's `knock` runs on the velocity (Netty) thread when an
+S12/S27 arrives, while its `pump` runs once per client tick. The adapter
+folds all its judgements into one `gates_open` bit (sprinting / on ground /
+not in fluid, the 120° front-angle geometry check — whitelisted frame-level
+geometry — and the `combatDecide` gate), then sends the clock and the tuning
+knobs: `chance`, `cooldown_mode` (0 Ticks, 1 ReceivedHits), `ticks_until`,
+`hits_until`, `delay_ms`. Both halves return step code 0 none / 1 jump now.
+
+The core owns the cooldown counter, the pending delayed jump and its
+deadline, and the chance roll on its own `rng_jump_reset` stream. The roll is
+consumed **only** in `knock`, after the gates and only when `chance < 100`;
+`pump` never draws — a tick-driven roll would advance the stream with frame
+timing and diverge on the first replay. A `delay_ms > 0` arms a deadline on
+the knock and `pump` fires the jump at that deadline; the pump also advances
+the Ticks cooldown, and both happen even on the firing tick, mirroring the
+two independent `if`s in the original tick listener. The final "still
+sprinting at jump time" check stays in the module and uses the *current*
+frame's player, not a snapshot cached at knockback time. A missing answer on
+either half means queue no jump: inventing a jump without the core's
+decision is worse than missing one. `SuperKnockback` is the last member of
+the Reset family to follow.
 
 `ClickAssistFlag` in `Wire.kt` is the bit layout for `PLAYER_CLICK_ASSIST`'s
 thirteen predicates. It lives beside the op rather than in the module for the

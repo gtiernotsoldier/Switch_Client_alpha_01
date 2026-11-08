@@ -393,6 +393,7 @@ object Ops {
     const val TAP_RANDOM = 6        // (no args) → side
     const val TAP_WTAP_SAMPLE = 7   // kind, postDelayMin/Max, actionMin/Max, onceEveryMin/Max → packed scalar
     const val TAP_STAP_SAMPLE = 8   // same shape, own RNG stream
+    const val TAP_ADTAP_SAMPLE = 9  // kind, chance, tapMin/Max, gapMin/Max → packed scalar (duration, gap, passed); own RNG stream
 
     // combat
     const val CBT_TRIGGER = 0       // mode, hurtResistant, maxHurt, counter, threshold, perMin, perMax, chance, hurtGate

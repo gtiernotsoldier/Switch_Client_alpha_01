@@ -1006,6 +1006,7 @@ fn emit_golden(dir: &str) -> Result<(), String> {    use std::fs;
     emit_jump_reset_golden(dir)?;
     emit_super_knockback_golden(dir)?;
     emit_tap_sample_golden(dir)?;
+    emit_adtap_sample_golden(dir)?;
     Ok(())
 }
 
@@ -1968,5 +1969,79 @@ fn emit_tap_sample_golden(dir: &str) -> Result<(), String> {
 
     fs::write(format!("{}/tap_sample_input.tsv", dir), input).map_err(|e| e.to_string())?;
     fs::write(format!("{}/tap_sample_expected.tsv", dir), expected).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// ADTap's fire-point chance roll plus duration / gap draws, replayed over a
+/// fixed input sequence.
+///
+/// Same discipline as the WTap / STap fixture: the rolls are scripted per row
+/// because Pcg32 and `kotlin.random` are different generators, and `draws` in
+/// the expected file is what catches a port that rolls a full chance, draws
+/// for a degenerate range, or draws the gap where the duration belongs.
+fn emit_adtap_sample_golden(dir: &str) -> Result<(), String> {
+    use std::fs;
+
+    let mut input = String::new();
+    input.push_str("# doppel-adtap-sample-golden v1\n");
+    input.push_str("# idx\tkind\tchance\ttap_min\ttap_max\tgap_min\tgap_max\troll1\troll2\n");
+
+    let mut expected = String::new();
+    expected.push_str("# idx\tcode\tpassed\tduration_ms\tgap_ms\tdraws\n");
+
+    let mut rng = Pcg32::new(0x0000_5EED_AD7A_0001);
+
+    for i in 0..500 {
+        // Independent dice per field, so no branch is unreachable: a shared
+        // pick would couple kind and chance and leave the fail path cold.
+        let kind = rng.random_int(0, 1);
+        // chance: 100 never rolls, 0 always fails, the middle is a real roll.
+        let chance = match rng.random_int(0, 9) {
+            0 => 100,
+            1 => 0,
+            _ => rng.random_int(1, 99),
+        };
+        let tap_min = rng.random_int(10, 400);
+        let tap_max = if rng.random_int(0, 9) == 0 { tap_min } else { rng.random_int(10, 400) };
+        let gap_min = rng.random_int(0, 500);
+        let gap_max = if rng.random_int(0, 9) == 0 { gap_min } else { rng.random_int(0, 500) };
+        let roll1 = rng.random_int(0, 99);
+        let roll2 = rng.random_int(0, 99);
+
+        input.push_str(&format!(
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+            i, kind, chance, tap_min, tap_max, gap_min, gap_max, roll1, roll2
+        ));
+
+        let script = [roll1, roll2];
+        let mut rolls = script.into_iter();
+        let mut draws = 0;
+        let out = strategy::adtap_sample::sample(
+            strategy::adtap_sample::Input {
+                kind: strategy::adtap_sample::Kind::from_code(kind).unwrap(),
+                chance_percent: chance,
+                tap_min_ms: tap_min,
+                tap_max_ms: tap_max,
+                gap_min_ms: gap_min,
+                gap_max_ms: gap_max,
+            },
+            &mut |_, _| {
+                draws += 1;
+                rolls.next().unwrap_or(0)
+            },
+        );
+        expected.push_str(&format!(
+            "{}\t{}\t{}\t{}\t{}\t{}\n",
+            i,
+            strategy::adtap_sample::pack(out),
+            out.passed,
+            out.duration_ms,
+            out.gap_ms,
+            draws
+        ));
+    }
+
+    fs::write(format!("{}/adtap_sample_input.tsv", dir), input).map_err(|e| e.to_string())?;
+    fs::write(format!("{}/adtap_sample_expected.tsv", dir), expected).map_err(|e| e.to_string())?;
     Ok(())
 }

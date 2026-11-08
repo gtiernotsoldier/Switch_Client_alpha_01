@@ -583,6 +583,33 @@ class CoreStub(
         return decodeScalar(f)
     }
 
+    /**
+     * ADTap's fire-point chance roll plus its duration / gap draws; one packed
+     * scalar carries (duration, gap, passed), which [io.doppel.ipc.ADTapSample]
+     * unpacks. Null when no core is attached — the module then taps nothing
+     * rather than guessing locally.
+     */
+    fun adtapSample(
+        player: io.doppel.contract.model.PlayerState,
+        target: io.doppel.contract.model.TargetState?,
+        kind: Int,
+        chance: Int,
+        tapMinMs: Int,
+        tapMaxMs: Int,
+        gapMinMs: Int,
+        gapMaxMs: Int,
+        tick: Int
+    ): Double? {
+        val payload = genericRequest(
+            encodeSnapshot(player, target), Ops.TAP_ADTAP_SAMPLE,
+            kind.toDouble(), chance.toDouble(),
+            tapMinMs.toDouble(), tapMaxMs.toDouble(),
+            gapMinMs.toDouble(), gapMaxMs.toDouble()
+        )
+        val f = roundTrip(Wire.MODULE_TAP, payload, tick) ?: return null
+        return decodeScalar(f)
+    }
+
     fun combatTrigger(
         player: io.doppel.contract.model.PlayerState,
         target: io.doppel.contract.model.TargetState?,

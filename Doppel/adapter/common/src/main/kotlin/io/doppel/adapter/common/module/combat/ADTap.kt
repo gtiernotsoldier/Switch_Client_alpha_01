@@ -12,7 +12,6 @@ import io.doppel.adapter.common.option.float
 import io.doppel.adapter.common.option.int
 import io.doppel.ipc.Strategies
 import io.doppel.ipc.Strategies.TapTick
-import kotlin.random.Random
 
 /**
  * ADTap Module — automated A/D strafe-pattern ("7-tap") for combat.
@@ -37,6 +36,13 @@ import kotlin.random.Random
  *  - Aborts instantly if the player is physically pressing A or D (never fights
  *    the player's own strafing fingers), if RequireForward is set and W is not
  *    physically held, if airborne (OnlyPlane), or when out of combat.
+ *
+ * This module keeps only judgements (physical keys, target guards, the pattern
+ * mode), marshalling and the claimLeft / claimRight platform writes. The
+ * fire-point chance roll and both uniform draws (tap duration, inter-tap gap)
+ * run in the core on ADTap's own RNG stream (`TAP_ADTAP_SAMPLE`); the side
+ * selection was already there (`TAP_SEVEN` / `TAP_RANDOM` / `TAP_CHASE` on
+ * `rng_tap`). No `kotlin.random` remains here.
  */
 object ADTap : Module("ADTap", Category.COMBAT) {
 
@@ -107,14 +113,25 @@ object ADTap : Module("ADTap", Category.COMBAT) {
         when (t.event) {
             TapTick.END_TAP -> {
                 setSide(pendingSide, false)
-                Strategies.tapBegin(player, target, now, nextGapMs(), postDelay = true)
+                // The gap is a core draw. A missing answer means the pattern
+                // stops here — the machine is already IDLE again, so the next
+                // tick retries the fire point rather than arming a local guess.
+                val s = sample(Strategies.ADTapSampleKind.GAP, player, target)
+                if (s != null) {
+                    Strategies.tapBegin(player, target, now, s.gapMs, postDelay = true)
+                }
             }
             TapTick.SHOULD_START_TAP -> startTap(player, target, now)
             else -> {}
         }
 
         // First entry into combat (or resume after an abort) → begin the pattern.
-        if (t.phase == TapTick.IDLE) {
+        // `t.event == NONE` matters: the tick answer's phase is a snapshot from
+        // BEFORE this branch ran, so on an END_TAP tick it still reads IDLE even
+        // though the gap post-delay was just armed. Restarting here would arm
+        // the gap and immediately overwrite it with a new tap — the pre-IPC
+        // module read the phase AFTER arming, and this guard restores that.
+        if (t.event == TapTick.NONE && t.phase == TapTick.IDLE) {
             startTap(player, target, now)
         }
     }
@@ -123,18 +140,22 @@ object ADTap : Module("ADTap", Category.COMBAT) {
     // Pattern execution
     // ================================================================
     private fun startTap(player: PlayerState, target: TargetState, nowNs: Long) {
-        if (chance < 100 && Random.nextInt(100) >= chance) {
-            Strategies.tapBegin(player, target, nowNs, nextGapMs(), postDelay = true)
+        // Fire point: the chance roll and both range draws run in the core on
+        // ADTap's own stream. A missing answer means "do not tap" — never a
+        // local guess — and the machine is still IDLE, so the next tick retries.
+        val s = sample(Strategies.ADTapSampleKind.FIRE, player, target) ?: return
+        if (!s.passed) {
+            // The chance roll failed: cool off for a gap, then retry the fire point.
+            Strategies.tapBegin(player, target, nowNs, s.gapMs, postDelay = true)
             return
         }
         val side = chooseSide(player, target)
         if (side == null) { abort(); return }
         pendingSide = side
         lastSide = side
-        val duration = Random.nextInt(tapMinMs, tapMaxMs + 1)
         setSide(pendingSide, true)
         markWorked()                      // HUD work flash — the module just acted
-        Strategies.tapBegin(player, target, nowNs, duration, postDelay = false)
+        Strategies.tapBegin(player, target, nowNs, s.durationMs, postDelay = false)
     }
 
     /**
@@ -160,7 +181,12 @@ object ADTap : Module("ADTap", Category.COMBAT) {
         else -> Side.RIGHT
     }
 
-    private fun nextGapMs(): Int = Random.nextInt(gapMinMs, gapMaxMs + 1)
+    /** Ask ADTap's own core RNG stream for the chance roll and the range draws. */
+    private fun sample(kind: Int, player: PlayerState, target: TargetState?) =
+        Strategies.adtapSample(
+            player, target, kind, chance,
+            tapMinMs, tapMaxMs, gapMinMs, gapMaxMs
+        )
 
     /**
      * A/D are ADDITIVE claims — ADTap deliberately never hijacks the player's own strafing.

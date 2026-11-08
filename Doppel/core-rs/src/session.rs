@@ -17,6 +17,7 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use crate::codec::{self, op, ClickConfigKind};
 use crate::model::*;
 use crate::rng::Pcg32;
+use crate::strategy::adtap_sample;
 use crate::strategy::aim::{self, AimConfig, AimState};
 use crate::strategy::click_assist;
 use crate::strategy::click::{self, ClickConfig, ClickState, CooldownClickConfig, CritState};
@@ -72,6 +73,10 @@ pub struct Session {
     /// side-selection ops still use).
     pub rng_wtap: Pcg32,
     pub rng_stap: Pcg32,
+    /// ADTap's fire-chance roll and its duration / gap draws. Its own stream
+    /// for the same reason as WTap / STap: one module's zig-zag must not shift
+    /// another's replay, and `rng_tap` (side selection) must not shift either.
+    pub rng_adtap: Pcg32,
     pub rng_combat: Pcg32,
     /// Eagle's hold-delay roll. Its own stream for the same reason as the rest:
     /// toggling another module must not move this one's sequence.
@@ -186,6 +191,7 @@ impl Session {
             rng_tap: Pcg32::new(seed),
             rng_wtap: Pcg32::new(seed),
             rng_stap: Pcg32::new(seed),
+            rng_adtap: Pcg32::new(seed),
             rng_combat: Pcg32::new(seed),
             rng_player: Pcg32::new(seed),
             rng_backtrack: Pcg32::new(seed),
@@ -777,6 +783,28 @@ impl Session {
                         Module::Tap,
                         WireAction::Scalar,
                         tap_sample::pack(out) as f64,
+                    ))
+                }
+                op::TAP_ADTAP_SAMPLE => {
+                    let kind = adtap_sample::Kind::from_code(req.i32(0)?)
+                        .ok_or(Status::BadPayload)?;
+                    let input = adtap_sample::Input {
+                        kind,
+                        chance_percent: req.i32(1)?,
+                        tap_min_ms: req.i32(2)?,
+                        tap_max_ms: req.i32(3)?,
+                        gap_min_ms: req.i32(4)?,
+                        gap_max_ms: req.i32(5)?,
+                    };
+                    let rng = &mut self.rng_adtap;
+                    let out =
+                        adtap_sample::sample(input, &mut |lo, hi| rng.random_int(lo, hi));
+                    Ok(codec::encode_scalar(
+                        seq,
+                        tick,
+                        Module::Tap,
+                        WireAction::Scalar,
+                        adtap_sample::pack(out) as f64,
                     ))
                 }
                 _ => Err(Status::BadPayload),
@@ -2197,6 +2225,89 @@ mod tests {
 
         assert_eq!(a.rng_wtap.next_u32(), b.rng_wtap.next_u32(), "STap must not shift the WTap stream");
         assert_ne!(a.rng_stap.next_u32(), b.rng_stap.next_u32(), "STap drew once in b");
+    }
+
+    /// An ADTap range-sampling request: six f64 args after the op byte.
+    #[allow(clippy::too_many_arguments)]
+    fn adtap_sample_frame(
+        seq: u32,
+        kind: i32,
+        chance: i32,
+        tap_min: i32,
+        tap_max: i32,
+        gap_min: i32,
+        gap_max: i32,
+    ) -> Frame {
+        let (snap, len) = write_snapshot([0.0; 3], 0, 0);
+        let mut f = Frame::new(Kind::Snapshot, seq, 100, Module::Tap);
+        let total = {
+            let p = f.payload_mut();
+            p[..len].copy_from_slice(&snap[32..32 + len]);
+            let mut w = Writer::new(&mut p[len..]);
+            w.u8(op::TAP_ADTAP_SAMPLE);
+            w.u8(6);
+            w.f64(kind as f64);
+            w.f64(chance as f64);
+            w.f64(tap_min as f64);
+            w.f64(tap_max as f64);
+            w.f64(gap_min as f64);
+            w.f64(gap_max as f64);
+            len + w.pos()
+        };
+        f.set_len(total);
+        f
+    }
+
+    #[test]
+    fn adtap_sample_round_trips_over_the_wire() {
+        // Full chain: decode_generic → on_tap dispatch → adtap_sample::sample →
+        // encode_scalar. Degenerate ranges and a full chance are deterministic
+        // (no RNG draw), so the packed codes are stable across generators.
+        let mut s = Session::new(1, 42);
+
+        // FIRE with chance 100 and a degenerate duration: passed, no draws.
+        let f = s.handle(&adtap_sample_frame(1, 0, 100, 40, 40, 20, 80));
+        assert_eq!(jump_step(&f), 40 + 1024 * 1024, "passed flag rides above duration and gap");
+
+        // FIRE with chance 0: the roll always fails, the retry gap is drawn
+        // from a degenerate range, so the answer is still deterministic.
+        let a = s.handle(&adtap_sample_frame(2, 0, 0, 40, 80, 60, 60));
+        assert_eq!(jump_step(&a), 60 * 1024, "chance 0 fails into a 60 ms gap");
+
+        // GAP after a tap ended: the gap draw only.
+        let g = s.handle(&adtap_sample_frame(3, 1, 100, 40, 80, 25, 25));
+        assert_eq!(jump_step(&g), 25 * 1024, "GAP draws only the gap");
+    }
+
+    #[test]
+    fn adtap_owns_its_own_rng_stream() {
+        let mut a = Session::new(1, 7);
+        a.handle(&adtap_sample_frame(1, 0, 100, 10, 400, 0, 500));
+        a.handle(&adtap_sample_frame(2, 1, 100, 10, 400, 0, 500));
+
+        let mut b = Session::new(1, 7);
+        // WTap / STap / side-selection draws interleaved between two ADTap
+        // draws must not shift ADTap's stream, and ADTap must not shift theirs.
+        b.handle(&tap_sample_frame(1, op::TAP_WTAP_SAMPLE, 0, 0, 60, 1, 80, 1, 4));
+        b.handle(&adtap_sample_frame(2, 0, 100, 10, 400, 0, 500));
+        b.handle(&tap_sample_frame(3, op::TAP_STAP_SAMPLE, 0, 0, 60, 1, 80, 1, 4));
+        b.handle(&adtap_sample_frame(4, 1, 100, 10, 400, 0, 500));
+
+        assert_eq!(
+            a.rng_adtap.next_u32(),
+            b.rng_adtap.next_u32(),
+            "WTap / STap draws must not shift ADTap's stream"
+        );
+        assert_ne!(
+            a.rng_wtap.next_u32(),
+            b.rng_wtap.next_u32(),
+            "WTap drew once in b"
+        );
+        assert_ne!(
+            a.rng_stap.next_u32(),
+            b.rng_stap.next_u32(),
+            "STap drew once in b"
+        );
     }
 
     #[test]

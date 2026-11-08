@@ -290,6 +290,37 @@ object Strategies {
         postDelayMin, postDelayMax, actionMin, actionMax, onceEveryMin, onceEveryMax
     )
 
+    object ADTapSampleKind {
+        /** Fire point: the chance roll, then the tap duration (a pass) or the
+         * retry gap (a fail). */
+        const val FIRE = 0
+        /** The core's state machine ended a tap: the gap draw only. */
+        const val GAP = 1
+    }
+
+    /**
+     * ADTap's fire-point sampling — the chance roll and both uniform draws
+     * (duration, gap) that used to run through `kotlin.random.Random` on the
+     * JVM. Off-line answers null, and null means "do not tap": a local guess
+     * would be a different module.
+     */
+    fun adtapSample(
+        player: PlayerState,
+        target: TargetState?,
+        kind: Int,
+        chance: Int,
+        tapMinMs: Int,
+        tapMaxMs: Int,
+        gapMinMs: Int,
+        gapMaxMs: Int
+    ): ADTapSample? {
+        val stub = CoreLink.stub ?: return null
+        val v = stub.adtapSample(
+            player, target, kind, chance, tapMinMs, tapMaxMs, gapMinMs, gapMaxMs, nextTick()
+        ) ?: return null
+        return ADTapSample.fromCode(v.toInt())
+    }
+
     /** Tap side from target motion, or null when there is no target (or no core). */
     fun tapChase(player: PlayerState, target: TargetState?, yaw: Float, leadTicks: Int): Int? {
         val stub = CoreLink.stub ?: return null
@@ -909,6 +940,26 @@ class TapSample(
         @JvmStatic
         fun pack(postDelayMs: Int, actionMs: Int, threshold: Int): Int =
             postDelayMs + 1024 * actionMs + 1024 * 1024 * threshold
+    }
+}
+
+/** ADTap's packed sample answer: duration / gap in ms plus the chance verdict. */
+class ADTapSample(
+    @JvmField val passed: Boolean,
+    @JvmField val durationMs: Int,
+    @JvmField val gapMs: Int
+) {
+    companion object {
+        @JvmStatic
+        fun fromCode(code: Int): ADTapSample = ADTapSample(
+            code / (1024 * 1024) != 0,
+            code % 1024,
+            (code / 1024) % 1024
+        )
+
+        @JvmStatic
+        fun pack(passed: Boolean, durationMs: Int, gapMs: Int): Int =
+            durationMs + 1024 * gapMs + if (passed) 1024 * 1024 else 0
     }
 }
 

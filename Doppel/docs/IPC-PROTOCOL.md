@@ -298,6 +298,7 @@ The degraded direction differs per op; see `PROTECTION.md` §9.5.3 for the table
 | JumpReset knock / pump cooldown + delayed jump | `strategy/jump_reset.rs` | `JumpResetParityTest`, 500 events + `CoreStubE2ETest` real-socket round trip |
 | SuperKnockback phase machine / throttle / force sequence | `strategy/super_knockback.rs` | `SuperKnockbackParityTest`, 500 ticks + `CoreStubE2ETest` real-socket round trip |
 | WTap / STap range draws (post-delay, duration, threshold) | `strategy/tap_sample.rs` | `TapSampleParityTest`, 500 rows + `CoreStubE2ETest` real-socket round trip |
+| ADTap fire-chance / duration / gap draws | `strategy/adtap_sample.rs` | `ADTapSampleParityTest`, 500 rows + `CoreStubE2ETest` real-socket round trip |
 
 ### Module request shapes
 
@@ -350,6 +351,18 @@ zero and its stream untouched. The two ops own **separate** streams
 (`rng_wtap` / `rng_stap`) so one module's tap can never shift the other's
 replay, and neither touches `rng_tap`, which the side-selection ops still use.
 A missing answer degrades to "do not tap" — never a local guess.
+
+`TAP_ADTAP_SAMPLE` (9) is the same closure for ADTap: the fire-point chance
+roll plus the tap-duration and inter-tap-gap draws that also used to live in
+`kotlin.random`. The module marshals `kind` (0 fire point, 1 a tap just ended
+— gap only) plus `chance` and the two range pairs (`tapMin/Max`,
+`gapMin/Max`); the core rolls the chance first — never when `chance == 100`,
+always when it is 0 — then draws exactly one of duration (a pass) or gap (a
+fail), and answers one packed scalar: duration in the low 10 bits, gap in the
+next 10, the passed flag above that. Side selection stays on `rng_tap`
+(`TAP_SEVEN` / `TAP_RANDOM` / `TAP_CHASE`) and interleaves freely with this op
+because the two streams are independent. A missing answer degrades to "do not
+tap / do not arm a gap" — never a local guess.
 
 Combat's `CBT_DECIDE` (op 4) is the one op that merges two questions — the
 condition gate and the trigger — into a single request. They have to share a

@@ -464,6 +464,58 @@ class CoreStubE2ETest {
 
     @Test
     @Timeout(value = 60, unit = TimeUnit.SECONDS)
+    fun `adtap samples travel intact over a real socket`() {
+        // The whole path for ADTap's sampling op: Kotlin marshalling →
+        // TCP → decode_generic → on_tap dispatch → adtap_sample::sample →
+        // encode_scalar → decodeScalar. A full chance and degenerate ranges
+        // draw nothing, so the packed codes are deterministic across the two
+        // different RNGs; a real range still has to land in its band.
+        val exe = locateCore()
+        assumeTrue(exe != null, "doppel-core not built — run: cd Doppel/core-rs && cargo build")
+        val proc = ProcessBuilder(exe!!.absolutePath, "--listen", "tcp:127.0.0.1:0", "--seed", "424242")
+            .redirectError(ProcessBuilder.Redirect.INHERIT)
+            .start()
+        try {
+            val banner = proc.inputStream.bufferedReader().readLine()
+            assertNotNull(banner, "core produced no LISTEN line")
+            assertTrue(banner!!.startsWith("LISTEN "), "unexpected banner: $banner")
+            val addr = banner.removePrefix("LISTEN ").trim()
+
+            CoreStub(Endpoint.parse("tcp:$addr"), null, deadlineNanos = 20_000_000L).use { stub ->
+                stub.connect()
+                val p = player()
+                var tick = 1
+
+                // FIRE with a full chance and a degenerate duration: passed,
+                // zero draws, so the code is stable across the two RNGs.
+                val fire = stub.adtapSample(p, null, 0, 100, 40, 40, 20, 80, tick++)
+                assertEquals((40 + 1024 * 1024).toDouble(), fire!!, "passed with a 40 ms duration")
+
+                // FIRE with chance 0: the roll always fails and lands in the
+                // degenerate gap, still deterministic.
+                val fail = stub.adtapSample(p, null, 0, 0, 40, 80, 60, 60, tick++)
+                assertEquals((60 * 1024).toDouble(), fail!!, "chance 0 fails into a 60 ms gap")
+
+                // GAP after a tap ended: the gap draw only.
+                val gap = stub.adtapSample(p, null, 1, 100, 40, 80, 25, 25, tick++)
+                assertEquals((25 * 1024).toDouble(), gap!!, "GAP draws only the gap")
+
+                // A real range still lands inside the configured band.
+                val random = stub.adtapSample(p, null, 1, 100, 40, 80, 10, 20, tick)!!
+                val ms = (random.toInt() / 1024) % 1024
+                assertTrue(ms in 10..20, "gap stays in [10, 20], got $ms")
+
+                assertEquals(0L, stub.timeouts.get(), "deadline misses on loopback")
+                assertEquals(0L, stub.degradedTicks.get(), "degraded ticks on a healthy run")
+            }
+        } finally {
+            proc.destroyForcibly()
+            proc.waitFor(5, TimeUnit.SECONDS)
+        }
+    }
+
+    @Test
+    @Timeout(value = 60, unit = TimeUnit.SECONDS)
     fun `a dead core degrades instead of throwing`() {
         // Bind, then close: the stub must treat a refused connection as
         // "degrade this tick", never as an exception escaping into the tick loop.

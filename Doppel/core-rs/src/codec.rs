@@ -846,6 +846,12 @@ pub mod op {
     /// tap/stap: identical shape, but its own RNG stream so the two modules
     /// cannot shift each other's replay.
     pub const TAP_STAP_SAMPLE: u8 = 8;
+    /// tap/adtap: `sample(kind, chance, tap_min, tap_max, gap_min, gap_max)` →
+    /// packed scalar (duration, gap, passed). The fire-point chance roll and
+    /// both uniform draws that used to run through `kotlin.random.Random` on
+    /// the JVM. Own RNG stream: an ADTap zig-zag must not shift WTap's or
+    /// STap's replay. `kind`: 0 fire point, 1 the gap after a tap ended.
+    pub const TAP_ADTAP_SAMPLE: u8 = 9;
 
     /// combat: `trigger_evaluate(mode, hurt_resistant, max_hurt, counter,
     ///          threshold, per_min, per_max, chance, hurt_gate)` → fire.
@@ -1043,6 +1049,7 @@ pub fn known_ops(module: Module) -> &'static [u8] {
             op::TAP_BEGIN,
             op::TAP_WTAP_SAMPLE,
             op::TAP_STAP_SAMPLE,
+            op::TAP_ADTAP_SAMPLE,
         ],
         Module::Combat => &[
             op::CBT_TRIGGER,

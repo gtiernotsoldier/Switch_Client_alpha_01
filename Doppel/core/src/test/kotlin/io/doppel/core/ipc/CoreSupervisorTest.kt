@@ -39,7 +39,8 @@ class CoreSupervisorTest {
     @AfterEach
     fun tearDown() {
         CoreSupervisor.stop()
-        System.clearProperty("doppel.core.path")
+        System.clearProperty(CoreSupervisor.DEV_BINARY_PROPERTY)
+        System.clearProperty(CoreSupervisor.ENDPOINT_PROPERTY)
     }
 
     private fun binary(): File? = listOf(
@@ -154,5 +155,78 @@ class CoreSupervisorTest {
         // The off-line strategy must not be a Remote one: a Remote with a dead
         // socket would burn the round-trip deadline on every tick before skipping.
         assertFalse(Strategies.aim() is io.doppel.ipc.RemoteAimStrategy)
+    }
+
+    /**
+     * The production shape (PROTECTION.md §9.4): the core is started OUTSIDE the
+     * JVM by the injector, which publishes its endpoint. Kotlin must connect to
+     * that process and never spawn one of its own — that is the whole point of
+     * moving the launch ownership out of the game process.
+     *
+     * This test plays the injector's part: start the binary with `--port-file`,
+     * read the bound address, hand it over through the same property
+     * `Agent.coreInit` sets from `doppel-config.properties`, and assert that a
+     * real decision round trip goes over the wire.
+     */
+    @Test
+    fun `an injector-owned core is attached, not spawned, and answers over the wire`() {
+        val exe = binary()
+        assumeTrue(exe != null, "doppel-core not built — run: cd Doppel/core-rs && cargo build")
+
+        val portFile = File.createTempFile("doppel-core-external-", ".port").apply { deleteOnExit() }
+        portFile.delete()
+        val core = ProcessBuilder(
+            exe!!.absolutePath,
+            "--listen", "tcp:127.0.0.1:0",
+            "--port-file", portFile.absolutePath
+        ).redirectError(ProcessBuilder.Redirect.INHERIT).start()
+
+        try {
+            // The injector polls the port file for exactly this readiness signal.
+            var bound = ""
+            for (i in 0..200) {
+                if (portFile.isFile) {
+                    bound = portFile.readText().trim()
+                    if (bound.isNotEmpty()) break
+                }
+                Thread.sleep(25)
+            }
+            assertTrue(bound.isNotEmpty(), "external core never published its endpoint")
+
+            // No local binary is configured: if the JVM tried to spawn anything,
+            // start() would fail. This is the assertion that ownership moved.
+            System.clearProperty("doppel.core.path")
+            System.setProperty(
+                CoreSupervisor.ENDPOINT_PROPERTY,
+                if (bound.startsWith("tcp:")) bound else "tcp:$bound"
+            )
+
+            assertTrue(CoreSupervisor.start(), "attach to the injector-owned core failed")
+            assertTrue(CoreSupervisor.externallyOwned, "JVM must not own the algorithm process")
+            assertTrue(Strategies.online, "stub was not published by attach()")
+
+            // One real round trip proves the wire is up, not just the socket.
+            val player = PlayerState(
+                name = "tester",
+                posX = 0.0, posY = 64.0, posZ = 0.0,
+                motionX = 0.0, motionY = 0.0, motionZ = 0.0,
+                rotationYaw = 0f, rotationPitch = 0f,
+                onGround = true, isMovingForward = false, isSprinting = false,
+                health = 20f, hurtTime = 0, ticks = 1L
+            )
+            val target = TargetState(
+                entityId = 7, name = "target",
+                posX = 0.0, posY = 64.0, posZ = 3.0,
+                motionX = 0.0, motionY = 0.0, motionZ = 0.0,
+                health = 20f, hurtTime = 0, distance = 3.0f,
+                hitbox = Hitbox(-0.3, 0.0, -0.3, 0.3, 1.8, 0.3)
+            )
+            assertTrue(
+                Strategies.gate(player, target, TriggerOptions()),
+                "the external core did not answer a decision over the wire"
+            )
+        } finally {
+            core.destroyForcibly()
+        }
     }
 }

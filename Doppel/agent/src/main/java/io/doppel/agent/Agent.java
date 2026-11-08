@@ -165,6 +165,20 @@ public class Agent {
                     if (version.startsWith("=")) {
                         version = version.substring(1);
                     }
+                    // The injector owns the algorithm process and publishes its
+                    // address here (PROTECTION.md §9.4). Publishing it as a system
+                    // property is the whole hand-off: CoreSupervisor.start() reads
+                    // it and connects — it must NOT spawn a core of its own. When
+                    // the key is absent the injector started no core, so we clear
+                    // any stale value and let the modules stay offline.
+                    String endpoint = props.getProperty("doppel.core.endpoint", "").trim();
+                    if (!endpoint.isEmpty()) {
+                        System.setProperty("doppel.core.endpoint", endpoint);
+                        log("[Agent] Core endpoint (injector-owned): " + endpoint);
+                    } else {
+                        System.clearProperty("doppel.core.endpoint");
+                        log("[Agent] No core endpoint; algorithm modules stay offline");
+                    }
                     log("[Agent] Config loaded successfully");
                 } catch (IOException e) {
                     log("[Agent] Failed to read config: " + e.getMessage());

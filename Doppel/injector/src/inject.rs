@@ -100,6 +100,7 @@ pub fn inject_java_agent(
     agent_path: &str,
     platform: &str,
     version: &str,
+    core_endpoint: Option<&str>,
 ) -> InjectResult {
     ui::detail(&format!("DLL + JNI attach into PID {}", proc.pid));
 
@@ -109,10 +110,18 @@ pub fn inject_java_agent(
         None => "",
     };
     let config_path = format!("{}\\doppel-config.properties", config_dir);
-    let cfg = format!(
+    let mut cfg = format!(
         "doppel.platform={}\ndoppel.version={}\n",
         platform, version
     );
+    // The injector owns the algorithm process; the JVM is only handed the
+    // address to connect to. payload.dll rewrites this file while attaching but
+    // preserves every line except platform/version (see rewriteConfig), so the
+    // endpoint survives into Agent.coreInit(). No endpoint means no core was
+    // started, and the agent must NOT try to spawn one itself.
+    if let Some(ep) = core_endpoint {
+        cfg.push_str(&format!("doppel.core.endpoint={}\n", ep));
+    }
     if std::fs::write(&config_path, cfg).is_ok() {
         ui::detail(&format!("config written · {}", config_path));
     } else {

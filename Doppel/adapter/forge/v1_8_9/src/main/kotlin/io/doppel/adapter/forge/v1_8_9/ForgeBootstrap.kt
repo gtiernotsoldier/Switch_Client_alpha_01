@@ -125,8 +125,10 @@ object ForgeBootstrap {
 
         // Before anything is registered: the strategy factory decides local-vs-remote by
         // looking at CoreLink.stub, and a module that is constructed while the stub is still
-        // null would keep an inert strategy until it is re-enabled. Failure here is not fatal —
-        // it means this machine has no doppel-core binary, and the algorithm modules stay quiet.
+        // null would keep an inert strategy until it is re-enabled. The core itself is started
+        // by the injector, which publishes its endpoint in doppel-config.properties; this call
+        // only connects. Failure is not fatal — no endpoint means no core was launched, and the
+        // algorithm modules stay quiet (PROTECTION.md §9.4).
         io.doppel.ipc.CoreSupervisor.start()
 
         ModuleRegistry.registerAll(

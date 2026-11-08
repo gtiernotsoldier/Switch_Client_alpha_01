@@ -215,6 +215,19 @@ jobs:
         with: { java-version: '8', distribution: 'temurin' }
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
+      # The injector owns the algorithm process (PROTECTION.md §9.4): build the
+      # standalone core for Windows and let build.rs embed it as RCDATA 104.
+      # The game JVM only connects to it; it must never spawn one itself.
+      - name: Build core process to embed
+        shell: pwsh
+        run: |
+          cd Doppel/core-rs
+          cargo build --release
+          $exe = Get-Item "target\release\doppel-core.exe"
+          if ($exe.Length -lt 100000) { Write-Error "doppel-core.exe too small"; exit 1 }
+          New-Item -ItemType Directory -Force -Path "..\injector\resources" | Out-Null
+          Copy-Item $exe.FullName -Destination "..\injector\resources\doppel-core.exe" -Force
+          Write-Host "doppel-core.exe embedded source ready: $($exe.Length) bytes"
       - name: Build C++ payload.dll (cmake)
         shell: pwsh
         run: |

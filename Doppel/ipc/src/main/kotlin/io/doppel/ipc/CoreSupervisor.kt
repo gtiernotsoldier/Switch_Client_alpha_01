@@ -7,7 +7,22 @@ import java.io.InputStreamReader
 import java.util.concurrent.TimeUnit
 
 /**
- * Owns the `doppel-core` process and the socket that goes with it.
+ * Connects the Kotlin side to the algorithm process.
+ *
+ * ## Ownership (PROTECTION.md §9.4)
+ *
+ * The `doppel-core` process belongs to the **injector**, not to the game JVM.
+ * The injector starts it before injection and publishes its address as
+ * `doppel.core.endpoint` (via `doppel-config.properties`). In that production
+ * path this class is a *pure connector*: it opens the socket, completes the
+ * handshake and publishes [CoreLink.stub]. It never spawns, locates, supervises
+ * or kills a process — that is why `attach` has no watchdog.
+ *
+ * `spawnDev()` below is a **development/test-only fallback**, reached only when
+ * no endpoint was published and `doppel.core.path` names a binary explicitly.
+ * It keeps the parity suites runnable on a machine with no injector. A release
+ * build never sets that property, so the game JVM never launches the algorithm
+ * process itself.
  *
  * ## Why this has to exist before anything is switched over
  *
@@ -20,12 +35,17 @@ import java.util.concurrent.TimeUnit
  *
  * ## What it does not do
  *
- * No retry storm, no config writing, no UI. A crash is logged once and the stub
- * is cleared; the modules go quiet until the next start. Restart policy belongs
- * to whoever calls [start], because only that layer knows whether the user is in
- * a game, in a menu, or shutting down.
+ * No retry storm, no config writing, no UI, no process lifecycle. A failed
+ * connect is logged once and the modules stay offline. Restarting the core is
+ * the injector's job, because only that layer owns it.
  */
 object CoreSupervisor {
+
+    /** Endpoint published by the injector. Production path. */
+    const val ENDPOINT_PROPERTY = "doppel.core.endpoint"
+
+    /** Dev/test only: spawn a local binary. The injector never sets this. */
+    const val DEV_BINARY_PROPERTY = "doppel.core.path"
 
     private const val HANDSHAKE_TIMEOUT_MS = 3_000L
     private const val BANNER_TIMEOUT_MS = 5_000L
@@ -40,19 +60,68 @@ object CoreSupervisor {
         private set
 
     /**
-     * Locates the binary, starts it, connects and publishes the stub.
+     * Connect to the algorithm process. Two paths:
      *
-     * Returns false — without throwing — when no binary is present. That is a
-     * normal state on a machine that only has the jar, and it must not take the
-     * client down with it. Callers should surface it once (`CoreLogger.warn`),
-     * not per tick.
+     * 1. `doppel.core.endpoint` is set (production, injector owns the core):
+     *    connect only, no process to supervise.
+     * 2. otherwise `doppel.core.path` (dev/test fallback): spawn locally.
+     *
+     * Returns false — without throwing — when neither is available. That is a
+     * normal state on a machine with no injector, and it must not take the
+     * client down with it. Callers surface it once (`CoreLogger.warn`), not per
+     * tick.
      */
     @Synchronized
     fun start(): Boolean {
         if (running) return true
 
+        val external = System.getProperty(ENDPOINT_PROPERTY)
+        if (!external.isNullOrBlank()) return attach(external)
+
+        return spawnDev()
+    }
+
+    /**
+     * Production path: the injector already started the core. Parse the
+     * published endpoint, connect, publish the stub. Nothing here owns a
+     * process, so there is deliberately no watchdog — a dead core is the
+     * injector's problem to restart, and [CoreStub] reconnects on the next tick.
+     */
+    private fun attach(spec: String): Boolean {
+        val endpoint = try {
+            Endpoint.parse(spec)
+        } catch (e: Exception) {
+            CoreLogger.warn("[CoreSupervisor] bad endpoint \"$spec\": ${e.message}")
+            return false
+        }
+        return try {
+            val s = CoreStub(endpoint, null, deadlineNanos = 20_000_000L)
+            s.connect()
+            stub = s
+            CoreLink.stub = s
+            running = true
+            externallyOwned = true
+            CoreLogger.info("[CoreSupervisor] attached to injector-owned core at $spec")
+            true
+        } catch (e: Exception) {
+            CoreLogger.warn("[CoreSupervisor] attach to $spec failed: ${e.message}")
+            false
+        }
+    }
+
+    /** True when the core is an external process owned by the injector. */
+    @Volatile
+    var externallyOwned: Boolean = false
+        private set
+
+    /**
+     * Dev/test fallback: locate the binary, start it, connect and publish the
+     * stub. This is the only path that spawns a process, and it is reachable
+     * only when the injector published no endpoint.
+     */
+    private fun spawnDev(): Boolean {
         val exe = locate() ?: run {
-            CoreLogger.warn("[CoreSupervisor] doppel-core not found; algorithm modules will stay inactive")
+            CoreLogger.warn("[CoreSupervisor] no core endpoint and no local binary; algorithm modules stay inactive")
             return false
         }
 
@@ -95,6 +164,7 @@ object CoreSupervisor {
             stub = s
             CoreLink.stub = s
             running = true
+            externallyOwned = false
             CoreLogger.info("[CoreSupervisor] core started on $endpoint, seed=$seed")
             startWatchdog(p, s)
             true
@@ -105,12 +175,18 @@ object CoreSupervisor {
         }
     }
 
-    /** Detaches the stub first so no tick can start a round trip on a closing socket. */
+    /**
+     * Detaches the stub first so no tick can start a round trip on a closing
+     * socket. When the core is injector-owned, `process` is null and nothing is
+     * killed here — only the connection is dropped. The injector decides when
+     * the algorithm process goes away.
+     */
     @Synchronized
     fun stop() {
         if (!running && process == null) return
         CoreLink.stub = null
         running = false
+        externallyOwned = false
         try {
             stub?.close()
         } catch (_: Exception) {
@@ -160,41 +236,20 @@ object CoreSupervisor {
     }
 
     /**
-     * Search order: explicit override, next to the jar, the repo's cargo output,
-     * then PATH. The cargo entries are what makes a developer run work without
-     * setting a property; a released client ships the binary beside the jar.
+     * Dev/test fallback only: **explicit** `doppel.core.path`, nothing implicit.
+     *
+     * The old version also scanned the jar directory, cargo target dirs and PATH.
+     * That had to go: it let the game JVM silently start an algorithm process on
+     * its own, which is exactly the ownership inversion §9.4 rules out. A
+     * release build sets neither property, so `start()` returns false and the
+     * algorithm modules stay offline until the injector publishes an endpoint.
      */
     private fun locate(): File? {
-        val override = System.getProperty("doppel.core.path")
+        val override = System.getProperty(DEV_BINARY_PROPERTY)
         if (!override.isNullOrBlank()) {
             val f = File(override)
             if (f.canExecute()) return f
         }
-
-        val home = File(System.getProperty("user.dir") ?: ".")
-        val jarDir = runCatching {
-            File(CoreSupervisor::class.java.protectionDomain.codeSource.location.toURI()).parentFile
-        }.getOrNull()
-
-        val candidates = buildList {
-            if (jarDir != null) {
-                add(File(jarDir, exeName()))
-                add(File(jarDir, "core/${exeName()}"))
-            }
-            add(File(home, "doppel-core/${exeName()}"))
-            add(File(home, "Doppel/core-rs/target/release/${exeName()}"))
-            add(File(home, "Doppel/core-rs/target/debug/${exeName()}"))
-            add(File(home, "core-rs/target/release/${exeName()}"))
-            add(File(home, "core-rs/target/debug/${exeName()}"))
-        }
-        candidates.firstOrNull { it.isFile && it.canExecute() }?.let { return it }
-
-        return System.getenv("PATH")
-            ?.split(File.pathSeparator)
-            ?.map { File(it, exeName()) }
-            ?.firstOrNull { it.isFile && it.canExecute() }
+        return null
     }
-
-    private fun exeName(): String =
-        if (System.getProperty("os.name").orEmpty().startsWith("Windows")) "doppel-core.exe" else "doppel-core"
 }

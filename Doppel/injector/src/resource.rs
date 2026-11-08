@@ -13,6 +13,7 @@ use crate::process;
 const AGENT_JAR_RCDATA: u16 = 101;
 const PAYLOAD_DLL_RCDATA: u16 = 102;
 const HUD_EXE_RCDATA: u16 = 103;
+const CORE_EXE_RCDATA: u16 = 104;
 const RT_RCDATA: *const u16 = 10u16 as *const u16; // MAKEINTRESOURCE(10)
 
 // ── kernel32 resource FFI ──
@@ -134,6 +135,98 @@ pub fn get_embedded_payload_path() -> String {
     } else {
         String::new()
     }
+}
+
+/// Extract the embedded algorithm process and return its temp path.
+///
+/// The core is the process the injector owns, not the game JVM: `flow.rs`
+/// starts it before injection and hands its endpoint to the agent through
+/// `doppel-config.properties` (PROTECTION.md §9.4).
+pub fn get_embedded_core_path() -> String {
+    let dir = temp_dir();
+    if dir.is_empty() {
+        return String::new();
+    }
+    let path = format!("{}doppel-core.exe", dir);
+    // A running core keeps its image locked. Overwriting it would fail with a
+    // sharing violation, so an already-extracted file is reused as-is.
+    if std::path::Path::new(&path).is_file() {
+        return path;
+    }
+    if extract_resource(CORE_EXE_RCDATA, &path) {
+        path
+    } else {
+        String::new()
+    }
+}
+
+/// Start the standalone algorithm process and return the endpoint the
+/// Kotlin side should connect to.
+///
+/// `--port-file` is the readiness signal: the core writes its bound address
+/// there once the listener is up, so we never have to scrape stdout (which is
+/// redirected away anyway, since this is a console-subsystem binary under a
+/// GUI-subsystem parent). The endpoint travels to the JVM in the config file.
+///
+/// Returns `None` when the binary is not embedded or never came up. That is a
+/// normal, reportable state: the agent then has no endpoint and the algorithm
+/// modules stay offline. This waits at most 5 s inside "Preparing runtime" —
+/// the endpoint has to be in the config file *before* the agent attaches, so
+/// unlike the cosmetic overlay this cannot be deferred to a detached thread.
+/// It never fails the injection; a missing core only means no endpoint.
+pub fn launch_core() -> Option<String> {
+    let dir = temp_dir();
+    if dir.is_empty() {
+        return None;
+    }
+    let exe = get_embedded_core_path();
+    if exe.is_empty() {
+        return None;
+    }
+
+    let port_path = format!("{}doppel-core.port", dir);
+    let _ = std::fs::remove_file(&port_path);
+
+    let mut command = std::process::Command::new(&exe);
+    command.args([
+        "--listen", "tcp:127.0.0.1:0",
+        "--port-file", &port_path,
+    ]);
+    // The core prints a LISTEN banner and warnings; with no console to inherit
+    // it must not spawn one (same reasoning as the overlay below).
+    command.stdout(std::process::Stdio::null());
+    command.stderr(std::process::Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    if let Err(e) = command.spawn() {
+        eprintln!("[Resource] core spawn failed: {e}");
+        return None;
+    }
+
+    // Poll the port file rather than sleeping a fixed amount: the bind is
+    // usually instant, but a cold AV scan of a freshly written exe is not.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while std::time::Instant::now() < deadline {
+        if let Ok(s) = std::fs::read_to_string(&port_path) {
+            let bound = s.trim();
+            if !bound.is_empty() {
+                return Some(if bound.starts_with("tcp:") || bound.starts_with("unix:") {
+                    bound.to_string()
+                } else {
+                    // listener.local() drops the scheme ("127.0.0.1:35099").
+                    format!("tcp:{bound}")
+                });
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+    eprintln!("[Resource] core did not publish an endpoint in {port_path}");
+    None
 }
 
 /// Extract the embedded external HUD overlay and return its temp path.

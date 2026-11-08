@@ -151,6 +151,18 @@ pub fn run(target_pid: Option<u32>, rep: &dyn Reporter) -> Result<Outcome, FlowE
         return Err(FlowError::NoAgent);
     }
     rep.detail(&format!("agent ready · {}", agent_path));
+
+    // The algorithm process is ours, not the game JVM's (PROTECTION.md §9.4).
+    // Start it before injection and publish its endpoint in the config file the
+    // agent reads on attach. A missing binary is reported, not fatal: the agent
+    // then has no endpoint and its algorithm modules stay offline. This is also
+    // what makes "is the wire up?" observable from outside the game process —
+    // the injector is the one that knows whether a core was started at all.
+    let core_endpoint = resource::launch_core();
+    match &core_endpoint {
+        Some(ep) => rep.detail(&format!("core ready · {}", ep)),
+        None => rep.warn("core not started — algorithm modules will be offline"),
+    }
     rep.step_ok(1, t1.elapsed().as_secs_f32());
 
     // Snapshot the log BEFORE injecting: step 4 must only accept a broadcast
@@ -161,7 +173,13 @@ pub fn run(target_pid: Option<u32>, rep: &dyn Reporter) -> Result<Outcome, FlowE
     let t2 = Instant::now();
     rep.step_begin(2);
     rep.step_note(&format!("{} · {}", info.platform, info.version));
-    if let Err(why) = inject::inject_java_agent(&mc, &agent_path, &info.platform, &info.version) {
+    if let Err(why) = inject::inject_java_agent(
+        &mc,
+        &agent_path,
+        &info.platform,
+        &info.version,
+        core_endpoint.as_deref(),
+    ) {
         // `why` already says what actually went wrong (WinAPI error, already
         // resident payload, no confirmation...). Show it rather than a generic
         // "the JVM rejected the payload".

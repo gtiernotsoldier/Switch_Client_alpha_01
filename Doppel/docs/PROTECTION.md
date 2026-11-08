@@ -355,7 +355,7 @@ offline **不是 HUD 功能，也不进 Kotlin**。它是外部进程侧对「�
 | 件 | 状态 |
 |---|---|
 | 计算 / 算法 / 策略 / RNG / 窗口搬 core | **已落地**（2026-11-08，六模块 + Eagle autoPlace 时序 + Reset 族，CI 守卫 `io/doppel/core/` 类数为 0） |
-| Kotlin 只留判断与编组 | **六模块 + Eagle autoPlace + Reset 族 + Tap 家族随机达成**：`PLAYER_EAGLE_PLACE` 把 aim 状态机搬进 core；`PLAYER_SPRINT_RESET` 把上升沿、hitCount 节流、delay 窗口与概率掷骰搬进 core；`PLAYER_JUMP_KNOCK` / `PLAYER_JUMP_PUMP` 把 chance 掷骰、双模式冷却与 delay 窗口搬进 core；`PLAYER_SUPER_KNOCKBACK` 把 phase 状态机、delay 窗口、协调偏移、SprintTap 三拍 force 序列、per-target 节流与概率掷骰搬进 core。模块只剩门判断、编组、step 落地与平台副作用；`SuperKnockback` 一个 answer 打包两个平台写。`TAP_WTAP_SAMPLE` / `TAP_STAP_SAMPLE` 把 WTap / STap 的三段均匀抽样搬进 core（独立流、退化区间不掷骰、一个打包标量带回三个值）；`TAP_ADTAP_SAMPLE` 把 ADTap 的 chance 掷骰 / 时长 / gap 搬进 core（独立 `rng_adtap` 流）；`CBT_AUTOBLOCK_CHANCE` 把 AutoBlock 的逐 tick Chance 门与 Lag 窗口启动掷骰搬进 core（独立 `rng_autoblock` 流）；`CBT_BLOCKHIT_SAMPLE` 把 BlockHit 的 post-delay / wait 抽样与 on-enable 阈值搬进 core（独立 `rng_blockhit` 流）。adapter 模块侧 `kotlin.random` 残留清零（平台层 `ForgeEventBridge` / `ConfigManager` 见 9.5 白名单） |
+| Kotlin 只留判断与编组 | **六模块 + Eagle autoPlace + Reset 族 + Tap 家族随机达成**：`PLAYER_EAGLE_PLACE` 把 aim 状态机搬进 core；`PLAYER_SPRINT_RESET` 把上升沿、hitCount 节流、delay 窗口与概率掷骰搬进 core；`PLAYER_JUMP_KNOCK` / `PLAYER_JUMP_PUMP` 把 chance 掷骰、双模式冷却与 delay 窗口搬进 core；`PLAYER_SUPER_KNOCKBACK` 把 phase 状态机、delay 窗口、协调偏移、SprintTap 三拍 force 序列、per-target 节流与概率掷骰搬进 core。模块只剩门判断、编组、step 落地与平台副作用；`SuperKnockback` 一个 answer 打包两个平台写。`TAP_WTAP_SAMPLE` / `TAP_STAP_SAMPLE` 把 WTap / STap 的三段均匀抽样搬进 core（独立流、退化区间不掷骰、一个打包标量带回三个值）；`TAP_ADTAP_SAMPLE` 把 ADTap 的 chance 掷骰 / 时长 / gap 搬进 core（独立 `rng_adtap` 流）；`CBT_AUTOBLOCK_CHANCE` 把 AutoBlock 的逐 tick Chance 门与 Lag 窗口启动掷骰搬进 core（独立 `rng_autoblock` 流）；`CBT_BLOCKHIT_SAMPLE` 把 BlockHit 的 post-delay / wait 抽样与 on-enable 阈值搬进 core（独立 `rng_blockhit` 流）；`PLAYER_KEEPSPRINT`（12）把 KeepSprint 的 sprint 锁存 / hold 窗口 / 墙钟兜底 / 逐 tick 去重搬进 core（无 RNG 流，answer 低四位是 hold 状态，DEAD 即自愈交还 claim）；`PLAYER_LAGRANGE`（13）把 LagRange 的距离基准 / 伤害 / sprint / block 上升沿 / hold 时戳搬进 core（无 RNG 流，无应答一律放行包）。adapter 模块侧 `kotlin.random` 残留清零且无跨 tick 可变决策字段（平台层 `ForgeEventBridge` / `ConfigManager` 见 9.5 白名单） |
 | core 启动权归 injector | **已落地**（2026-11-08）：injector 用 `--port-file` 拉起 core，endpoint 经 `doppel-config.properties` → `Agent.coreInit` → `CoreSupervisor.attach()`；JVM 侧删掉 `locate()` 的隐式扫描与 `ProcessBuilder` 生产路径，`doppel.core.path` 仅作开发/测试回退 |
 | 外部算法进程 ↔ Kotlin 的 wire 沟通 | **已验证**：`CoreSupervisorTest` 模拟 injector 起 core、发布 endpoint、断言 JVM 不 spawn 且一次真实决策往返成功 |
 | offline 作为外部观察点 | **判定依据已就位、显示未做**：injector 是唯一知道「core 有没有被拉起」的实体，`--port-file` 即就绪信号；外部 overlay 据此判断显示与否。不进 Kotlin、不进 `HUD.kt`、不改 state 文件契约 |
@@ -389,7 +389,16 @@ offline **不是 HUD 功能，也不进 Kotlin**。它是外部进程侧对「�
 > jump/force 时刻的判断、编组与平台副作用。Tap 家族的随机抽样随后收尾：WTap / STap 的
 > 三段均匀抽样 → `strategy::tap_sample`（`b0bc0a5` 删 1.9+ 冗余模式、`8487fd7` 抽样进 core），
 > ADTap 的 chance 掷骰 / 时长 / gap → `strategy::adtap_sample`（第十一组 500 行对拍，
-> 真实 socket E2E；顺带修复 END_TAP 回归，见下方差距表）。adapter 侧不再出现任何
+> 真实 socket E2E；顺带修复 END_TAP 回归，见下方差距表）。Block 家族随后：AutoBlock 的
+> 逐 tick Chance 门与 Lag 窗口启动掷骰 → `strategy::autoblock_sample`（`c04adf2`），BlockHit 的
+> post-delay / wait / 阈值抽样 → `strategy::blockhit_sample`，adapter 模块侧 `kotlin.random` 清零。
+> 最后收尾的是两个无随机但有完整本地状态机的模块：KeepSprint 的 sprint 锁存 / hold 窗口 /
+> 墙钟兜底 / 逐 tick 去重 → `strategy::keep_sprint`（`PLAYER_KEEPSPRINT` = 12，第十二组 500 帧
+> 对拍，真实 socket E2E；首个帧频 op，空闲帧短路使其零额外往返），LagRange 的距离基准 /
+> 伤害 / sprint / block 上升沿 / hold 时戳 → `strategy::lag_range`（`PLAYER_LAGRANGE` = 13，
+> 第十三组 500 tick 对拍，真实 socket E2E）。至此 adapter 模块侧既无 `kotlin.random`，也无
+> 跨 tick 可变决策字段——按 9.4 判据，留在 Kotlin 里的只剩确定性布尔分支、编组与平台副作用。
+> adapter 侧不再出现任何
 > `io.doppel.core` 引用，`agent.jar` 内 `io/doppel/core/` 类数为 **0**（CI 有守卫，回退会直接失败）。
 >
 > **HitSelect 是唯一跨线程的一个**：tick 侧喂状态、render 侧在点击时问结果，两个 op 共用
@@ -409,7 +418,7 @@ offline **不是 HUD 功能，也不进 Kotlin**。它是外部进程侧对「�
 > | core 启动权 | **injector 拉起**（`resource::launch_core()` + `--port-file`），endpoint 经 `doppel-config.properties` 交给 `CoreSupervisor.attach()`；JVM 不再 `ProcessBuilder`，`doppel.core.path` 仅开发/测试回退 | 达成 |
 > | 状态沟通 | 编排权与进程状态归 injector；injector→JVM 的 config 通道承载 endpoint，JVM↔core 双向 wire 承载决策 | 达成最小闭环；overlay 侧的 offline 显示仍待做 |
 > | 几何 | `contract/util/Geometry` + `PortableMath` 留在 jar | **正式豁免**，留在 jar（白名单，见 9.4） |
-> | 残留抖动 | 不带随机算法的平台抖动（ForgeEventBridge / ConfigManager 等；BlockHit / AutoBlock 的随机已迁出，见下） | 按 9.4 判据不合规，但各自带 RNG 流、搬动会碰 `--replay` 对拍，**显式白名单 + 到期复评**；Reset 族、Tap 家族（W/S/AD）与 Block 家族（AutoBlock / BlockHit）已全部迁完，不再列在此项 |
+> | 残留抖动 | 不带随机算法的平台抖动（ForgeEventBridge / ConfigManager 等；BlockHit / AutoBlock 的随机已迁出，见下） | 按 9.4 判据不合规，但各自带 RNG 流、搬动会碰 `--replay` 对拍，**显式白名单 + 到期复评**；Reset 族、Tap 家族（W/S/AD）、Block 家族（AutoBlock / BlockHit）与两个本地状态机（KeepSprint / LagRange）均已迁完（见下），不再列在此项 |
 > | Eagle autoPlace 时序 | **已迁移（2026-11-08）**：aim-in-flight / 等待计数 / 冷却与随机抽样全部进 `strategy::eagle_place`（`PLAYER_EAGLE_PLACE` = 7，独立 `rng_eagle_place` 流）；模块只剩门判断 `shouldAutoPlace`、几何容差判断 `pitchInTolerance`、编组、`when(step)` 落地与平台副作用 | 达成；`EaglePlaceParityTest` 320 tick 对拍，真实 socket 往返有 E2E 覆盖 |
 > | SprintReset 决策 | **已迁移（2026-11-08）**：上升沿 / hitCount 节流 / 目标切换 / delay 窗口 / 概率掷骰全部进 `strategy::sprint_reset`（`PLAYER_SPRINT_RESET` = 8，独立 `rng_sprint_reset` 流）；模块只剩门判断（gate / range / hurt）、编组、`when(step)` 落地与平台副作用 | 达成；`SprintResetParityTest` 400 tick 对拍，真实 socket 往返有 E2E 覆盖 |
 > | JumpReset 决策 | **已迁移（2026-11-08）**：chance 掷骰 / Ticks 与 ReceivedHits 冷却 / pending jump 与 deadline 全部进 `strategy::jump_reset`（`PLAYER_JUMP_KNOCK` = 9 / `PLAYER_JUMP_PUMP` = 10，独立 `rng_jump_reset` 流，pump 永不掷骰）；模块只剩内部条件、正面角度几何、统一门、jump 时刻仍在疾跑的判断、编组与 `queueJump` 平台副作用 | 达成；`JumpResetParityTest` 500 事件对拍，真实 socket 往返有 E2E 覆盖 |
@@ -418,6 +427,8 @@ offline **不是 HUD 功能，也不进 Kotlin**。它是外部进程侧对「�
 > | ADTap 随机 | **已迁移（2026-11-08）**：fire 点 chance 掷骰 / tap 时长 / gap 三段抽样全部进 `strategy::adtap_sample`（`TAP_ADTAP_SAMPLE` = 9，独立 `rng_adtap` 流，chance==100 不掷骰、退化区间不掷骰、fail 路径抽 gap）；模块只剩物理 A/D 键 / ground / target 守卫、模式判断、编组与 claimLeft / claimRight / tapBegin 平台副作用。顺带修复了 tap 状态机迁 IPC 时引入的 END_TAP 回归：tick 应答里的 phase 是事件前快照，END_TAP 那拍仍读 IDLE，曾把刚 arm 的 gap 同 tick 覆盖掉（GapMs 选项在默认 chance=100 下完全失效）；现在 IDLE 重启加 `event == NONE` 门，恢复初版的 gap 语义 | 达成；`ADTapSampleParityTest` 500 行对拍，真实 socket 往返有 E2E 覆盖 |
 > | AutoBlock 随机 | **已迁移（2026-11-08）**：逐 tick Chance 门与 Lag 窗口启动掷骰两处 `Random.nextInt(100)` 全部进 `strategy::autoblock_sample`（`CBT_AUTOBLOCK_CHANCE` = 5，独立 `rng_autoblock` 流，chance==100 不掷骰、chance==0 照掷必败、同一采样器无 kind——两处调用点同一算法，流序即调用序）；模块只剩模式状态机（Sag 保持 / Normal 定时 / Lag 窗口 / Adaptive 信号）、统一门、range/predict/arbiter 编组与 syntheticUse / packetLagActive 平台副作用；无 core 时逐 tick 门答 false = 不按下，与 gate / range 的降级方向一致 | 达成；`AutoBlockSampleParityTest` 500 行对拍，真实 socket 往返有 E2E 覆盖 |
 > | BlockHit 随机 | **已迁移（2026-11-08）**：fire 点 post-delay / wait 两段抽样与 on-enable hitPer 阈值抽样（含 `coerceAtLeast(1)` clamp）全部进 `strategy::blockhit_sample`（`CBT_BLOCKHIT_SAMPLE` = 6，独立 `rng_blockhit` 流，退化区间不掷骰、FIRE 先 post 后 wait 保持原抽取顺序）；模块只剩物理 / 合成点击状态、target / sword 守卫、CombatTrigger 判定编组与 pressBlock / releaseBlock 平台副作用；chance 掷骰本就在 core（`CBT_DECIDE` 的 `rng_combat`），本次只关掉最后一个 `kotlin.random` 洞 | 达成；`BlockHitSampleParityTest` 500 行对拍，真实 socket 往返有 E2E 覆盖；**Block 家族完成，adapter 模块侧 `kotlin.random` 清零** |
+| KeepSprint 本地状态机 | **已迁移（2026-11-08）**：sprint 采样锁存（120ms）、两个 dispatch 的 hold 窗口、150ms 墙钟兜底与逐 tick assert 去重全部进 `strategy::keep_sprint`（`PLAYER_KEEPSPRINT` = 12，无 RNG 流——模块本无随机）；模块只剩攻击复合判定、target 存活、forward 仲裁、tap 占用 W 判断、编组与 claimSprint / C0B 平台副作用。answer 低四位是 hold **状态**（DEAD/LIVE/RELEASE）而非仅事件：DEAD 或无应答都交还 claim，治的是 Reset / core 重启后 claim 悬挂这一类泄漏；模块还把原 early-return 重排为空闲帧短路，空闲帧零往返 | 达成；`KeepSprintParityTest` 500 帧对拍，真实 socket 往返有 E2E 覆盖；首个**帧频** op，理由与 HitSelect 的逐帧拒绝同页对举：无随机流可供帧率驱动 |
+| LagRange 本地状态机 | **已迁移（2026-11-08）**：上一 tick 距离基准、伤害上升沿（hurtTime 倒计时不误判）、sprint / block 上升沿与 hold 起始时间戳全部进 `strategy::lag_range`（`PLAYER_LAGRANGE` = 13，无 RNG 流）；模块只剩 GUI / 距离 / 剑判定编组与单一 `packetLagActive` 平台副作用；无应答一律放行包——持包才是能 desync 视角的那个状态，与 Backtrack 同向；`last_dist` 以 f32 原始位进 fixture，与 velocity 的 f64 位规则同源 | 达成；`LagRangeParityTest` 500 tick 对拍（七种 flush 原因全覆盖断言），真实 socket 往返有 E2E 覆盖 |
 >
 > 注：`agent.jar` 内的 `CoreStub` / `Strategies` / wire 表本来就会暴露「存在外部算法进程」，
 > 所以把 offline 从 jar 里挪出去**不是防护增强**，只是架构归位与视觉约束。

@@ -301,6 +301,8 @@ The degraded direction differs per op; see `PROTECTION.md` §9.5.3 for the table
 | ADTap fire-chance / duration / gap draws | `strategy/adtap_sample.rs` | `ADTapSampleParityTest`, 500 rows + `CoreStubE2ETest` real-socket round trip |
 | AutoBlock chance gates (per-tick Chance, Lag window start) | `strategy/autoblock_sample.rs` | `AutoBlockSampleParityTest`, 500 rows + `CoreStubE2ETest` real-socket round trip |
 | BlockHit draws (post-delay, wait, threshold) | `strategy/blockhit_sample.rs` | `BlockHitSampleParityTest`, 500 rows + `CoreStubE2ETest` real-socket round trip |
+| KeepSprint hold machine (latch / window / backstop / dedup) | `strategy/keep_sprint.rs` | `KeepSprintParityTest`, 500 frames + `CoreStubE2ETest` real-socket round trip |
+| LagRange hold machine (distance base / edges / deadline) | `strategy/lag_range.rs` | `LagRangeParityTest`, 500 ticks + `CoreStubE2ETest` real-socket round trip |
 
 ### Module request shapes
 
@@ -404,7 +406,7 @@ modules were enabled and in what order they ran, so toggling aim would quietly
 change click timing.
 
 `Module::Player` (id 8) carries the modules that used to keep their whole
-logic in the jar. Ops 0..11 are append-only like the rest. `PLAYER_HIT_TICK` (5)
+logic in the jar. Ops 0..13 are append-only like the rest. `PLAYER_HIT_TICK` (5)
 and `PLAYER_HIT_GATE` (6) are the only pair that shares **one** state across two
 callers: the tick feeds the target windows, the click gate reads them. The
 adapter asks the gate only when a physical attack is actually being applied —
@@ -486,6 +488,50 @@ platform writes and a single tick can carry both, because the original
 `onTick` advanced the force machine before evaluating the trigger without
 short-circuiting. Unknown codes degrade to NONE on each half; a missing
 answer means write nothing. With this op the Reset family is complete.
+
+`PLAYER_KEEPSPRINT` (12) moves KeepSprint's whole hold machine into the core:
+the sprint-sample latch (a 20 Hz sampler can land either side of the attack
+that clears the flag, so "was sprinting" latches for 120 ms), the
+two-dispatch hold window, the 150 ms wall-clock backstop for a stalled
+dispatcher, and the per-tick assert dedup (1.8 polls the attack key every
+tick, so a held button is a new attack every 50 ms). The adapter marshals
+seven arguments — `now_ns`, `tick`, `local_sprinting`, `attacking` (physical
+OR synthetic), `target_alive`, `forward`, `forward_override` — and turns the
+answer into the sprint-claim / C0B writes.
+
+The answer is packed the same way SuperKnockback's is, with one deliberate
+difference: the low nibble is a hold **status** (0 dead, 1 live, 2 release),
+not only a transition. DEAD tells the adapter to give back any claim it
+still holds — another module's Reset frame or a core restart can drop the
+hold behind its back, and a stuck ADDITIVE claim is exactly the leak class
+the AutoBlock lag-window fix belonged to; RELEASE and a missing answer
+degrade the same way. There is **no RNG stream**: the module has no
+randomness, so no roll exists for anything to drive.
+
+This is the first **frame-driven** op, and that is deliberate: the attack
+flag is refreshed once per render frame, and the wall-clock backstop must be
+checked on a thread that survives a stalled tick dispatcher (render keeps
+running while the 20 Hz dispatch stops). Idle frames cost nothing — the
+adapter short-circuits a frame with no attack, no sprinting sample and no
+live claim, which is exactly the original's early returns re-ordered, not a
+behaviour change — and there is no random stream for the frame rate to
+drive, which was the reason HitSelect refuses to ask per frame.
+
+`PLAYER_LAGRANGE` (13) does the same for LagRange: the previous distance
+(the "still closing in?" comparison), the damage edge (a *rise* in hurtTime
+— the countdown is not a new hit), the sprint and block edges, and the
+hold's start timestamp are core state. The adapter marshals thirteen
+arguments per tick: the clock, the judgements (GUI open, target distance
+present, the weapon being a sword, the player snapshot fields) and the
+knobs (range, maxDelay, the three condition toggles). `dist` and `range`
+ride as f64 but both were f32 on the JVM, so the core narrows them back and
+compares in f32 — the fixture pins `last_dist` as raw f32 bits for the same
+reason the velocity fixture pins f64 bits. The answer is one step code
+(0 none, 1 hold, 2 arm — the HUD flashes, 3 flush); every terminal path in
+the original wrote one of the two `packetLagActive` flags, so NONE is wire
+discipline only. No RNG stream either — the hold machine is deterministic.
+A missing answer means let the packets through: holding is the state that
+can desync the view, the same direction as Backtrack.
 
 `ClickAssistFlag` in `Wire.kt` is the bit layout for `PLAYER_CLICK_ASSIST`'s
 thirteen predicates. It lives beside the op rather than in the module for the

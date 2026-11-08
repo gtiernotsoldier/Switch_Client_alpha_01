@@ -410,6 +410,151 @@ class CoreStubE2ETest {
 
     @Test
     @Timeout(value = 60, unit = TimeUnit.SECONDS)
+    fun `keep sprint decisions travel intact over a real socket`() {
+        // The whole path for the KeepSprint op: Kotlin marshalling → TCP →
+        // decode_generic → on_player dispatch → keep_sprint::frame →
+        // encode_scalar → decodeScalar. There is no randomness, so the
+        // packed hold/assert codes are deterministic end to end.
+        val exe = locateCore()
+        assumeTrue(exe != null, "doppel-core not built — run: cd Doppel/core-rs && cargo build")
+        val proc = ProcessBuilder(exe!!.absolutePath, "--listen", "tcp:127.0.0.1:0", "--seed", "424242")
+            .redirectError(ProcessBuilder.Redirect.INHERIT)
+            .start()
+        try {
+            val banner = proc.inputStream.bufferedReader().readLine()
+            assertNotNull(banner, "core produced no LISTEN line")
+            assertTrue(banner!!.startsWith("LISTEN "), "unexpected banner: $banner")
+            val addr = banner.removePrefix("LISTEN ").trim()
+
+            CoreStub(Endpoint.parse("tcp:$addr"), null, deadlineNanos = 20_000_000L).use { stub ->
+                stub.connect()
+                val p = player()
+                var tickId = 1
+                var now = 1_000_000_000L
+
+                // A landed swing while sprinting: hold LIVE + assert, 0x11.
+                val asserted = stub.playerKeepSprint(
+                    p, null, now, 10, true, true, true, true, false, tickId++
+                )
+                assertEquals(0x11, asserted, "ASSERT travels in the high nibble with a live hold")
+
+                // The same dispatch tick again (a held button within one
+                // tick): the dedup keeps the assert quiet, the hold is live.
+                now += 4_000_000L
+                val deduped = stub.playerKeepSprint(
+                    p, null, now, 10, true, true, true, true, false, tickId++
+                )
+                assertEquals(0x01, deduped, "one assert per tick, hold still live")
+
+                // Two dispatches later the hold expires: RELEASE.
+                now += 100_000_000L
+                val released = stub.playerKeepSprint(
+                    p, null, now, 12, true, false, true, true, false, tickId++
+                )
+                assertEquals(0x02, released, "the dispatch window releases the hold")
+
+                // A fresh assert re-arms the hold; then the wall-clock
+                // backstop fires when the dispatcher stalls (same tick, past
+                // the deadline).
+                now += 4_000_000L
+                val reArmed = stub.playerKeepSprint(
+                    p, null, now, 12, true, true, true, true, false, tickId++
+                )
+                assertEquals(0x11, reArmed, "the assert re-arms the hold")
+                now += 160_000_000L
+                val stalled = stub.playerKeepSprint(
+                    p, null, now, 12, true, false, true, true, false, tickId
+                )
+                assertEquals(0x02, stalled, "the wall-clock backstop ends a stalled hold")
+
+                assertEquals(0L, stub.timeouts.get(), "deadline misses on loopback")
+                assertEquals(0L, stub.degradedTicks.get(), "degraded ticks on a healthy run")
+            }
+        } finally {
+            proc.destroyForcibly()
+            proc.waitFor(5, TimeUnit.SECONDS)
+        }
+    }
+
+    @Test
+    @Timeout(value = 60, unit = TimeUnit.SECONDS)
+    fun `lag range decisions travel intact over a real socket`() {
+        // The whole path for the LagRange op: Kotlin marshalling → TCP →
+        // decode_generic → on_player dispatch → lag_range::tick →
+        // encode_scalar → decodeScalar. No randomness, so the steps are
+        // deterministic end to end.
+        val exe = locateCore()
+        assumeTrue(exe != null, "doppel-core not built — run: cd Doppel/core-rs && cargo build")
+        val proc = ProcessBuilder(exe!!.absolutePath, "--listen", "tcp:127.0.0.1:0", "--seed", "424242")
+            .redirectError(ProcessBuilder.Redirect.INHERIT)
+            .start()
+        try {
+            val banner = proc.inputStream.bufferedReader().readLine()
+            assertNotNull(banner, "core produced no LISTEN line")
+            assertTrue(banner!!.startsWith("LISTEN "), "unexpected banner: $banner")
+            val addr = banner.removePrefix("LISTEN ").trim()
+
+            CoreStub(Endpoint.parse("tcp:$addr"), null, deadlineNanos = 20_000_000L).use { stub ->
+                stub.connect()
+                val p = player()
+                var tick = 1
+                var now = 1_000_000_000L
+
+                // First closing tick: ARM (2).
+                val armed = stub.playerLagRange(
+                    p, null, now, false, true, 3.5, 4.0, 200,
+                    true, false, true, false, true, true, 0, tick++
+                )
+                assertEquals(2, armed, "the first closing tick arms the hold")
+
+                // Still closing: HOLD (1).
+                now += 50_000_000L
+                val held = stub.playerLagRange(
+                    p, null, now, false, true, 3.0, 4.0, 200,
+                    true, false, true, false, true, true, 0, tick++
+                )
+                assertEquals(1, held, "a further closing tick extends the hold")
+
+                // maxDelay elapsed while still closing: FLUSH (3), and the
+                // hold re-arms on the next closing tick.
+                now += 200_000_000L
+                val expired = stub.playerLagRange(
+                    p, null, now, false, true, 2.0, 4.0, 200,
+                    true, false, true, false, true, true, 0, tick++
+                )
+                assertEquals(3, expired, "the maxDelay deadline flushes even while closing")
+                now += 50_000_000L
+                val reArmed = stub.playerLagRange(
+                    p, null, now, false, true, 1.5, 4.0, 200,
+                    true, false, true, false, true, true, 0, tick++
+                )
+                assertEquals(2, reArmed, "the hold re-arms after the deadline flush")
+
+                // A fresh damage edge flushes; so does the GUI.
+                now += 50_000_000L
+                val hurt = stub.playerLagRange(
+                    p, null, now, false, true, 1.0, 4.0, 200,
+                    true, false, true, false, true, true, 10, tick++
+                )
+                assertEquals(3, hurt, "damage is never held through")
+                now += 50_000_000L
+                val gui = stub.playerLagRange(
+                    p, null, now, true, true, 0.5, 4.0, 200,
+                    true, false, true, false, true, true, 0, tick
+                )
+                assertEquals(3, gui, "an open screen flushes")
+
+                assertEquals(0L, stub.timeouts.get(), "deadline misses on loopback")
+                assertEquals(0L, stub.degradedTicks.get(), "degraded ticks on a healthy run")
+            }
+        } finally {
+            proc.destroyForcibly()
+            proc.waitFor(5, TimeUnit.SECONDS)
+        }
+    }
+
+    @Test
+    @Timeout(value = 60, unit = TimeUnit.SECONDS)
     fun `tap range samples travel intact over a real socket`() {
         // The whole path for the WTap / STap sampling op: Kotlin marshalling →
         // TCP → decode_generic → on_tap dispatch → tap_sample::sample →

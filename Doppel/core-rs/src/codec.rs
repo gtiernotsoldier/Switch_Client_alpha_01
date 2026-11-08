@@ -984,6 +984,28 @@ pub mod op {
     /// carries two actions: the SprintTap step at the top of the tick and a
     /// fire step from the trigger evaluation later in the same tick.
     pub const PLAYER_SUPER_KNOCKBACK: u8 = 11;
+
+    /// player/keep_sprint: `frame(now_ns, tick, local_sprinting, attacking,
+    ///        target_alive, forward, forward_override)` → packed step.
+    ///
+    /// The sprint-sample latch, the two-dispatch hold window, the wall-clock
+    /// backstop and the per-tick assert dedup live in the core. The answer's
+    /// low nibble is the hold *status* (0 dead, 1 live, 2 release) rather
+    /// than only a transition, so the adapter can self-heal a claim the core
+    /// no longer knows about; the high nibble is the assert step. No RNG
+    /// stream — the module has no randomness.
+    pub const PLAYER_KEEPSPRINT: u8 = 12;
+
+    /// player/lag_range: `tick(now_ns, gui_open, has_dist, dist, range,
+    ///        max_delay_ms, sprint_reset_on, is_sprinting, block_sword_on,
+    ///        is_blocking, holding_weapon_on, weapon_is_sword, hurt_time)`
+    ///        → step (0 none, 1 hold, 2 arm, 3 flush).
+    ///
+    /// The previous distance, the damage / sprint / block edges and the
+    /// hold's start timestamp live in the core; the knobs ride the request
+    /// as config values. No RNG stream either — the hold machine is
+    /// deterministic.
+    pub const PLAYER_LAGRANGE: u8 = 13;
 }
 
 /// Maps a side to the wire's 0/1.
@@ -1088,6 +1110,8 @@ pub fn known_ops(module: Module) -> &'static [u8] {
             op::PLAYER_JUMP_KNOCK,
             op::PLAYER_JUMP_PUMP,
             op::PLAYER_SUPER_KNOCKBACK,
+            op::PLAYER_KEEPSPRINT,
+            op::PLAYER_LAGRANGE,
         ],
         Module::Velocity => &[op::VEL_BRACE, op::VEL_DELAY_ENQUEUE, op::VEL_DELAY_PUMP],
         _ => &[],

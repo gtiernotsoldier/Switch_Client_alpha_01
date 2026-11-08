@@ -420,6 +420,8 @@ object Ops {
     const val PLAYER_JUMP_KNOCK = 9     // gatesOpen, nowNs, chance, cooldownMode, ticksUntil, hitsUntil, delayMs → step (0 none/armed, 1 jump now)
     const val PLAYER_JUMP_PUMP = 10     // nowNs, cooldownMode, ticksUntil → step (0 none, 1 jump now)
     const val PLAYER_SUPER_KNOCKBACK = 11 // nowNs, hasTarget, triggerOk, inRange, gateOk, entityId, chance, hitCount, delayMs, mode, sprintTapAllowed, coordinationActive → packed step
+    const val PLAYER_KEEPSPRINT = 12       // nowNs, tick, localSprinting, attacking, targetAlive, forward, forwardOverride → packed hold status + assert step; no RNG stream
+    const val PLAYER_LAGRANGE = 13         // nowNs, guiOpen, hasDist, dist, range, maxDelayMs, sprintResetOn, isSprinting, blockSwordOn, isBlocking, holdingWeaponOn, weaponIsSword, hurtTime → step (0 none, 1 hold, 2 arm, 3 flush); no RNG stream
 }
 
 /**

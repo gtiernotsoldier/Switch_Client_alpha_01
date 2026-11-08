@@ -3,6 +3,10 @@ package io.doppel.adapter.common.module.combat
 import io.doppel.adapter.common.module.Module
 import io.doppel.adapter.common.module.Category
 import io.doppel.adapter.common.api.EventBridge
+import io.doppel.contract.model.PlayerState
+import io.doppel.ipc.KeepSprintAssert
+import io.doppel.ipc.KeepSprintHold
+import io.doppel.ipc.Strategies
 
 /**
  * KeepSprint — carry the sprint state across a hit.
@@ -52,18 +56,30 @@ import io.doppel.adapter.common.api.EventBridge
  *    believing you are sprinting, so if the sprint *hit* is all you want, this single packet is the
  *    smoother of the two.
  *  - `WTap` resets the sprint *on purpose* by releasing W. That is the opposite intent, so this
- *    module stands down while a tap owns the W key (see the guard in [onRenderFrame]) — the tap is
+ *    module stands down while a tap owns the W key (see the marshalled `forwardOverride`) — the tap is
  *    deliberate, the preserve is automatic. `STap` sets sprint off by pressing S instead and owns a
  *    different key, so the two still disagree on the sprint state: pick one.
  *  - `Sprint` (movement) already re-asserts sprint every tick you hold forward, so the local half
  *    below is redundant while that module is on. The server half is not: `Sprint` never sends
  *    anything, and the server is the side that was wrong.
  *
- * ── Timing rules this module is built on
+ * ── Where the state lives now
+ *
+ * This side holds only **judgements + marshalling + platform writes**: the attack composite
+ * (physical left mouse OR an AutoClicker synthetic attack — both refreshed per frame), the
+ * crosshair target being alive, the forward-key arbitration and the tap-owns-W override.
+ * Everything stateful lives in the algorithm process (`strategy::keep_sprint`): the sprint-sample
+ * latch, the two-dispatch hold window, the wall-clock backstop and the per-tick assert dedup.
+ * There is no `kotlin.random` and no local time window — `System.nanoTime()` is an input we
+ * marshal. The core answers with a hold *status* plus an assert step, and DEAD/`null` both mean
+ * "give any claim you still hold back" — an unclaimed state means "no opinion", which is also the
+ * self-heal for a hold dropped behind our back by another module's Reset or a core restart.
+ *
+ * ── Timing rules this module is built on (now core-side, enforced by the parity fixture)
  *
  * **Detection is per tick, not per edge.** On 1.8 the attack key is polled every tick, so holding
  * the button swings ~20 times a second and each swing clears the server's flag. An edge detector
- * (the previous implementation) fired once for a whole held combo and left every hit after the
+ * (an earlier implementation) fired once for a whole held combo and left every hit after the
  * first unrepaired.
  *
  * **The local hold spans a tick, not a frame.** `onRenderFrame` runs 60+ times a second against 20
@@ -71,62 +87,16 @@ import io.doppel.adapter.common.api.EventBridge
  * hold did nothing. It is held until two tick boundaries have passed instead (or until the player
  * lets go of forward, or a wall-clock backstop expires, whichever comes first), which also means a
  * module that claims sprint in the meantime cannot stomp it.
+ *
+ * **The ask is frame-driven, and that is deliberate.** This is the first frame-rate op: the attack
+ * flag is refreshed once per render frame, and the wall-clock backstop must be checked on a thread
+ * that survives a stalled tick dispatcher (render keeps running while the 20 Hz dispatch stops).
+ * Idle frames cost nothing — the short-circuit below is exactly the original's early returns
+ * re-ordered, so a frame with no attack, no sprinting sample and no live claim never crosses the
+ * wire — and there is no random stream for the frame rate to drive, which was the reason HitSelect
+ * refuses to ask per frame.
  */
 object KeepSprint : Module("KeepSprint", Category.COMBAT) {
-
-    /** Tick at which the current hold stops being applied; -1 when no hold is live. */
-    @Volatile private var holdUntilTick: Int = -1
-
-    /**
-     * Wall-clock backstop for [holdUntilTick].
-     *
-     * A tick counter only moves when ticks move. If the client stops ticking (pause, world change)
-     * the two-tick window would never end, and a sprint claim is applied straight to the player, not
-     * through the keybind layer that a GUI suppresses — so it would sit there forcing sprint. Three
-     * ticks of real time is longer than the window needs and short enough that a stall cannot hold
-     * the flag.
-     */
-    @Volatile private var holdDeadlineNanos: Long = 0L
-    private const val HOLD_MAX_NANOS = 150_000_000L
-
-    /** Last tick an attack was handled on — one assertion per tick, not one per render frame. */
-    @Volatile private var lastHandledTick: Int = -1
-
-    /**
-     * Last time the tick sample reported "sprinting".
-     *
-     * `EventBridge.localSprinting` is a sample, and on forge the sampler is a 20 Hz background
-     * thread whose phase against the game tick is arbitrary — it can land after the attack, when
-     * vanilla has already cleared the flag. A single read would then say "not sprinting" about a
-     * player who demonstrably was. Latching for a bit over one sample interval makes the answer
-     * independent of where the sample fell.
-     */
-    @Volatile private var lastSprintSeenNanos: Long = 0L
-    private const val SPRINT_MEMORY_NANOS = 120_000_000L
-
-    fun reset() {
-        lastHandledTick = -1
-        lastSprintSeenNanos = 0L
-        releaseHold()
-    }
-
-    override fun onDisable() {
-        reset()
-    }
-
-    /**
-     * Give the sprint claim back.
-     *
-     * Releasing is not the same as switching sprint off: an unclaimed state means "no opinion", so
-     * the flag we set survives and vanilla's own rules decide from the next tick on. This is what
-     * keeps the hold from turning into a permanent forced sprint.
-     */
-    private fun releaseHold() {
-        if (holdUntilTick < 0) return
-        holdUntilTick = -1
-        holdDeadlineNanos = 0L
-        EventBridge.releaseSprint(name)
-    }
 
     /**
      * Called from the platform render loop (MC main thread) every frame
@@ -137,77 +107,81 @@ object KeepSprint : Module("KeepSprint", Category.COMBAT) {
      */
     fun onRenderFrame(mc: Any) {
         try {
-            if (!enabled) {
-                reset()
-                return
-            }
-
-            val tick = EventBridge.getCurrentTick()
-            val now = System.nanoTime()
-            if (EventBridge.localSprinting) lastSprintSeenNanos = now
-
-            // A hold that outlives its reason is a stuck sprint. Three ways to end it: the tick
-            // window (2 dispatches), the wall clock (tick source stalled), or the player letting go
-            // of forward — the last one also keeps the flag from rendering sprint particles for a
-            // player who has stopped moving.
-            if (holdUntilTick >= 0 &&
-                (tick > holdUntilTick || now > holdDeadlineNanos || !EventBridge.isKeyForwardActive)
-            ) {
-                releaseHold()
-            }
+            if (!enabled) return
 
             // "Attacking now" — physical left mouse OR an AutoClicker synthetic attack (the platform
             // samples the mouse at the end of the frame, so this can be up to one frame late).
             val attacking = EventBridge.isLeftMousePhysicallyDown || EventBridge.syntheticAttack
-            if (!attacking) return
-            if (tick == lastHandledTick) return
+
+            // The original's early returns, re-ordered into one guard: a frame with no attack, no
+            // sprinting sample and no live claim can change nothing, so it never crosses the wire.
+            // The latch only refreshes on a *sprinting* sample (the core stamps the same way), a
+            // release needs a live hold (the claim is its platform shadow), and an assert needs an
+            // attack — each predicate is the original's own, no new judgement.
+            if (!attacking && !EventBridge.localSprinting && !EventBridge.hasSprintClaim(name)) return
 
             // Only for a swing that landed. There is no hook into the attack method, so a live
             // entity under the crosshair is the proxy this family uses; a swing at air must not
             // assert anything.
-            val target = EventBridge.crosshairTarget ?: return
-            if (target.health <= 0f) return
+            val target = EventBridge.crosshairTarget
+            val targetAlive = target != null && target.health > 0f
 
-            // Preserve a sprint, never create one. The sample can fall on either side of the
-            // attack (see [lastSprintSeenNanos]), so the gate is "the sample said sprinting, or it
-            // said so within the last ~2 dispatches". Without this a player standing still and
-            // clicking would be put into sprint, complete with sprint particles and a flag the
-            // server did not expect.
-            val sprintWasOn = EventBridge.localSprinting ||
-                (lastSprintSeenNanos != 0L && now - lastSprintSeenNanos <= SPRINT_MEMORY_NANOS)
-            if (!sprintWasOn) return
+            val step = Strategies.keepSprint(
+                PlayerState.EMPTY, target,
+                System.nanoTime(),
+                EventBridge.getCurrentTick(),
+                EventBridge.localSprinting,
+                attacking,
+                targetAlive,
+                EventBridge.isKeyForwardActive,
+                EventBridge.syntheticForwardOverride
+            )
 
-            // Sprint is fed by forward input; with W released the flag is on its way out anyway and
-            // claiming it would only delay vanilla's own decision.
-            if (!EventBridge.isKeyForwardActive) return
+            // No answer: give any claim we still hold back. An unclaimed state means "no opinion",
+            // so the flag we set survives and vanilla's own rules decide from the next tick on —
+            // the same direction as the release, and it cannot leave a forced sprint behind.
+            if (step == null) {
+                if (EventBridge.hasSprintClaim(name)) EventBridge.releaseSprint(name)
+                return
+            }
 
-            // A tap module currently owns W: it is resetting sprint on purpose, and the whole point
-            // of a W-tap is the tick of walking knockback. Re-asserting here would undo the reset it
-            // just paid for. Same principle as the key arbitration — a deliberate intent wins over
-            // an automatic correction. (Ours is ADDITIVE, so this flag is never set by us.)
-            if (EventBridge.syntheticForwardOverride) return
+            // Hold upkeep: RELEASE ended the hold this frame; DEAD means the core holds nothing
+            // (a Reset or a restart dropped it) — both give the claim back. Only LIVE keeps it.
+            if (step.hold != KeepSprintHold.LIVE && EventBridge.hasSprintClaim(name)) {
+                EventBridge.releaseSprint(name)
+            }
 
-            lastHandledTick = tick
+            if (step.assert == KeepSprintAssert.ASSERT) {
+                // Local half: one full tick of "the flag stays on". ADDITIVE, so it never fights a
+                // module that wants sprint off.
+                EventBridge.claimSprint(name, true)
 
-            // Local half: one full tick of "the flag stays on". ADDITIVE, so it never fights a
-            // module that wants sprint off.
-            EventBridge.claimSprint(name, true)
-            holdUntilTick = tick + 1
-            holdDeadlineNanos = System.nanoTime() + HOLD_MAX_NANOS
+                // Server half, and the reason the module exists at all.
+                //
+                // Deliberately NOT gated on `serverSprintState`. That mirror tracks the LOCAL flag
+                // (the platform's sprint setter reports into it), and in MC-69459 the local flag is
+                // still true — the desync is precisely that the client thinks true while the server
+                // holds false. Checking the mirror here would read our own optimism back and skip the
+                // one packet that fixes it. The attack itself is the proof: the server ran the same
+                // `setSprinting(false)`, so its copy is cleared whether or not we can see it.
+                EventBridge.sendEntityAction("START_SPRINTING")
 
-            // Server half, and the reason the module exists at all.
-            //
-            // Deliberately NOT gated on `serverSprintState`. That mirror tracks the LOCAL flag
-            // (the platform's sprint setter reports into it), and in MC-69459 the local flag is
-            // still true — the desync is precisely that the client thinks true while the server
-            // holds false. Checking the mirror here would read our own optimism back and skip the
-            // one packet that fixes it. The attack itself is the proof: the server ran the same
-            // `setSprinting(false)`, so its copy is cleared whether or not we can see it.
-            EventBridge.sendEntityAction("START_SPRINTING")
-
-            markWorked() // HUD work flash — the sprint state survived the hit
+                markWorked() // HUD work flash — the sprint state survived the hit
+            }
         } catch (_: Exception) {
             // Never crash the render loop.
         }
+    }
+
+    override fun onEnable() {
+        // A fresh enable must not inherit a latch, a hold window or an
+        // assert dedup the core still believes it owns.
+        Strategies.resetPlayer()
+    }
+
+    override fun onDisable() {
+        // The claim itself is released by Module.disable() -> releaseAllClaims,
+        // which hands the sprint decision back to whatever else wants it.
+        Strategies.resetPlayer()
     }
 }

@@ -1005,6 +1005,8 @@ fn emit_golden(dir: &str) -> Result<(), String> {    use std::fs;
     emit_sprint_reset_golden(dir)?;
     emit_jump_reset_golden(dir)?;
     emit_super_knockback_golden(dir)?;
+    emit_keep_sprint_golden(dir)?;
+    emit_lag_range_golden(dir)?;
     emit_tap_sample_golden(dir)?;
     emit_adtap_sample_golden(dir)?;
     emit_autoblock_sample_golden(dir)?;
@@ -1901,6 +1903,191 @@ fn emit_super_knockback_golden(dir: &str) -> Result<(), String> {
 
     fs::write(format!("{}/super_knockback_input.tsv", dir), input).map_err(|e| e.to_string())?;
     fs::write(format!("{}/super_knockback_expected.tsv", dir), expected).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// KeepSprint's hold machine, replayed over a fixed frame sequence.
+///
+/// No rolls anywhere — the module has no randomness — so the expected file
+/// carries only the packed step and the four state fields. The input file
+/// scripts frames the way the render loop produces them: several frames per
+/// dispatch tick, sprint samples that flip, holds that expire by each of the
+/// three exits (dispatch window, wall clock, forward released).
+fn emit_keep_sprint_golden(dir: &str) -> Result<(), String> {
+    use std::fs;
+
+    let mut input = String::new();
+    input.push_str("# doppel-keep-sprint-golden v1\n");
+    input.push_str("# idx\tnow_ns\ttick\tlocal_sprinting\tattacking\ttarget_alive\tforward\tforward_override\n");
+
+    let mut expected = String::new();
+    expected.push_str("# idx\tcode\thold_until_tick\thold_deadline_ns\tlast_handled_tick\tlast_sprint_seen_ns\n");
+
+    let mut state = strategy::keep_sprint::State::new();
+    let mut rng = Pcg32::new(0x0000_5EED_4E90_0001);
+    let mut now: i64 = 1_000_000_000;
+    let mut tick: i32 = 1;
+
+    for i in 0..500 {
+        // ~2.4 frames per dispatch tick, like a 120 fps render loop against
+        // the 20 Hz dispatcher.
+        if i % 12 == 0 {
+            tick += 1;
+        }
+        now += 4_000_000; // ~4 ms per frame
+        // A drifting sprint sample: true 70% of the time so the latch sees
+        // both fresh stamps and stale windows.
+        let local_sprinting = rng.random_int(0, 9) < 7;
+        // Attack bursts: held for stretches of frames, with idle gaps.
+        let attacking = rng.random_int(0, 9) < 6;
+        let target_alive = rng.random_int(0, 9) >= 2;
+        // Forward mostly held; the occasional drop exercises the immediate
+        // release path. A tap owning W is rare but present.
+        let forward = rng.random_int(0, 9) >= 1;
+        let forward_override = rng.random_int(0, 99) < 8;
+
+        input.push_str(&format!(
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+            i,
+            now,
+            tick,
+            local_sprinting as u8,
+            attacking as u8,
+            target_alive as u8,
+            forward as u8,
+            forward_override as u8
+        ));
+
+        let (code, next) = strategy::keep_sprint::frame(
+            state,
+            strategy::keep_sprint::Input {
+                now_ns: now,
+                tick,
+                local_sprinting,
+                attacking,
+                target_alive,
+                forward,
+                forward_override,
+            },
+        );
+        state = next;
+        expected.push_str(&format!(
+            "{}\t{}\t{}\t{}\t{}\t{}\n",
+            i,
+            code,
+            state.hold_until_tick,
+            state.hold_deadline_ns,
+            state.last_handled_tick,
+            state.last_sprint_seen_ns
+        ));
+    }
+
+    fs::write(format!("{}/keep_sprint_input.tsv", dir), input).map_err(|e| e.to_string())?;
+    fs::write(format!("{}/keep_sprint_expected.tsv", dir), expected).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// LagRange's hold machine, replayed over a fixed tick sequence.
+///
+/// No rolls — the machine is deterministic. The expected file carries the
+/// step and the five state fields; `last_dist` prints as raw f32 bits so a
+/// parity check comparing decimals cannot pass while the last mantissa bit
+/// differs.
+fn emit_lag_range_golden(dir: &str) -> Result<(), String> {
+    use std::fs;
+
+    let mut input = String::new();
+    input.push_str("# doppel-lag-range-golden v1\n");
+    input.push_str("# idx\tnow_ns\tgui_open\thas_dist\tdist\trange\tmax_delay_ms\tsprint_reset_on\tis_sprinting\tblock_sword_on\tis_blocking\tholding_weapon_on\tweapon_is_sword\thurt_time\n");
+
+    let mut expected = String::new();
+    expected.push_str("# idx\tstep\tlast_dist_bits\tlast_self_hurt\tlast_sprint\tlast_blocking\thold_start_ns\n");
+
+    let mut state = strategy::lag_range::State::new();
+    let mut rng = Pcg32::new(0x0000_5EED_1A42_0001);
+    let mut now: i64 = 1_000_000_000;
+    // A slowly shrinking distance with noise: the "still closing in?"
+    // branch and the flush-on-not-closing branch both need runs of each.
+    let mut dist: f32 = 5.5;
+
+    for i in 0..500 {
+        now += 50_000_000; // 50 ms per tick
+        dist += rng.random_float(-0.45, 0.25) as f32; // drifts down, occasionally up
+        if dist < 0.5 {
+            dist = 5.0; // reset for another approach
+        }
+        let gui_open = rng.random_int(0, 39) == 0;
+        let has_dist = rng.random_int(0, 39) != 0;
+        let range = [4.0f32, 5.0, 6.0][rng.random_int(0, 2) as usize] as f64;
+        let max_delay_ms = [200, 150, 100][rng.random_int(0, 2) as usize];
+        let sprint_reset_on = rng.random_int(0, 9) < 8;
+        let is_sprinting = rng.random_int(0, 9) < 3;
+        let block_sword_on = rng.random_int(0, 9) < 8;
+        let is_blocking = rng.random_int(0, 9) < 2;
+        let holding_weapon_on = rng.random_int(0, 9) < 8;
+        let weapon_is_sword = rng.random_int(0, 39) != 0;
+        // hurtTime: mostly 0, sometimes a fresh 10 (damage), sometimes
+        // counting down 9/8/7 — the falling values must NOT read as damage.
+        let hurt_pick = rng.random_int(0, 19);
+        let hurt_time = if hurt_pick == 0 {
+            10
+        } else if hurt_pick < 4 {
+            9 - (hurt_pick % 3)
+        } else {
+            0
+        };
+
+        input.push_str(&format!(
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+            i,
+            now,
+            gui_open as u8,
+            has_dist as u8,
+            dist as f64,
+            range,
+            max_delay_ms,
+            sprint_reset_on as u8,
+            is_sprinting as u8,
+            block_sword_on as u8,
+            is_blocking as u8,
+            holding_weapon_on as u8,
+            weapon_is_sword as u8,
+            hurt_time
+        ));
+
+        let (code, next) = strategy::lag_range::tick(
+            state,
+            strategy::lag_range::Input {
+                now_ns: now,
+                gui_open,
+                has_dist,
+                dist: dist as f64,
+                range,
+                max_delay_ms,
+                sprint_reset_on,
+                is_sprinting,
+                block_sword_on,
+                is_blocking,
+                holding_weapon_on,
+                weapon_is_sword,
+                hurt_time,
+            },
+        );
+        state = next;
+        expected.push_str(&format!(
+            "{}\t{}\t{:08x}\t{}\t{}\t{}\t{}\n",
+            i,
+            code,
+            state.last_dist.to_bits(),
+            state.last_self_hurt,
+            state.last_sprint as u8,
+            state.last_blocking as u8,
+            state.hold_start_ns
+        ));
+    }
+
+    fs::write(format!("{}/lag_range_input.tsv", dir), input).map_err(|e| e.to_string())?;
+    fs::write(format!("{}/lag_range_expected.tsv", dir), expected).map_err(|e| e.to_string())?;
     Ok(())
 }
 

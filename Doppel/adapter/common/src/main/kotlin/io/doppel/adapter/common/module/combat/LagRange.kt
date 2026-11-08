@@ -9,6 +9,8 @@ import io.doppel.adapter.common.option.int
 import io.doppel.contract.model.PlayerState
 import io.doppel.contract.model.TargetState
 import io.doppel.contract.strategy.click.WeaponType
+import io.doppel.ipc.LagRangeStep
+import io.doppel.ipc.Strategies
 
 /**
  * LagRange — hold your own packets while closing in, so the server keeps computing positions from where
@@ -29,6 +31,16 @@ import io.doppel.contract.strategy.click.WeaponType
  *
  * Nothing is drawn: this client's overlay is 2D and the reference's real-position marker is a world-space
  * draw, so the module is the network behaviour without the marker rather than a marker that does not work.
+ *
+ * ── Where the state lives now
+ *
+ * This side holds only **judgements + marshalling + platform writes**: the GUI-open check, the
+ * target's distance sample, the weapon being a sword, and the single `packetLagActive` write.
+ * Everything stateful lives in the algorithm process (`strategy::lag_range`): the previous
+ * distance, the damage / sprint / block edges and the hold's start timestamp. There is no
+ * `kotlin.random` and no local time window — `System.nanoTime()` is an input we marshal. A missing
+ * answer means the packets go through: holding is the state that can desync the view, so the safe
+ * direction when the core is unreachable is not to hold at all.
  */
 object LagRange : Module("LagRange", Category.COMBAT) {
 
@@ -38,97 +50,56 @@ object LagRange : Module("LagRange", Category.COMBAT) {
     private val blockSword by boolean("BlockSword", true)
     private val holdingWeapon by boolean("HoldingWeapon", true)
 
-    private var lastDist: Float = -1f
-    private var lastSelfHurt: Int = 0
-    private var lastSprint: Boolean = false
-    private var lastBlocking: Boolean = false
-    private var holdStartNano: Long = 0L
-
     private val tickListener: (PlayerState, TargetState?) -> Unit = { p, t ->
         if (enabled) onTick(p, t)
     }
 
     private fun onTick(player: PlayerState, target: TargetState?) {
-        val now = System.nanoTime()
         val dist = target?.distance
 
-        if (EventBridge.isGuiOpen || dist == null || dist > range) {
-            flush()
-            lastDist = -1f
-            return
-        }
+        val step = Strategies.lagRange(
+            player, target,
+            System.nanoTime(),
+            EventBridge.isGuiOpen,
+            dist != null,
+            (dist ?: 0f).toDouble(),
+            range.toDouble(),
+            maxDelay,
+            sprintReset,
+            player.isSprinting,
+            blockSword,
+            player.isBlocking,
+            holdingWeapon,
+            player.weaponType == WeaponType.SWORD,
+            player.hurtTime
+        )
 
-        // Damage taken: never held through it.
-        if (player.hurtTime > lastSelfHurt) {
-            lastSelfHurt = player.hurtTime
-            flush()
-            lastDist = dist
-            return
-        }
-        lastSelfHurt = player.hurtTime
-
-        if (sprintReset) {
-            if (player.isSprinting && !lastSprint) {
-                lastSprint = true
-                flush()
-                lastDist = dist
-                return
+        when (step) {
+            LagRangeStep.ARM -> {
+                // A hold starting is a transition, like every other module's work.
+                EventBridge.packetLagActive = true
+                markWorked()
             }
-            lastSprint = player.isSprinting
+            LagRangeStep.HOLD -> EventBridge.packetLagActive = true
+            LagRangeStep.FLUSH -> EventBridge.packetLagActive = false
+            // No answer: never hold packets on a guess — same direction as
+            // the flush, and exactly Backtrack's reasoning.
+            null -> EventBridge.packetLagActive = false
+            LagRangeStep.NONE -> Unit
         }
-
-        if (blockSword) {
-            if (player.isBlocking && !lastBlocking) {
-                lastBlocking = true
-                flush()
-                lastDist = dist
-                return
-            }
-            lastBlocking = player.isBlocking
-        }
-
-        if (holdingWeapon && player.weaponType != WeaponType.SWORD) {
-            flush()
-            lastDist = dist
-            return
-        }
-
-        // Not closing in any more: the delay buys nothing, so let everything go.
-        if (lastDist >= 0f && dist >= lastDist) {
-            flush()
-            lastDist = dist
-            return
-        }
-        lastDist = dist
-
-        if (holdStartNano == 0L) {
-            holdStartNano = now
-            markWorked() // a hold starting is a transition, like every other module's work
-        } else {
-            EventBridge.packetLagActive = true
-        }
-        EventBridge.packetLagActive = true
-
-        if (now - holdStartNano >= maxDelay * 1_000_000L) flush()
-    }
-
-    private fun flush() {
-        holdStartNano = 0L
-        EventBridge.packetLagActive = false
     }
 
     override fun onEnable() {
-        lastDist = -1f
-        lastSelfHurt = 0
-        lastSprint = false
-        lastBlocking = false
-        holdStartNano = 0L
+        // A fresh enable must not inherit a distance base, an edge tracker
+        // or a hold start the core still believes it owns.
+        Strategies.resetPlayer()
         EventBridge.packetLagActive = false
         EventBridge.registerTickListener(tickListener)
     }
 
     override fun onDisable() {
         EventBridge.unregisterTickListener(tickListener)
-        flush()
+        EventBridge.packetLagActive = false
+        Strategies.resetPlayer()
     }
 }

@@ -743,6 +743,85 @@ object Strategies {
     }
 
     /**
+     * KeepSprint: one frame of the hold machine.
+     *
+     * The module supplies the frame's judgements (the dispatch tick, the
+     * sprint sample, the attack composite, the crosshair target being alive,
+     * the forward-key state, the tap-owns-W override) and the core owns the
+     * sprint-sample latch, the two-dispatch hold window, the wall-clock
+     * backstop and the per-tick assert dedup. No randomness — there is no
+     * RNG stream for this module, and no roll for the frame rate to drive.
+     *
+     * The answer's low nibble is the hold *status*: DEAD is not merely
+     * "nothing happened" — it tells the caller to give back any sprint claim
+     * it still holds (another module's Reset frame or a core restart may have
+     * dropped the hold behind its back). `null` means no answer: write
+     * nothing and release the claim — an unclaimed state means "no opinion",
+     * which is exactly what releasing stands for.
+     */
+    fun keepSprint(
+        player: PlayerState,
+        target: TargetState?,
+        nowNs: Long,
+        tick: Int,
+        localSprinting: Boolean,
+        attacking: Boolean,
+        targetAlive: Boolean,
+        forward: Boolean,
+        forwardOverride: Boolean
+    ): KeepSprintStep? {
+        val stub = CoreLink.stub ?: return null
+        val code = stub.playerKeepSprint(
+            player, target, nowNs, tick, localSprinting, attacking,
+            targetAlive, forward, forwardOverride, nextTick()
+        ) ?: return null
+        return KeepSprintStep(
+            hold = KeepSprintHold.fromCode(code and 0xF)
+                ?: KeepSprintHold.DEAD,
+            assert = KeepSprintAssert.fromCode((code shr 4) and 0xF)
+                ?: KeepSprintAssert.NONE
+        )
+    }
+
+    /**
+     * LagRange: one tick of the packet-hold machine.
+     *
+     * The module supplies the judgements (GUI open, the target's distance,
+     * the weapon being a sword, the player snapshot fields) and marshals the
+     * knobs; the core owns the previous distance, the damage / sprint /
+     * block edges and the hold's start timestamp.
+     *
+     * `null` means the core did not answer, and the caller must let the
+     * packets through — holding is the state that can desync the view, so
+     * the safe direction is not to hold at all.
+     */
+    fun lagRange(
+        player: PlayerState,
+        target: TargetState?,
+        nowNs: Long,
+        guiOpen: Boolean,
+        hasDist: Boolean,
+        dist: Double,
+        range: Double,
+        maxDelayMs: Int,
+        sprintResetOn: Boolean,
+        isSprinting: Boolean,
+        blockSwordOn: Boolean,
+        isBlocking: Boolean,
+        holdingWeaponOn: Boolean,
+        weaponIsSword: Boolean,
+        hurtTime: Int
+    ): LagRangeStep? {
+        val stub = CoreLink.stub ?: return null
+        val code = stub.playerLagRange(
+            player, target, nowNs, guiOpen, hasDist, dist, range, maxDelayMs,
+            sprintResetOn, isSprinting, blockSwordOn, isBlocking,
+            holdingWeaponOn, weaponIsSword, hurtTime, nextTick()
+        ) ?: return null
+        return LagRangeStep.fromCode(code)
+    }
+
+    /**
      * Backtrack: hold position updates this tick?
      *
      * `null` means the core did not answer, and the caller must let the updates
@@ -968,6 +1047,49 @@ class SuperKnockbackStep(
     @JvmField val sprint: SuperKnockbackSprintStep,
     @JvmField val fire: SuperKnockbackFireStep
 )
+
+/** The hold status half of KeepSprint's answer — a status, not just a step. */
+enum class KeepSprintHold(val code: Int) {
+    /** No hold is live — release any claim you still hold. */
+    DEAD(0),
+    /** A hold is live; keep claiming. */
+    LIVE(1),
+    /** The hold ended on this frame — release now. */
+    RELEASE(2);
+
+    companion object {
+        /** Unknown codes degrade to DEAD: never leave a claim stuck on. */
+        @JvmStatic
+        fun fromCode(code: Int): KeepSprintHold? = entries.firstOrNull { it.code == code }
+    }
+}
+
+/** The assert half of KeepSprint's answer. */
+enum class KeepSprintAssert(val code: Int) {
+    NONE(0), ASSERT(1);
+
+    companion object {
+        @JvmStatic
+        fun fromCode(code: Int): KeepSprintAssert? = entries.firstOrNull { it.code == code }
+    }
+}
+
+/** One KeepSprint frame, unpacked from one scalar. */
+class KeepSprintStep(
+    @JvmField val hold: KeepSprintHold,
+    @JvmField val assert: KeepSprintAssert
+)
+
+/** What the core decided for one LagRange tick. */
+enum class LagRangeStep(val code: Int) {
+    NONE(0), HOLD(1), ARM(2), FLUSH(3);
+
+    companion object {
+        /** Unknown codes degrade to FLUSH: never hold packets on a guess. */
+        @JvmStatic
+        fun fromCode(code: Int): LagRangeStep? = entries.firstOrNull { it.code == code }
+    }
+}
 
 /** WTap / STap range draws, unpacked from one scalar (base-1024 packing). */
 class TapSample(

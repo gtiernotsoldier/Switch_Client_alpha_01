@@ -29,7 +29,9 @@ use crate::strategy::eagle;
 use crate::strategy::eagle_place;
 use crate::strategy::hit_select;
 use crate::strategy::jump_reset;
+use crate::strategy::keep_sprint;
 use crate::strategy::knockback_displace;
+use crate::strategy::lag_range;
 use crate::strategy::reach_sample;
 use crate::strategy::sprint_reset;
 use crate::strategy::super_knockback;
@@ -171,6 +173,15 @@ pub struct Session {
     /// offset, the SprintTap force sequence and the per-target hit throttle.
     pub super_knockback: super_knockback::State,
 
+    /// KeepSprint: the sprint-sample latch, the two-dispatch hold window,
+    /// the wall-clock backstop and the per-tick assert dedup. No RNG stream —
+    /// the module has no randomness.
+    pub keep_sprint: keep_sprint::State,
+
+    /// LagRange: the previous distance, the damage / sprint / block edges
+    /// and the hold's start timestamp. No RNG stream either.
+    pub lag_range: lag_range::State,
+
     pub ticks: u64,
     pub decisions: u64,
     pub degraded: u64,
@@ -240,6 +251,8 @@ impl Session {
             sprint_reset: sprint_reset::State::new(),
             jump_reset: jump_reset::State::new(),
             super_knockback: super_knockback::State::new(),
+            keep_sprint: keep_sprint::State::new(),
+            lag_range: lag_range::State::new(),
             ticks: 0,
             decisions: 0,
             degraded: 0,
@@ -313,6 +326,8 @@ impl Session {
                 self.sprint_reset = sprint_reset::State::new();
                 self.jump_reset = jump_reset::State::new();
                 self.super_knockback = super_knockback::State::new();
+                self.keep_sprint = keep_sprint::State::new();
+                self.lag_range = lag_range::State::new();
             }
         }
         Frame::new(Kind::Reset, frame.header.seq, frame.header.tick, module)
@@ -1356,6 +1371,56 @@ impl Session {
                     let (code, next) =
                         super_knockback::tick(state, input, &mut || rng.random_int(0, 99));
                     self.super_knockback = next;
+                    Ok(codec::encode_scalar(
+                        seq,
+                        tick,
+                        Module::Player,
+                        WireAction::Scalar,
+                        code as f64,
+                    ))
+                }
+                op::PLAYER_KEEPSPRINT => {
+                    let input = keep_sprint::Input {
+                        now_ns: req.arg(0)? as i64,
+                        tick: req.i32(1)?,
+                        local_sprinting: req.bool(2)?,
+                        attacking: req.bool(3)?,
+                        target_alive: req.bool(4)?,
+                        forward: req.bool(5)?,
+                        forward_override: req.bool(6)?,
+                    };
+                    // No roll: KeepSprint has no randomness, so there is no
+                    // RNG stream to advance — the answer is a pure function
+                    // of the frame's inputs and the hold state.
+                    let (code, next) = keep_sprint::frame(self.keep_sprint, input);
+                    self.keep_sprint = next;
+                    Ok(codec::encode_scalar(
+                        seq,
+                        tick,
+                        Module::Player,
+                        WireAction::Scalar,
+                        code as f64,
+                    ))
+                }
+                op::PLAYER_LAGRANGE => {
+                    let input = lag_range::Input {
+                        now_ns: req.arg(0)? as i64,
+                        gui_open: req.bool(1)?,
+                        has_dist: req.bool(2)?,
+                        dist: req.arg(3)?,
+                        range: req.arg(4)?,
+                        max_delay_ms: req.i32(5)?,
+                        sprint_reset_on: req.bool(6)?,
+                        is_sprinting: req.bool(7)?,
+                        block_sword_on: req.bool(8)?,
+                        is_blocking: req.bool(9)?,
+                        holding_weapon_on: req.bool(10)?,
+                        weapon_is_sword: req.bool(11)?,
+                        hurt_time: req.i32(12)?,
+                    };
+                    // No roll either: the hold machine is deterministic.
+                    let (code, next) = lag_range::tick(self.lag_range, input);
+                    self.lag_range = next;
                     Ok(codec::encode_scalar(
                         seq,
                         tick,

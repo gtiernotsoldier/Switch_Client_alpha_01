@@ -1010,6 +1010,85 @@ class CoreStub(
     }
 
     /**
+     * KeepSprint: one frame of the hold machine.
+     *
+     * The JVM supplies the frame's judgements — the dispatch tick, the
+     * sprint sample, the attack composite, the crosshair target being
+     * alive, the forward-key state and the tap-owns-W override — and the
+     * core owns the sprint-sample latch, the two-dispatch hold window, the
+     * wall-clock backstop and the per-tick assert dedup.
+     *
+     * The scalar answer is packed: low nibble = the hold *status* (0 dead,
+     * 1 live, 2 release), high nibble = the assert step (0 none, 1 assert).
+     * DEAD is not merely "nothing happened" — it is what lets the adapter
+     * give back a claim the core no longer knows about. `null` means no
+     * answer: the caller writes nothing and releases any claim it holds.
+     */
+    fun playerKeepSprint(
+        player: io.doppel.contract.model.PlayerState,
+        target: io.doppel.contract.model.TargetState?,
+        nowNs: Long,
+        tick: Int,
+        localSprinting: Boolean,
+        attacking: Boolean,
+        targetAlive: Boolean,
+        forward: Boolean,
+        forwardOverride: Boolean,
+        tickId: Int
+    ): Int? {
+        val payload = genericRequest(
+            encodeSnapshot(player, target), Ops.PLAYER_KEEPSPRINT,
+            nowNs.toDouble(), tick.toDouble(), b(localSprinting), b(attacking),
+            b(targetAlive), b(forward), b(forwardOverride)
+        )
+        val f = roundTrip(Wire.MODULE_PLAYER, payload, tickId) ?: return null
+        return decodeScalar(f).toInt()
+    }
+
+    /**
+     * LagRange: one tick of the packet-hold machine.
+     *
+     * The JVM supplies the judgements (GUI open, the target's distance, the
+     * weapon being a sword) and the player snapshot fields (hurt time,
+     * sprinting, blocking), and marshals the knobs (range / maxDelay / the
+     * three condition toggles). The core owns the previous distance, the
+     * damage / sprint / block edges and the hold's start timestamp.
+     *
+     * The answer is a step code: 0 none, 1 hold, 2 arm (hold just started —
+     * flash the HUD), 3 flush. `null` means no answer — the caller must let
+     * the packets through: holding is the state that can desync the view,
+     * so the safe direction when the core is unreachable is not to hold.
+     */
+    fun playerLagRange(
+        player: io.doppel.contract.model.PlayerState,
+        target: io.doppel.contract.model.TargetState?,
+        nowNs: Long,
+        guiOpen: Boolean,
+        hasDist: Boolean,
+        dist: Double,
+        range: Double,
+        maxDelayMs: Int,
+        sprintResetOn: Boolean,
+        isSprinting: Boolean,
+        blockSwordOn: Boolean,
+        isBlocking: Boolean,
+        holdingWeaponOn: Boolean,
+        weaponIsSword: Boolean,
+        hurtTime: Int,
+        tick: Int
+    ): Int? {
+        val payload = genericRequest(
+            encodeSnapshot(player, target), Ops.PLAYER_LAGRANGE,
+            nowNs.toDouble(), b(guiOpen), b(hasDist), dist, range,
+            maxDelayMs.toDouble(), b(sprintResetOn), b(isSprinting),
+            b(blockSwordOn), b(isBlocking), b(holdingWeaponOn),
+            b(weaponIsSword), hurtTime.toDouble()
+        )
+        val f = roundTrip(Wire.MODULE_PLAYER, payload, tick) ?: return null
+        return decodeScalar(f).toInt()
+    }
+
+    /**
      * Backtrack's hold window: one call per tick.
      *
      * `null` means the core did not answer. The caller must then let the

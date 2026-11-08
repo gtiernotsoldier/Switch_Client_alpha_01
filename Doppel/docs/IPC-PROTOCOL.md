@@ -5,7 +5,7 @@ in the tree today**, not what is planned; §9 is the design rationale, this is t
 byte table and the runbook.
 
 - Core process: `Doppel/core-rs/` (`doppel-core`, Rust, zero third-party deps)
-- Thin stub: `Doppel/core/src/main/kotlin/io/doppel/core/ipc/` (`CoreStub.kt`, `Wire.kt`)
+- Thin stub: `Doppel/ipc/src/main/kotlin/io/doppel/ipc/` (`CoreStub.kt`, `Wire.kt`, `Strategies.kt`, `CoreSupervisor.kt`)
 - Status: **vertical slice complete** — see [§9 Implementation status](#9-implementation-status)
 
 ---
@@ -318,7 +318,7 @@ all look alike and none of which can be checked without counting bytes.
 | Aim | `mouse_dx f32, mouse_dy f32, sensitivity f32` (12 bytes) |
 | Click | `attack_cooldown f32, is_falling u8, pad 3` (8 bytes) |
 | Movement / Tap / Combat / Reach | `op u8, nargs u8, nargs × f64` |
-| Player (8) | `op u8, nargs u8, nargs × f64` — ops 0..11, up to 11 args |
+| Player (8) | `op u8, nargs u8, nargs × f64` — ops 0..13, up to 13 args (LagRange) |
 
 Op ids are append-only, same reasoning as module ids: the stub and the core are
 separate binaries. The tables live beside their decoders in `codec.rs` and are

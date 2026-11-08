@@ -57,35 +57,32 @@ We firmly believe that a ghost client capable of long-term survival must adhere 
 ┌─────────────────────────────────────────────┐
 │     C++/Rust Injector (injector)            │
 │  · Process detection / version recognition  │
-│  · Load mapping library / cache files       │
-│  · Inject Agent / deploy Fabric Mod         │
+│  · Spawns & owns the core process; hands    │
+│    its endpoint to the agent via config     │
+│  · Inject Agent via payload.dll (JNI)       │
 ├─────────────────────────────────────────────┤
 │          Java Agent (agent)                 │
-│  · Class-loading-time bytecode modification │
-│    (ASM)                                    │
-│  · Provide MappingContext                   │
-│    (cross-version class/method mapping)     │
-│  · Cache serialization (avoid reflection    │
-│    on every startup)                        │
+│  · One ASM hook: Display.update()           │
+│  · MappingContext (cross-version resolver)  │
+│  · Orchestration only — zero algorithms     │
 ├─────────────────────────────────────────────┤
-│          Kotlin Core Library (core)         │
-│  · Pure math / no Minecraft dependencies    │
-│  · Strategy interfaces + implementations    │
-│    (aim, click, velocity, keepsprint, tap)  │
-│  · Algorithm implementations                │
-│    (rotation, knockback, prediction, noise) │
-│  · Condition engine (TriggerCondition)      │
-│  · Data models (PlayerState, Vec3)          │
+│          Version Adapter (adapter)          │
+│  · 50 modules, one .kt file each            │
+│  · Judgement + marshalling + platform       │
+│    side effects only                        │
+│  · forge/v1_8_9 · fabric/v1_21              │
 ├─────────────────────────────────────────────┤
-│          Version Adapter Layer (adapter)    │
-│  · adapter/common (cross-version shared)    │
-│  · forge/v1_8_9 (independent implementation)│
-│  · fabric/v1_21 (version-difference mixins) │
-│  · Each module = one .kt file               │
-│  · Listen to Minecraft events → call core   │
-│    strategies                               │
-│  · Write decisions back to game             │
-│    (motion, keypress, packet sending)       │
+│   Thin IPC stub (ipc) + models (contract)   │
+│  · 384-byte fixed frames over TCP loopback  │
+│  · 1 ms deadline, per-op degradation        │
+├─────────────────────────────────────────────┤
+│  ★ Algorithm Core Process (core-rs, Rust)   │
+│  · All strategies & cross-tick state        │
+│    machines — deterministic & replayable    │
+│  · All randomness: 20 independent PCG32     │
+│    streams, pinned by golden parity         │
+│  · A separate OS process — a JVM dump       │
+│    reveals no heuristic                     │
 └─────────────────────────────────────────────┘
 ```
 
@@ -103,47 +100,48 @@ Doppel/
 ├── gradle/wrapper/
 │   └── gradle-wrapper.properties
 │
-├── core/                         # Pure Kotlin logic — zero MC dependencies
-│   └── src/main/kotlin/io/doppel/core/
-│       ├── algorithm/            # RotationCalculator, VectorOperations,
-│       │                         #   GaussianNoise, NoiseGenerator, NoiseProvider
-│       ├── condition/            # TriggerCondition, ConditionChecker
-│       ├── decorator/            # NoiseDecorator (mandatory human-like noise)
-│       ├── logging/              # CoreLogger, ReplayLogger (per-tick replay)
-│       ├── model/                # PlayerState, TargetState, CombatContext,
-│       │                         #   VelocityContext, PlatformCommand, SetbackEvent
-│       ├── network/              # PacketScheduler (global packet scheduling)
-│       ├── option/               # AimConfig, ClickMode, RandomRange, ProbabilityOption,
-│       │                         #   TimingOptions, TriggerOptions
-│       ├── safety/               # SafetyWrapper (auto-disable on repeated failures),
-│       │                         #   SetbackTracker
-│       ├── strategy/             # Strategy contracts + concrete implementations
-│       │   ├── aim/              # AimStrategy, LegitAimStrategy,
-│       │   │                     #   SelfAdaptiveAimStrategy, OvershootHelper
-│       │   ├── click/            # ClickStrategy, ProbabilisticClickStrategy,
-│       │   │                     #   CooldownClickStrategy, CritMode, OnItemUse,
-│       │   │                     #   WeaponFilter
-│       │   ├── velocity/         # VelocityStrategy, Legit/Delay/Click strategies
-│       │   ├── keepsprint/       # KeepSprintStrategy, LegitKeepSprintStrategy
-│       │   ├── tap/              # TapStateMachine
-│       │   └── combat/           # CombatTrigger
-│       └── util/                 # Vec2, Vec3, MathUtils
-│   ├── src/main/java/io/doppel/agent/
-│   │   └── MappingContext.java   # Semantic key → MC member reflection resolver
-│   └── src/test/kotlin/          # Unit tests: RotationCalculator, ConditionChecker,
-│       └── ...                   #   TriggerOptions, MathUtils, Vec2, Vec3
+├── contract/                     # Pure data models & strategy interfaces
+│                                 #   (PlayerState, TargetState, VelocityContext,
+│                                 #    PlatformCommand, Vec3 …)
+│
+├── ipc/                          # JVM-side thin pipe to the core process
+│   └── src/main/kotlin/io/doppel/ipc/
+│       ├── CoreStub.kt           #   framing, seq correlation, 1 ms deadline
+│       ├── CoreSupervisor.kt     #   pure connector in production (the injector
+│       │                         #   owns the process; spawnDev is test-only)
+│       ├── Wire.kt               #   wire enums mirrored from core-rs
+│       └── Strategies.kt         #   the single factory the adapter asks
+│
+├── core-rs/                      # ★ The algorithm core — its own OS process
+│                                 #   (Rust, zero third-party dependencies)
+│   ├── src/strategy/             #   24 files: every strategy, state machine and
+│   │                             #   RNG sampler (aim, click, velocity, tap,
+│   │                             #   combat, keep_sprint, lag_range, eagle …)
+│   ├── src/rng.rs                #   PCG32, bit-identical to DecisionRng.kt
+│   ├── src/session.rs            #   20 RNG streams + per-module machines + op dispatch
+│   ├── src/wire.rs / codec.rs    #   384-byte frames + append-only op table
+│   ├── src/transport.rs          #   TCP loopback / UDS behind one Conn trait
+│   └── golden/                   #   42 TSVs / 36k rows of bit-level parity fixtures
+│
+├── core/                         # Kotlin oracle — the reference twin of core-rs
+│   └── src/                      #   Keeps the parity suites honest; never packaged
+│                                 #   into agent.jar (CI guard: io/doppel/core
+│                                 #   class count in the jar must be 0)
+│
+├── safety/                       # SetbackTracker & auto-disable wrappers
 │
 ├── adapter/
 │   ├── common/                   # Cross-version shared adapter layer
 │   │   └── src/main/kotlin/io/doppel/adapter/common/
 │   │       ├── api/              # EventBridge, IEventBridge, IStateExtractor,
 │   │       │                     #   IMappingContext, KeyCode, KeyTranslator
+│   │       ├── hud/              # HudStateWriter (v3 HUD state-file contract)
 │   │       ├── insight/          # BattleInsight (display-only assistance)
 │   │       ├── module/           # Module base, Category, ModuleRegistry
-│   │       │   ├── combat/       # 16 modules (see catalog below)
-│   │       │   ├── movement/     # 6 modules
-│   │       │   ├── player/       # 6 modules
-│   │       │   ├── render/       # 5 modules (Fullbright, HUD, NoFOV, NoHurtCam, WebUI)
+│   │       │   ├── combat/       # 21 modules (see catalog below)
+│   │       │   ├── movement/     # 10 modules
+│   │       │   ├── player/       # 7 modules
+│   │       │   ├── render/       # 11 modules (+ KeystrokesLayout helper)
 │   │       │   └── world/        # 1 module (FastPlace)
 │   │       ├── option/           # ModuleOptions, OptionMeta, Delegates, ConfigManager
 │   │       ├── render/           # GL11Bridge, FontRendererBridge, GLConstants,
@@ -180,58 +178,72 @@ Doppel/
 │   └── presets/                  # aggressive.json / invisible.json / seasoned.json
 │
 ├── mappings/                     # Semantic key → MC member mapping (JSON)
-│   ├── forge/v1_8_9.json         # Forge 1.8.9 (MCP names)
-│   └── fabric/
-│       ├── v1_20_1.json          # Fabric 1.20.1 baseline
-│       └── deltas/               # Per-version delta mappings
+│   ├── forge/v1_8_9.json         # Forge 1.8.9 (SRG + MCP names)
+│   ├── fabric/                   # v1_20_1.json baseline + per-version deltas
+│   └── verify/                   # Mapping verification fixtures
 │
-├── injector/                     # C++/Rust dual-process injector
-│   ├── CMakeLists.txt            # C++ payload build (payload.dll)
-│   ├── Cargo.toml / build.rs     # Rust injector build
-│   ├── src/                      # inject.cpp/h, main.cpp (+ Rust: inject.rs,
-│   │                             #   main.rs, process.rs, resource.rs)
-│   ├── src/payload/              # payload.cpp/h, attach_pipe.cpp/h, payload_log.h
-│   └── resources/                # agent.jar, agent.rc
+├── injector/                     # Rust injector + C++ payload — OWNS the core
+│   ├── CMakeLists.txt            #   process lifecycle (resource.rs::launch_core
+│   ├── Cargo.toml / build.rs     #   spawns doppel-core BEFORE injection; the
+│   ├── src/                      #   endpoint travels in doppel-config.properties)
+│   │                             #   Rust: flow / panel / window / ui / inject /
+│   │                             #   process / resource; C++: main / inject / payload
+│   └── resources/                #   agent.jar, agent.rc
 │
-├── scripts/
-│   └── generate_mappings.py      # Mapping JSON generator utility
+├── hud/                          # External overlay process (Rust) — the offline
+│                                 #   indicator lives here, not in the JVM
+├── scripts/                      # generate_mappings.py, verify_mappings.mjs,
+│                                 #   ipc_latency_bench.c, HUD mockups
+├── tickets/                      # Open P0 tickets (injection, classloader)
 │
-└── docs/                         # Project documentation
-    ├── ARCHITECTURE.md           # In-depth architecture walkthrough
-    ├── CONSTITUTION.md           # The Sandwich Constitution (full text)
-    └── CONTRIBUTING.md           # Contribution guidelines
+└── docs/                         # Deep documentation (the two architecture maps
+    │                             #   live in the repo root's own docs/)
+    ├── IPC-PROTOCOL.md           # Wire v1 byte tables + runbook
+    ├── PROTECTION.md             # Hardening roadmap (§9: the process split)
+    ├── CONSTITUTION.md           # The Sandwich Constitution
+    ├── CONTRIBUTING.md           # Contribution guidelines
+    ├── CLIENT-AUTHORITY-AUDIT.md # Which advantages are truly undetectable
+    └── hud-contract-v3.md        # HUD state-file contract v3
+
+../docs/ARCHITECTURE.md           # Architecture map, Chinese (repo root)
+../docs/ARCHITECTURE.en.md        # English mirror
 
 .github/workflows/ci.yml          # CI: CMake payload.dll build pipeline
 ```
 
 ---
 
-📦 Module Catalog (34 modules implemented)
+📦 Module Catalog (50 modules implemented)
 
-All modules live in `adapter/common`, one `.kt` file each. Each module declares typed options via property delegates and can be toggled/configured from the WebUI panel.
+All modules live in `adapter/common`, one `.kt` file each. Each module declares typed options via property delegates and can be toggled/configured from the WebUI panel. Combat/movement decision modules carry **no algorithms of their own** — every probability, time window and state machine lives in the core process (`core-rs`).
 
 | Category | Modules |
 |---|---|
-| Combat (16) | AimAssist, AutoBlock, AutoClicker, BlockHit, ClickAssist, DelayRemover, HitSelect, JumpReset, KeepSprint, Reach, STap, SprintReset, SuperKnockback, TriggerBot, Velocity, WTap |
-| Movement (6) | NoJumpDelay, NoKeyboardFix, NoMouseFix, Sprint, Strafe, StrafeFix |
-| Player (6) | AntiBot, AutoTool, BridgeAssist, Eagle, ParallaxStrike, Teams |
-| Render (5) | Fullbright, HUD, NoFOV, NoHurtCam, WebUI |
+| Combat (21) | ADTap, AimAssist, AutoBlock, AutoClicker, Backtrack, BlockHit, ClickAssist, DelayRemover, HitSelect, JumpReset, KeepSprint, KnockbackDelay, KnockbackDisplace, LagRange, Reach, SprintReset, STap, SuperKnockback, TriggerBot, Velocity, WTap |
+| Movement (10) | InstantStop, InvMove, NoJumpDelay, NoKeyboardFix, NoMouseFix, NullMove, Sprint, Strafe, StrafeAssist, StrafeFix |
+| Player (7) | AntiBot, AutoTool, BridgeAssist, Eagle, FakeLag, TargetFilter, Teams |
+| Render (11) | Freelook, Fullbright, HUD, JumpStatus, JumpTiming, Keystrokes, KnockbackDisplay, NoHurtCam, Speedometer, VelocityDisplay, WebUI |
 | World (1) | FastPlace |
 
 ---
 
 🧠 Core Strategy Implementations
 
-The Core layer ships concrete strategy implementations — the ones the modules bind to:
+Since the P6 split the strategy implementations the modules bind to live in **core-rs** (Rust, its own OS process); the Kotlin `core/` tree remains only as the bit-exact oracle for the parity suites. Modules ask through `Strategies` (ipc) and never call an algorithm in-VM:
 
-| Domain | Implementations |
-|---|---|
-| Aim | `LegitAimStrategy` (soft pull to hitbox edge), `SelfAdaptiveAimStrategy` (distance/state adaptive), `OvershootHelper` (human overshoot modeling) |
-| Click | `ProbabilisticClickStrategy` (gamma-distributed CPS), `CooldownClickStrategy` (1.9+ cooldown-aware), `CritMode`, `OnItemUse`, `WeaponFilter` |
-| Velocity | `LegitVelocityStrategy` (random retention range + conditional triggers), `DelayVelocityStrategy`, `ClickVelocityStrategy` |
-| KeepSprint | `KeepSprintStrategy`, `LegitKeepSprintStrategy` |
-| Tap | `TapStateMachine` (STap/WTap timing state machine) |
-| Combat | `CombatTrigger` (shared combat activation conditions) |
+| Domain | core-rs implementation | Wire ops |
+|---|---|---|
+| Aim | `strategy/aim.rs` (LEGIT / NORMAL / LINEAR / SELF_ADAPTIVE) + `geom.rs` | structured frames |
+| Click | `strategy/click.rs` (probabilistic + cooldown crit FSM) | structured frames |
+| Velocity / KnockbackDelay | `strategy/velocity.rs` (retention, sprint brace, delay queue) | `VEL_BRACE`, `VEL_DELAY_ENQUEUE/PUMP` |
+| Movement | `strategy/movement.rs` (SOCD / strafe / sliding) | `MOV_*` ops 0–2 |
+| Tap family | `strategy/tap.rs` + `tap_sample.rs` / `adtap_sample.rs` (own RNG streams) | `TAP_*` ops 0–9 |
+| Trigger engine | `strategy/combat.rs` (trigger / arbiter / predictor / range / decide) | `CBT_*` ops 0–6 |
+| Block family | `autoblock_sample.rs`, `blockhit_sample.rs` (chance & timing draws, own streams) | `CBT_AUTOBLOCK_CHANCE`, `CBT_BLOCKHIT_SAMPLE` |
+| Reach | `reach.rs` + `reach_sample.rs` | `REACH_INTERSECT`, `PLAYER_REACH_SAMPLE` |
+| Player family | `eagle.rs`, `eagle_place.rs`, `backtrack.rs`, `knockback_displace.rs`, `click_assist.rs`, `hit_select.rs`, `sprint_reset.rs`, `jump_reset.rs`, `super_knockback.rs`, `keep_sprint.rs`, `lag_range.rs` | `PLAYER_*` ops 0–13 |
+
+Every port is pinned by a bit-level golden replay (500+ rows per module) plus a real-socket E2E; the full evidence table is `Doppel/docs/IPC-PROTOCOL.md` §9.
 
 ---
 
@@ -254,15 +266,16 @@ Strafe	Perfect movement lock	Assists only when the player is already strafing; n
 🔧 Four-Layer Architecture in Detail
 
 Layer	Language	Responsibility	Key Components	
-Injector	C++ / Rust	Process detection, version recognition, Agent injection / Fabric Mod deployment	Process enumeration, remote thread, version probing, payload DLL	
-Agent	Java	Class-loading-time bytecode modification, providing cross-version mapping	ASM, MappingContext, MappingLoader, cache serialization, RenderBridge	
-Core	Kotlin	Pure math algorithms, strategy interfaces + implementations, condition engine, noise perturbation	AimStrategy, VelocityStrategy, TriggerCondition, NoiseProvider, SafetyWrapper	
-Adapter	Kotlin	Version adaptation (1.8.9 Forge / 1.21 Fabric) + cross-version common modules	VelocityModule, AimModule, BattleInsight, WebUIServer, render bridges	
+Injector	C++ / Rust	Process detection, version recognition, Agent injection — and it spawns & owns the core process	Process enumeration, remote thread, version probing, payload DLL, resource.rs::launch_core	
+Agent	Java	Orchestration only — one hook (Display.update), mappings, tick/key threads	ASM, MappingContext, MappingLoader, RenderBridge	
+Core process	Rust	**All algorithms, state machines and randomness** — deterministic, replayable, golden-parity pinned	24 strategy files, 20 PCG32 streams, session state, wire/codec/transport (core-rs/)	
+IPC stub	Kotlin	Thin pipe: framing, seq correlation, 1 ms deadline, per-op degradation	CoreStub, CoreSupervisor, Wire, Strategies (ipc/)	
+Adapter	Kotlin	Version adaptation (1.8.9 Forge / 1.21 Fabric) + judgement & platform side effects	50 modules, EventBridge, WebUIServer, render bridges	
 
 Core Principles:
-- Algorithms in Core: All decision logic (knockback modification, rotation calculation, CPS generation) is fully decoupled from Minecraft and can be unit-tested.
-- Logic in Modules: Each adapter layer module is a complete file that listens to events, extracts state, calls Core, and writes back to the game.
-- Execution in Adapter: Specific packet sending, motion modification, and key simulation are completed by the adapter layer; Core is unaware.
+- Algorithms in the core **process**: All decision logic (knockback modification, rotation calculation, CPS generation, every probability, window and cross-tick memory) lives in core-rs — out of process, unit-testable, and replayable bit for bit. A JVM dump reveals no heuristic.
+- Logic in Modules: Each adapter module is a complete file that samples game-context facts, marshals them across the wire, and materializes the returned instruction.
+- Execution in Adapter: Specific packet sending, motion modification, and key simulation are completed by the adapter layer; the core never knows what Minecraft is.
 
 ---
 
@@ -270,13 +283,15 @@ Core Principles:
 
 Infrastructure	Function	Implementation Location	Status	
 Mapping Library + Cache	Cross-version class/method/field access, zero-reflection startup	Agent MappingLoader + JSON (forge/v1_8_9.json, fabric/v1_20_1.json + deltas)	✅ Implemented	
-Condition Engine	Unified trigger rules (onlyGround, onLook, chance, delay, ticks)	Core TriggerCondition + ConditionChecker	✅ Implemented	
-Noise Perturbation	Mandatory randomization (Gaussian/uniform distribution) on all strategy outputs	Core NoiseProvider + NoiseDecorator	✅ Implemented	
+Condition Engine	Unified trigger rules (onlyGround, onLook, chance, delay, ticks)	core-rs `condition.rs` (full port) + Kotlin oracle twin	✅ Implemented	
+Noise Perturbation	Mandatory randomization (Gaussian/uniform distribution) on all strategy outputs	core-rs RNG: 20 independent PCG32 streams on the decision path	✅ Implemented	
 Global Packet Scheduler	Manages all network packet sending order, delay, and packet loss simulation	Core network/PacketScheduler	✅ Implemented	
 Safety Wrapper	Auto-disable a module after repeated failures / suspicious patterns	Core safety/SafetyWrapper + SetbackTracker	✅ Implemented	
 Replay Logging	Per-tick state, decision, and packet recording for post-kick review	Core logging/ReplayLogger	✅ Implemented	
 
 These infrastructures are transparent to modules; module developers only need to declare configurations without repetitive implementation.
+
+> Since the P6 split, anything on the decision path that this table calls "Core" is the **core-rs process**; the Kotlin `core/` tree is the parity oracle and ships nowhere.
 
 ---
 
@@ -340,22 +355,25 @@ The in-game `HUD` module remains the single in-game overlay (module state cards)
 
 🎮 Combat Module Example (Velocity)
 
-Core Layer:
+Core process (Rust, `core-rs/src/strategy/velocity.rs`) — out-of-process, stateful per session:
 
-```kotlin
-interface VelocityStrategy {
-    fun modifyVelocity(original: Vec3, player: PlayerState, target: TargetState?, config: VelocityConfig): Vec3
-}
-class DefaultVelocityStrategy : VelocityStrategy { /* pure math implementation */ }
+```rust
+pub fn decide(ctx: &VelocityContext, cfg: &VelocityConfig, rng: &mut Pcg32) -> VelocityResult
+// gate chain + retention draw; the RNG stream lives in the session, so a
+// golden replay with the same seed reproduces every decision bit for bit
 ```
 
-Adapter Layer (1.8.9):
+Adapter layer (1.8.9) — judgement, marshalling, materialization; no algorithm in sight:
 
 ```kotlin
-@EventTarget fun onPacket(event: PacketEvent) {
-    val config = buildConfig()
-    val modified = SandwichCore.velocityStrategy.modifyVelocity(original, playerState, targetState, config)
-    applyModifiedMotion(modified)
+fun onVelocityPacket(ctx: VelocityContext) {
+    val outcome = Strategies.velocity(ctx, buildConfig())   // → CoreStub → wire → core-rs
+    when (val cmd = outcome.result) {                       // 1 ms deadline inside
+        is VelocityResult.Modify    -> EventBridge.pendingMotion(cmd.motion)
+        is VelocityResult.Cancel    -> dropPacket(ctx.packetHandle)
+        is VelocityResult.ClickBurst -> sendBurst(cmd)
+        else -> {}                                          // Pass: vanilla applies it
+    }
 }
 ```
 
@@ -389,20 +407,24 @@ All prompts are based on real data collection (knockback packets, attack animati
 
 🧪 Testing
 
-Core-layer strategies are unit-tested without any Minecraft runtime:
+The core is tested without any Minecraft runtime, at three levels:
 
-- `RotationCalculatorTest` — rotation math
-- `ConditionCheckerTest` — trigger condition evaluation
-- `TriggerOptionsTest` — trigger option parsing
-- `MathUtilsTest` / `Vec2Test` / `Vec3Test` — math utilities
+- **Rust unit tests** (`cargo test`) — every strategy, the wire codecs, the RNG, panic containment
+- **Golden parity suites** (25 JVM suites, `core/src/test/.../ipc/`) — the Kotlin oracle replays the TSV fixtures emitted by `cargo run -- --emit-golden golden`; every decision and every state field must match bit for bit (500+ rows per module)
+- **Real-socket E2E** (`CoreStubE2ETest`) — full framing → TCP loopback → core → decode round trips, tick for tick
+
+Wiring tests on the adapter side assert that modules ask the core with the right ops and own no local randomness or cross-tick state.
 
 ---
 
 📚 Documentation
 
-- `docs/ARCHITECTURE.md` — in-depth architecture walkthrough
-- `docs/CONSTITUTION.md` — the full Sandwich Constitution (four fundamental principles)
-- `docs/CONTRIBUTING.md` — contribution guidelines
+- `docs/ARCHITECTURE.md` — architecture map, the code-truth lookup table (Chinese; `ARCHITECTURE.en.md` is the English mirror)
+- `Doppel/docs/IPC-PROTOCOL.md` — wire v1: byte tables, ops, timing, degradation
+- `Doppel/docs/PROTECTION.md` — hardening roadmap; §9 documents the process split
+- `Doppel/docs/CONSTITUTION.md` — the Sandwich Constitution (four fundamental principles)
+- `Doppel/docs/CLIENT-AUTHORITY-AUDIT.md` — which client-authority advantages are genuinely undetectable
+- `Doppel/docs/CONTRIBUTING.md` — contribution guidelines
 - `Doppel/README.md` — reference implementation guide (build & usage)
 
 ---
@@ -413,21 +435,22 @@ Alpha stage. Architecture complete, both platform translation layers implemented
 
 ✅ Completed
 - Sandwich architecture structure
-- Core algorithms (RotationCalculator, VectorOperations, NoiseProvider, GaussianNoise)
-- Concrete strategy implementations (aim: Legit/SelfAdaptive; click: Probabilistic/Cooldown; velocity: Legit/Delay/Click; keepsprint; tap state machine)
+- **P6 process split (2026-11)**: all algorithms live in `core-rs`, a separate Rust process; the JVM keeps judgement + marshalling + side effects only, and the injector owns the core's lifecycle
+- **All randomness migrated (2026-11-08)**: 20 independent PCG32 streams in the core; the 50 adapter modules contain zero `kotlin.random` calls
+- **All state machines migrated (2026-11-08)**: KeepSprint / LagRange joined SprintReset, JumpReset, SuperKnockback, Eagle (AutoPlace), Backtrack, HitSelect, ClickAssist, KnockbackDisplace, Reach sampling and the Tap / Block families in the core (`PLAYER_*` ops 0–13)
+- **Golden parity system**: 42 TSV fixtures / 36k rows, 25 JVM parity suites + a real-socket E2E per module
 - Data models (PlayerState, TargetState, CombatContext, VelocityContext, PlatformCommand, SetbackEvent)
 - EventBridge singleton pattern + AgentBridge (Fabric fallback)
 - Property delegates (float, int, boolean, enum, triggerOptions, probability) + OptionMeta typing
-- **34 modules** across combat / movement / player / render / world categories
+- **50 modules** across combat (21) / movement (10) / player (7) / render (11) / world (1)
 - Forge 1.8.9 platform layer (bootstrap, event bridge, state extractor, packet interceptor, GL/font bridges)
 - Fabric 1.21 platform layer (bootstrap, event bridge, state extractor, velocity interceptor, packet mixin)
 - MappingContext reflection system + MappingLoader cache + mapping JSON (forge 1.8.9, fabric 1.20.1 + deltas)
 - **WebUI Aurora panel** (LAN access, bearer token auth, config persistence, keybinds, export/import)
 - **In-game HUD** restored as the sole in-game overlay; ClickGUI removed in favor of WebUI
 - Render abstraction (GL11Bridge, FontRendererBridge, OverlayRenderer, RenderContext)
-- Safety infra (SafetyWrapper, SetbackTracker) + ReplayLogger + PacketScheduler
-- Unit tests for core algorithms / conditions / options / math utilities
-- CI pipeline (payload.dll build) + project docs (ARCHITECTURE / CONSTITUTION / CONTRIBUTING)
+- Safety infra (SafetyWrapper, SetbackTracker)
+- CI pipeline (payload.dll build) + project docs (ARCHITECTURE / IPC-PROTOCOL / PROTECTION / CONSTITUTION / CONTRIBUTING)
 
 In Progress
 - More module refinements and balance tuning
@@ -464,7 +487,7 @@ This project is licensed under GPLv3. Any derivative work must be open-sourced a
 
 🤝 Contact Us
 
-> "Algorithms in core, logic in modules, execution in adapter" — this is both a code organization principle and a design philosophy.
+> "Algorithms in core, logic in modules, execution in adapter" — and since 2026-11 the core is a *process*, not a library: nothing a JVM dump reveals is a heuristic.
 
 🔗 [Discord](https://discord.gg/Sq4rWn4JG) · [GitHub](https://github.com/gtiernotsoldier/Switch_Client_alpha_01)
 

@@ -512,6 +512,8 @@ tick 边界（50ms 一次）
 | `PLAYER_JUMP_KNOCK` / `PLAYER_JUMP_PUMP` | 不排队 jump | 未经 core 决策凭空按一次跳跃键，比漏跳更糟 |
 | `PLAYER_SUPER_KNOCKBACK` | 不写 C0B、不写 sprint claim | 未经 core 决策凭空造一次 sprint 突发或强制 sprint 声明，比漏一拍更糟 |
 | `PLAYER_BACKTRACK_TICK` | `release()` | 宁可放过也不悬着状态 |
+| `PLAYER_KEEPSPRINT` | 交还 sprint claim（等同 DEAD） | 悬挂的 ADDITIVE sprint 声明与 AutoBlock lag 窗口同属一类泄漏；无应答即"无意见"，归还即释放 |
+| `PLAYER_LAGRANGE` | 放行所有包（不持有） | 持包才是会 desync 视角的状态，与 Backtrack 同向 |
 | `Velocity` 同步决策 | `Pass(original motion)` | 见上，`Modify` 不可重放 |
 | 其余 tick 级 op | 本拍无动作 | 状态留在 core，下一拍自然续上 |
 

@@ -1,6 +1,7 @@
 # 防护与反逆向路线
 
-> 状态：**设计文档，未实施。** 记录 2026-10 的讨论结论，供后续按顺序执行。
+> 状态：**部分已实施。** 2026-10 立项；P6（core 独立进程 + IPC）于 2026-11 落地，其余阶段状态见 §6 与 §9.5。
+> **目标形态以 §9.4 为准（2026-11-08 定稿）**；§3 的"现状"是 2026-10 快照，仅供追溯，不代表当前实现。
 > 所有"现状"条目都指向具体文件，便于核对；所有工作量都是单人估算。
 
 ---
@@ -99,9 +100,9 @@ Java 客户端不存在"防逆向"，只存在"提高成本"。JVM 在执行前�
 
 ### L3 结构（胶水化）
 
-目标：**jar 里只剩 JVM 要求的东西、薄桩转发。**
+目标：**jar 里的 Kotlin 只做逻辑判断、编组与平台副作用；计算、算法、策略与跨 tick 状态全部在外部进程。**
 
-见 §9 的分层审计。核心是把 `core/`（7.1k 行，零反射）搬到 **Rust 独立进程**，`adapter/` 保持 Kotlin，游戏侧只留不含业务的编组薄桩（设计见 9.5）。
+见 §9 的分层审计与 §9.4 定稿形状。`core/`（7.1k 行，零反射）搬到 **Rust 独立进程**，由 injector 拉起；`adapter/` 保持 Kotlin，游戏侧只留逻辑判断与编组。"只有编组和转发"是早期口号，已弃用——它把必须留在 JVM 的逻辑判断也一起否掉了。
 
 ### L4 授权
 
@@ -222,6 +223,9 @@ org.objectweb.asm.**  →  io.doppel.shaded.asm.**
 
 **P0–P1 不做，后面全部没有意义。** P6 是"结构缺失"的分水岭。
 
+> **进度（2026-11-08）**：P6 的算法迁移与 core 启动权归 injector **均已完成**，形状见 9.4；P0–P5 / P7–P9 仍按上表顺序执行。
+> P6 尚余一项：外部 overlay 的 offline 显示（判定依据已在 injector 侧，显示层不进 Kotlin）。
+
 ---
 
 ## 7. 验收
@@ -256,9 +260,9 @@ org.objectweb.asm.**  →  io.doppel.shaded.asm.**
 
 ## 9. 附录：语言与分层审计
 
-### 9.1 代码分布
+### 9.1 代码分布（2026-10 快照，仅供追溯）
 
-| 层 | 行数 | 反射 | 结论 |
+| 层 | 行数 | 反射 | 当时的结论 |
 |---|---|---|---|
 | `core/` | 7,105 | **0** | 全部可搬 Rust |
 | `adapter/common` | 17,832 | 有 | 大部分留 Kotlin（胶水/管道） |
@@ -266,7 +270,7 @@ org.objectweb.asm.**  →  io.doppel.shaded.asm.**
 
 `core/` 内部：
 
-| 包 | 行数 | 处理 |
+| 包 | 行数 | 当时的处理 |
 |---|---|---|
 | `strategy` | 2,936 | 搬 Rust |
 | `algorithm` | 1,021 | 搬 Rust |
@@ -274,13 +278,22 @@ org.objectweb.asm.**  →  io.doppel.shaded.asm.**
 | `model` / `util` | 469 | 搬 Rust |
 | `logging` | 478 | 留 Kotlin |
 
+> **实施后（2026-11-08）**：策略与算法已迁到 `core-rs/src/strategy/`；JVM 侧 `core/` 仍有
+> 65 个 kt 文件，但用途变了——它们是 `ParityTest` 的 **Kotlin oracle**（对拍基准）与
+> `PacketScheduler.kt`（保留作回滚用），**不再被 adapter 引用**，也不进 `agent.jar`。
+> `agent.jar` 内 `io/doppel/core/` 类数为 **0**（CI 守卫）。此表是迁移前的统计，别按行数判断达标。
+
 ### 9.2 什么必须留在 JVM
 
-只有三样：
+早期写「只有三样」，那是进程内 JNI 设想的残留，独立进程模型下不成立。按 9.4 定稿，留在 JVM 的是**平台相关的一层**，且全部不含算法：
 
-1. `agentmain(String, Instrumentation)` —— JVM 按名字调，签名固定
-2. `ClassFileTransformer.transform(...)` —— 接口是 Java 的
-3. `CoreStub` —— IPC 薄桩：快照编组、决策解组、core 进程监督。只有数据，没有业务
+1. `agentmain(String, Instrumentation)` / `ClassFileTransformer.transform(...)` —— JVM 按名字调，签名固定
+2. `CoreStub` / `ipc/Strategies` —— wire 编组、决策解组、会话连接（逻辑判断 + 编组）
+3. `Module` / `ModuleRegistry` / `ConfigManager` / WebUI / `EventBridge` —— 读游戏状态、选项、事件注册
+4. 游戏内 `OverlayRenderer` 与 `HudStateWriter` —— 画兼容层 HUD、写 state 文件（平台副作用）
+5. `Geometry` / `PortableMath` —— 帧级纯函数，**正式豁免**（见 9.4）
+
+**不在 JVM**：计算、算法、策略、随机数、时间窗口、跨 tick 状态。CI 守卫只校验「`io/doppel/core/` 类数为 0」，即按包名而非按语义——换包名能绕过，白名单之外残留的 `kotlin.random` 守卫也抓不到。
 
 ### 9.3 语言能力矩阵
 
@@ -290,30 +303,65 @@ org.objectweb.asm.**  →  io.doppel.shaded.asm.**
 | 拿 `Instrumentation` | `agentmain` | JVMTI `Agent_OnAttach` | 后者更底层 |
 | 读游戏状态 | 反射（留在 JVM 内） | —— | 独立进程方案里 core **永不**碰游戏内存，映射表不用补描述符列 |
 | 改字节码 | ASM | 自己写编辑器 | ASM 仍是最优 |
-| 渲染 | LWJGL 直调 | hook GL / 独立 overlay | native 很痛 |
-| 业务逻辑 | 任意 | 任意 | IPC 边界成本，实测往返 ~10µs（见 9.5） |
+| 渲染 | LWJGL 直调（游戏内兼容层） | 外部 overlay 进程 | 正式 HUD 是外部 Rust overlay |
+| **逻辑判断 / 编组 / 平台副作用** | **只在 Kotlin** | —— | 平台 API 只在 JVM 侧可得（9.4） |
+| **策略 / 算法 / 有状态噪声 / 跨 tick 状态** | 不留 | **只在 Rust core** | 决策状态整体住 core 进程，不过边界 |
 
-### 9.4 目标形态
+> 旧表写「业务逻辑：任意 / 任意」，是进程内时代「放哪都行」的说法，与 9.4「策略全进 core」矛盾，此处更正。
+
+### 9.4 目标形态（2026-11-08 定稿）
+
+一句话：**Kotlin 里只有逻辑判断；计算、算法、策略、随机数、时间窗口与跨 tick 状态全部在外部进程。**
 
 ```
-游戏 JVM（agent.jar）
-├─ Agent.java            入口、Attach、ASM 变换（重定位 ASM）
-├─ Transformer.java      transform() → 改名 / 字符串加密（P2–P5）
-├─ adapter（瘦身）        读游戏状态、应用动作——只有管道，没有策略
-└─ CoreStub.kt           快照编组 → IPC → 决策解组 → 监督 core 进程
-
-core 进程（doppel-core.exe，Rust；游戏内存与注入器里都没有它）
-├─ strategy / algorithm / option / condition / safety / model
-├─ 授权验签（P8）
-├─ 会话状态：策略 FSM、噪声 RNG、调度放行决策
-├─ WebUI 服务：配置面从游戏进程整体迁出（今天它住在 adapter 里）
-└─ --replay 模式：金测回放器
-
-注入器                    只负责注入 agent、拉起 core 与 overlay，不携带 IP
-外部 UI / HUD             ClickGUI 走外部 overlay，HUD 读 state 文件——均不携带 IP
+injector（编排者）
+ ├─ 拉起 core（算法进程）  ← 启动权在这里，不在游戏 JVM
+ └─ 拉起 overlay（外部 HUD）
+        │
+        │  进程状态与会话状态在外部进程侧
+        │
+游戏 JVM / agent.jar ─── wire（双向，Kotlin ↔ core）─── core（doppel-core）
+  Kotlin 只做三件事：                                    ├─ 策略 / 算法 / 计算
+  ① 逻辑判断  enabled / 条件 / 分支                     ├─ 跨 tick 状态、时间窗口
+  ② 编组      收状态→打包→发；收决策→拆包→落地           ├─ 每模块独立 RNG stream
+  ③ 平台副作用 按键、攻击脉冲、事件注册、游戏内渲染        └─ 配置副本（由 Kotlin 下发）
+  不在 Kotlin：计算、算法、策略、随机数、时间窗口、跨 tick 状态
 ```
 
-逆向者 dump 游戏进程：策略和算法不在里面；打开 jar：只有编组和转发。要看懂这套客户端，只能去逆那个独立 exe。
+#### 状态归谁
+
+| 状态 | 归属 | 说明 |
+|---|---|---|
+| 进程生存状态（谁活着、endpoint、pid） | injector | 只有拉起它的人才在外部看得见 |
+| 会话状态（seed、generation、连接存根） | core | Kotlin 不生成 seed、不持有进程生死 |
+| 决策状态（策略 FSM、窗口、RNG、配置副本） | core | 每模块独立 RNG stream，见 IPC-PROTOCOL §9 |
+| 模块开关 / 选项值 | Kotlin 读、打包下发 | 配置是**输入**；存在哪、UI 在哪是另一个议题，不属本形状 |
+| 显示状态 | 外部 overlay 进程 | **外部 HUD 才是正式的**；游戏内那套是迁就模块的兼容层，不删 |
+
+#### offline 是什么
+
+offline **不是 HUD 功能，也不进 Kotlin**。它是外部进程侧对「这条 wire 有没有建立」的观察：没建立 → 显示，建立了 → 不显示。不进 `HUD.kt`、不改 state 文件契约。
+
+把 core 启动权交给 injector 的理由正是这个：现在 JVM 自己拉起 core、自己连自己，外部无从观察沟通是否成立；由 injector 拉起后，沟通链路的起点在外部，外部进程能直接看到它。
+
+#### 三条明确边界
+
+- **几何正式豁免**：`contract/util/Geometry` 与 `contract/math/PortableMath` 留在 JVM。理由不是"走 IPC 会破坏手感"（9.5.1 实测帧预算够用），而是不为每帧通讯付架构成本；它们是对已有数字的算术，不含策略。白名单外的纯函数一律在 core。
+- **逻辑判断的判据**：留在 Kotlin 的 `if` 只能是确定性布尔分支 + 编组 + 平台副作用 + 降级方向；带 `Random`、时间窗口、跨 tick 可变字段的判断不合规（残留见 9.5）。
+- **明确不做**：配置面迁出、seed 归 injector、删除游戏内 HUD——这三项都不在本形状内。配置值作为输入被打包属于编组；`core-rs/src/main.rs` 已有 `seed.unwrap_or_else(now_nanos)`，`hello_ack` 把 seed 回传给 Kotlin，协议一个字节不用改。
+
+#### 落地状态
+
+| 件 | 状态 |
+|---|---|
+| 计算 / 算法 / 策略 / RNG / 窗口搬 core | **已落地**（2026-11-08，六模块收尾，CI 守卫 `io/doppel/core/` 类数为 0） |
+| Kotlin 只留判断与编组 | 基本达成，残留见 9.5 |
+| core 启动权归 injector | **已落地**（2026-11-08）：injector 用 `--port-file` 拉起 core，endpoint 经 `doppel-config.properties` → `Agent.coreInit` → `CoreSupervisor.attach()`；JVM 侧删掉 `locate()` 的隐式扫描与 `ProcessBuilder` 生产路径，`doppel.core.path` 仅作开发/测试回退 |
+| 外部算法进程 ↔ Kotlin 的 wire 沟通 | **已验证**：`CoreSupervisorTest` 模拟 injector 起 core、发布 endpoint、断言 JVM 不 spawn 且一次真实决策往返成功 |
+| offline 作为外部观察点 | **判定依据已就位、显示未做**：injector 是唯一知道「core 有没有被拉起」的实体，`--port-file` 即就绪信号；外部 overlay 据此判断显示与否。不进 Kotlin、不进 `HUD.kt`、不改 state 文件契约 |
+| WebUI / 授权验签 / `--replay` 进 core 进程 | **设计中，未实施**（旧图把它们画成现状，此处更正） |
+
+逆向者 dump 游戏进程：策略和算法不在里面；打开 jar：只有逻辑判断与编组。§0 的立场不变——不追求无法 dump，只提高成本；jar 里的 `CoreStub` / `Strategies` / wire 表仍会暴露「存在外部算法进程」这一事实，本形状不以此为收益。
 
 ---
 
@@ -328,7 +376,7 @@ core 进程（doppel-core.exe，Rust；游戏内存与注入器里都没有它�
 > **全部模块已移植完毕**：aim / click / combat / movement / reach / autoblock / tap /
 > velocity 均改走 `ipc/Strategies.kt`；2026-11-08 又补上最后 6 个把完整逻辑留在 jar 里的模块
 > （Eagle / Backtrack / KnockbackDisplace / Reach / ClickAssist / HitSelect）。它们的窗口状态、
-> 门顺序和随机数流全部迁到 `Module::Player`（id 8），adapter 侧只剩编组与平台副作用；
+> 门顺序和随机数流全部迁到 `Module::Player`（id 8），adapter 侧只剩**逻辑判断、编组与平台副作用**；
 > 六组 Kotlin↔Rust golden 对拍共 2100 行。adapter 侧不再出现任何 `io.doppel.core` 引用，
 > `agent.jar` 内 `io/doppel/core/` 类数为 **0**（CI 有守卫，回退会直接失败）。
 >
@@ -337,14 +385,22 @@ core 进程（doppel-core.exe，Rust；游戏内存与注入器里都没有它�
 > 成立时才问 gate；core 没回答时一律**放行**点击（吞掉真实一击比放过去更糟），与 Reach
 > 的「没回答就不扩展」方向相反。
 >
-> 代价是必然的：**没有 `doppel-core` 进程在跑时，这些模块一动不动**——不是降级，
-> 是完全不动作。启动顺序因此变成「先 core，后游戏」，injector 负责拉起 core。
+> **可见性说明（2026-11-08 定稿）**：没有 `doppel-core` 进程时，这些模块一动不动——
+> 这是 `Strategies` 里 `OfflineAim` / `OfflineClick` 被写成 no-op 的**主动选择**，不是物理定律。
+> 行为不降级，但可见性要降级：offline 由**外部进程**看 wire 是否建立来判断，没建立才显示，
+> 建立了就不显示；它不进 Kotlin、不进 `HUD.kt`、不改 state 文件契约（见 9.4）。
 >
-> **9.4 的「只有编组和转发」尚未完全兑现**：jar 里仍留着 `contract/util/Geometry` 与
-> `PortableMath`（帧级纯函数，走 IPC 会破坏瞄准手感）、Eagle 的 autoPlace 放方块时序，
-> 以及 9 个模块里共 **24 处** `kotlin.random` 时长/概率抖动（STap / WTap / ADTap /
-> BlockHit / AutoBlock 等）。它们不是 `io.doppel.core` 的类，但反编译仍可读；是否继续
-> 外移待定。
+> **与 9.4 定稿形状的差距（2026-11-08 核对）**：
+>
+> | 件 | 2026-11-08 之后 | 目标（9.4） |
+> |---|---|---|
+> | core 启动权 | **injector 拉起**（`resource::launch_core()` + `--port-file`），endpoint 经 `doppel-config.properties` 交给 `CoreSupervisor.attach()`；JVM 不再 `ProcessBuilder`，`doppel.core.path` 仅开发/测试回退 | 达成 |
+> | 状态沟通 | 编排权与进程状态归 injector；injector→JVM 的 config 通道承载 endpoint，JVM↔core 双向 wire 承载决策 | 达成最小闭环；overlay 侧的 offline 显示仍待做 |
+> | 几何 | `contract/util/Geometry` + `PortableMath` 留在 jar | **正式豁免**，留在 jar（白名单，见 9.4） |
+> | 残留抖动 | 11 个文件里仍有 `kotlin.random`（ADTap / WTap / STap / BlockHit / AutoBlock / SuperKnockback / JumpReset / SprintReset / Eagle / ForgeEventBridge / ConfigManager）与 Eagle 的 autoPlace 时序 | 按 9.4 判据不合规，但各自带 RNG 流、搬动会碰 `--replay` 对拍，**显式白名单 + 到期复评**，本轮不处理 |
+>
+> 注：`agent.jar` 内的 `CoreStub` / `Strategies` / wire 表本来就会暴露「存在外部算法进程」，
+> 所以把 offline 从 jar 里挪出去**不是防护增强**，只是架构归位与视觉约束。
 
 P6 从「进程内 JNI（DLL 随 agent 加载进游戏进程）」改为「**独立 core 进程 + 游戏侧薄桩**」。
 决定的三条理由，按重要性排：
@@ -369,7 +425,7 @@ P6 从「进程内 JNI（DLL 随 agent 加载进游戏进程）」改为「**独
 - RTT p50 = 0.019%，p999 = 0.042%
 - 全链路（编组 5µs + RTT p999 + 单次决策按 100µs 算）≈ **0.13ms = 0.25%**
 - 20 TPS 下每秒 IPC 花费 0.19ms ≈ 单核的 0.019%
-- 240fps 的帧预算 4.17ms，往返占 0.23%——帧级也够，但帧级走 9.5.2 的轨迹计划，不需要每帧通讯
+- 240fps 的帧预算 4.17ms，往返占 0.23%——**延迟上帧级也够**；不每帧通讯是架构选择（几何留 JVM，见 9.4），不是性能不可能。9.5.2 的「轨迹计划」尚未实施
 
 落地选择：**先 named pipe**（Windows 本机 socket 等价物），简单够用；真要抠延迟再换共享内存双缓冲，消息边界不变，协议不用改。
 
@@ -397,18 +453,34 @@ tick 边界（50ms 一次）
 | 异步通知 | PacketScheduler 放行决策 | 无往返 |
 | 帧级计划 | 每 tick 返回整条旋转插值曲线 | 每 tick 一次，帧间零通讯 |
 
-帧级平滑走**轨迹计划**：`RotationCalculator.interpolate` 是纯函数，薄桩拿一条曲线本地逐帧执行，帧与帧之间不通讯。
+> **状态修正（2026-11-08）**：上面第三行「帧级计划 / 轨迹计划」是**设计中的方案，未实施**，
+> Done 清单里没有它。按 9.4 定稿，`Geometry` / `PortableMath` 正式豁免、帧级几何留在 JVM，
+> 不存在「每 tick 下发一条曲线」这条链路。9.5.1 那句「帧级也够」只说明延迟预算够，
+> 不构成「已经这么做」；保留几何是**不想每帧通讯的架构选择**，不是性能不可能。
 
 #### 9.5.3 deadline 降级纪律
 
 协议按**延迟**设计，不按吞吐：
 
 - 每个同步决策带 deadline（1ms ≈ p99 的 67 倍）
-- 超时没回 → **本拍沿用上一拍命令**（对修改类动作即跳过本拍），游戏永远不等 core
-- core 进程死了 → 薄桩重启（exe 冷启动 ~10ms 量级），期间全部降级；tick 快照本身就是心跳
+- 超时没回 → **返回 `Pass(original motion)`，不是沿用上一拍命令**：重放一个 `Modify` 会把上一拍的缩放系数又作用到本拍的击退上，位置误差会累积。对修改类动作即跳过本拍，游戏永远不等 core（IPC-PROTOCOL.md §8）
+- core 进程死了 → 下一 tick 重连，察觉到的那一拍降级；快照本身就是心跳，没有独立的 keepalive
 - 崩溃纪律不变：每个入口 `catch_unwind` → 错误码 → 模块降级；进程模型多一层兜底
 
 最坏情况只是丢一拍，不存在「卡住等待」这个状态。
+
+**降级方向不是全局统一的**，按模块各自的失效代价定，这张表此前一直缺：
+
+| op | 无回答时 | 理由 |
+|---|---|---|
+| `PLAYER_HIT_GATE` | **放行点击** | 吞掉真实一击比放过去更糟 |
+| `PLAYER_REACH_SAMPLE` | 返回 `0.0`（不扩展） | 凭空扩展距离更糟 |
+| `PLAYER_CLICK_ASSIST` | 返回 `0`（不加点击） | 未经 core 批准不能凭空造一次点击 |
+| `PLAYER_BACKTRACK_TICK` | `release()` | 宁可放过也不悬着状态 |
+| `Velocity` 同步决策 | `Pass(original motion)` | 见上，`Modify` 不可重放 |
+| 其余 tick 级 op | 本拍无动作 | 状态留在 core，下一拍自然续上 |
+
+`Strategies.online`（= `CoreLink.stub != null`）是**会话/进程在不在**：单次 deadline 超时不算 offline，进程退出或 `start()` 找不到 exe 才算。offline 的显示由外部进程判断，不进 Kotlin（见 9.4）。
 
 #### 9.5.4 边界与状态
 
@@ -416,7 +488,8 @@ JNI 三分类在进程模型下更简单——**所有决策状态都长驻 core
 
 | 分类 | 处理 |
 |---|---|
-| 纯函数（rotateInterp / withinFov3D / VectorOperations） | 搬 core，结果进输出曲线 |
+| 决策形纯函数（withinFov3D / 策略内算术） | 搬 core，结果随决策返回 |
+| **帧级几何白名单**（`Geometry` / `PortableMath`） | **留 JVM**，正式豁免（见 9.4）：对已有数字做算术、每帧每实体调用、不含策略 |
 | 有状态噪声（GaussianNoise / NoiseProvider 的 RNG） | 状态整体住 core 进程，不过边界 |
 | 永不过界（游戏对象 / 字符串 / Map / FSM 胶水） | 留薄桩侧，或变成 wire 数据 |
 
@@ -431,14 +504,19 @@ JNI 三分类在进程模型下更简单——**所有决策状态都长驻 core
 
 #### 9.5.6 工作量
 
-| 步骤 | 估时 | 状态 |
+| 步骤 | 估时 | 状态（2026-11-08） |
 |---|---|---|
 | wire 协议 + 薄桩编组/解组 + 进程监督 | 2–3 天 | **已完成** |
-| core 进程骨架（生命周期 / 握手 / --replay） | 2–3 天 | 骨架与握手已完成；`--replay` 待做 |
-| 策略 + 算法移植（主体） | 3–4 周 | velocity 已完成，其余模块待做 |
-| 金测回放基建 + 对拍清零 | 1 周 | 夹具与对拍已完成（合成数据，真实录像待接） |
-| **合计** | **4–6 周**（与 v1 相当，省掉 JNI 描述符基建） | 约完成 1/4，模式已确立 |
+| core 进程骨架（生命周期 / 握手） | 2–3 天 | **已完成**；`--replay` 回放器仍待做 |
+| 策略 + 算法移植（主体） | 3–4 周 | **已完成**：aim / click / combat / movement / reach / velocity / tap / condition + 最后 6 个 Player 模块，见 9.5 开头 |
+| 金测回放基建 + 对拍清零 | 1 周 | 夹具与 Kotlin↔Rust 对拍已完成（合成数据）；真实录像回放待接 |
+| core 启动权归 injector | — | **已完成**（2026-11-08），含 `--port-file` 交接与 JVM 纯连接路径 |
+| 外部 overlay 的 offline 显示 | — | **未开始**：判定依据已在 injector 侧，显示层不进 Kotlin |
+| **合计** | **4–6 周** | 移植主体与启动权已完成；剩余是 overlay 可见性，不是算法迁移 |
+
+> 旧表曾写「velocity 已完成，其余模块待做 / 约完成 1/4」，与 9.5 开头「全部模块已移植完毕」
+> 直接矛盾，此处按 2026-11-08 实况更正。
 
 ## 10. 一句话总结
 
-> **搬算法进独立进程，不搬管道；留 ASM，只把它改名；先断提取，再谈混淆；参数永远不在客户端。**
+> **Kotlin 里只留逻辑判断与编组，算法和状态全在外部进程；injector 拉起 core 与 overlay，外部就能看见沟通是否成立；留 ASM，只把它改名；先断提取，再谈混淆；参数永远不在客户端。**

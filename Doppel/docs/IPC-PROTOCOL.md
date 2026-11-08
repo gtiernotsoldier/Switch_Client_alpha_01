@@ -249,6 +249,18 @@ tick boundary (50 ms)
   process survives. Losing the gate chain is a quality regression, not a crash.
 - The snapshot **is** the heartbeat. There is no keepalive to misconfigure.
 
+### Offline is not a HUD concern
+
+"Core is not attached" is a **process-liveness fact**, not game state. `Strategies.online`
+(`CoreLink.stub != null`) is the session-level view on the JVM side: a single deadline miss
+does **not** count as offline (the stub is still there), while a process exit or a failed
+`start()` does. Per the 2026-11-08 shape in `PROTECTION.md` §9.4, the offline indicator is
+rendered by an **external process** watching whether this wire got established — absent when
+attached, present when not. It does not enter `HUD.kt`, does not add a HUD entry, and does not
+change the v3 state-file contract. Nothing on the JVM publishes it.
+
+The degraded direction differs per op; see `PROTECTION.md` §9.5.3 for the table.
+
 ## 9. Implementation status
 
 ### Done (in tree, tested)
@@ -354,7 +366,10 @@ nothing in the logs to explain it.
 | Item | Why it is not here |
 |---|---|
 | `PacketScheduler` queue move | Needs the versioned verb table (§9.5.4). The queue stays in Kotlin until `CancelPacket(handle: Any)` becomes an abstract packet id; `Snapshot.packet_id` is reserved for it. The class is currently referenced by nothing, so the table would abstract a call chain that does not exist. |
-| WebUI service move out of the adapter | Independent of the decision path; moving it now would mix two migrations in one diff. |
+| WebUI service move out of the adapter | **Not part of the shape.** Config values are inputs that Kotlin packs into a request; where they are stored and edited is a separate question. |
+| ~~Owner of the core process lifecycle~~ | **Done (2026-11-08).** The injector launches the core (`resource::launch_core()`, `--port-file`) and publishes the endpoint as `doppel.core.endpoint` in `doppel-config.properties`; `Agent.coreInit` sets the property and `CoreSupervisor.attach()` connects only. `doppel.core.path` remains as an explicit dev/test spawn fallback. Wire protocol unchanged — verified by `CoreSupervisorTest`'s external-core round trip. |
+| Seed ownership | **Not part of the shape.** `main.rs` already does `seed.unwrap_or_else(now_nanos)` and `hello_ack` returns the seed to the JVM; the injector passes no `--seed`. |
+| External overlay's offline indicator | Not implemented. The injector is the only entity that knows whether a core was started (`--port-file` is its readiness signal); an external process can read that to decide. It does not enter Kotlin, `HUD.kt`, or the v3 state-file contract. |
 | Windows named pipe transport | §1. Blocked on a JNA decision, not on protocol design. |
 | Windows on-device validation | The sandbox is Linux. Everything here is platform-neutral except `transport.rs`'s `cfg(unix)` branch, which is compiled out on Windows. |
 | Golden replay against real recorded sessions | Current fixture is synthetic (2000 generated snapshots). A real trace needs the adapter to emit one, which is the next slice. |

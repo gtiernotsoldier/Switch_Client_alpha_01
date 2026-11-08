@@ -1,6 +1,5 @@
 package io.doppel.adapter.common.module.combat
 
-import io.doppel.ipc.Strategies
 import io.doppel.contract.model.PlayerState
 import io.doppel.contract.model.TargetState
 import io.doppel.contract.strategy.click.WeaponType
@@ -12,8 +11,8 @@ import io.doppel.adapter.common.option.choices
 import io.doppel.adapter.common.option.float
 import io.doppel.adapter.common.option.int
 import io.doppel.adapter.common.option.triggerOptions
-import kotlin.random.Random
 import io.doppel.contract.option.TriggerOptions
+import io.doppel.ipc.Strategies
 
 /**
  * BlockHit Module — 1.8 exclusive sword block-hit combo.
@@ -29,6 +28,13 @@ import io.doppel.contract.option.TriggerOptions
  * State machine: IDLE → POST_DELAY (optional) → BLOCKING → IDLE
  *
  * Uses physical mouse button state to avoid cross-talk with AutoClicker.
+ *
+ * This module keeps only judgements (physical / synthetic click state, target
+ * guards, the sword filter) and marshalling. The CombatTrigger verdict
+ * (`Strategies.decide`) and the three uniform draws — the post-delay, the
+ * block duration, and the on-enable hit threshold — all run in the core, the
+ * draws on BlockHit's own RNG stream (`CBT_BLOCKHIT_SAMPLE`). No
+ * `kotlin.random` remains here.
  */
 object BlockHit : Module("BlockHit", Category.COMBAT) {
 
@@ -176,8 +182,13 @@ object BlockHit : Module("BlockHit", Category.COMBAT) {
         if (!decision.fire) return
 
         // ---- Execute block-hit ----
-        val postDelayMs = Random.nextInt(postDelayMin, postDelayMax + 1)
-        currentWaitMs = Random.nextInt(waitMsMin, waitMsMax + 1)
+        // Fire point: the post-delay and the block duration are core draws on
+        // BlockHit's own stream, in that order. A missing answer means "do not
+        // block-hit" — never a local guess — and the counters were already
+        // written back above, so the next fire point retries cleanly.
+        val s = sample(Strategies.BlockHitSampleKind.FIRE, player, target) ?: return
+        val postDelayMs = s.postDelayMs
+        currentWaitMs = s.waitMs
 
         if (postDelayMs > 0) {
             postDelayEndNano = now + postDelayMs * 1_000_000L
@@ -213,6 +224,13 @@ object BlockHit : Module("BlockHit", Category.COMBAT) {
         return true
     }
 
+    /** Ask BlockHit's own core RNG stream for the post-delay / wait / threshold draws. */
+    private fun sample(kind: Int, player: PlayerState, target: TargetState?) =
+        Strategies.blockhitSample(
+            player, target, kind,
+            postDelayMin, postDelayMax, waitMsMin, waitMsMax, hitPerMin, hitPerMax
+        )
+
     private fun resetState() {
         hitCounter = 0
         // Don't reset phase — timers need to finish
@@ -222,7 +240,10 @@ object BlockHit : Module("BlockHit", Category.COMBAT) {
 
     override fun onEnable() {
         hitCounter = 0
-        hitPerThreshold = Random.nextInt(hitPerMin, hitPerMax + 1).coerceAtLeast(1)
+        // Seed the throttle from the core's stream. Off-line, keep 1 — the
+        // same value the module used before any block-hit could be computed.
+        hitPerThreshold =
+            sample(Strategies.BlockHitSampleKind.INIT, PlayerState.EMPTY, null)?.threshold ?: 1
         // No syntheticUseOverride: BlockHit ADDS its block on top of the player's own
         // right-click (Raven style). Overriding the whole use key would swallow manual
         // blocking and cause the occasional stuck/unnatural behavior reported.

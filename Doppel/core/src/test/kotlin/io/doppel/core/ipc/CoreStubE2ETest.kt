@@ -516,6 +516,101 @@ class CoreStubE2ETest {
 
     @Test
     @Timeout(value = 60, unit = TimeUnit.SECONDS)
+    fun `autoblock chance gates travel intact over a real socket`() {
+        // The whole path for AutoBlock's chance op: Kotlin marshalling →
+        // TCP → decode_generic → on_combat dispatch → autoblock_sample::sample
+        // → encode_bool → decodeBool. chance 100 and chance 0 are
+        // deterministic (pass / fail) regardless of the generator; a middle
+        // chance still has to come back as a verdict, not an error.
+        val exe = locateCore()
+        assumeTrue(exe != null, "doppel-core not built — run: cd Doppel/core-rs && cargo build")
+        val proc = ProcessBuilder(exe!!.absolutePath, "--listen", "tcp:127.0.0.1:0", "--seed", "424242")
+            .redirectError(ProcessBuilder.Redirect.INHERIT)
+            .start()
+        try {
+            val banner = proc.inputStream.bufferedReader().readLine()
+            assertNotNull(banner, "core produced no LISTEN line")
+            assertTrue(banner!!.startsWith("LISTEN "), "unexpected banner: $banner")
+            val addr = banner.removePrefix("LISTEN ").trim()
+
+            CoreStub(Endpoint.parse("tcp:$addr"), null, deadlineNanos = 20_000_000L).use { stub ->
+                stub.connect()
+                val p = player()
+                var tick = 1
+
+                // A full chance passes without a roll — deterministic across
+                // the two RNGs.
+                val full = stub.autoblockChance(p, null, 100, tick++)
+                assertEquals(true, full, "a full chance passes")
+
+                // chance 0 rolls and always fails — deterministic too.
+                val zero = stub.autoblockChance(p, null, 0, tick++)
+                assertEquals(false, zero, "chance 0 always fails")
+
+                // A middle chance is still a clean verdict, whichever way it lands.
+                val middle = stub.autoblockChance(p, null, 60, tick)
+                assertNotNull(middle, "a middle chance answers, it does not error")
+
+                assertEquals(0L, stub.timeouts.get(), "deadline misses on loopback")
+                assertEquals(0L, stub.degradedTicks.get(), "degraded ticks on a healthy run")
+            }
+        } finally {
+            proc.destroyForcibly()
+            proc.waitFor(5, TimeUnit.SECONDS)
+        }
+    }
+
+    @Test
+    @Timeout(value = 60, unit = TimeUnit.SECONDS)
+    fun `blockhit samples travel intact over a real socket`() {
+        // The whole path for BlockHit's sampling op: Kotlin marshalling →
+        // TCP → decode_generic → on_combat dispatch → blockhit_sample::sample
+        // → encode_scalar → decodeScalar. Degenerate ranges draw nothing, so
+        // the packed codes are deterministic across the two different RNGs.
+        val exe = locateCore()
+        assumeTrue(exe != null, "doppel-core not built — run: cd Doppel/core-rs && cargo build")
+        val proc = ProcessBuilder(exe!!.absolutePath, "--listen", "tcp:127.0.0.1:0", "--seed", "424242")
+            .redirectError(ProcessBuilder.Redirect.INHERIT)
+            .start()
+        try {
+            val banner = proc.inputStream.bufferedReader().readLine()
+            assertNotNull(banner, "core produced no LISTEN line")
+            assertTrue(banner!!.startsWith("LISTEN "), "unexpected banner: $banner")
+            val addr = banner.removePrefix("LISTEN ").trim()
+
+            CoreStub(Endpoint.parse("tcp:$addr"), null, deadlineNanos = 20_000_000L).use { stub ->
+                stub.connect()
+                val p = player()
+                var tick = 1
+
+                // FIRE with degenerate ranges: post-delay 0, wait 40.
+                val fire = stub.blockhitSample(p, null, 0, 0, 0, 40, 40, 1, 1, tick++)
+                assertEquals(40 * 1024.0, fire!!, "post-delay 0, wait 40 over the socket")
+
+                // FIRE with both ranges pinned: post 25, wait 25.
+                val pinned = stub.blockhitSample(p, null, 0, 25, 25, 25, 25, 1, 10, tick++)
+                assertEquals((25 + 25 * 1024).toDouble(), pinned!!, "both draws land in their bands")
+
+                // INIT seeds the hit threshold.
+                val init = stub.blockhitSample(p, null, 1, 0, 0, 0, 0, 3, 3, tick++)
+                assertEquals((3 * 1024 * 1024).toDouble(), init!!, "INIT seeds the threshold")
+
+                // A real range still lands inside the configured band.
+                val random = stub.blockhitSample(p, null, 0, 0, 0, 110, 150, 1, 1, tick)!!
+                val ms = (random.toInt() / 1024) % 1024
+                assertTrue(ms in 110..150, "wait stays in [110, 150], got $ms")
+
+                assertEquals(0L, stub.timeouts.get(), "deadline misses on loopback")
+                assertEquals(0L, stub.degradedTicks.get(), "degraded ticks on a healthy run")
+            }
+        } finally {
+            proc.destroyForcibly()
+            proc.waitFor(5, TimeUnit.SECONDS)
+        }
+    }
+
+    @Test
+    @Timeout(value = 60, unit = TimeUnit.SECONDS)
     fun `a dead core degrades instead of throwing`() {
         // Bind, then close: the stub must treat a refused connection as
         // "degrade this tick", never as an exception escaping into the tick loop.

@@ -401,6 +401,8 @@ object Ops {
     const val CBT_PREDICT = 2       // maxHurt, rtt, lead, predict, window, chance, alpha, seed, tick, opponentJustHit
     const val CBT_RANGE = 3         // mode, min, max, hysteresis, hasDistance, distance
     const val CBT_DECIDE = 4        // flags, minD, maxD, lookAngle, gateChance, mode, hurtGate, maxHurt, targetHurt, counter, threshold, perMin, perMax, triggerChance
+    const val CBT_AUTOBLOCK_CHANCE = 5  // chance → bool (per-tick Chance gate / Lag window start roll); own RNG stream
+    const val CBT_BLOCKHIT_SAMPLE = 6   // kind, postDelayMin/Max, waitMin/Max, hitPerMin/Max → packed scalar (postDelay, wait, threshold); own RNG stream
 
     // reach
     const val REACH_INTERSECT = 0   // minX..maxZ, originX..Z, dirX..Z, maxDist

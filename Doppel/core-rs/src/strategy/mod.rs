@@ -3,7 +3,9 @@
 
 pub mod adtap_sample;
 pub mod aim;
+pub mod autoblock_sample;
 pub mod backtrack;
+pub mod blockhit_sample;
 pub mod click;
 pub mod click_assist;
 pub mod combat;

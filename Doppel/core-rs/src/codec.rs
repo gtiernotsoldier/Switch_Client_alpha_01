@@ -875,6 +875,22 @@ pub mod op {
     /// two draws would interleave differently on each side, and a 300-tick replay
     /// would diverge on the first fire.
     pub const CBT_DECIDE: u8 = 4;
+    /// combat/autoblock: `chance(chance_percent)` → bool. The two chance gates
+    /// that used to run through `kotlin.random.Random` on the JVM: the
+    /// per-tick Chance roll and the Lag window's start roll. One sampler, not
+    /// two kinds, because the call sites are the same algorithm — the stream
+    /// order is the call order, exactly as the JVM's single shared stream saw
+    /// it. Own RNG stream: AutoBlock's rolls must not shift the trigger
+    /// engine's `rng_combat` draws or BlockHit's.
+    pub const CBT_AUTOBLOCK_CHANCE: u8 = 5;
+    /// combat/blockhit: `sample(kind, post_delay_min, post_delay_max, wait_min,
+    ///            wait_max, hit_per_min, hit_per_max)` → packed scalar
+    /// (post-delay, wait, threshold). The two uniform fire-point draws and
+    /// the on-enable threshold draw that used to run through
+    /// `kotlin.random.Random` on the JVM. Own RNG stream: BlockHit's draws
+    /// must not shift AutoBlock's rolls or the trigger engine's. `kind`:
+    /// 0 fire point, 1 module enable.
+    pub const CBT_BLOCKHIT_SAMPLE: u8 = 6;
 
     /// reach: `intersect_box(min_x, min_y, min_z, max_x, max_y, max_z,
     ///          ox, oy, oz, dx, dy, dz)` → bool.

@@ -19,6 +19,8 @@ use crate::model::*;
 use crate::rng::Pcg32;
 use crate::strategy::adtap_sample;
 use crate::strategy::aim::{self, AimConfig, AimState};
+use crate::strategy::autoblock_sample;
+use crate::strategy::blockhit_sample;
 use crate::strategy::click_assist;
 use crate::strategy::click::{self, ClickConfig, ClickState, CooldownClickConfig, CritState};
 use crate::strategy::backtrack;
@@ -78,6 +80,16 @@ pub struct Session {
     /// another's replay, and `rng_tap` (side selection) must not shift either.
     pub rng_adtap: Pcg32,
     pub rng_combat: Pcg32,
+    /// AutoBlock's two chance gates (the per-tick Chance roll and the Lag
+    /// window's start roll). Its own stream: another module's draws — and the
+    /// trigger engine's `rng_combat` rolls, which run in the same ticks — must
+    /// not shift AutoBlock's sequence.
+    pub rng_autoblock: Pcg32,
+    /// BlockHit's post-delay / wait draws and its on-enable threshold draw.
+    /// Its own stream for the same reason: AutoBlock's rolls must not shift
+    /// BlockHit's replay, and neither may touch `rng_combat`, where the
+    /// module's `Chance` already rolls inside `CBT_DECIDE`.
+    pub rng_blockhit: Pcg32,
     /// Eagle's hold-delay roll. Its own stream for the same reason as the rest:
     /// toggling another module must not move this one's sequence.
     pub rng_player: Pcg32,
@@ -193,6 +205,8 @@ impl Session {
             rng_stap: Pcg32::new(seed),
             rng_adtap: Pcg32::new(seed),
             rng_combat: Pcg32::new(seed),
+            rng_autoblock: Pcg32::new(seed),
+            rng_blockhit: Pcg32::new(seed),
             rng_player: Pcg32::new(seed),
             rng_backtrack: Pcg32::new(seed),
             rng_kbd: Pcg32::new(seed),
@@ -987,6 +1001,44 @@ impl Session {
                         r.fire,
                         r.hit_counter,
                         r.hit_threshold,
+                    ))
+                }
+                op::CBT_AUTOBLOCK_CHANCE => {
+                    let input = autoblock_sample::Input {
+                        chance_percent: req.i32(0)?,
+                    };
+                    let rng = &mut self.rng_autoblock;
+                    let out =
+                        autoblock_sample::sample(input, &mut |lo, hi| rng.random_int(lo, hi));
+                    Ok(codec::encode_bool(
+                        seq,
+                        tick,
+                        Module::Combat,
+                        WireAction::Bool,
+                        out.passed,
+                    ))
+                }
+                op::CBT_BLOCKHIT_SAMPLE => {
+                    let kind = blockhit_sample::Kind::from_code(req.i32(0)?)
+                        .ok_or(Status::BadPayload)?;
+                    let input = blockhit_sample::Input {
+                        kind,
+                        post_delay_min: req.i32(1)?,
+                        post_delay_max: req.i32(2)?,
+                        wait_min: req.i32(3)?,
+                        wait_max: req.i32(4)?,
+                        hit_per_min: req.i32(5)?,
+                        hit_per_max: req.i32(6)?,
+                    };
+                    let rng = &mut self.rng_blockhit;
+                    let out =
+                        blockhit_sample::sample(input, &mut |lo, hi| rng.random_int(lo, hi));
+                    Ok(codec::encode_scalar(
+                        seq,
+                        tick,
+                        Module::Combat,
+                        WireAction::Scalar,
+                        blockhit_sample::pack(out) as f64,
                     ))
                 }
                 _ => Err(Status::BadPayload),
@@ -2308,6 +2360,127 @@ mod tests {
             b.rng_stap.next_u32(),
             "STap drew once in b"
         );
+    }
+
+    /// A combat-family request: the velocity snapshot with an op byte and a
+    /// f64 argument vector appended — what `decode_generic` expects.
+    fn combat_args_frame(seq: u32, op_code: u8, args: &[f64]) -> Frame {
+        let (snap, len) = write_snapshot([0.0; 3], 0, 0);
+        let mut f = Frame::new(Kind::Snapshot, seq, 100, Module::Combat);
+        let total = {
+            let p = f.payload_mut();
+            p[..len].copy_from_slice(&snap[32..32 + len]);
+            let mut w = Writer::new(&mut p[len..]);
+            w.u8(op_code);
+            w.u8(args.len() as u8);
+            for a in args {
+                w.f64(*a);
+            }
+            len + w.pos()
+        };
+        f.set_len(total);
+        f
+    }
+
+    /// The bool answer sits at payload offset 2 (action, reason, then the
+    /// u16 verdict) — see `codec::encode_bool`.
+    fn reply_bool(f: &Frame) -> bool {
+        assert_eq!(f.header.kind, Kind::Decision, "expected a decision, got {:?}", f.header.kind);
+        let mut r = Reader::new(&f.payload[2..4]);
+        r.u16().expect("bool answer") != 0
+    }
+
+    #[test]
+    fn autoblock_chance_round_trips_over_the_wire() {
+        // Full chain: decode_generic → on_combat dispatch →
+        // autoblock_sample::sample → encode_bool. chance 100 and chance 0 are
+        // deterministic (pass / fail) regardless of the generator.
+        let mut s = Session::new(1, 42);
+
+        let full = s.handle(&combat_args_frame(1, op::CBT_AUTOBLOCK_CHANCE, &[100.0]));
+        assert!(reply_bool(&full), "a full chance passes without a roll");
+
+        let zero = s.handle(&combat_args_frame(2, op::CBT_AUTOBLOCK_CHANCE, &[0.0]));
+        assert!(!reply_bool(&zero), "chance 0 rolls and always fails");
+
+        // chance 100 must not have advanced the stream; chance 0 must have.
+        let mut fresh = Session::new(1, 42);
+        assert_eq!(
+            s.rng_autoblock.next_u32(),
+            {
+                fresh.handle(&combat_args_frame(3, op::CBT_AUTOBLOCK_CHANCE, &[0.0]));
+                fresh.rng_autoblock.next_u32()
+            },
+            "exactly one roll for the zero chance, none for the full one"
+        );
+    }
+
+    #[test]
+    fn autoblock_and_blockhit_own_independent_rng_streams() {
+        let mut a = Session::new(1, 7);
+        a.handle(&combat_args_frame(1, op::CBT_AUTOBLOCK_CHANCE, &[50.0]));
+        a.handle(&combat_args_frame(2, op::CBT_AUTOBLOCK_CHANCE, &[50.0]));
+
+        let mut b = Session::new(1, 7);
+        // BlockHit draws and a trigger-engine draw interleaved between the two
+        // AutoBlock rolls must not shift AutoBlock's stream — that is the whole
+        // point of separate Pcg32s — and AutoBlock must not shift theirs.
+        b.handle(&combat_args_frame(
+            1,
+            op::CBT_BLOCKHIT_SAMPLE,
+            &[0.0, 10.0, 40.0, 110.0, 150.0, 1.0, 10.0],
+        ));
+        b.handle(&combat_args_frame(2, op::CBT_AUTOBLOCK_CHANCE, &[50.0]));
+        b.handle(&combat_args_frame(3, op::CBT_AUTOBLOCK_CHANCE, &[50.0]));
+
+        assert_eq!(
+            a.rng_autoblock.next_u32(),
+            b.rng_autoblock.next_u32(),
+            "BlockHit draws must not shift AutoBlock's stream"
+        );
+        assert_ne!(
+            a.rng_blockhit.next_u32(),
+            b.rng_blockhit.next_u32(),
+            "BlockHit drew once in b"
+        );
+        assert_eq!(
+            a.rng_combat.next_u32(),
+            b.rng_combat.next_u32(),
+            "neither module may shift the trigger engine's stream"
+        );
+    }
+
+    #[test]
+    fn blockhit_sample_round_trips_over_the_wire() {
+        // Full chain: decode_generic → on_combat dispatch →
+        // blockhit_sample::sample → encode_scalar. Degenerate ranges are
+        // deterministic (no RNG draw), so the packed code is stable across
+        // the two different generators.
+        let mut s = Session::new(1, 42);
+
+        // FIRE with degenerate ranges: post-delay 0, duration 40.
+        let fire = s.handle(&combat_args_frame(
+            1,
+            op::CBT_BLOCKHIT_SAMPLE,
+            &[0.0, 0.0, 0.0, 40.0, 40.0, 1.0, 1.0],
+        ));
+        assert_eq!(jump_step(&fire), 40 * 1024, "post-delay 0, wait 40");
+
+        // FIRE with both ranges live but pinned: post 25, wait 25.
+        let pinned = s.handle(&combat_args_frame(
+            2,
+            op::CBT_BLOCKHIT_SAMPLE,
+            &[0.0, 25.0, 25.0, 25.0, 25.0, 1.0, 10.0],
+        ));
+        assert_eq!(jump_step(&pinned), 25 + 25 * 1024, "both draws land in their degenerate bands");
+
+        // INIT seeds the threshold; the clamp keeps it at least one.
+        let init = s.handle(&combat_args_frame(
+            3,
+            op::CBT_BLOCKHIT_SAMPLE,
+            &[1.0, 0.0, 0.0, 0.0, 0.0, 3.0, 3.0],
+        ));
+        assert_eq!(jump_step(&init), 3 * 1024 * 1024, "INIT seeds the threshold");
     }
 
     #[test]

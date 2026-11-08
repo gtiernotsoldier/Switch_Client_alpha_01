@@ -12,7 +12,6 @@ import io.doppel.adapter.common.option.choices
 import io.doppel.adapter.common.option.float
 import io.doppel.adapter.common.option.int
 import io.doppel.adapter.common.option.triggerOptions
-import kotlin.random.Random
 import io.doppel.contract.option.TriggerOptions
 import io.doppel.ipc.Strategies
 
@@ -39,6 +38,13 @@ private const val RANGE_HYSTERESIS = 1.5f
  * - OnlyPlane / OnlyTargeting / OnlyMove / OnlyMoveForward / OnlyWhenTargetGoesBack.
  * - Plus AutoBlock's own distance range and probability.
  * - Player must hold a sword ([WeaponType.SWORD]).
+ *
+ * This module keeps only judgements (the mode state machines, the unified
+ * condition engine, the attack/debounce bookkeeping) and marshalling. Its two
+ * chance rolls — the per-tick Chance gate and the Lag window's start roll —
+ * run in the core on AutoBlock's own RNG stream (`CBT_AUTOBLOCK_CHANCE`),
+ * alongside the range gate / predictor / arbiter that were already there. No
+ * `kotlin.random` remains here.
  *
  * On disable: automatically releases right-click to prevent stuck key.
  */
@@ -258,7 +264,11 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
             hysteresis = RANGE_HYSTERESIS,
             distance = target?.distance
         )
-        val probPass = probability >= 100 || Random.nextInt(100) < probability
+        // The module's own Chance gate. The roll is a core draw on AutoBlock's own
+        // stream, spent once per armed tick exactly where the JVM module rolled it;
+        // `chance >= 100` never rolls and a missing answer degrades to "do not
+        // block", never a local guess.
+        val probPass = Strategies.autoblockChance(player, target, probability)
 
         if (++diagCount % 40 == 0) {
             CoreLogger.info(
@@ -410,7 +420,10 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
             "Lag" -> {
                 val want = conditionsMet && inRange && probPass && isAttacking
                 val lagging = lagStartNano != 0L
-                if (!lagging && want && (lagChance >= 100 || Random.nextInt(100) < lagChance)) {
+                // The window's start roll is the module's second core draw, spent only
+                // when a window actually wants to start — the same point the JVM
+                // module's short-circuit `&&` reached the roll.
+                if (!lagging && want && Strategies.autoblockChance(player, target, lagChance)) {
                     lagStartNano = nowNs
                     EventBridge.packetLagActive = true
                     markWorked() // a lag window starting is a transition, like a block starting
@@ -493,6 +506,7 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
         // right-click (Raven style). Overriding the whole use key would swallow the
         // player's manual blocking.
         lastAttackNano = 0L
+        lagStartNano = 0L
         Strategies.resetCombat()
         lastSelfHurt = 0
         tickCounter = 0
@@ -504,6 +518,12 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
         releaseBlock()
         EventBridge.syntheticUse = false
         lastAttackNano = 0L
+        // A half-elapsed Lag window must not survive a toggle: on the first tick
+        // back it would read as "already lagging" and keep the packet hold alive
+        // on a stale deadline — the same leak the Reset frames exist to prevent,
+        // on the adapter side of the Lag state machine.
+        lagStartNano = 0L
+        EventBridge.packetLagActive = false
         Strategies.resetCombat()
         lastSelfHurt = 0
     }

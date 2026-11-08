@@ -321,6 +321,52 @@ object Strategies {
         return ADTapSample.fromCode(v.toInt())
     }
 
+    /**
+     * AutoBlock's chance gates — the per-tick Chance roll and the Lag window's
+     * start roll that used to run through `kotlin.random.Random` on the JVM,
+     * now on AutoBlock's own core RNG stream.
+     *
+     * Off-line answers `false` — do not block, do not start a lag window. Same
+     * reasoning as [gate] and [range]: a module whose question cannot be
+     * answered stays idle instead of acting on a guess.
+     */
+    fun autoblockChance(player: PlayerState, target: TargetState?, chance: Int): Boolean {
+        val stub = CoreLink.stub ?: return false
+        return stub.autoblockChance(player, target, chance, nextTick()) ?: false
+    }
+
+    object BlockHitSampleKind {
+        /** Fire point: draw the post-delay and the block duration. */
+        const val FIRE = 0
+        /** Module enabled: seed the hit throttle with a random threshold. */
+        const val INIT = 1
+    }
+
+    /**
+     * BlockHit's range sampling — the post-delay and block-duration draws at
+     * the fire point, and the hit-threshold draw on enable, that used to run
+     * through `kotlin.random.Random` on the JVM. Off-line answers null, and
+     * null means "do not block-hit": a local guess would be a different module.
+     */
+    fun blockhitSample(
+        player: PlayerState,
+        target: TargetState?,
+        kind: Int,
+        postDelayMin: Int,
+        postDelayMax: Int,
+        waitMin: Int,
+        waitMax: Int,
+        hitPerMin: Int,
+        hitPerMax: Int
+    ): BlockHitSample? {
+        val stub = CoreLink.stub ?: return null
+        val v = stub.blockhitSample(
+            player, target, kind, postDelayMin, postDelayMax,
+            waitMin, waitMax, hitPerMin, hitPerMax, nextTick()
+        ) ?: return null
+        return BlockHitSample.fromCode(v.toInt())
+    }
+
     /** Tap side from target motion, or null when there is no target (or no core). */
     fun tapChase(player: PlayerState, target: TargetState?, yaw: Float, leadTicks: Int): Int? {
         val stub = CoreLink.stub ?: return null
@@ -960,6 +1006,26 @@ class ADTapSample(
         @JvmStatic
         fun pack(passed: Boolean, durationMs: Int, gapMs: Int): Int =
             durationMs + 1024 * gapMs + if (passed) 1024 * 1024 else 0
+    }
+}
+
+/** BlockHit's packed sample answer: post-delay / block duration in ms plus the threshold. */
+class BlockHitSample(
+    @JvmField val postDelayMs: Int,
+    @JvmField val waitMs: Int,
+    @JvmField val threshold: Int
+) {
+    companion object {
+        @JvmStatic
+        fun fromCode(code: Int): BlockHitSample = BlockHitSample(
+            code % 1024,
+            (code / 1024) % 1024,
+            code / (1024 * 1024)
+        )
+
+        @JvmStatic
+        fun pack(postDelayMs: Int, waitMs: Int, threshold: Int): Int =
+            postDelayMs + 1024 * waitMs + 1024 * 1024 * threshold
     }
 }
 

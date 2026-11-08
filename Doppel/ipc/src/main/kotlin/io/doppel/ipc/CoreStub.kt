@@ -749,6 +749,54 @@ class CoreStub(
         return decodeBool(f)
     }
 
+    /**
+     * AutoBlock's chance gates — the per-tick Chance roll and the Lag window's
+     * start roll — on AutoBlock's own RNG stream. Null when no core is
+     * attached; callers then do nothing rather than acting on a local guess.
+     */
+    fun autoblockChance(
+        player: io.doppel.contract.model.PlayerState,
+        target: io.doppel.contract.model.TargetState?,
+        chance: Int,
+        tick: Int
+    ): Boolean? {
+        val payload = genericRequest(
+            encodeSnapshot(player, target), Ops.CBT_AUTOBLOCK_CHANCE, chance.toDouble()
+        )
+        val f = roundTrip(Wire.MODULE_COMBAT, payload, tick) ?: return null
+        return decodeBool(f)
+    }
+
+    /**
+     * BlockHit's range sampling — the post-delay and block-duration draws at
+     * the fire point, and the hit-threshold draw on enable; one packed scalar
+     * carries all three, which [io.doppel.ipc.BlockHitSample] unpacks. Null
+     * when no core is attached — the module then blocks nothing rather than
+     * guessing locally.
+     */
+    fun blockhitSample(
+        player: io.doppel.contract.model.PlayerState,
+        target: io.doppel.contract.model.TargetState?,
+        kind: Int,
+        postDelayMin: Int,
+        postDelayMax: Int,
+        waitMin: Int,
+        waitMax: Int,
+        hitPerMin: Int,
+        hitPerMax: Int,
+        tick: Int
+    ): Double? {
+        val payload = genericRequest(
+            encodeSnapshot(player, target), Ops.CBT_BLOCKHIT_SAMPLE,
+            kind.toDouble(),
+            postDelayMin.toDouble(), postDelayMax.toDouble(),
+            waitMin.toDouble(), waitMax.toDouble(),
+            hitPerMin.toDouble(), hitPerMax.toDouble()
+        )
+        val f = roundTrip(Wire.MODULE_COMBAT, payload, tick) ?: return null
+        return decodeScalar(f)
+    }
+
     fun reachIntersect(
         player: io.doppel.contract.model.PlayerState,
         target: io.doppel.contract.model.TargetState?,

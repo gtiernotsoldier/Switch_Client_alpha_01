@@ -299,6 +299,8 @@ The degraded direction differs per op; see `PROTECTION.md` §9.5.3 for the table
 | SuperKnockback phase machine / throttle / force sequence | `strategy/super_knockback.rs` | `SuperKnockbackParityTest`, 500 ticks + `CoreStubE2ETest` real-socket round trip |
 | WTap / STap range draws (post-delay, duration, threshold) | `strategy/tap_sample.rs` | `TapSampleParityTest`, 500 rows + `CoreStubE2ETest` real-socket round trip |
 | ADTap fire-chance / duration / gap draws | `strategy/adtap_sample.rs` | `ADTapSampleParityTest`, 500 rows + `CoreStubE2ETest` real-socket round trip |
+| AutoBlock chance gates (per-tick Chance, Lag window start) | `strategy/autoblock_sample.rs` | `AutoBlockSampleParityTest`, 500 rows + `CoreStubE2ETest` real-socket round trip |
+| BlockHit draws (post-delay, wait, threshold) | `strategy/blockhit_sample.rs` | `BlockHitSampleParityTest`, 500 rows + `CoreStubE2ETest` real-socket round trip |
 
 ### Module request shapes
 
@@ -363,6 +365,31 @@ next 10, the passed flag above that. Side selection stays on `rng_tap`
 (`TAP_SEVEN` / `TAP_RANDOM` / `TAP_CHASE`) and interleaves freely with this op
 because the two streams are independent. A missing answer degrades to "do not
 tap / do not arm a gap" — never a local guess.
+
+`CBT_AUTOBLOCK_CHANCE` (5) closes AutoBlock's `kotlin.random` hole: the two
+chance gates that used to run on the JVM — the per-tick `Chance` roll and the
+Lag window's start roll. Both are the same algorithm
+(`chance >= 100 || nextInt(100) < chance`), so the op takes just `chance` and
+answers a bool; there is no `kind`, and the stream order is simply the call
+order, exactly as the JVM's single shared stream saw it: one roll per armed
+tick (GUI closed, sword held) and one more only when a lag window wants to
+start. The roll never happens at `chance == 100`, always happens at 0 (and
+always fails), on AutoBlock's own `rng_autoblock` stream so neither the
+trigger engine's `rng_combat` draws nor BlockHit's can shift it. A missing
+answer degrades to `false` — do not block — the same direction as `gate` and
+`range`.
+
+`CBT_BLOCKHIT_SAMPLE` (6) does the same for BlockHit: the post-delay and
+block-duration draws at the fire point, and the hit-threshold draw on module
+enable. The module marshals `kind` (0 fire point, 1 enable) plus the three
+range pairs (`postDelayMin/Max`, `waitMin/Max`, `hitPerMin/Max`); the core
+draws the post-delay first and the duration second — the module's original
+order — and `INIT` draws only the threshold, clamped to at least one hit.
+Degenerate ranges never advance the stream, the answer is one packed scalar
+(post-delay in the low 10 bits, wait in the next 10, threshold above that) on
+BlockHit's own `rng_blockhit` stream, and BlockHit's `Chance` itself was
+already rolling inside `CBT_DECIDE` on `rng_combat`. A missing answer
+degrades to "do not block-hit" — never a local guess.
 
 Combat's `CBT_DECIDE` (op 4) is the one op that merges two questions — the
 condition gate and the trigger — into a single request. They have to share a

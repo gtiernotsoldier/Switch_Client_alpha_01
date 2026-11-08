@@ -1007,6 +1007,8 @@ fn emit_golden(dir: &str) -> Result<(), String> {    use std::fs;
     emit_super_knockback_golden(dir)?;
     emit_tap_sample_golden(dir)?;
     emit_adtap_sample_golden(dir)?;
+    emit_autoblock_sample_golden(dir)?;
+    emit_blockhit_sample_golden(dir)?;
     Ok(())
 }
 
@@ -2043,5 +2045,124 @@ fn emit_adtap_sample_golden(dir: &str) -> Result<(), String> {
 
     fs::write(format!("{}/adtap_sample_input.tsv", dir), input).map_err(|e| e.to_string())?;
     fs::write(format!("{}/adtap_sample_expected.tsv", dir), expected).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// AutoBlock's two chance gates, replayed over a fixed input sequence.
+///
+/// Same discipline as the other samplers: the rolls are scripted per row
+/// because Pcg32 and `kotlin.random` are different generators, and `draws` in
+/// the expected file is what catches a port that rolls a full chance, skips
+/// the roll at chance 0, or rolls a different range than `nextInt(100)`.
+fn emit_autoblock_sample_golden(dir: &str) -> Result<(), String> {
+    use std::fs;
+
+    let mut input = String::new();
+    input.push_str("# doppel-autoblock-sample-golden v1\n");
+    input.push_str("# idx\tchance\troll\n");
+
+    let mut expected = String::new();
+    expected.push_str("# idx\tpassed\tdraws\n");
+
+    let mut rng = Pcg32::new(0x0000_5EED_A0B1_0001);
+
+    for i in 0..500 {
+        // chance: 100 never rolls, 0 always fails, the middle is a real roll —
+        // the three behaviours the original `||` gate could produce.
+        let chance = match rng.random_int(0, 9) {
+            0 => 100,
+            1 => 0,
+            _ => rng.random_int(1, 99),
+        };
+        let roll = rng.random_int(0, 99);
+
+        input.push_str(&format!("{}\t{}\t{}\n", i, chance, roll));
+
+        let script = [roll];
+        let mut rolls = script.into_iter();
+        let mut draws = 0;
+        let out = strategy::autoblock_sample::sample(
+            strategy::autoblock_sample::Input { chance_percent: chance },
+            &mut |_, _| {
+                draws += 1;
+                rolls.next().unwrap_or(0)
+            },
+        );
+        expected.push_str(&format!("{}\t{}\t{}\n", i, out.passed as i32, draws));
+    }
+
+    fs::write(format!("{}/autoblock_sample_input.tsv", dir), input).map_err(|e| e.to_string())?;
+    fs::write(format!("{}/autoblock_sample_expected.tsv", dir), expected).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// BlockHit's post-delay / wait draws and its on-enable threshold draw,
+/// replayed over a fixed input sequence.
+///
+/// Same discipline as the WTap / STap fixture: the rolls are scripted per row
+/// because Pcg32 and `kotlin.random` are different generators, and `draws` in
+/// the expected file is what catches a port that swaps the two fire draws,
+/// draws for a degenerate range, or forgets the `coerceAtLeast(1)` clamp.
+fn emit_blockhit_sample_golden(dir: &str) -> Result<(), String> {
+    use std::fs;
+
+    let mut input = String::new();
+    input.push_str("# doppel-blockhit-sample-golden v1\n");
+    input.push_str("# idx\tkind\tpost_min\tpost_max\twait_min\twait_max\tper_min\tper_max\troll1\troll2\n");
+
+    let mut expected = String::new();
+    expected.push_str("# idx\tcode\tpost_delay_ms\twait_ms\tthreshold\tdraws\n");
+
+    let mut rng = Pcg32::new(0x0000_5EED_B10D_0001);
+
+    for i in 0..500 {
+        // Independent dice per field, so no branch is unreachable: a shared
+        // pick would couple kind and the ranges and leave the INIT path cold.
+        let kind = rng.random_int(0, 1);
+        let post_min = rng.random_int(0, 500);
+        let post_max = if rng.random_int(0, 9) == 0 { post_min } else { rng.random_int(0, 500) };
+        let wait_min = rng.random_int(1, 500);
+        let wait_max = if rng.random_int(0, 9) == 0 { wait_min } else { rng.random_int(1, 500) };
+        let per_min = rng.random_int(1, 10);
+        let per_max = if rng.random_int(0, 9) == 0 { per_min } else { rng.random_int(1, 10) };
+        let roll1 = rng.random_int(0, 499);
+        let roll2 = rng.random_int(0, 499);
+
+        input.push_str(&format!(
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+            i, kind, post_min, post_max, wait_min, wait_max, per_min, per_max, roll1, roll2
+        ));
+
+        let script = [roll1, roll2];
+        let mut rolls = script.into_iter();
+        let mut draws = 0;
+        let out = strategy::blockhit_sample::sample(
+            strategy::blockhit_sample::Input {
+                kind: strategy::blockhit_sample::Kind::from_code(kind).unwrap(),
+                post_delay_min: post_min,
+                post_delay_max: post_max,
+                wait_min: wait_min,
+                wait_max: wait_max,
+                hit_per_min: per_min,
+                hit_per_max: per_max,
+            },
+            &mut |_, _| {
+                draws += 1;
+                rolls.next().unwrap_or(0)
+            },
+        );
+        expected.push_str(&format!(
+            "{}\t{}\t{}\t{}\t{}\t{}\n",
+            i,
+            strategy::blockhit_sample::pack(out),
+            out.post_delay_ms,
+            out.wait_ms,
+            out.threshold,
+            draws
+        ));
+    }
+
+    fs::write(format!("{}/blockhit_sample_input.tsv", dir), input).map_err(|e| e.to_string())?;
+    fs::write(format!("{}/blockhit_sample_expected.tsv", dir), expected).map_err(|e| e.to_string())?;
     Ok(())
 }

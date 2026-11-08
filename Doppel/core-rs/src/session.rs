@@ -29,6 +29,7 @@ use crate::strategy::jump_reset;
 use crate::strategy::knockback_displace;
 use crate::strategy::reach_sample;
 use crate::strategy::sprint_reset;
+use crate::strategy::super_knockback;
 use crate::strategy::movement::{self, SocdResolver};
 use crate::strategy::reach;
 use crate::strategy::tap::{self, TapStateMachine};
@@ -91,6 +92,9 @@ pub struct Session {
     /// never on a pump tick — the velocity and tick threads must not be able
     /// to shift each other's stream by scheduling differences.
     pub rng_jump_reset: Pcg32,
+    /// SuperKnockback's fire-probability roll. Drawn only at the fire point;
+    /// the state machine's idle / delayed / coordinating ticks never advance it.
+    pub rng_super_knockback: Pcg32,
     pub config: VelocityConfig,
     pub velocity: velocity::State,
 
@@ -140,6 +144,10 @@ pub struct Session {
     /// the velocity (knock) and tick (pump) call sites.
     pub jump_reset: jump_reset::State,
 
+    /// SuperKnockback: the phase machine, the delay deadline, the coordination
+    /// offset, the SprintTap force sequence and the per-target hit throttle.
+    pub super_knockback: super_knockback::State,
+
     pub ticks: u64,
     pub decisions: u64,
     pub degraded: u64,
@@ -180,6 +188,7 @@ impl Session {
             rng_eagle_place: Pcg32::new(seed),
             rng_sprint_reset: Pcg32::new(seed),
             rng_jump_reset: Pcg32::new(seed),
+            rng_super_knockback: Pcg32::new(seed),
             config: VelocityConfig::default(),
             velocity: velocity::State::new(),
             aim_config: AimConfig::default(),
@@ -202,6 +211,7 @@ impl Session {
             eagle_place: eagle_place::State::default(),
             sprint_reset: sprint_reset::State::new(),
             jump_reset: jump_reset::State::new(),
+            super_knockback: super_knockback::State::new(),
             ticks: 0,
             decisions: 0,
             degraded: 0,
@@ -274,6 +284,7 @@ impl Session {
                 self.eagle_place = eagle_place::State::default();
                 self.sprint_reset = sprint_reset::State::new();
                 self.jump_reset = jump_reset::State::new();
+                self.super_knockback = super_knockback::State::new();
             }
         }
         Frame::new(Kind::Reset, frame.header.seq, frame.header.tick, module)
@@ -1206,6 +1217,37 @@ impl Session {
                         step.code() as f64,
                     ))
                 }
+                op::PLAYER_SUPER_KNOCKBACK => {
+                    let input = super_knockback::Input {
+                        now_ns: req.arg(0)? as i64,
+                        has_target: req.bool(1)?,
+                        trigger_ok: req.bool(2)?,
+                        in_range: req.bool(3)?,
+                        gate_ok: req.bool(4)?,
+                        entity_id: req.i32(5)?,
+                        chance: req.i32(6)?,
+                        hit_count: req.i32(7)?,
+                        delay_ms: req.i32(8)?,
+                        mode: req.i32(9)?,
+                        sprint_tap_allowed: req.bool(10)?,
+                        coordination_active: req.bool(11)?,
+                    };
+                    let state = self.super_knockback;
+                    let rng = &mut self.rng_super_knockback;
+                    // Kotlin's `Random.nextInt(100)` is [0, 100); the closure
+                    // is invoked only when chance < 100 and the fire point is
+                    // actually reached.
+                    let (code, next) =
+                        super_knockback::tick(state, input, &mut || rng.random_int(0, 99));
+                    self.super_knockback = next;
+                    Ok(codec::encode_scalar(
+                        seq,
+                        tick,
+                        Module::Player,
+                        WireAction::Scalar,
+                        code as f64,
+                    ))
+                }
                 _ => Err(Status::BadPayload),
             }
         };
@@ -1938,6 +1980,120 @@ mod tests {
         b.handle(&jump_knock_frame(2, true, 1_000_000_000, 50, 1, 0, 1, 0));
 
         assert_eq!(a.rng_jump_reset.next_u32(), b.rng_jump_reset.next_u32());
+    }
+
+    /// A SuperKnockback request: twelve f64 args after the op byte.
+    #[allow(clippy::too_many_arguments)]
+    fn super_knockback_frame(
+        seq: u32,
+        now_ns: i64,
+        has_target: bool,
+        trigger_ok: bool,
+        in_range: bool,
+        gate_ok: bool,
+        entity_id: i32,
+        chance: i32,
+        hit_count: i32,
+        delay_ms: i32,
+        mode: i32,
+        sprint_tap_allowed: bool,
+        coordination_active: bool,
+    ) -> Frame {
+        let (snap, len) = write_snapshot([0.0; 3], 0, 0);
+        let mut f = Frame::new(Kind::Snapshot, seq, 100, Module::Player);
+        let total = {
+            let p = f.payload_mut();
+            p[..len].copy_from_slice(&snap[32..32 + len]);
+            let mut w = Writer::new(&mut p[len..]);
+            w.u8(op::PLAYER_SUPER_KNOCKBACK);
+            w.u8(12);
+            w.f64(now_ns as f64);
+            w.f64(has_target as u8 as f64);
+            w.f64(trigger_ok as u8 as f64);
+            w.f64(in_range as u8 as f64);
+            w.f64(gate_ok as u8 as f64);
+            w.f64(entity_id as f64);
+            w.f64(chance as f64);
+            w.f64(hit_count as f64);
+            w.f64(delay_ms as f64);
+            w.f64(mode as f64);
+            w.f64(sprint_tap_allowed as u8 as f64);
+            w.f64(coordination_active as u8 as f64);
+            len + w.pos()
+        };
+        f.set_len(total);
+        f
+    }
+
+    #[test]
+    fn super_knockback_round_trips_over_the_wire() {
+        // Full chain: decode_generic → on_player dispatch →
+        // super_knockback::tick → encode_scalar. chance=100 skips the draw;
+        // Old's fire step (5) sits in the high nibble.
+        let mut s = Session::new(1, 42);
+        let f = s.handle(&super_knockback_frame(
+            1, 1_000_000_000, true, true, true, true, 7, 100, 1, 0, 1, false, false,
+        ));
+        assert_eq!(jump_step(&f), 80, "OLD fire over the wire");
+        assert_eq!(s.super_knockback.hit_counter, 0);
+
+        // A closed gate neither counts the hit nor draws.
+        let f = s.handle(&super_knockback_frame(
+            2, 1_050_000_000, true, true, true, false, 7, 50, 1, 0, 1, false, false,
+        ));
+        assert_eq!(jump_step(&f), 0);
+        assert_eq!(s.super_knockback.hit_counter, 0);
+    }
+
+    #[test]
+    fn super_knockback_delay_and_sprint_tap_share_one_state() {
+        let mut s = Session::new(2, 42);
+        // SprintTap arms the force sequence (fire step 4 in the high nibble).
+        let armed = s.handle(&super_knockback_frame(
+            1, 1_000_000_000, true, true, true, true, 7, 100, 1, 0, 0, true, false,
+        ));
+        assert_eq!(jump_step(&armed), 64);
+        assert_eq!(s.super_knockback.phase, super_knockback::Phase::SprintTap);
+
+        // The next tick advances the SprintTap machine in the low nibble while
+        // the trigger stays quiet: two independent writes, one scalar answer.
+        let advancing = s.handle(&super_knockback_frame(
+            2, 1_050_000_000, true, false, true, true, 7, 100, 1, 0, 0, false, false,
+        ));
+        assert_eq!(jump_step(&advancing), 1, "BREAK in the low nibble");
+
+        // A delayed SneakPacket fire arms on the hit and fires at its deadline.
+        let delayed = s.handle(&super_knockback_frame(
+            3, 1_100_000_000, true, true, true, true, 7, 100, 1, 100, 2, false, false,
+        ));
+        assert_eq!(jump_step(&delayed), 0);
+        assert_eq!(s.super_knockback.phase, super_knockback::Phase::Delay);
+        let before = s.handle(&super_knockback_frame(
+            4, 1_150_000_000, true, false, true, true, 7, 100, 1, 100, 2, false, false,
+        ));
+        assert_eq!(jump_step(&before), 0, "deadline not reached");
+        let fired = s.handle(&super_knockback_frame(
+            5, 1_200_000_000, true, false, true, true, 7, 100, 1, 100, 2, false, false,
+        ));
+        assert_eq!(jump_step(&fired), 96, "SNEAK_PACKET fire at the deadline");
+        assert_eq!(s.super_knockback.phase, super_knockback::Phase::Idle);
+    }
+
+    #[test]
+    fn super_knockback_has_its_own_rng_stream() {
+        let mut a = Session::new(1, 7);
+        a.handle(&super_knockback_frame(
+            1, 1_000_000_000, true, true, true, true, 7, 50, 1, 0, 1, false, false,
+        ));
+        let mut b = Session::new(1, 7);
+        b.handle(&eagle_frame(1, true, true, false, 1, 5)); // one sneak draw (rng_player)
+        b.handle(&super_knockback_frame(
+            2, 1_000_000_000, true, true, true, true, 7, 50, 1, 0, 1, false, false,
+        ));
+        assert_eq!(
+            a.rng_super_knockback.next_u32(),
+            b.rng_super_knockback.next_u32()
+        );
     }
 
     #[test]

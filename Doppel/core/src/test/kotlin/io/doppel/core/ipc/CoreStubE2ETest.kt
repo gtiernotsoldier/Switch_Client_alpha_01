@@ -339,6 +339,76 @@ class CoreStubE2ETest {
 
     @Test
     @Timeout(value = 60, unit = TimeUnit.SECONDS)
+    fun `super knockback decisions travel intact over a real socket`() {
+        // The whole path for the SuperKnockback op: Kotlin marshalling → TCP →
+        // decode_generic → on_player dispatch → super_knockback::tick →
+        // encode_scalar → decodeScalar. chance=100 skips the draw, so the
+        // packed step codes are deterministic across the two different RNGs.
+        val exe = locateCore()
+        assumeTrue(exe != null, "doppel-core not built — run: cd Doppel/core-rs && cargo build")
+        val proc = ProcessBuilder(exe!!.absolutePath, "--listen", "tcp:127.0.0.1:0", "--seed", "424242")
+            .redirectError(ProcessBuilder.Redirect.INHERIT)
+            .start()
+        try {
+            val banner = proc.inputStream.bufferedReader().readLine()
+            assertNotNull(banner, "core produced no LISTEN line")
+            assertTrue(banner!!.startsWith("LISTEN "), "unexpected banner: $banner")
+            val addr = banner.removePrefix("LISTEN ").trim()
+
+            CoreStub(Endpoint.parse("tcp:$addr"), null, deadlineNanos = 20_000_000L).use { stub ->
+                stub.connect()
+                val p = player()
+                var tick = 1
+                var now = 1_000_000_000L
+
+                // Old, chance=100, delay=0 → fire step 5 in the high nibble.
+                val old = stub.playerSuperKnockback(
+                    p, null, now, true, true, true, true, 7, 100, 1, 0, 1, false, false, tick++
+                )
+                assertEquals(80, old, "OLD fire over the socket")
+
+                // SprintTap arms the force sequence; the next tick advances it
+                // while the trigger stays quiet — the low nibble must survive.
+                now += 50_000_000L
+                val armed = stub.playerSuperKnockback(
+                    p, null, now, true, true, true, true, 7, 100, 1, 0, 0, true, false, tick++
+                )
+                assertEquals(64, armed, "SPRINT_TAP fire arms the sequence")
+                now += 50_000_000L
+                val advancing = stub.playerSuperKnockback(
+                    p, null, now, true, false, true, true, 7, 100, 1, 0, 0, false, false, tick++
+                )
+                assertEquals(1, advancing, "BREAK step travels in the low nibble")
+
+                // A delayed SneakPacket fire arms on the hit and fires at its
+                // deadline on a later tick, through the same shared state.
+                now += 50_000_000L
+                val delayed = stub.playerSuperKnockback(
+                    p, null, now, true, true, true, true, 7, 100, 1, 100, 2, false, false, tick++
+                )
+                assertEquals(0, delayed, "armed, nothing yet")
+                now += 50_000_000L
+                val waiting = stub.playerSuperKnockback(
+                    p, null, now, true, false, true, true, 7, 100, 1, 100, 2, false, false, tick++
+                )
+                assertEquals(0, waiting, "still quiet before the deadline")
+                now += 50_000_000L
+                val fired = stub.playerSuperKnockback(
+                    p, null, now, true, false, true, true, 7, 100, 1, 100, 2, false, false, tick
+                )
+                assertEquals(96, fired, "SNEAK_PACKET fires at the deadline")
+
+                assertEquals(0L, stub.timeouts.get(), "deadline misses on loopback")
+                assertEquals(0L, stub.degradedTicks.get(), "degraded ticks on a healthy run")
+            }
+        } finally {
+            proc.destroyForcibly()
+            proc.waitFor(5, TimeUnit.SECONDS)
+        }
+    }
+
+    @Test
+    @Timeout(value = 60, unit = TimeUnit.SECONDS)
     fun `a dead core degrades instead of throwing`() {
         // Bind, then close: the stub must treat a refused connection as
         // "degrade this tick", never as an exception escaping into the tick loop.

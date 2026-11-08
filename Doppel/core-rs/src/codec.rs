@@ -943,6 +943,16 @@ pub mod op {
     /// RNG stream. The tick thread only pumps the clock.
     pub const PLAYER_JUMP_KNOCK: u8 = 9;
     pub const PLAYER_JUMP_PUMP: u8 = 10;
+    /// player/super_knockback: `tick(now_ns, has_target, trigger_ok, in_range,
+    ///        gate_ok, entity_id, chance, hit_count, delay_ms, mode,
+    ///        sprint_tap_allowed, coordination_active)` → packed step.
+    ///
+    /// The phase machine (Idle / Delay / SprintTap), the delay deadline, the
+    /// coordination offset, the SprintTap force sequence, the per-target
+    /// hit-count throttle and the chance roll all live in the core. One scalar
+    /// carries two actions: the SprintTap step at the top of the tick and a
+    /// fire step from the trigger evaluation later in the same tick.
+    pub const PLAYER_SUPER_KNOCKBACK: u8 = 11;
 }
 
 /// Maps a side to the wire's 0/1.
@@ -1043,6 +1053,7 @@ pub fn known_ops(module: Module) -> &'static [u8] {
             op::PLAYER_SPRINT_RESET,
             op::PLAYER_JUMP_KNOCK,
             op::PLAYER_JUMP_PUMP,
+            op::PLAYER_SUPER_KNOCKBACK,
         ],
         Module::Velocity => &[op::VEL_BRACE, op::VEL_DELAY_ENQUEUE, op::VEL_DELAY_PUMP],
         _ => &[],

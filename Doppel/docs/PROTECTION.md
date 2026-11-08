@@ -355,7 +355,7 @@ offline **不是 HUD 功能，也不进 Kotlin**。它是外部进程侧对「�
 | 件 | 状态 |
 |---|---|
 | 计算 / 算法 / 策略 / RNG / 窗口搬 core | **已落地**（2026-11-08，六模块 + Eagle autoPlace 时序 + Reset 族，CI 守卫 `io/doppel/core/` 类数为 0） |
-| Kotlin 只留判断与编组 | **六模块 + Eagle autoPlace + SprintReset + JumpReset 达成**：`PLAYER_EAGLE_PLACE` 把 aim 状态机搬进 core；`PLAYER_SPRINT_RESET` 把上升沿、hitCount 节流、delay 窗口与概率掷骰搬进 core；`PLAYER_JUMP_KNOCK` / `PLAYER_JUMP_PUMP` 把 chance 掷骰、双模式冷却与 delay 窗口搬进 core，模块只剩门判断（内部条件 / 正面角度几何 / gate / jump 时刻仍在疾跑）、编组、step 落地与平台副作用。Reset 族只剩 SuperKnockback；其余 `kotlin.random` 残留见 9.5（显式白名单，本轮不处理） |
+| Kotlin 只留判断与编组 | **六模块 + Eagle autoPlace + Reset 族（SprintReset / JumpReset / SuperKnockback）达成**：`PLAYER_EAGLE_PLACE` 把 aim 状态机搬进 core；`PLAYER_SPRINT_RESET` 把上升沿、hitCount 节流、delay 窗口与概率掷骰搬进 core；`PLAYER_JUMP_KNOCK` / `PLAYER_JUMP_PUMP` 把 chance 掷骰、双模式冷却与 delay 窗口搬进 core；`PLAYER_SUPER_KNOCKBACK` 把 phase 状态机、delay 窗口、协调偏移、SprintTap 三拍 force 序列、per-target 节流与概率掷骰搬进 core。模块只剩门判断、编组、step 落地与平台副作用；`SuperKnockback` 一个 answer 打包两个平台写。其余 `kotlin.random` 残留见 9.5（显式白名单，本轮不处理） |
 | core 启动权归 injector | **已落地**（2026-11-08）：injector 用 `--port-file` 拉起 core，endpoint 经 `doppel-config.properties` → `Agent.coreInit` → `CoreSupervisor.attach()`；JVM 侧删掉 `locate()` 的隐式扫描与 `ProcessBuilder` 生产路径，`doppel.core.path` 仅作开发/测试回退 |
 | 外部算法进程 ↔ Kotlin 的 wire 沟通 | **已验证**：`CoreSupervisorTest` 模拟 injector 起 core、发布 endpoint、断言 JVM 不 spawn 且一次真实决策往返成功 |
 | offline 作为外部观察点 | **判定依据已就位、显示未做**：injector 是唯一知道「core 有没有被拉起」的实体，`--port-file` 即就绪信号；外部 overlay 据此判断显示与否。不进 Kotlin、不进 `HUD.kt`、不改 state 文件契约 |
@@ -382,8 +382,11 @@ offline **不是 HUD 功能，也不进 Kotlin**。它是外部进程侧对「�
 > 真实 socket 有 E2E 覆盖），Eagle 遂成为「模块里只有逻辑判断」的样板。Reset 族按一次一个推进：
 > SprintReset 的上升沿 / 节流 / delay 窗口 / 概率掷骰 → `strategy::sprint_reset`（第八组 400 tick
 > 对拍，真实 socket E2E）；JumpReset 的 chance 掷骰 / Ticks 与 ReceivedHits 冷却 / delay 窗口 →
-> `strategy::jump_reset` 的 knock / pump 双 op（第九组 500 事件对拍，真实 socket E2E），模块只剩
-> 内部条件、正面角度几何、统一门与「jump 时刻仍在疾跑」判断。adapter 侧不再出现任何
+> `strategy::jump_reset` 的 knock / pump 双 op（第九组 500 事件对拍，真实 socket E2E）；SuperKnockback
+> 的 Idle/Delay/SprintTap phase、协调偏移、三拍 force 序列、per-target 节流与 chance 掷骰 →
+> `strategy::super_knockback`（第十组 500 tick 对拍，真实 socket E2E，answer 低四位装 force step、
+> 高四位装 fire step）。Reset 族至此全部完成；模块只剩内部条件、正面角度几何、统一门、
+> jump/force 时刻的判断、编组与平台副作用。adapter 侧不再出现任何
 > `io.doppel.core` 引用，`agent.jar` 内 `io/doppel/core/` 类数为 **0**（CI 有守卫，回退会直接失败）。
 >
 > **HitSelect 是唯一跨线程的一个**：tick 侧喂状态、render 侧在点击时问结果，两个 op 共用
@@ -403,10 +406,11 @@ offline **不是 HUD 功能，也不进 Kotlin**。它是外部进程侧对「�
 > | core 启动权 | **injector 拉起**（`resource::launch_core()` + `--port-file`），endpoint 经 `doppel-config.properties` 交给 `CoreSupervisor.attach()`；JVM 不再 `ProcessBuilder`，`doppel.core.path` 仅开发/测试回退 | 达成 |
 > | 状态沟通 | 编排权与进程状态归 injector；injector→JVM 的 config 通道承载 endpoint，JVM↔core 双向 wire 承载决策 | 达成最小闭环；overlay 侧的 offline 显示仍待做 |
 > | 几何 | `contract/util/Geometry` + `PortableMath` 留在 jar | **正式豁免**，留在 jar（白名单，见 9.4） |
-> | 残留抖动 | 不带随机算法的平台抖动（ADTap / WTap / STap / BlockHit / AutoBlock / ForgeEventBridge / ConfigManager 等）与仍在迁移的 Reset 族（SuperKnockback） | 按 9.4 判据不合规，但各自带 RNG 流、搬动会碰 `--replay` 对拍，**显式白名单 + 到期复评**，按族逐个迁移 |
+> | 残留抖动 | 不带随机算法的平台抖动（ADTap / WTap / STap / BlockHit / AutoBlock / ForgeEventBridge / ConfigManager 等） | 按 9.4 判据不合规，但各自带 RNG 流、搬动会碰 `--replay` 对拍，**显式白名单 + 到期复评**；Reset 族已全部迁完，不再列在此项 |
 > | Eagle autoPlace 时序 | **已迁移（2026-11-08）**：aim-in-flight / 等待计数 / 冷却与随机抽样全部进 `strategy::eagle_place`（`PLAYER_EAGLE_PLACE` = 7，独立 `rng_eagle_place` 流）；模块只剩门判断 `shouldAutoPlace`、几何容差判断 `pitchInTolerance`、编组、`when(step)` 落地与平台副作用 | 达成；`EaglePlaceParityTest` 320 tick 对拍，真实 socket 往返有 E2E 覆盖 |
 > | SprintReset 决策 | **已迁移（2026-11-08）**：上升沿 / hitCount 节流 / 目标切换 / delay 窗口 / 概率掷骰全部进 `strategy::sprint_reset`（`PLAYER_SPRINT_RESET` = 8，独立 `rng_sprint_reset` 流）；模块只剩门判断（gate / range / hurt）、编组、`when(step)` 落地与平台副作用 | 达成；`SprintResetParityTest` 400 tick 对拍，真实 socket 往返有 E2E 覆盖 |
 > | JumpReset 决策 | **已迁移（2026-11-08）**：chance 掷骰 / Ticks 与 ReceivedHits 冷却 / pending jump 与 deadline 全部进 `strategy::jump_reset`（`PLAYER_JUMP_KNOCK` = 9 / `PLAYER_JUMP_PUMP` = 10，独立 `rng_jump_reset` 流，pump 永不掷骰）；模块只剩内部条件、正面角度几何、统一门、jump 时刻仍在疾跑的判断、编组与 `queueJump` 平台副作用 | 达成；`JumpResetParityTest` 500 事件对拍，真实 socket 往返有 E2E 覆盖 |
+> | SuperKnockback 决策 | **已迁移（2026-11-08）**：phase 状态机 / delay 窗口 / 协调偏移 / SprintTap 三拍 force 序列 / per-target hitCount 节流 / chance 掷骰全部进 `strategy::super_knockback`（`PLAYER_SUPER_KNOCKBACK` = 11，独立 `rng_super_knockback` 流，只在 fire point 掷骰）；模块只剩 trigger 风格、range、gate、server sprint mirror、isMovingForward、协调标志等判断、编组与 C0B / sprint-claim 平台副作用 | 达成；`SuperKnockbackParityTest` 500 tick 对拍，真实 socket 往返有 E2E 覆盖；**Reset 族完成** |
 >
 > 注：`agent.jar` 内的 `CoreStub` / `Strategies` / wire 表本来就会暴露「存在外部算法进程」，
 > 所以把 offline 从 jar 里挪出去**不是防护增强**，只是架构归位与视觉约束。
@@ -488,6 +492,7 @@ tick 边界（50ms 一次）
 | `PLAYER_EAGLE_PLACE` | 不写 rotation、不点击 | 未经 core 决策放下的方块收不回来；已持有的右键仍照常释放 |
 | `PLAYER_SPRINT_RESET` | 不发包 | 未经 core 决策凭空造一次 C0B/C03 突发，比漏发更糟 |
 | `PLAYER_JUMP_KNOCK` / `PLAYER_JUMP_PUMP` | 不排队 jump | 未经 core 决策凭空按一次跳跃键，比漏跳更糟 |
+| `PLAYER_SUPER_KNOCKBACK` | 不写 C0B、不写 sprint claim | 未经 core 决策凭空造一次 sprint 突发或强制 sprint 声明，比漏一拍更糟 |
 | `PLAYER_BACKTRACK_TICK` | `release()` | 宁可放过也不悬着状态 |
 | `Velocity` 同步决策 | `Pass(original motion)` | 见上，`Modify` 不可重放 |
 | 其余 tick 级 op | 本拍无动作 | 状态留在 core，下一拍自然续上 |

@@ -1,6 +1,8 @@
 package io.doppel.adapter.common.module.combat
 
 import io.doppel.ipc.Strategies
+import io.doppel.ipc.SuperKnockbackFireStep
+import io.doppel.ipc.SuperKnockbackSprintStep
 import io.doppel.contract.model.PlayerState
 import io.doppel.contract.model.TargetState
 import io.doppel.adapter.common.api.EventBridge
@@ -11,24 +13,31 @@ import io.doppel.adapter.common.option.choices
 import io.doppel.adapter.common.option.float
 import io.doppel.adapter.common.option.int
 import io.doppel.adapter.common.option.triggerOptions
-import kotlin.random.Random
 
 /**
  * SuperKnockback Module — sprint manipulation to maximise knockback dealt.
  *
- * Ported toward LiquidBounce's SuperKnockback semantics. Attack-event driven: fires on a fresh
- * hit of the crosshair target (hurtTime rising edge — our reliable 20Hz equivalent of LB's
- * AttackEvent). Three modes:
- *   **SprintTap**: on hit, briefly break sprint then re-engage (uses serverSprintState mirror,
- *     like LB's PostSprintUpdate state machine).
- *   **Old**: on hit, send STOP+START+STOP+START sprint packets and force local+server sprint on
- *     (LB "Old" — reported best).
- *   **SneakPacket**: on hit, interleave STOP_SPRINTING / START_SNEAKING / START_SPRINTING /
- *     STOP_SNEAKING packets (LB "SneakPacket").
+ * Ported toward LiquidBounce's SuperKnockback semantics. Attack-event driven:
+ * fires on a fresh hit of the crosshair target. Three modes:
+ *   **SprintTap**: on hit, briefly break sprint then re-engage (server sprint
+ *     mirror + an OWNED sprint claim, like LB's PostSprintUpdate state machine).
+ *   **Old**: on hit, send STOP+START+STOP+START sprint packets and force sprint on.
+ *   **SneakPacket**: on hit, interleave four STOP/START sprint+sneak packets.
  *
- * Trigger conditions via the unified engine + built-in 3-block range + probability + optional
- * delay. `minEnemyRotDiffToIgnore` is omitted because our TargetState does not expose the
- * enemy's yaw (default 180° is a no-op anyway).
+ * This side holds only **logic judgements + marshalling + platform I/O**:
+ *  - the crosshair target, the trigger style (a one-tick attack pulse or an
+ *    exact `hurtTime` match), the distance window and the unified gate;
+ *  - `player.isSprinting && serverSprintState`, the `isMovingForward` check
+ *    inside the force-sprint restore, the sprint coordination flag;
+ *  - and the C0B / sprint-claim platform writes.
+ *
+ * Everything stateful lives in the algorithm process: the Idle / Delay /
+ * SprintTap phase machine, the delay deadline, the coordination offset, the
+ * SprintTap force sequence, the per-target hit-count throttle and the
+ * probability roll. No `kotlin.random`, no local time-window judgement
+ * (`System.nanoTime()` is an input we marshal), no cross-tick decision state —
+ * the only retained pulse is the one-tick attack notification, a platform
+ * concern exactly like HitSelect's click pulse.
  */
 object SuperKnockback : Module("SuperKnockback", Category.COMBAT) {
 
@@ -41,24 +50,20 @@ object SuperKnockback : Module("SuperKnockback", Category.COMBAT) {
     private val hitCount by int("HitCount", 1, 1..20, "hits")
 
     /**
-     * Distance window, the same shape as WTap/STap's Range options. Replaces a hardcoded
-     * `target.distance > 3.0f` upper bound. Note this is evaluated on the frame a hit lands, when
-     * the crosshair target is already inside reach, so raising RangeMax has little practical
-     * effect; lowering RangeMin is what would matter, since a min above reach disables the module.
+     * Distance window, the same shape as WTap/STap's Range options. Evaluated
+     * on the frame a hit lands; lowering RangeMin is what would disable the
+     * module, since a min above reach can never be satisfied.
      */
     private val rangeMin by float("RangeMin", 0.0f, 0.0f..6.0f, "blocks")
     private val rangeMax by float("RangeMax", 6.0f, 0.0f..6.0f, "blocks")
 
     // ========== Trigger Mode (two detection styles, both preserved) ==========
-    //   RisingEdge: reliable 20Hz "just got hit" (hurtTime 0 -> >0). Never misses.
-    //   HurtTimeExact: fire when target.hurtTime equals the configured HurtTime value (default
-    //   10). Stronger, matches LB's exact-match semantics, can be tuned — but like the old
-    //   SuperKnockback/SprintReset bug, the exact ==N window can be missed under 20Hz sampling.
+    //   RisingEdge: reliable 20Hz "just got hit" (one-tick attack pulse).
+    //   HurtTimeExact: fire when target.hurtTime equals the configured value.
     private val triggerMode by choices("TriggerMode", arrayOf("RisingEdge", "HurtTimeExact"))
     private val hurtTime by int("HurtTime", 10, 0..10)
 
     // ========== Conditions (Unified Engine) ==========
-    // Defaults follow LB: require moving forward to trigger (SprintTap needs forward motion).
     private val onlyGround by boolean("OnlyGround", false)
     private val onlyTargeting by boolean("OnlyTargeting", false)
     private val onlyMove by boolean("OnlyMove", true)
@@ -73,199 +78,107 @@ object SuperKnockback : Module("SuperKnockback", Category.COMBAT) {
         onlyWhenTargetGoesBack = this@SuperKnockback.onlyWhenTargetGoesBack
     }
 
-    // ========== State ==========
-    private enum class Phase { IDLE, DELAY, SPRINT_TAP }
-
-    private var phase: Phase = Phase.IDLE
-    private var delayEndNano: Long = 0L
-
-    /** A fresh hit was detected this tick (attack listener -> evaluated in tick listener). */
-    private var hitPending = false
-
-    // SprintTap force-sprint state machine (LB PostSprintUpdate).
-    private var sprintTicks = 0
-    private var forceSprintState = 0
-
-    /** One-tick offset countdown when coordinated with SprintReset. */
-    private var coordOffsetTicks = 0
-
-    /** Hit-count throttle, per target — same shape as SprintReset's. */
-    private var hitCounter: Int = 0
-    private var lastTargetId: Int = -1
+    // ========== Platform pulse (not a decision state) ==========
+    /** Set by the attack listener, consumed as an input on the next tick. */
+    @Volatile private var attackPulse = false
 
     /**
-     * OWNED sprint claim — SprintTap works by the sprint state being *forced*, not merely
-     * requested, and it has to beat Sprint (movement), which asks for sprinting every tick you hold
-     * W. Direct setSprinting() calls could not express that; the last caller in the tick won.
+     * OWNED sprint claim — SprintTap works by the sprint state being *forced*,
+     * not merely requested, and it has to beat Sprint (movement), which asks
+     * for sprinting every tick you hold W.
      */
     private fun ownSprint(value: Boolean) = EventBridge.claimSprint(
         name, value, EventBridge.SprintClaimMode.OWNED, EventBridge.SPRINT_PRIORITY_TAP
     )
 
-    private val attackListener: (TargetState?) -> Unit = {
-        // Coordination: when SprintReset is also active, SprintReset acts first and we offset
-        // our action by one tick so the two never fire a C0B burst in the same tick.
-        if (enabled) hitPending = true
-    }
-    private val tickListener: (PlayerState, TargetState?) -> Unit = { p, t -> if (enabled) onTick(p, t) }
-
-    private fun onTick(player: PlayerState, target: TargetState?) {
-        // ---- SprintTap force-sprint state machine (runs each tick while active) ----
-        if (phase == Phase.SPRINT_TAP && mode == "SprintTap") {
-            when (sprintTicks) {
-                2 -> {
-                    ownSprint(false)
-                    forceSprintState = 2
-                    sprintTicks--
-                }
-                1 -> {
-                    if (player.isMovingForward) {
-                        ownSprint(true)
-                    }
-                    forceSprintState = 1
-                    sprintTicks--
-                }
-                else -> {
-                    forceSprintState = 0
-                    // The tap is over. A sticky OWNED claim would pin the sprint state forever.
-                    EventBridge.releaseSprint(name)
-                    phase = Phase.IDLE
-                }
-            }
-        }
-
-        // ---- Delay timer -> start action ----
-        if (phase == Phase.DELAY) {
-            if (System.nanoTime() >= delayEndNano) {
-                phase = Phase.IDLE
-                startAction(player)
-            }
-            return
-        }
-
-        // ---- Coordination offset: fire the deferred action from the previous hit ----
-        if (coordOffsetTicks > 0) {
-            coordOffsetTicks--
-            if (coordOffsetTicks == 0) {
-                fireTrigger(player)
-            }
-            return
-        }
-
-        // ---- Trigger evaluation (both trigger styles preserved) ----
-        val t = EventBridge.crosshairTarget ?: return
-
-        // The hit counter is per target, like SprintReset's: switching targets restarts the cycle.
-        if (lastTargetId != t.entityId) {
-            lastTargetId = t.entityId
-            hitCounter = 0
-        }
-
-        when (triggerMode) {
-            "RisingEdge" -> {
-                // Fire on the fresh-hit rising edge (set by the attack listener).
-                if (!hitPending) return
-                hitPending = false
-            }
-            else -> { // "HurtTimeExact"
-                // Fire when target.hurtTime equals the configured HurtTime value.
-                // We must sample each tick (not rely on the edge listener).
-                if (t.hurtTime != hurtTime) return
-            }
-        }
-
-        if (!canTrigger(player, t)) return
-
-        // Hit-count throttle: fire once every `hitCount` hits.
-        hitCounter++
-        if (hitCounter < hitCount) return
-        hitCounter = 0
-
-        if (chance < 100 && Random.nextInt(100) >= chance) return
-
-        // When SprintReset is also active it acts this tick; we offset one tick so our sprint
-        // packets land after its reset burst (SprintReset first, SuperKnockback second).
-        if (EventBridge.isSprintCoordinationActive()) {
-            coordOffsetTicks = 1
-            return
-        }
-
-        fireTrigger(player)
+    private val attackListener: (TargetState?) -> Unit = { if (enabled) attackPulse = true }
+    private val tickListener: (PlayerState, TargetState?) -> Unit = { p, _ ->
+        if (enabled) onTick(p)
     }
 
-    /** Perform the mode action (after condition/chance/delay/coordination gates). */
-    private fun fireTrigger(player: PlayerState) {
-        if (delay > 0) {
-            delayEndNano = System.nanoTime() + delay * 1_000_000L
-            phase = Phase.DELAY
-        } else {
-            startAction(player)
+    private fun onTick(player: PlayerState) {
+        // ---- Judgements (this side decides nothing beyond these predicates) ----
+        val pulse = attackPulse
+        attackPulse = false
+        val t = EventBridge.crosshairTarget
+        val hasTarget = t != null
+        val triggerOk = if (triggerMode == "RisingEdge") pulse else (t?.hurtTime == hurtTime)
+        val inRange = t != null && t.distance >= rangeMin && t.distance <= rangeMax
+        // Short-circuit: a failed range never asks the unified gate, exactly
+        // as the original canTrigger did.
+        val gateOk = inRange && Strategies.gate(player, t, triggerOptions)
+        val entityId = t?.entityId ?: -1
+        val sprintTapAllowed = player.isSprinting && EventBridge.serverSprintState
+        val coordinationActive = EventBridge.isSprintCoordinationActive()
+
+        val step = Strategies.superKnockback(
+            player, t, System.nanoTime(),
+            hasTarget, triggerOk, inRange, gateOk, entityId,
+            chance, hitCount, delay, modeCode(), sprintTapAllowed, coordinationActive
+        ) ?: return // no answer: write nothing at all
+
+        // ---- Platform side effect 1: the SprintTap force sequence ----
+        when (step.sprint) {
+            SuperKnockbackSprintStep.BREAK -> ownSprint(false)
+            SuperKnockbackSprintStep.RESTORE ->
+                if (player.isMovingForward) ownSprint(true)
+            SuperKnockbackSprintStep.END -> EventBridge.releaseSprint(name)
+            else -> Unit
         }
-    }
 
-    /** Trigger gates: range, unified conditions. */
-    private fun canTrigger(player: PlayerState, target: TargetState): Boolean {
-        if (target.distance < rangeMin || target.distance > rangeMax) return false
-        return Strategies.gate(player, target, triggerOptions)
-    }
-
-    private fun startAction(player: PlayerState) {
-        markWorked() // the HUD row flashes on the hit that actually triggered it
-        when (mode) {
-            "SprintTap" -> {
-                // LB: only break sprint if the server actually believes we're sprinting.
-                if (player.isSprinting && EventBridge.serverSprintState) {
-                    sprintTicks = 2
-                    forceSprintState = 0
-                    phase = Phase.SPRINT_TAP
-                }
+        // ---- Platform side effect 2: the fire step ----
+        when (step.fire) {
+            SuperKnockbackFireStep.SPRINT_TAP -> {
+                // The core already armed the force sequence; only the HUD flash
+                // is ours. Even when the server mirror disallowed the tap the
+                // original startAction flashed on the triggering hit.
+                markWorked()
             }
-            "Old" -> {
-                if (player.isSprinting) {
-                    EventBridge.sendEntityAction("STOP_SPRINTING")
-                }
+            SuperKnockbackFireStep.OLD -> {
+                markWorked()
+                if (player.isSprinting) EventBridge.sendEntityAction("STOP_SPRINTING")
                 EventBridge.sendEntityActions(
                     "START_SPRINTING", "STOP_SPRINTING", "START_SPRINTING"
                 )
-                // Force local sprint on. The server mirror is not ours to write any more — the
-                // platform reports it when the C0B actually goes out above.
                 ownSprint(true)
             }
-            "SneakPacket" -> {
+            SuperKnockbackFireStep.SNEAK_PACKET -> {
+                markWorked()
                 EventBridge.sendEntityActions(
-                    "STOP_SPRINTING", "START_SNEAKING", "START_SPRINTING", "STOP_SNEAKING"
+                    "STOP_SPRINTING", "START_SNEAKING",
+                    "START_SPRINTING", "STOP_SNEAKING"
                 )
             }
+            else -> Unit
         }
+    }
+
+    /** Wire mode code shared with the core's step encoding. */
+    private fun modeCode(): Int = when (mode) {
+        "Old" -> 1
+        "SneakPacket" -> 2
+        else -> 0 // SprintTap
     }
 
     // ========== Lifecycle ==========
     override fun onEnable() {
+        // A fresh enable must not inherit a phase, a delay deadline, a
+        // coordination offset, a force sequence or a hit throttle the core
+        // still believes it owns.
+        Strategies.resetPlayer()
+        attackPulse = false
         EventBridge.registerAttackListener(attackListener)
         EventBridge.registerTickListener(tickListener)
         EventBridge.setSuperKnockbackActive(true)
-        phase = Phase.IDLE
-        hitPending = false
-        sprintTicks = 0
-        forceSprintState = 0
-        coordOffsetTicks = 0
-        hitCounter = 0
-        lastTargetId = -1
     }
 
     override fun onDisable() {
         EventBridge.unregisterAttackListener(attackListener)
         EventBridge.unregisterTickListener(tickListener)
         EventBridge.setSuperKnockbackActive(false)
-        // Clean up stuck state. The claim is released by Module.disable() -> releaseAllClaims,
-        // which is also why the old "restore sprint" write is gone: releasing our claim hands the
-        // decision back to whatever else wants it, instead of asserting a value we do not own.
-        phase = Phase.IDLE
-        hitPending = false
-        sprintTicks = 0
-        forceSprintState = 0
-        coordOffsetTicks = 0
-        hitCounter = 0
-        lastTargetId = -1
+        attackPulse = false
+        Strategies.resetPlayer()
+        // The claim is released by Module.disable() -> releaseAllClaims, which
+        // hands the sprint decision back to whatever else wants it.
     }
 }

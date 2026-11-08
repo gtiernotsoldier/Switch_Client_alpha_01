@@ -15,5 +15,6 @@ pub mod movement;
 pub mod reach;
 pub mod reach_sample;
 pub mod sprint_reset;
+pub mod super_knockback;
 pub mod tap;
 pub mod velocity;

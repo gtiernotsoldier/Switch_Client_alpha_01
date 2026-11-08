@@ -558,6 +558,50 @@ object Strategies {
     }
 
     /**
+     * SuperKnockback: one tick of the phase machine.
+     *
+     * The module supplies every judgement it made (crosshair target present,
+     * the trigger style, the distance window, the unified gate, the server
+     * sprint mirror and the coordination flag) plus the clock and the tuning
+     * knobs. The core owns the Idle / Delay / SprintTap phase, the delay
+     * deadline, the coordination offset, the SprintTap force sequence, the
+     * per-target hit-count throttle and the chance roll.
+     *
+     * One scalar answer may carry **two** platform writes: the SprintTap step
+     * at the top of the tick, and a fire step from the trigger evaluation later
+     * in the same tick. `null` means no answer — the caller writes nothing.
+     */
+    fun superKnockback(
+        player: PlayerState,
+        target: TargetState?,
+        nowNs: Long,
+        hasTarget: Boolean,
+        triggerOk: Boolean,
+        inRange: Boolean,
+        gateOk: Boolean,
+        entityId: Int,
+        chance: Int,
+        hitCount: Int,
+        delayMs: Int,
+        mode: Int,
+        sprintTapAllowed: Boolean,
+        coordinationActive: Boolean
+    ): SuperKnockbackStep? {
+        val stub = CoreLink.stub ?: return null
+        val code = stub.playerSuperKnockback(
+            player, target, nowNs, hasTarget, triggerOk, inRange, gateOk,
+            entityId, chance, hitCount, delayMs, mode, sprintTapAllowed,
+            coordinationActive, nextTick()
+        ) ?: return null
+        return SuperKnockbackStep(
+            sprint = SuperKnockbackSprintStep.fromCode(code and 0xF)
+                ?: SuperKnockbackSprintStep.NONE,
+            fire = SuperKnockbackFireStep.fromCode((code shr 4) and 0xF)
+                ?: SuperKnockbackFireStep.NONE
+        )
+    }
+
+    /**
      * Backtrack: hold position updates this tick?
      *
      * `null` means the core did not answer, and the caller must let the updates
@@ -754,6 +798,35 @@ enum class JumpResetStep(val code: Int) {
         fun fromCode(code: Int): JumpResetStep? = entries.firstOrNull { it.code == code }
     }
 }
+
+/** The SprintTap force-sprint step at the top of a SuperKnockback tick. */
+enum class SuperKnockbackSprintStep(val code: Int) {
+    NONE(0), BREAK(1), RESTORE(2), END(3);
+
+    companion object {
+        @JvmStatic
+        fun fromCode(code: Int): SuperKnockbackSprintStep? = entries.firstOrNull { it.code == code }
+    }
+}
+
+/** The fire step from SuperKnockback's trigger evaluation. */
+enum class SuperKnockbackFireStep(val code: Int) {
+    NONE(0), SPRINT_TAP(4), OLD(5), SNEAK_PACKET(6);
+
+    companion object {
+        @JvmStatic
+        fun fromCode(code: Int): SuperKnockbackFireStep? = entries.firstOrNull { it.code == code }
+    }
+}
+
+/**
+ * One tick can write the platform twice: the SprintTap force machine advances
+ * at the top of the tick, and a fire may land later in the same tick.
+ */
+class SuperKnockbackStep(
+    @JvmField val sprint: SuperKnockbackSprintStep,
+    @JvmField val fire: SuperKnockbackFireStep
+)
 
 private object OfflineAim : AimStrategy {
     override val name: String get() = "OfflineAim"

@@ -1004,6 +1004,7 @@ fn emit_golden(dir: &str) -> Result<(), String> {    use std::fs;
     emit_hit_select_golden(dir)?;
     emit_sprint_reset_golden(dir)?;
     emit_jump_reset_golden(dir)?;
+    emit_super_knockback_golden(dir)?;
     Ok(())
 }
 
@@ -1795,5 +1796,106 @@ fn emit_jump_reset_golden(dir: &str) -> Result<(), String> {
 
     fs::write(format!("{}/jump_reset_input.tsv", dir), input).map_err(|e| e.to_string())?;
     fs::write(format!("{}/jump_reset_expected.tsv", dir), expected).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// SuperKnockback's phase machine, replayed over a fixed input sequence.
+///
+/// Every field is drawn from its own dice so no branch implies another (a
+/// single `pick` made SprintReset's delay branch unreachable on a rising
+/// edge). The roll is scripted per row: Pcg32 and `kotlin.random` are
+/// different generators, and `rolls` in the expected file is what catches a
+/// port that draws while idle, throttled, delayed or coordinating.
+fn emit_super_knockback_golden(dir: &str) -> Result<(), String> {
+    use std::fs;
+
+    let mut input = String::new();
+    input.push_str("# doppel-super-knockback-golden v1\n");
+    input.push_str("# idx\tnow_ns\thas_target\ttrigger_ok\tin_range\tgate_ok\tentity_id\tchance\thit_count\tdelay_ms\tmode\tsprint_tap_allowed\tcoordination_active\troll\n");
+
+    let mut expected = String::new();
+    expected.push_str("# idx\tcode\tphase\tdelay_end_ns\tcoord_offset_ticks\tsprint_ticks\thit_counter\tlast_target_id\trolls\n");
+
+    let mut state = strategy::super_knockback::State::new();
+    let mut rng = Pcg32::new(0x0000_5EED_5A11_0001);
+    let mut now: i64 = 1_000_000_000;
+
+    for i in 0..500 {
+        now += 50_000_000; // 50 ms per tick
+        let has_target = rng.random_int(0, 99) >= 10;
+        let trigger_ok = rng.random_int(0, 99) >= 25;
+        let in_range = rng.random_int(0, 99) >= 15;
+        let gate_ok = rng.random_int(0, 99) >= 15;
+        let entity_id = [7, 7, 9][rng.random_int(0, 2) as usize];
+        let chance = if rng.random_int(0, 1) == 1 { 100 } else { 60 };
+        let hit_count = [1, 1, 2, 3][rng.random_int(0, 3) as usize];
+        let delay_ms = if rng.random_int(0, 99) < 25 { 100 } else { 0 };
+        let mode = rng.random_int(0, 2); // 0 SprintTap, 1 Old, 2 SneakPacket
+        let sprint_tap_allowed = rng.random_int(0, 1) == 1;
+        let coordination_active = rng.random_int(0, 99) < 20;
+        let roll = rng.random_int(0, 99);
+
+        input.push_str(&format!(
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+            i,
+            now,
+            has_target as u8,
+            trigger_ok as u8,
+            in_range as u8,
+            gate_ok as u8,
+            entity_id,
+            chance,
+            hit_count,
+            delay_ms,
+            mode,
+            sprint_tap_allowed as u8,
+            coordination_active as u8,
+            roll
+        ));
+
+        let mut rolls = 0;
+        let (code, next) = strategy::super_knockback::tick(
+            state,
+            strategy::super_knockback::Input {
+                now_ns: now,
+                has_target,
+                trigger_ok,
+                in_range,
+                gate_ok,
+                entity_id,
+                chance,
+                hit_count,
+                delay_ms,
+                mode,
+                sprint_tap_allowed,
+                coordination_active,
+            },
+            &mut || {
+                rolls += 1;
+                roll
+            },
+        );
+        state = next;
+        let phase_code = match state.phase {
+            strategy::super_knockback::Phase::Idle => 0,
+            strategy::super_knockback::Phase::Delay => 1,
+            strategy::super_knockback::Phase::SprintTap => 2,
+        };
+        expected.push_str(&format!(
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+            i,
+            code,
+            phase_code,
+            state.delay_end_ns,
+            state.coord_offset_ticks,
+            state.sprint_ticks,
+            state.hit_counter,
+            state.last_target_id,
+            rolls
+        ));
+    }
+
+    fs::write(format!("{}/super_knockback_input.tsv", dir), input).map_err(|e| e.to_string())?;
+    fs::write(format!("{}/super_knockback_expected.tsv", dir), expected).map_err(|e| e.to_string())?;
     Ok(())
 }

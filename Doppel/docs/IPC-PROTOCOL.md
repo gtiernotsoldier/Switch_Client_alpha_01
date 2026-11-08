@@ -296,6 +296,7 @@ The degraded direction differs per op; see `PROTECTION.md` §9.5.3 for the table
 | HitSelect windows + click gate | `strategy/hit_select.rs` | `HitSelectParityTest`, 500 interleaved events |
 | SprintReset rising-edge / throttle / delay | `strategy/sprint_reset.rs` | `SprintResetParityTest`, 400 ticks + `CoreStubE2ETest` real-socket round trip |
 | JumpReset knock / pump cooldown + delayed jump | `strategy/jump_reset.rs` | `JumpResetParityTest`, 500 events + `CoreStubE2ETest` real-socket round trip |
+| SuperKnockback phase machine / throttle / force sequence | `strategy/super_knockback.rs` | `SuperKnockbackParityTest`, 500 ticks + `CoreStubE2ETest` real-socket round trip |
 
 ### Module request shapes
 
@@ -311,7 +312,7 @@ all look alike and none of which can be checked without counting bytes.
 | Aim | `mouse_dx f32, mouse_dy f32, sensitivity f32` (12 bytes) |
 | Click | `attack_cooldown f32, is_falling u8, pad 3` (8 bytes) |
 | Movement / Tap / Combat / Reach | `op u8, nargs u8, nargs × f64` |
-| Player (8) | `op u8, nargs u8, nargs × f64` — ops 0..10, up to 11 args |
+| Player (8) | `op u8, nargs u8, nargs × f64` — ops 0..11, up to 11 args |
 
 Op ids are append-only, same reasoning as module ids: the stub and the core are
 separate binaries. The tables live beside their decoders in `codec.rs` and are
@@ -349,7 +350,7 @@ modules were enabled and in what order they ran, so toggling aim would quietly
 change click timing.
 
 `Module::Player` (id 8) carries the modules that used to keep their whole
-logic in the jar. Ops 0..10 are append-only like the rest. `PLAYER_HIT_TICK` (5)
+logic in the jar. Ops 0..11 are append-only like the rest. `PLAYER_HIT_TICK` (5)
 and `PLAYER_HIT_GATE` (6) are the only pair that shares **one** state across two
 callers: the tick feeds the target windows, the click gate reads them. The
 adapter asks the gate only when a physical attack is actually being applied —
@@ -409,8 +410,28 @@ two independent `if`s in the original tick listener. The final "still
 sprinting at jump time" check stays in the module and uses the *current*
 frame's player, not a snapshot cached at knockback time. A missing answer on
 either half means queue no jump: inventing a jump without the core's
-decision is worse than missing one. `SuperKnockback` is the last member of
-the Reset family to follow.
+decision is worse than missing one.
+
+`PLAYER_SUPER_KNOCKBACK` (11) is the last member of the Reset family and the
+most stateful. The adapter marshals twelve judgements/knobs per tick:
+`now_ns`, `has_target`, `trigger_ok` (a one-tick attack pulse for RisingEdge
+or an exact `hurtTime` match — both evaluated on the JVM), `in_range`,
+`gate_ok`, `entity_id`, `chance`, `hit_count`, `delay_ms`, `mode` (0
+SprintTap, 1 Old, 2 SneakPacket), `sprint_tap_allowed`
+(`player.isSprinting && serverSprintState`) and `coordination_active`. The
+core owns the Idle / Delay / SprintTap phase machine, the delay deadline, the
+one-tick coordination offset, the SprintTap three-tick force sequence, the
+per-target hit-count throttle and the chance roll on its own
+`rng_super_knockback` stream. The roll is consumed **only** at the fire point
+and only when `chance < 100`.
+
+The scalar answer is **packed**: the low nibble is the SprintTap force-sprint
+step at the top of the tick (0 none, 1 break, 2 restore, 3 release), the high
+nibble is the fire step (0 none, 4 SprintTap, 5 Old, 6 SneakPacket). Both are
+platform writes and a single tick can carry both, because the original
+`onTick` advanced the force machine before evaluating the trigger without
+short-circuiting. Unknown codes degrade to NONE on each half; a missing
+answer means write nothing. With this op the Reset family is complete.
 
 `ClickAssistFlag` in `Wire.kt` is the bit layout for `PLAYER_CLICK_ASSIST`'s
 thirteen predicates. It lives beside the op rather than in the module for the

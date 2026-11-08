@@ -864,6 +864,48 @@ class CoreStub(
     }
 
     /**
+     * SuperKnockback: one tick of the phase machine.
+     *
+     * The JVM has already evaluated every judgement (crosshair target present,
+     * the trigger style, the distance window, the unified gate, the server
+     * sprint mirror and the coordination flag) and marshals them with the
+     * tuning knobs. The core owns the Idle / Delay / SprintTap phase, the delay
+     * deadline, the coordination offset, the SprintTap force sequence, the
+     * per-target hit-count throttle and the chance roll.
+     *
+     * The scalar answer is a packed code: low nibble = the SprintTap
+     * force-sprint step at the top of the tick, high nibble = the fire step
+     * from the trigger evaluation. Both are platform writes, so a tick can
+     * carry two of them. `null` means no answer — the caller writes nothing.
+     */
+    fun playerSuperKnockback(
+        player: io.doppel.contract.model.PlayerState,
+        target: io.doppel.contract.model.TargetState?,
+        nowNs: Long,
+        hasTarget: Boolean,
+        triggerOk: Boolean,
+        inRange: Boolean,
+        gateOk: Boolean,
+        entityId: Int,
+        chance: Int,
+        hitCount: Int,
+        delayMs: Int,
+        mode: Int,
+        sprintTapAllowed: Boolean,
+        coordinationActive: Boolean,
+        tick: Int
+    ): Int? {
+        val payload = genericRequest(
+            encodeSnapshot(player, target), Ops.PLAYER_SUPER_KNOCKBACK,
+            nowNs.toDouble(), b(hasTarget), b(triggerOk), b(inRange), b(gateOk),
+            entityId.toDouble(), chance.toDouble(), hitCount.toDouble(),
+            delayMs.toDouble(), mode.toDouble(), b(sprintTapAllowed), b(coordinationActive)
+        )
+        val f = roundTrip(Wire.MODULE_PLAYER, payload, tick) ?: return null
+        return decodeScalar(f).toInt()
+    }
+
+    /**
      * Backtrack's hold window: one call per tick.
      *
      * `null` means the core did not answer. The caller must then let the

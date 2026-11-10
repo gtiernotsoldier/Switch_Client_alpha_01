@@ -1,0 +1,25 @@
+# Ground truth for mappings/fabric/v1_21_11.json
+# game 1.21.11 | intermediary @ 9168687 | yarn 1.21.11+build.6
+# columns: class_intermediary  kind  member_intermediary  member_yarn  member_official  descriptor
+io.doppel.adapter.fabric.v1_21.FabricVelocityPacketHandle	field	motionX	motionX	-	D
+io.doppel.adapter.fabric.v1_21.FabricVelocityPacketHandle	field	motionY	motionY	-	D
+io.doppel.adapter.fabric.v1_21.FabricVelocityPacketHandle	field	motionZ	motionZ	-	D
+net.minecraft.class_1297	field	field_5952	onGround	bc	Z
+net.minecraft.class_1297	field	field_5965	pitch	ba	F
+net.minecraft.class_1297	field	field_5969	lastZ	aa	D
+net.minecraft.class_1297	field	field_6005	boundingBox	bb	Lnet/minecraft/class_238;
+net.minecraft.class_1297	field	field_6008	timeUntilRegen	ax	I
+net.minecraft.class_1297	field	field_6014	lastX	Y	D
+net.minecraft.class_1297	field	field_6031	yaw	aZ	F
+net.minecraft.class_1297	field	field_6036	lastY	Z	D
+net.minecraft.class_1309	field	field_6212	sidewaysSpeed	bN	F
+net.minecraft.class_1309	field	field_6235	hurtTime	bu	I
+net.minecraft.class_1309	field	field_6250	forwardSpeed	bP	F
+net.minecraft.class_1937	method	method_8469	getEntityById	a	(I)Lnet/minecraft/class_1297;
+net.minecraft.class_238	field	field_1320	maxX	d	D
+net.minecraft.class_238	field	field_1321	minZ	c	D
+net.minecraft.class_238	field	field_1322	minY	b	D
+net.minecraft.class_238	field	field_1323	minX	a	D
+net.minecraft.class_238	field	field_1324	maxZ	f	D
+net.minecraft.class_238	field	field_1325	maxY	e	D
+net.minecraft.class_636	field	field_3717	breakingBlock	i	Z

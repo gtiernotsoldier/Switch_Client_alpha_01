@@ -1,0 +1,267 @@
+{
+  "_meta": {
+    "platform": "fabric",
+    "version": "1.21.11",
+    "layers": "official (Mojang obfuscated) -> intermediary (Fabric runtime) -> named (Yarn dev)",
+    "runtime_layer": "intermediary — 'class'/'field'/'method' values are intermediary names, resolvable via Class.forName on any production Fabric launch",
+    "sources": [
+      "FabricMC/intermediary @ 9168687 (branch 1.21.11), official<->intermediary",
+      "Yarn 1.21.11+build.6 (maven.fabricmc.net), intermediary<->named"
+    ],
+    "generated": "2026-11-11",
+    "format": "flat MappingLoader table, same schema as mappings/forge/v1_8_9.json; 'mcp' holds the Yarn readable name (member fallback in Yarn-named runtimes)",
+    "unmappable_keys": {
+      "fabric:entity_health": "1.21.11 moved LivingEntity health into the DataTracker (HEALTH field_6247); no float 'health' field exists — use compiled getHealth() (method_6032) in the adapter",
+      "fabric:entity_maxHurtResistantTime": "1.8-only concept; the 20-tick i-frame maximum is a constant, not a field (caller default 10 already matches the fail-closed path)",
+      "fabric:entity_motionX": "Entity.velocity (field_18276) is a Vec3d in 1.21.11 — no primitive motion fields exist; reads return Double (fails) and applyMotion writes setDouble (impossible). Use setVelocityClient (method_5750)",
+      "fabric:entity_motionY": "Entity.velocity (field_18276) is a Vec3d in 1.21.11 — no primitive motion fields exist; reads return Double (fails) and applyMotion writes setDouble (impossible). Use setVelocityClient (method_5750)",
+      "fabric:entity_motionZ": "Entity.velocity (field_18276) is a Vec3d in 1.21.11 — no primitive motion fields exist; reads return Double (fails) and applyMotion writes setDouble (impossible). Use setVelocityClient (method_5750)",
+      "fabric:player_isSprinting": "sprinting is a DataTracker flag on 1.21.11 (SPRINTING_FLAG_INDEX); the only accessor is isSprinting() (method_5624) — no boolean field exists"
+    }
+  },
+  "fabric:bb_maxX": {
+    "class": "net.minecraft.class_238",
+    "field": "field_1320",
+    "aliases": [
+      "bb_maxX",
+      "maxX"
+    ],
+    "mcp": "maxX",
+    "yarnClass": "net.minecraft.util.math.Box",
+    "official": "d"
+  },
+  "fabric:bb_maxY": {
+    "class": "net.minecraft.class_238",
+    "field": "field_1325",
+    "aliases": [
+      "bb_maxY",
+      "maxY"
+    ],
+    "mcp": "maxY",
+    "yarnClass": "net.minecraft.util.math.Box",
+    "official": "e"
+  },
+  "fabric:bb_maxZ": {
+    "class": "net.minecraft.class_238",
+    "field": "field_1324",
+    "aliases": [
+      "bb_maxZ",
+      "maxZ"
+    ],
+    "mcp": "maxZ",
+    "yarnClass": "net.minecraft.util.math.Box",
+    "official": "f"
+  },
+  "fabric:bb_minX": {
+    "class": "net.minecraft.class_238",
+    "field": "field_1323",
+    "aliases": [
+      "bb_minX",
+      "minX"
+    ],
+    "mcp": "minX",
+    "yarnClass": "net.minecraft.util.math.Box",
+    "official": "a"
+  },
+  "fabric:bb_minY": {
+    "class": "net.minecraft.class_238",
+    "field": "field_1322",
+    "aliases": [
+      "bb_minY",
+      "minY"
+    ],
+    "mcp": "minY",
+    "yarnClass": "net.minecraft.util.math.Box",
+    "official": "b"
+  },
+  "fabric:bb_minZ": {
+    "class": "net.minecraft.class_238",
+    "field": "field_1321",
+    "aliases": [
+      "bb_minZ",
+      "minZ"
+    ],
+    "mcp": "minZ",
+    "yarnClass": "net.minecraft.util.math.Box",
+    "official": "c"
+  },
+  "fabric:entity_boundingBox": {
+    "class": "net.minecraft.class_1297",
+    "field": "field_6005",
+    "aliases": [
+      "entity_boundingBox",
+      "boundingBox"
+    ],
+    "mcp": "boundingBox",
+    "yarnClass": "net.minecraft.entity.Entity",
+    "official": "bb"
+  },
+  "fabric:entity_hurtResistantTime": {
+    "class": "net.minecraft.class_1297",
+    "field": "field_6008",
+    "aliases": [
+      "entity_hurtResistantTime",
+      "timeUntilRegen"
+    ],
+    "mcp": "timeUntilRegen",
+    "yarnClass": "net.minecraft.entity.Entity",
+    "official": "ax",
+    "note": "the i-frame/regen counter (Forge hurtResistantTime equivalent)"
+  },
+  "fabric:entity_hurtTime": {
+    "class": "net.minecraft.class_1309",
+    "field": "field_6235",
+    "aliases": [
+      "entity_hurtTime",
+      "hurtTime"
+    ],
+    "mcp": "hurtTime",
+    "yarnClass": "net.minecraft.entity.LivingEntity",
+    "official": "bu"
+  },
+  "fabric:entity_onGround": {
+    "class": "net.minecraft.class_1297",
+    "field": "field_5952",
+    "aliases": [
+      "entity_onGround",
+      "onGround"
+    ],
+    "mcp": "onGround",
+    "yarnClass": "net.minecraft.entity.Entity",
+    "official": "bc"
+  },
+  "fabric:entity_posX": {
+    "class": "net.minecraft.class_1297",
+    "field": "field_6014",
+    "aliases": [
+      "entity_posX",
+      "lastX"
+    ],
+    "mcp": "lastX",
+    "yarnClass": "net.minecraft.entity.Entity",
+    "official": "Y",
+    "note": "prev-tick X: the only primitive position fields on 1.21.11; current pos lives in Vec3d field 'pos'"
+  },
+  "fabric:entity_posY": {
+    "class": "net.minecraft.class_1297",
+    "field": "field_6036",
+    "aliases": [
+      "entity_posY",
+      "lastY"
+    ],
+    "mcp": "lastY",
+    "yarnClass": "net.minecraft.entity.Entity",
+    "official": "Z",
+    "note": "prev-tick Y: the only primitive position fields on 1.21.11; current pos lives in Vec3d field 'pos'"
+  },
+  "fabric:entity_posZ": {
+    "class": "net.minecraft.class_1297",
+    "field": "field_5969",
+    "aliases": [
+      "entity_posZ",
+      "lastZ"
+    ],
+    "mcp": "lastZ",
+    "yarnClass": "net.minecraft.entity.Entity",
+    "official": "aa",
+    "note": "prev-tick Z: the only primitive position fields on 1.21.11; current pos lives in Vec3d field 'pos'"
+  },
+  "fabric:interactionManager_isBreakingBlock": {
+    "class": "net.minecraft.class_636",
+    "field": "field_3717",
+    "aliases": [
+      "interactionManager_isBreakingBlock",
+      "breakingBlock"
+    ],
+    "mcp": "breakingBlock",
+    "yarnClass": "net.minecraft.client.network.ClientPlayerInteractionManager",
+    "official": "i"
+  },
+  "fabric:player_moveForward": {
+    "class": "net.minecraft.class_1309",
+    "field": "field_6250",
+    "aliases": [
+      "player_moveForward",
+      "forwardSpeed"
+    ],
+    "mcp": "forwardSpeed",
+    "yarnClass": "net.minecraft.entity.LivingEntity",
+    "official": "bP",
+    "note": "travel() forward input (1.8 moveForward equivalent)"
+  },
+  "fabric:player_moveStrafing": {
+    "class": "net.minecraft.class_1309",
+    "field": "field_6212",
+    "aliases": [
+      "player_moveStrafing",
+      "sidewaysSpeed"
+    ],
+    "mcp": "sidewaysSpeed",
+    "yarnClass": "net.minecraft.entity.LivingEntity",
+    "official": "bN",
+    "note": "travel() sideways input (1.8 moveStrafing equivalent)"
+  },
+  "fabric:player_rotationPitch": {
+    "class": "net.minecraft.class_1297",
+    "field": "field_5965",
+    "aliases": [
+      "player_rotationPitch",
+      "pitch"
+    ],
+    "mcp": "pitch",
+    "yarnClass": "net.minecraft.entity.Entity",
+    "official": "ba"
+  },
+  "fabric:player_rotationYaw": {
+    "class": "net.minecraft.class_1297",
+    "field": "field_6031",
+    "aliases": [
+      "player_rotationYaw",
+      "yaw"
+    ],
+    "mcp": "yaw",
+    "yarnClass": "net.minecraft.entity.Entity",
+    "official": "aZ"
+  },
+  "fabric:velocity_motionX": {
+    "class": "io.doppel.adapter.fabric.v1_21.FabricVelocityPacketHandle",
+    "field": "motionX",
+    "aliases": [
+      "velocity_motionX",
+      "motionX"
+    ],
+    "mcp": "motionX",
+    "yarnClass": "io.doppel.adapter.fabric.v1_21.FabricVelocityPacketHandle"
+  },
+  "fabric:velocity_motionY": {
+    "class": "io.doppel.adapter.fabric.v1_21.FabricVelocityPacketHandle",
+    "field": "motionY",
+    "aliases": [
+      "velocity_motionY",
+      "motionY"
+    ],
+    "mcp": "motionY",
+    "yarnClass": "io.doppel.adapter.fabric.v1_21.FabricVelocityPacketHandle"
+  },
+  "fabric:velocity_motionZ": {
+    "class": "io.doppel.adapter.fabric.v1_21.FabricVelocityPacketHandle",
+    "field": "motionZ",
+    "aliases": [
+      "velocity_motionZ",
+      "motionZ"
+    ],
+    "mcp": "motionZ",
+    "yarnClass": "io.doppel.adapter.fabric.v1_21.FabricVelocityPacketHandle"
+  },
+  "fabric:world_getEntityByID": {
+    "class": "net.minecraft.class_1937",
+    "method": "method_8469",
+    "aliases": [
+      "world_getEntityByID",
+      "getEntityById"
+    ],
+    "mcp": "getEntityById",
+    "yarnClass": "net.minecraft.world.World",
+    "official": "a"
+  }
+}

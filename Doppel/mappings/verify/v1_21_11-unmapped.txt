@@ -1,0 +1,8 @@
+# fabric keys referenced by adapter code that have NO faithful 1.21.11 binding.
+# verify_mappings_fabric.mjs warns (not fails) for these; everything else must resolve.
+fabric:entity_health  # 1.21.11 moved LivingEntity health into the DataTracker (HEALTH field_6247); no float 'health' field exists — use compiled getHealth() (method_6032) in the adapter
+fabric:entity_maxHurtResistantTime  # 1.8-only concept; the 20-tick i-frame maximum is a constant, not a field (caller default 10 already matches the fail-closed path)
+fabric:entity_motionX  # Entity.velocity (field_18276) is a Vec3d in 1.21.11 — no primitive motion fields exist; reads return Double (fails) and applyMotion writes setDouble (impossible). Use setVelocityClient (method_5750)
+fabric:entity_motionY  # Entity.velocity (field_18276) is a Vec3d in 1.21.11 — no primitive motion fields exist; reads return Double (fails) and applyMotion writes setDouble (impossible). Use setVelocityClient (method_5750)
+fabric:entity_motionZ  # Entity.velocity (field_18276) is a Vec3d in 1.21.11 — no primitive motion fields exist; reads return Double (fails) and applyMotion writes setDouble (impossible). Use setVelocityClient (method_5750)
+fabric:player_isSprinting  # sprinting is a DataTracker flag on 1.21.11 (SPRINTING_FLAG_INDEX); the only accessor is isSprinting() (method_5624) — no boolean field exists

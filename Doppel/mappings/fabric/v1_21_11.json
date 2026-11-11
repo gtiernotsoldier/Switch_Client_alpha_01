@@ -1,12 +1,27 @@
 {
+  "fabric:S12PacketEntityVelocity_entityID": {
+    "class": "net.minecraft.class_2743",
+    "field": "field_12564",
+    "aliases": [
+      "S12PacketEntityVelocity_entityID",
+      "entityId"
+    ]
+  },
+  "fabric:axisAlignedBB_calculateIntercept": {
+    "class": "net.minecraft.class_238",
+    "method": "method_1010",
+    "aliases": [
+      "axisAlignedBB_calculateIntercept",
+      "raycast"
+    ]
+  },
   "fabric:bb_maxX": {
     "class": "net.minecraft.class_238",
     "field": "field_1320",
     "aliases": [
       "bb_maxX",
       "maxX"
-    ],
-    "mcp": "maxX"
+    ]
   },
   "fabric:bb_maxY": {
     "class": "net.minecraft.class_238",
@@ -14,8 +29,7 @@
     "aliases": [
       "bb_maxY",
       "maxY"
-    ],
-    "mcp": "maxY"
+    ]
   },
   "fabric:bb_maxZ": {
     "class": "net.minecraft.class_238",
@@ -23,8 +37,7 @@
     "aliases": [
       "bb_maxZ",
       "maxZ"
-    ],
-    "mcp": "maxZ"
+    ]
   },
   "fabric:bb_minX": {
     "class": "net.minecraft.class_238",
@@ -32,8 +45,7 @@
     "aliases": [
       "bb_minX",
       "minX"
-    ],
-    "mcp": "minX"
+    ]
   },
   "fabric:bb_minY": {
     "class": "net.minecraft.class_238",
@@ -41,8 +53,7 @@
     "aliases": [
       "bb_minY",
       "minY"
-    ],
-    "mcp": "minY"
+    ]
   },
   "fabric:bb_minZ": {
     "class": "net.minecraft.class_238",
@@ -50,8 +61,31 @@
     "aliases": [
       "bb_minZ",
       "minZ"
-    ],
-    "mcp": "minZ"
+    ]
+  },
+  "fabric:blocks_air": {
+    "class": "net.minecraft.class_2246",
+    "field": "field_10124",
+    "aliases": [
+      "blocks_air",
+      "AIR"
+    ]
+  },
+  "fabric:entityLivingBase_getEquipmentInSlot": {
+    "class": "net.minecraft.class_1309",
+    "method": "method_6118",
+    "aliases": [
+      "entityLivingBase_getEquipmentInSlot",
+      "getEquippedStack"
+    ]
+  },
+  "fabric:entityLivingBase_isEntityAlive": {
+    "class": "net.minecraft.class_1297",
+    "method": "method_5805",
+    "aliases": [
+      "entityLivingBase_isEntityAlive",
+      "isAlive"
+    ]
   },
   "fabric:entity_boundingBox": {
     "class": "net.minecraft.class_1297",
@@ -59,8 +93,95 @@
     "aliases": [
       "entity_boundingBox",
       "boundingBox"
-    ],
-    "mcp": "boundingBox"
+    ]
+  },
+  "fabric:entity_canBeCollidedWith": {
+    "class": "net.minecraft.class_1297",
+    "method": "method_5863",
+    "aliases": [
+      "entity_canBeCollidedWith",
+      "canHit"
+    ]
+  },
+  "fabric:entity_entityId": {
+    "class": "net.minecraft.class_1297",
+    "field": "field_5986",
+    "aliases": [
+      "entity_entityId",
+      "id"
+    ]
+  },
+  "fabric:entity_getDistanceToEntity": {
+    "class": "net.minecraft.class_1297",
+    "method": "method_5739",
+    "aliases": [
+      "entity_getDistanceToEntity",
+      "distanceTo"
+    ]
+  },
+  "fabric:entity_getEntityBoundingBox": {
+    "class": "net.minecraft.class_1297",
+    "field": "field_6005",
+    "aliases": [
+      "entity_getEntityBoundingBox",
+      "boundingBox"
+    ]
+  },
+  "fabric:entity_getEntityId": {
+    "class": "net.minecraft.class_1297",
+    "field": "field_5986",
+    "aliases": [
+      "entity_getEntityId",
+      "id"
+    ]
+  },
+  "fabric:entity_getLook": {
+    "class": "net.minecraft.class_1297",
+    "method": "method_5828",
+    "aliases": [
+      "entity_getLook",
+      "getRotationVec"
+    ]
+  },
+  "fabric:entity_getPosX": {
+    "class": "net.minecraft.class_1297",
+    "field": "field_6014",
+    "aliases": [
+      "entity_getPosX",
+      "lastX"
+    ]
+  },
+  "fabric:entity_getPosY": {
+    "class": "net.minecraft.class_1297",
+    "field": "field_6036",
+    "aliases": [
+      "entity_getPosY",
+      "lastY"
+    ]
+  },
+  "fabric:entity_getPosZ": {
+    "class": "net.minecraft.class_1297",
+    "field": "field_5969",
+    "aliases": [
+      "entity_getPosZ",
+      "lastZ"
+    ]
+  },
+  "fabric:entity_getPositionEyes": {
+    "class": "net.minecraft.class_1297",
+    "method": "method_33571",
+    "aliases": [
+      "entity_getPositionEyes",
+      "getEyePos"
+    ]
+  },
+  "fabric:entity_health": {
+    "class": "net.minecraft.class_1309",
+    "method": "method_6032",
+    "aliases": [
+      "entity_health",
+      "getHealth"
+    ]
   },
   "fabric:entity_hurtResistantTime": {
     "class": "net.minecraft.class_1297",
@@ -68,8 +189,7 @@
     "aliases": [
       "entity_hurtResistantTime",
       "timeUntilRegen"
-    ],
-    "mcp": "timeUntilRegen"
+    ]
   },
   "fabric:entity_hurtTime": {
     "class": "net.minecraft.class_1309",
@@ -77,8 +197,39 @@
     "aliases": [
       "entity_hurtTime",
       "hurtTime"
-    ],
-    "mcp": "hurtTime"
+    ]
+  },
+  "fabric:entity_isDead": {
+    "class": "net.minecraft.class_1309",
+    "field": "field_6272",
+    "aliases": [
+      "entity_isDead",
+      "dead"
+    ]
+  },
+  "fabric:entity_isInLava": {
+    "class": "net.minecraft.class_1297",
+    "method": "method_5771",
+    "aliases": [
+      "entity_isInLava",
+      "isInLava"
+    ]
+  },
+  "fabric:entity_isInWater": {
+    "class": "net.minecraft.class_1297",
+    "method": "method_5799",
+    "aliases": [
+      "entity_isInWater",
+      "isTouchingWater"
+    ]
+  },
+  "fabric:entity_isOnGround": {
+    "class": "net.minecraft.class_1297",
+    "field": "field_5952",
+    "aliases": [
+      "entity_isOnGround",
+      "onGround"
+    ]
   },
   "fabric:entity_onGround": {
     "class": "net.minecraft.class_1297",
@@ -86,8 +237,23 @@
     "aliases": [
       "entity_onGround",
       "onGround"
-    ],
-    "mcp": "onGround"
+    ]
+  },
+  "fabric:entity_player_moveForward": {
+    "class": "net.minecraft.class_1309",
+    "field": "field_6250",
+    "aliases": [
+      "entity_player_moveForward",
+      "forwardSpeed"
+    ]
+  },
+  "fabric:entity_player_moveStrafing": {
+    "class": "net.minecraft.class_1309",
+    "field": "field_6212",
+    "aliases": [
+      "entity_player_moveStrafing",
+      "sidewaysSpeed"
+    ]
   },
   "fabric:entity_posX": {
     "class": "net.minecraft.class_1297",
@@ -95,8 +261,7 @@
     "aliases": [
       "entity_posX",
       "lastX"
-    ],
-    "mcp": "lastX"
+    ]
   },
   "fabric:entity_posY": {
     "class": "net.minecraft.class_1297",
@@ -104,8 +269,7 @@
     "aliases": [
       "entity_posY",
       "lastY"
-    ],
-    "mcp": "lastY"
+    ]
   },
   "fabric:entity_posZ": {
     "class": "net.minecraft.class_1297",
@@ -113,8 +277,239 @@
     "aliases": [
       "entity_posZ",
       "lastZ"
-    ],
-    "mcp": "lastZ"
+    ]
+  },
+  "fabric:entity_prevPosX": {
+    "class": "net.minecraft.class_1297",
+    "field": "field_6014",
+    "aliases": [
+      "entity_prevPosX",
+      "lastX"
+    ]
+  },
+  "fabric:entity_prevPosY": {
+    "class": "net.minecraft.class_1297",
+    "field": "field_6036",
+    "aliases": [
+      "entity_prevPosY",
+      "lastY"
+    ]
+  },
+  "fabric:entity_prevPosZ": {
+    "class": "net.minecraft.class_1297",
+    "field": "field_5969",
+    "aliases": [
+      "entity_prevPosZ",
+      "lastZ"
+    ]
+  },
+  "fabric:entity_prevRotationPitch": {
+    "class": "net.minecraft.class_1297",
+    "field": "field_6004",
+    "aliases": [
+      "entity_prevRotationPitch",
+      "lastPitch"
+    ]
+  },
+  "fabric:entity_prevRotationYaw": {
+    "class": "net.minecraft.class_1297",
+    "field": "field_5982",
+    "aliases": [
+      "entity_prevRotationYaw",
+      "lastYaw"
+    ]
+  },
+  "fabric:entity_rotationPitch": {
+    "class": "net.minecraft.class_1297",
+    "field": "field_5965",
+    "aliases": [
+      "entity_rotationPitch",
+      "pitch"
+    ]
+  },
+  "fabric:entity_rotationYaw": {
+    "class": "net.minecraft.class_1297",
+    "field": "field_6031",
+    "aliases": [
+      "entity_rotationYaw",
+      "yaw"
+    ]
+  },
+  "fabric:entity_ticksExisted": {
+    "class": "net.minecraft.class_1297",
+    "field": "field_6012",
+    "aliases": [
+      "entity_ticksExisted",
+      "age"
+    ]
+  },
+  "fabric:fontRenderer_FONT_HEIGHT": {
+    "class": "net.minecraft.class_327",
+    "field": "field_2000",
+    "aliases": [
+      "fontRenderer_FONT_HEIGHT",
+      "fontHeight"
+    ]
+  },
+  "fabric:fontRenderer_drawStringWithShadow": {
+    "class": "net.minecraft.class_332",
+    "method": "method_25303",
+    "aliases": [
+      "fontRenderer_drawStringWithShadow",
+      "drawTextWithShadow"
+    ]
+  },
+  "fabric:fontRenderer_getStringWidth": {
+    "class": "net.minecraft.class_327",
+    "method": "method_27525",
+    "aliases": [
+      "fontRenderer_getStringWidth",
+      "getWidth"
+    ]
+  },
+  "fabric:foodStats_foodLevel": {
+    "class": "net.minecraft.class_1702",
+    "field": "field_7756",
+    "aliases": [
+      "foodStats_foodLevel",
+      "foodLevel"
+    ]
+  },
+  "fabric:gs_gammaSetting": {
+    "class": "net.minecraft.class_315",
+    "field": "field_1840",
+    "aliases": [
+      "gs_gammaSetting",
+      "gamma"
+    ]
+  },
+  "fabric:gs_guiScale": {
+    "class": "net.minecraft.class_315",
+    "field": "field_1868",
+    "aliases": [
+      "gs_guiScale",
+      "guiScale"
+    ]
+  },
+  "fabric:gs_keyBindAttack": {
+    "class": "net.minecraft.class_315",
+    "field": "field_1886",
+    "aliases": [
+      "gs_keyBindAttack",
+      "attackKey"
+    ]
+  },
+  "fabric:gs_keyBindBack": {
+    "class": "net.minecraft.class_315",
+    "field": "field_1881",
+    "aliases": [
+      "gs_keyBindBack",
+      "backKey"
+    ]
+  },
+  "fabric:gs_keyBindForward": {
+    "class": "net.minecraft.class_315",
+    "field": "field_1894",
+    "aliases": [
+      "gs_keyBindForward",
+      "forwardKey"
+    ]
+  },
+  "fabric:gs_keyBindJump": {
+    "class": "net.minecraft.class_315",
+    "field": "field_1903",
+    "aliases": [
+      "gs_keyBindJump",
+      "jumpKey"
+    ]
+  },
+  "fabric:gs_keyBindLeft": {
+    "class": "net.minecraft.class_315",
+    "field": "field_1913",
+    "aliases": [
+      "gs_keyBindLeft",
+      "leftKey"
+    ]
+  },
+  "fabric:gs_keyBindRight": {
+    "class": "net.minecraft.class_315",
+    "field": "field_1849",
+    "aliases": [
+      "gs_keyBindRight",
+      "rightKey"
+    ]
+  },
+  "fabric:gs_keyBindSneak": {
+    "class": "net.minecraft.class_315",
+    "field": "field_1832",
+    "aliases": [
+      "gs_keyBindSneak",
+      "sneakKey"
+    ]
+  },
+  "fabric:gs_keyBindUseItem": {
+    "class": "net.minecraft.class_315",
+    "field": "field_1904",
+    "aliases": [
+      "gs_keyBindUseItem",
+      "useKey"
+    ]
+  },
+  "fabric:gs_mouseSensitivity": {
+    "class": "net.minecraft.class_315",
+    "field": "field_1843",
+    "aliases": [
+      "gs_mouseSensitivity",
+      "mouseSensitivity"
+    ]
+  },
+  "fabric:gs_thirdPersonView": {
+    "class": "net.minecraft.class_315",
+    "field": "field_26677",
+    "aliases": [
+      "gs_thirdPersonView",
+      "perspective"
+    ]
+  },
+  "fabric:guiScreen_height": {
+    "class": "net.minecraft.class_437",
+    "field": "field_22790",
+    "aliases": [
+      "guiScreen_height",
+      "height"
+    ]
+  },
+  "fabric:guiScreen_mouseClicked": {
+    "class": "net.minecraft.class_364",
+    "method": "method_25402",
+    "aliases": [
+      "guiScreen_mouseClicked",
+      "mouseClicked"
+    ]
+  },
+  "fabric:guiScreen_width": {
+    "class": "net.minecraft.class_437",
+    "field": "field_22789",
+    "aliases": [
+      "guiScreen_width",
+      "width"
+    ]
+  },
+  "fabric:iblockstate_block": {
+    "class": "net.minecraft.class_4970$class_4971",
+    "method": "method_26204",
+    "aliases": [
+      "iblockstate_block",
+      "getBlock"
+    ]
+  },
+  "fabric:ichatComponent_formattedText": {
+    "class": "net.minecraft.class_2561",
+    "method": "method_54160",
+    "aliases": [
+      "ichatComponent_formattedText",
+      "getLiteralString"
+    ]
   },
   "fabric:interactionManager_isBreakingBlock": {
     "class": "net.minecraft.class_636",
@@ -122,8 +517,423 @@
     "aliases": [
       "interactionManager_isBreakingBlock",
       "breakingBlock"
-    ],
-    "mcp": "breakingBlock"
+    ]
+  },
+  "fabric:inventory_currentItem": {
+    "class": "net.minecraft.class_1661",
+    "field": "field_7545",
+    "aliases": [
+      "inventory_currentItem",
+      "selectedSlot"
+    ]
+  },
+  "fabric:inventory_getHeldItem": {
+    "class": "net.minecraft.class_1661",
+    "method": "method_7391",
+    "aliases": [
+      "inventory_getHeldItem",
+      "getSelectedStack"
+    ]
+  },
+  "fabric:itemStack_item": {
+    "class": "net.minecraft.class_1799",
+    "field": "field_8038",
+    "aliases": [
+      "itemStack_item",
+      "item"
+    ]
+  },
+  "fabric:itemStack_stackSize": {
+    "class": "net.minecraft.class_1799",
+    "field": "field_8031",
+    "aliases": [
+      "itemStack_stackSize",
+      "count"
+    ]
+  },
+  "fabric:item_getDigSpeed": {
+    "class": "net.minecraft.class_1792",
+    "method": "method_58404",
+    "aliases": [
+      "item_getDigSpeed",
+      "getMiningSpeed"
+    ]
+  },
+  "fabric:keybinding_isKeyDown": {
+    "class": "net.minecraft.class_304",
+    "method": "method_1434",
+    "aliases": [
+      "keybinding_isKeyDown",
+      "isPressed"
+    ]
+  },
+  "fabric:keybinding_keyCode": {
+    "class": "net.minecraft.class_304",
+    "field": "field_1655",
+    "aliases": [
+      "keybinding_keyCode",
+      "boundKey"
+    ]
+  },
+  "fabric:keybinding_onTick": {
+    "class": "net.minecraft.class_304",
+    "method": "method_1420",
+    "aliases": [
+      "keybinding_onTick",
+      "onKeyPressed"
+    ]
+  },
+  "fabric:keybinding_pressTime": {
+    "class": "net.minecraft.class_304",
+    "field": "field_1661",
+    "aliases": [
+      "keybinding_pressTime",
+      "timesPressed"
+    ]
+  },
+  "fabric:keybinding_pressed": {
+    "class": "net.minecraft.class_304",
+    "field": "field_1653",
+    "aliases": [
+      "keybinding_pressed",
+      "pressed"
+    ]
+  },
+  "fabric:keybinding_setKeyBindState": {
+    "class": "net.minecraft.class_304",
+    "method": "method_1416",
+    "aliases": [
+      "keybinding_setKeyBindState",
+      "setKeyPressed"
+    ]
+  },
+  "fabric:mc_currentScreen": {
+    "class": "net.minecraft.class_310",
+    "field": "field_1755",
+    "aliases": [
+      "mc_currentScreen",
+      "currentScreen"
+    ]
+  },
+  "fabric:mc_displayGuiScreen": {
+    "class": "net.minecraft.class_310",
+    "method": "method_1507",
+    "aliases": [
+      "mc_displayGuiScreen",
+      "setScreen"
+    ]
+  },
+  "fabric:mc_entityRenderer": {
+    "class": "net.minecraft.class_310",
+    "field": "field_1773",
+    "aliases": [
+      "mc_entityRenderer",
+      "gameRenderer"
+    ]
+  },
+  "fabric:mc_fontRendererObj": {
+    "class": "net.minecraft.class_310",
+    "field": "field_1772",
+    "aliases": [
+      "mc_fontRendererObj",
+      "textRenderer"
+    ]
+  },
+  "fabric:mc_gameSettings": {
+    "class": "net.minecraft.class_310",
+    "field": "field_1690",
+    "aliases": [
+      "mc_gameSettings",
+      "options"
+    ]
+  },
+  "fabric:mc_getMinecraft": {
+    "class": "net.minecraft.class_310",
+    "method": "method_1551",
+    "aliases": [
+      "mc_getMinecraft",
+      "getInstance"
+    ]
+  },
+  "fabric:mc_getRenderViewEntity": {
+    "class": "net.minecraft.class_310",
+    "method": "method_1560",
+    "aliases": [
+      "mc_getRenderViewEntity",
+      "getCameraEntity"
+    ]
+  },
+  "fabric:mc_leftClickCounter": {
+    "class": "net.minecraft.class_310",
+    "field": "field_1771",
+    "aliases": [
+      "mc_leftClickCounter",
+      "attackCooldown"
+    ]
+  },
+  "fabric:mc_mouseHelper": {
+    "class": "net.minecraft.class_310",
+    "field": "field_1729",
+    "aliases": [
+      "mc_mouseHelper",
+      "mouse"
+    ]
+  },
+  "fabric:mc_netHandler": {
+    "class": "net.minecraft.class_310",
+    "method": "method_1562",
+    "aliases": [
+      "mc_netHandler",
+      "getNetworkHandler"
+    ]
+  },
+  "fabric:mc_objectMouseOver": {
+    "class": "net.minecraft.class_310",
+    "field": "field_1765",
+    "aliases": [
+      "mc_objectMouseOver",
+      "crosshairTarget"
+    ]
+  },
+  "fabric:mc_playerController": {
+    "class": "net.minecraft.class_310",
+    "field": "field_1761",
+    "aliases": [
+      "mc_playerController",
+      "interactionManager"
+    ]
+  },
+  "fabric:mc_pointedEntity": {
+    "class": "net.minecraft.class_310",
+    "field": "field_1692",
+    "aliases": [
+      "mc_pointedEntity",
+      "targetedEntity"
+    ]
+  },
+  "fabric:mc_renderViewEntity": {
+    "class": "net.minecraft.class_310",
+    "field": "field_1719",
+    "aliases": [
+      "mc_renderViewEntity",
+      "cameraEntity"
+    ]
+  },
+  "fabric:mc_rightClickDelayTimer": {
+    "class": "net.minecraft.class_310",
+    "field": "field_1752",
+    "aliases": [
+      "mc_rightClickDelayTimer",
+      "itemUseCooldown"
+    ]
+  },
+  "fabric:mc_thePlayer": {
+    "class": "net.minecraft.class_310",
+    "field": "field_1724",
+    "aliases": [
+      "mc_thePlayer",
+      "player"
+    ]
+  },
+  "fabric:mc_theWorld": {
+    "class": "net.minecraft.class_310",
+    "field": "field_1687",
+    "aliases": [
+      "mc_theWorld",
+      "world"
+    ]
+  },
+  "fabric:mc_timer": {
+    "class": "net.minecraft.class_310",
+    "field": "field_52750",
+    "aliases": [
+      "mc_timer",
+      "renderTickCounter"
+    ]
+  },
+  "fabric:mouseHelper_deltaX": {
+    "class": "net.minecraft.class_312",
+    "field": "field_1789",
+    "aliases": [
+      "mouseHelper_deltaX",
+      "cursorDeltaX"
+    ]
+  },
+  "fabric:mouseHelper_deltaY": {
+    "class": "net.minecraft.class_312",
+    "field": "field_1787",
+    "aliases": [
+      "mouseHelper_deltaY",
+      "cursorDeltaY"
+    ]
+  },
+  "fabric:mouseHelper_grabMouseCursor": {
+    "class": "net.minecraft.class_312",
+    "method": "method_1612",
+    "aliases": [
+      "mouseHelper_grabMouseCursor",
+      "lockCursor"
+    ]
+  },
+  "fabric:mouseHelper_ungrabMouseCursor": {
+    "class": "net.minecraft.class_312",
+    "method": "method_1610",
+    "aliases": [
+      "mouseHelper_ungrabMouseCursor",
+      "unlockCursor"
+    ]
+  },
+  "fabric:movingObjectPosition_blockPos": {
+    "class": "net.minecraft.class_3965",
+    "field": "field_17589",
+    "aliases": [
+      "movingObjectPosition_blockPos",
+      "blockPos"
+    ]
+  },
+  "fabric:movingObjectPosition_entityHit": {
+    "class": "net.minecraft.class_3966",
+    "field": "field_17592",
+    "aliases": [
+      "movingObjectPosition_entityHit",
+      "entity"
+    ]
+  },
+  "fabric:movingObjectPosition_hitVec": {
+    "class": "net.minecraft.class_239",
+    "field": "field_1329",
+    "aliases": [
+      "movingObjectPosition_hitVec",
+      "pos"
+    ]
+  },
+  "fabric:movingObjectPosition_typeOfHit": {
+    "class": "net.minecraft.class_239",
+    "method": "method_17783",
+    "aliases": [
+      "movingObjectPosition_typeOfHit",
+      "getType"
+    ]
+  },
+  "fabric:nbtBase_getCompoundTag": {
+    "class": "net.minecraft.class_2487",
+    "method": "method_10562",
+    "aliases": [
+      "nbtBase_getCompoundTag",
+      "getCompound"
+    ]
+  },
+  "fabric:nbtBase_getInteger": {
+    "class": "net.minecraft.class_2487",
+    "method": "method_10550",
+    "aliases": [
+      "nbtBase_getInteger",
+      "getInt"
+    ]
+  },
+  "fabric:nbtBase_hasKey": {
+    "class": "net.minecraft.class_2487",
+    "method": "method_10545",
+    "aliases": [
+      "nbtBase_hasKey",
+      "contains"
+    ]
+  },
+  "fabric:netHandlerPlayClient_networkManager": {
+    "class": "net.minecraft.class_8673",
+    "field": "field_45589",
+    "aliases": [
+      "netHandlerPlayClient_networkManager",
+      "connection"
+    ]
+  },
+  "fabric:netHandler_addToSendQueue": {
+    "class": "net.minecraft.class_8673",
+    "method": "method_52787",
+    "aliases": [
+      "netHandler_addToSendQueue",
+      "sendPacket"
+    ]
+  },
+  "fabric:playerController_isHittingBlock": {
+    "class": "net.minecraft.class_636",
+    "field": "field_3717",
+    "aliases": [
+      "playerController_isHittingBlock",
+      "breakingBlock"
+    ]
+  },
+  "fabric:player_eyeHeight": {
+    "class": "net.minecraft.class_1297",
+    "method": "method_18381",
+    "aliases": [
+      "player_eyeHeight",
+      "getEyeHeight"
+    ]
+  },
+  "fabric:player_foodStats": {
+    "class": "net.minecraft.class_1657",
+    "method": "method_7344",
+    "aliases": [
+      "player_foodStats",
+      "getHungerManager"
+    ]
+  },
+  "fabric:player_heldItem": {
+    "class": "net.minecraft.class_1309",
+    "method": "method_6047",
+    "aliases": [
+      "player_heldItem",
+      "getMainHandStack"
+    ]
+  },
+  "fabric:player_inventory": {
+    "class": "net.minecraft.class_1657",
+    "field": "field_7514",
+    "aliases": [
+      "player_inventory",
+      "inventory"
+    ]
+  },
+  "fabric:player_isBlocking": {
+    "class": "net.minecraft.class_1309",
+    "method": "method_6039",
+    "aliases": [
+      "player_isBlocking",
+      "isBlocking"
+    ]
+  },
+  "fabric:player_isSneaking": {
+    "class": "net.minecraft.class_1297",
+    "method": "method_5715",
+    "aliases": [
+      "player_isSneaking",
+      "isSneaking"
+    ]
+  },
+  "fabric:player_isSprinting": {
+    "class": "net.minecraft.class_1297",
+    "method": "method_5624",
+    "aliases": [
+      "player_isSprinting",
+      "isSprinting"
+    ]
+  },
+  "fabric:player_jump": {
+    "class": "net.minecraft.class_1309",
+    "method": "method_6043",
+    "aliases": [
+      "player_jump",
+      "jump"
+    ]
+  },
+  "fabric:player_jumpTicks": {
+    "class": "net.minecraft.class_1309",
+    "field": "field_6228",
+    "aliases": [
+      "player_jumpTicks",
+      "jumpingCooldown"
+    ]
   },
   "fabric:player_moveForward": {
     "class": "net.minecraft.class_1309",
@@ -131,8 +941,7 @@
     "aliases": [
       "player_moveForward",
       "forwardSpeed"
-    ],
-    "mcp": "forwardSpeed"
+    ]
   },
   "fabric:player_moveStrafing": {
     "class": "net.minecraft.class_1309",
@@ -140,8 +949,7 @@
     "aliases": [
       "player_moveStrafing",
       "sidewaysSpeed"
-    ],
-    "mcp": "sidewaysSpeed"
+    ]
   },
   "fabric:player_rotationPitch": {
     "class": "net.minecraft.class_1297",
@@ -149,8 +957,7 @@
     "aliases": [
       "player_rotationPitch",
       "pitch"
-    ],
-    "mcp": "pitch"
+    ]
   },
   "fabric:player_rotationYaw": {
     "class": "net.minecraft.class_1297",
@@ -158,8 +965,71 @@
     "aliases": [
       "player_rotationYaw",
       "yaw"
-    ],
-    "mcp": "yaw"
+    ]
+  },
+  "fabric:player_sendQueue": {
+    "class": "net.minecraft.class_746",
+    "field": "field_3944",
+    "aliases": [
+      "player_sendQueue",
+      "networkHandler"
+    ]
+  },
+  "fabric:player_setSneaking": {
+    "class": "net.minecraft.class_1297",
+    "method": "method_5660",
+    "aliases": [
+      "player_setSneaking",
+      "setSneaking"
+    ]
+  },
+  "fabric:player_setSprinting": {
+    "class": "net.minecraft.class_1297",
+    "method": "method_5728",
+    "aliases": [
+      "player_setSprinting",
+      "setSprinting"
+    ]
+  },
+  "fabric:player_stopUsingItem": {
+    "class": "net.minecraft.class_1309",
+    "method": "method_6075",
+    "aliases": [
+      "player_stopUsingItem",
+      "stopUsingItem"
+    ]
+  },
+  "fabric:scorePlayerTeam_membershipCollection": {
+    "class": "net.minecraft.class_268",
+    "field": "field_1415",
+    "aliases": [
+      "scorePlayerTeam_membershipCollection",
+      "playerList"
+    ]
+  },
+  "fabric:scorePlayerTeam_registeredName": {
+    "class": "net.minecraft.class_268",
+    "field": "field_1421",
+    "aliases": [
+      "scorePlayerTeam_registeredName",
+      "name"
+    ]
+  },
+  "fabric:scoreboard_teams": {
+    "class": "net.minecraft.class_269",
+    "field": "field_1426",
+    "aliases": [
+      "scoreboard_teams",
+      "teams"
+    ]
+  },
+  "fabric:timer_renderPartialTicks": {
+    "class": "net.minecraft.class_9779",
+    "method": "method_60637",
+    "aliases": [
+      "timer_renderPartialTicks",
+      "getTickProgress"
+    ]
   },
   "fabric:velocity_motionX": {
     "class": "io.doppel.adapter.fabric.v1_21.FabricVelocityPacketHandle",
@@ -167,8 +1037,7 @@
     "aliases": [
       "velocity_motionX",
       "motionX"
-    ],
-    "mcp": "motionX"
+    ]
   },
   "fabric:velocity_motionY": {
     "class": "io.doppel.adapter.fabric.v1_21.FabricVelocityPacketHandle",
@@ -176,8 +1045,7 @@
     "aliases": [
       "velocity_motionY",
       "motionY"
-    ],
-    "mcp": "motionY"
+    ]
   },
   "fabric:velocity_motionZ": {
     "class": "io.doppel.adapter.fabric.v1_21.FabricVelocityPacketHandle",
@@ -185,8 +1053,23 @@
     "aliases": [
       "velocity_motionZ",
       "motionZ"
-    ],
-    "mcp": "motionZ"
+    ]
+  },
+  "fabric:world_getBlockState": {
+    "class": "net.minecraft.class_1922",
+    "method": "method_8320",
+    "aliases": [
+      "world_getBlockState",
+      "getBlockState"
+    ]
+  },
+  "fabric:world_getEntitiesWithinAABBExcludingEntity": {
+    "class": "net.minecraft.class_1924",
+    "method": "method_8333",
+    "aliases": [
+      "world_getEntitiesWithinAABBExcludingEntity",
+      "getOtherEntities"
+    ]
   },
   "fabric:world_getEntityByID": {
     "class": "net.minecraft.class_1937",
@@ -194,7 +1077,30 @@
     "aliases": [
       "world_getEntityByID",
       "getEntityById"
-    ],
-    "mcp": "getEntityById"
+    ]
+  },
+  "fabric:world_rayTraceBlocks": {
+    "class": "net.minecraft.class_1922",
+    "method": "method_32880",
+    "aliases": [
+      "world_rayTraceBlocks",
+      "raycast"
+    ]
+  },
+  "fabric:world_scoreboard": {
+    "class": "net.minecraft.class_1937",
+    "method": "method_8428",
+    "aliases": [
+      "world_scoreboard",
+      "getScoreboard"
+    ]
+  },
+  "fabric:world_worldTime": {
+    "class": "net.minecraft.class_1937",
+    "method": "method_8532",
+    "aliases": [
+      "world_worldTime",
+      "getTimeOfDay"
+    ]
   }
 }

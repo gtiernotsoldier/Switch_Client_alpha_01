@@ -6,7 +6,7 @@
 
 struct VersionInfo {
     std::string platform;  // "Forge" or "Fabric"
-    std::string version;   // e.g., "1.8.9", "1.20.1"
+    std::string version;   // e.g., "1.8.9", "1.21.11"
     std::string mcDir;     // .minecraft directory path
     bool valid;
     

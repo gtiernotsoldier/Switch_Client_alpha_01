@@ -46,7 +46,7 @@ public class MappingLoader {
     /**
      * Load mappings for specified platform and version
      * @param platform "Forge" or "Fabric"
-     * @param version Minecraft version (e.g., "1.8.9", "1.20.1")
+     * @param version Minecraft version (e.g., "1.8.9", "1.21.11")
      * @param customPath Optional custom mappings path (null = use embedded classpath resources)
      */
     public static void loadMappings(String platform, String version, String customPath) throws IOException {

@@ -8,17 +8,19 @@
 //
 // What it checks
 // --------------
-//  0. the table obeys the 1.8.9 table schema EXACTLY (mappings/forge/v1_8_9.json):
-//     a flat map of "fabric:*" keys, no _meta block, every entry carries the
-//     key set {class, field|method, aliases, mcp} and nothing else, aliases[0]
-//     is the bare semantic key. The official<->intermediary<->yarn chain is
-//     documented in the ground-truth file, not inside the runtime table;
+//  0. the table obeys the 1.8.9 table schema (mappings/forge/v1_8_9.json) with
+//     ONE deliberate deviation: NO "mcp" key — the 1.21.11 table is a flat map
+//     of "fabric:*" keys, no _meta block, every entry carries the key set
+//     {class, field|method, aliases} and nothing else, aliases[0] is the bare
+//     semantic key and aliases[1] the Yarn readable name. The
+//     official<->intermediary<->yarn chain is documented in the ground-truth
+//     file, not inside the runtime table;
 //  1. every entry's class/member exists in mappings/verify/v1_21_11-members.txt
 //     (ground truth extracted from FabricMC/intermediary @ 9168687 and
 //     Yarn 1.21.11+build.6), and the Mojang official name is present there for
 //     every net.minecraft row — the middle-layer chain must stay complete;
-//  2. the entry's readable name (`mcp`) agrees with the Yarn name for that
-//     intermediary member — catches "the id exists but is a different
+//  2. the entry's readable name (aliases[1]) agrees with the Yarn name for
+//     that intermediary member — catches "the id exists but is a different
 //     member", which bare existence checks cannot see;
 //  3. every `fabric:*` key referenced by MappingContext call sites in the
 //     Kotlin/Java sources resolves through the table (key or alias) with the
@@ -71,10 +73,11 @@ const mismatched = [];
 let checked = 0;
 
 // ─── 0. strict 1.8.9 table schema ────────────────────────────────────────────
-// The fabric table must obey mappings/forge/v1_8_9.json exactly: flat
-// "fabric:*" map, no _meta, entries carry {class, field|method, aliases, mcp}
-// and nothing else, aliases[0] is the bare semantic key.
-const ENTRY_KEYS = new Set(['class', 'field', 'method', 'aliases', 'mcp']);
+// The fabric table must obey mappings/forge/v1_8_9.json with one deviation:
+// NO "mcp" key (the 1.21.11 rule) — flat "fabric:*" map, no _meta, entries
+// carry {class, field|method, aliases} and nothing else, aliases[0] is the
+// bare semantic key and aliases[1] the Yarn readable name.
+const ENTRY_KEYS = new Set(['class', 'field', 'method', 'aliases']);
 const schemaBad = new Set();
 function schemaFail(key, msg) { invalid.push(msg); schemaBad.add(key); }
 
@@ -88,15 +91,15 @@ for (const [key, entry] of Object.entries(mapping)) {
     continue;
   }
   if (!entry || typeof entry !== 'object') { schemaFail(key, `${key}: not an object`); continue; }
+  if ('mcp' in entry) schemaFail(key, `${key}: the 1.21.11 table must NOT carry "mcp" — the readable name lives in aliases[1]`);
   const extra = Object.keys(entry).filter((k) => !ENTRY_KEYS.has(k));
   if (extra.length) schemaFail(key, `${key}: keys outside the 1.8.9 schema: ${extra.join(', ')}`);
   if (entry.field && entry.method) schemaFail(key, `${key}: carries both field and method (a 1.8.9 entry carries exactly one)`);
-  if (!Array.isArray(entry.aliases) || !entry.aliases.length || entry.aliases.some((a) => typeof a !== 'string')) {
-    schemaFail(key, `${key}: aliases must be a non-empty array of strings`);
+  if (!Array.isArray(entry.aliases) || entry.aliases.length < 2 || entry.aliases.some((a) => typeof a !== 'string')) {
+    schemaFail(key, `${key}: aliases must be [bareKey, readableName] (two non-empty strings)`);
   } else if (entry.aliases[0] !== key.replace(/^fabric:/, '')) {
     schemaFail(key, `${key}: aliases[0] must be the bare semantic key (1.8.9 convention)`);
   }
-  if (typeof entry.mcp !== 'string' || !entry.mcp) schemaFail(key, `${key}: mcp must be a non-empty string`);
 }
 
 for (const [key, entry] of Object.entries(mapping)) {
@@ -118,8 +121,8 @@ for (const [key, entry] of Object.entries(mapping)) {
     continue;
   }
 
-  if (row.yarn && entry.mcp && row.yarn !== entry.mcp) {
-    mismatched.push(`${key}: table says mcp="${entry.mcp}" but ${member} is Yarn "${row.yarn}"`);
+  if (row.yarn && (!Array.isArray(entry.aliases) || entry.aliases[1] !== row.yarn)) {
+    mismatched.push(`${key}: aliases[1]="${entry.aliases && entry.aliases[1]}" but ${member} is Yarn "${row.yarn}"`);
   }
   if (cls.startsWith('net.minecraft.') && (!row.official || row.official === '-')) {
     mismatched.push(`${key}: ${cls}/${member} — ground truth carries no Mojang official name (middle-layer chain incomplete)`);

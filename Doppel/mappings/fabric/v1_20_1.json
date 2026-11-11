@@ -1,7 +1,0 @@
-{
-  "fabric:interactionManager_isBreakingBlock": {
-    "class": "net.minecraft.client.network.ClientPlayerInteractionManager",
-    "field": "isBreakingBlock",
-    "aliases": ["interactionManager_isBreakingBlock"]
-  }
-}

@@ -7,7 +7,7 @@ package io.doppel.adapter.common.render
  * (obtained via reflection / MappingContext) and implements this interface.
  *
  * The consumer (OverlayRenderer) only calls drawStringWithShadow / getStringWidth
- * without knowing whether the underlying renderer is Forge 1.8.9 or Fabric 1.20.1.
+ * without knowing whether the underlying renderer is Forge 1.8.9 or Fabric 1.21.11.
  */
 interface FontRendererBridge {
 

@@ -44,10 +44,10 @@ object FabricStateExtractor : IStateExtractor {
         val rotationYaw = MappingContext.getFieldValue(player, "fabric:player_rotationYaw") as? Float ?: 0f
         val rotationPitch = MappingContext.getFieldValue(player, "fabric:player_rotationPitch") as? Float ?: 0f
         val onGround = MappingContext.getFieldValue(player, "fabric:entity_onGround") as? Boolean ?: false
-        val isSprinting = MappingContext.getFieldValue(player, "fabric:player_isSprinting") as? Boolean ?: false
+        val isSprinting = MappingContext.invokeMethod(player, "fabric:player_isSprinting") as? Boolean ?: false
         val hurtTime = MappingContext.getFieldValue(player, "fabric:entity_hurtTime") as? Int ?: 0
         val maxHurtResistantTime = MappingContext.getFieldValue(player, "fabric:entity_maxHurtResistantTime") as? Int ?: 10
-        val health = MappingContext.getFieldValue(player, "fabric:entity_health") as? Float ?: 0f
+        val health = MappingContext.invokeMethod(player, "fabric:entity_health") as? Float ?: 0f
 
         val moveForward = MappingContext.getFieldValue(player, "fabric:player_moveForward") as? Float ?: 0f
         val moveStrafe = MappingContext.getFieldValue(player, "fabric:player_moveStrafing") as? Float ?: 0f
@@ -100,7 +100,7 @@ object FabricStateExtractor : IStateExtractor {
         val motionX = MappingContext.getFieldValue(entity, "fabric:entity_motionX") as? Double ?: 0.0
         val motionY = MappingContext.getFieldValue(entity, "fabric:entity_motionY") as? Double ?: 0.0
         val motionZ = MappingContext.getFieldValue(entity, "fabric:entity_motionZ") as? Double ?: 0.0
-        val health = MappingContext.getFieldValue(entity, "fabric:entity_health") as? Float ?: 0f
+        val health = MappingContext.invokeMethod(entity, "fabric:entity_health") as? Float ?: 0f
         val hurtTime = MappingContext.getFieldValue(entity, "fabric:entity_hurtTime") as? Int ?: 0
         // 1.9+ has no Entity.hurtResistantTime; use the entity's regen counter if mapped,
         // else fall back to hurtTime (Forge uses the dedicated i-frame counter).

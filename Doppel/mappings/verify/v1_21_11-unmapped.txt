@@ -1,8 +1,32 @@
-# fabric keys referenced by adapter code that have NO faithful 1.21.11 binding.
+# fabric keys with NO faithful 1.21.11 binding.
 # verify_mappings_fabric.mjs warns (not fails) for these; everything else must resolve.
-fabric:entity_health  # 1.21.11 moved LivingEntity health into the DataTracker (HEALTH field_6247); no float 'health' field exists — use compiled getHealth() (method_6032) in the adapter
-fabric:entity_maxHurtResistantTime  # 1.8-only concept; the 20-tick i-frame maximum is a constant, not a field (caller default 10 already matches the fail-closed path)
-fabric:entity_motionX  # Entity.velocity (field_18276) is a Vec3d in 1.21.11 — no primitive motion fields exist; reads return Double (fails) and applyMotion writes setDouble (impossible). Use setVelocityClient (method_5750)
-fabric:entity_motionY  # Entity.velocity (field_18276) is a Vec3d in 1.21.11 — no primitive motion fields exist; reads return Double (fails) and applyMotion writes setDouble (impossible). Use setVelocityClient (method_5750)
-fabric:entity_motionZ  # Entity.velocity (field_18276) is a Vec3d in 1.21.11 — no primitive motion fields exist; reads return Double (fails) and applyMotion writes setDouble (impossible). Use setVelocityClient (method_5750)
-fabric:player_isSprinting  # sprinting is a DataTracker flag on 1.21.11 (SPRINTING_FLAG_INDEX); the only accessor is isSprinting() (method_5624) — no boolean field exists
+# entries follow the forge/v1_8_9.json semantic key universe; reasons cite the
+# 1.21.11 intermediary/yarn ground truth (intermediary @ 9168687, yarn build.6).
+fabric:S12PacketEntityVelocity_getMotionX  # the 1.21.11 velocity packet stores one Vec3d (getVelocity() method_73085) — no per-axis getters exist
+fabric:S12PacketEntityVelocity_getMotionY  # the 1.21.11 velocity packet stores one Vec3d (getVelocity() method_73085) — no per-axis getters exist
+fabric:S12PacketEntityVelocity_getMotionZ  # the 1.21.11 velocity packet stores one Vec3d (getVelocity() method_73085) — no per-axis getters exist
+fabric:S27PacketExplosion_motionX  # the 1.21.11 explosion packet no longer carries the player-knockback motion fields
+fabric:S27PacketExplosion_motionY  # the 1.21.11 explosion packet no longer carries the player-knockback motion fields
+fabric:S27PacketExplosion_motionZ  # the 1.21.11 explosion packet no longer carries the player-knockback motion fields
+fabric:entityLivingBase_displayName  # 1.21.11 has no getDisplayName on Entity/LivingEntity — Entity.getDefaultName() (method_23315) returns the type name only and ignores custom names
+fabric:entityLivingBase_swingProgressInt  # the int swing counter is gone; LivingEntity.handSwingProgress (field_6251) is the float progress, not a tick counter
+fabric:entityRenderer_fovModifierHand  # the hand-specific FOV modifier is gone; GameRenderer.fovMultiplier (field_4019) + updateFovMultiplier() cover all FOV scaling
+fabric:entity_getMotionX  # Entity.velocity is a Vec3d in 1.21.11 — no primitive motion fields exist; use the velocity Vec3d or setVelocityClient (method_5750)
+fabric:entity_getMotionY  # Entity.velocity is a Vec3d in 1.21.11 — no primitive motion fields exist; use the velocity Vec3d or setVelocityClient (method_5750)
+fabric:entity_getMotionZ  # Entity.velocity is a Vec3d in 1.21.11 — no primitive motion fields exist; use the velocity Vec3d or setVelocityClient (method_5750)
+fabric:entity_isInWeb  # 1.21.11 has no inWeb flag on Entity — cobweb slowdown is applied through block collision logic, not a flag
+fabric:entity_maxHurtResistantTime  # the 20-tick i-frame maximum is a constant in 1.21.11, not a field (caller default 10 already matches the fail-closed path)
+fabric:entity_motionX  # Entity.velocity is a Vec3d in 1.21.11 — no primitive motion fields exist; reads return the Vec3d and applyMotion writes setDouble (impossible). Use setVelocityClient (method_5750)
+fabric:entity_motionY  # Entity.velocity is a Vec3d in 1.21.11 — no primitive motion fields exist; reads return the Vec3d and applyMotion writes setDouble (impossible). Use setVelocityClient (method_5750)
+fabric:entity_motionZ  # Entity.velocity is a Vec3d in 1.21.11 — no primitive motion fields exist; reads return the Vec3d and applyMotion writes setDouble (impossible). Use setVelocityClient (method_5750)
+fabric:entity_name  # 1.21.11 has no getDisplayName on Entity/LivingEntity — Entity.getDefaultName() (method_23315) returns the type name only and ignores custom names
+fabric:gs_viewBobbing  # 1.21.11 has no viewBobbing option (the toggle was removed from GameOptions)
+fabric:inventory_getStackInSlot  # the 1.21.11 inventory rework removed getStack(int) — use getMainStacks()/getSelectedStack()
+fabric:itemStack_hasTagCompound  # 1.20.5+ replaced NBT with DataComponents — ItemStack has no tag compound to test
+fabric:itemStack_tagCompound  # 1.20.5+ replaced NBT with DataComponents — ItemStack has no tag compound field
+fabric:mc_addScheduledTask  # thread-task scheduling is reworked — use client.execute(Runnable) (java.util.concurrent.Executor, unnamed in Yarn) or ThreadExecutor.executeSync (method_40000)
+fabric:mc_displayHeight  # 1.21.11 keeps window size behind the Window object — use getWindow().getFramebufferHeight()
+fabric:mc_displayWidth  # 1.21.11 keeps window size behind the Window object — use getWindow().getFramebufferWidth()
+fabric:mouseHelper_mouseXYChange  # 1.8 legacy no-op pair; read cursorDeltaX/cursorDeltaY directly
+fabric:world_isAirBlock  # 1.21.11 has no isAir on World/BlockView — use getBlockState(pos).isAir()
+fabric:world_loadedEntityList  # 1.21.11 hides the entity list behind EntityLookup (World.getEntityLookup(), method_31592)

@@ -8,12 +8,17 @@
 //
 // What it checks
 // --------------
+//  0. the table obeys the 1.8.9 table schema EXACTLY (mappings/forge/v1_8_9.json):
+//     a flat map of "fabric:*" keys, no _meta block, every entry carries the
+//     key set {class, field|method, aliases, mcp} and nothing else, aliases[0]
+//     is the bare semantic key. The official<->intermediary<->yarn chain is
+//     documented in the ground-truth file, not inside the runtime table;
 //  1. every entry's class/member exists in mappings/verify/v1_21_11-members.txt
-//     (ground truth extracted from FabricMC/intermediary @ 1.21.11 and
-//     Yarn 1.21.11+build.6 — see scripts/generate_fabric_1_21_11.py);
+//     (ground truth extracted from FabricMC/intermediary @ 9168687 and
+//     Yarn 1.21.11+build.6), and the Mojang official name is present there for
+//     every net.minecraft row — the middle-layer chain must stay complete;
 //  2. the entry's readable name (`mcp`) agrees with the Yarn name for that
-//     intermediary member, and `official` (when present) agrees with the
-//     Mojang obfuscated name — catches "the id exists but is a different
+//     intermediary member — catches "the id exists but is a different
 //     member", which bare existence checks cannot see;
 //  3. every `fabric:*` key referenced by MappingContext call sites in the
 //     Kotlin/Java sources resolves through the table (key or alias) with the
@@ -60,14 +65,42 @@ if (fs.existsSync(unmappedPath)) {
   }
 }
 
-// ─── 1 + 2. entry checks ─────────────────────────────────────────────────────
+// ─── schema + entry checks ─────────────────────────────────────────────────────
 const invalid = [];
 const mismatched = [];
 let checked = 0;
 
+// ─── 0. strict 1.8.9 table schema ────────────────────────────────────────────
+// The fabric table must obey mappings/forge/v1_8_9.json exactly: flat
+// "fabric:*" map, no _meta, entries carry {class, field|method, aliases, mcp}
+// and nothing else, aliases[0] is the bare semantic key.
+const ENTRY_KEYS = new Set(['class', 'field', 'method', 'aliases', 'mcp']);
+const schemaBad = new Set();
+function schemaFail(key, msg) { invalid.push(msg); schemaBad.add(key); }
+
 for (const [key, entry] of Object.entries(mapping)) {
-  if (key === '_meta') continue;
-  if (!entry || typeof entry !== 'object') { invalid.push(`${key}: not an object`); continue; }
+  if (key === '_meta') {
+    schemaFail(key, `${key}: _meta is not part of the 1.8.9 table format — provenance lives in mappings/verify/`);
+    continue;
+  }
+  if (!key.startsWith('fabric:')) {
+    schemaFail(key, `${key}: top-level keys must be "fabric:*" (1.8.9 table convention)`);
+    continue;
+  }
+  if (!entry || typeof entry !== 'object') { schemaFail(key, `${key}: not an object`); continue; }
+  const extra = Object.keys(entry).filter((k) => !ENTRY_KEYS.has(k));
+  if (extra.length) schemaFail(key, `${key}: keys outside the 1.8.9 schema: ${extra.join(', ')}`);
+  if (entry.field && entry.method) schemaFail(key, `${key}: carries both field and method (a 1.8.9 entry carries exactly one)`);
+  if (!Array.isArray(entry.aliases) || !entry.aliases.length || entry.aliases.some((a) => typeof a !== 'string')) {
+    schemaFail(key, `${key}: aliases must be a non-empty array of strings`);
+  } else if (entry.aliases[0] !== key.replace(/^fabric:/, '')) {
+    schemaFail(key, `${key}: aliases[0] must be the bare semantic key (1.8.9 convention)`);
+  }
+  if (typeof entry.mcp !== 'string' || !entry.mcp) schemaFail(key, `${key}: mcp must be a non-empty string`);
+}
+
+for (const [key, entry] of Object.entries(mapping)) {
+  if (schemaBad.has(key)) continue;
   const cls = entry.class;
   const kind = entry.method ? 'method' : entry.field ? 'field' : null;
   const member = entry.method || entry.field;
@@ -88,8 +121,8 @@ for (const [key, entry] of Object.entries(mapping)) {
   if (row.yarn && entry.mcp && row.yarn !== entry.mcp) {
     mismatched.push(`${key}: table says mcp="${entry.mcp}" but ${member} is Yarn "${row.yarn}"`);
   }
-  if (entry.official && row.official && row.official !== '-' && row.official !== entry.official) {
-    mismatched.push(`${key}: table says official="${entry.official}" but ${member} is "${row.official}"`);
+  if (cls.startsWith('net.minecraft.') && (!row.official || row.official === '-')) {
+    mismatched.push(`${key}: ${cls}/${member} — ground truth carries no Mojang official name (middle-layer chain incomplete)`);
   }
 }
 

@@ -277,18 +277,10 @@ object FabricEventBridge : IEventBridge {
      */
     private fun setPlayerRotation(rotation: Vec2) {
         val player = mc.player ?: return
-        MappingContext.getFieldValue(player, "fabric:player_rotationYaw")?.let { field ->
-            (field as? java.lang.reflect.Field)?.apply {
-                isAccessible = true
-                setFloat(player, rotation.yaw)
-            }
-        }
-        MappingContext.getFieldValue(player, "fabric:player_rotationPitch")?.let { field ->
-            (field as? java.lang.reflect.Field)?.apply {
-                isAccessible = true
-                setFloat(player, rotation.pitch)
-            }
-        }
+        // getField() returns the raw java.lang.reflect.Field — getFieldValue()
+        // returns the VALUE, so the old cast-to-Field pattern was a silent no-op.
+        MappingContext.getField("fabric:player_rotationYaw")?.setFloat(player, rotation.yaw)
+        MappingContext.getField("fabric:player_rotationPitch")?.setFloat(player, rotation.pitch)
     }
 
     /**
@@ -296,24 +288,15 @@ object FabricEventBridge : IEventBridge {
      */
     private fun applyMotion(motion: Vec3) {
         val player = mc.player ?: return
-        MappingContext.getFieldValue(player, "fabric:entity_motionX")?.let { field ->
-            (field as? java.lang.reflect.Field)?.apply {
-                isAccessible = true
-                setDouble(player, motion.x)
-            }
-        }
-        MappingContext.getFieldValue(player, "fabric:entity_motionY")?.let { field ->
-            (field as? java.lang.reflect.Field)?.apply {
-                isAccessible = true
-                setDouble(player, motion.y)
-            }
-        }
-        MappingContext.getFieldValue(player, "fabric:entity_motionZ")?.let { field ->
-            (field as? java.lang.reflect.Field)?.apply {
-                isAccessible = true
-                setDouble(player, motion.z)
-            }
-        }
+        // 1.21.11 stores motion as one Vec3d (Entity.velocity, field_18276) — the
+        // per-axis primitives of 1.8.9 no longer exist. Write the whole vector
+        // through the real client-side setter (method_5750) instead of trying to
+        // reflect per-axis fields that were never there.
+        MappingContext.invokeMethod(
+            player,
+            "fabric:entity_setVelocityClient",
+            net.minecraft.util.math.Vec3d(motion.x, motion.y, motion.z),
+        )
     }
 
     /**

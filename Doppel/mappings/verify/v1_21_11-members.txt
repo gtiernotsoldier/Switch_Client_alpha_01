@@ -126,3 +126,11 @@ net.minecraft.class_746	field	field_3944	networkHandler	b	Lnet/minecraft/class_6
 net.minecraft.class_8673	field	field_45589	connection	b	Lnet/minecraft/class_2535;
 net.minecraft.class_8673	method	method_52787	sendPacket	b	(Lnet/minecraft/class_2596;)V
 net.minecraft.class_9779	method	method_60637	getTickProgress	a	(Z)F
+net.minecraft.class_1297	field	field_18276	velocity	aY	Lnet/minecraft/class_243;
+net.minecraft.class_243	field	field_1352	x	g	D
+net.minecraft.class_243	field	field_1351	y	h	D
+net.minecraft.class_243	field	field_1350	z	i	D
+net.minecraft.class_1297	method	method_5750	setVelocityClient	j	(Lnet/minecraft/class_243;)V
+net.minecraft.class_1297	method	method_23317	getX	dP	()D
+net.minecraft.class_1297	method	method_23318	getY	dR	()D
+net.minecraft.class_1297	method	method_23321	getZ	dV	()D

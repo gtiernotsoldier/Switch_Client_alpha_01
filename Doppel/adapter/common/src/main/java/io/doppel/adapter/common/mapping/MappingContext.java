@@ -26,8 +26,10 @@ import java.util.concurrent.ConcurrentHashMap;
  *       "aliases": ["entity_posX", "posX"]
  *     }
  *
- *   Now both MappingContext.getFieldValue(obj, "forge:entity_posX") and
- *   MappingContext.getFieldValue(obj, "entity_posX") resolve to the same entry.
+ *   Now both MappingContext.getFieldValue(obj, "forge:entity_onGround") and
+ *   MappingContext.getFieldValue(obj, "entity_onGround") resolve to the same entry.
+ *   (Use invokeMethod() for method entries, e.g. "fabric:entity_posX" binds to
+ *   Entity.getX on 1.21.11 — position has no primitive fields there.)
  *
  * SRG/MCP naming:
  *   In Forge 1.8.9, the runtime uses SRG names (field_70165_t, func_70071_h_)

@@ -11,14 +11,14 @@ fabric:S27PacketExplosion_motionZ  # the 1.21.11 explosion packet no longer carr
 fabric:entityLivingBase_displayName  # 1.21.11 has no getDisplayName on Entity/LivingEntity — Entity.getDefaultName() (method_23315) returns the type name only and ignores custom names
 fabric:entityLivingBase_swingProgressInt  # the int swing counter is gone; LivingEntity.handSwingProgress (field_6251) is the float progress, not a tick counter
 fabric:entityRenderer_fovModifierHand  # the hand-specific FOV modifier is gone; GameRenderer.fovMultiplier (field_4019) + updateFovMultiplier() cover all FOV scaling
-fabric:entity_getMotionX  # Entity.velocity is a Vec3d in 1.21.11 — no primitive motion fields exist; use the velocity Vec3d or setVelocityClient (method_5750)
-fabric:entity_getMotionY  # Entity.velocity is a Vec3d in 1.21.11 — no primitive motion fields exist; use the velocity Vec3d or setVelocityClient (method_5750)
-fabric:entity_getMotionZ  # Entity.velocity is a Vec3d in 1.21.11 — no primitive motion fields exist; use the velocity Vec3d or setVelocityClient (method_5750)
+fabric:entity_getMotionX  # Entity.velocity is one Vec3d in 1.21.11 (field_18276) — no per-axis primitive fields exist. Two-hop read: entity_deltaMovement (field_18276) then vec3_x/y/z (field_1352/1351/1350). Write via setVelocityClient (method_5750)
+fabric:entity_getMotionY  # Entity.velocity is one Vec3d in 1.21.11 (field_18276) — no per-axis primitive fields exist. Two-hop read: entity_deltaMovement (field_18276) then vec3_x/y/z (field_1352/1351/1350). Write via setVelocityClient (method_5750)
+fabric:entity_getMotionZ  # Entity.velocity is one Vec3d in 1.21.11 (field_18276) — no per-axis primitive fields exist. Two-hop read: entity_deltaMovement (field_18276) then vec3_x/y/z (field_1352/1351/1350). Write via setVelocityClient (method_5750)
 fabric:entity_isInWeb  # 1.21.11 has no inWeb flag on Entity — cobweb slowdown is applied through block collision logic, not a flag
 fabric:entity_maxHurtResistantTime  # the 20-tick i-frame maximum is a constant in 1.21.11, not a field (caller default 10 already matches the fail-closed path)
-fabric:entity_motionX  # Entity.velocity is a Vec3d in 1.21.11 — no primitive motion fields exist; reads return the Vec3d and applyMotion writes setDouble (impossible). Use setVelocityClient (method_5750)
-fabric:entity_motionY  # Entity.velocity is a Vec3d in 1.21.11 — no primitive motion fields exist; reads return the Vec3d and applyMotion writes setDouble (impossible). Use setVelocityClient (method_5750)
-fabric:entity_motionZ  # Entity.velocity is a Vec3d in 1.21.11 — no primitive motion fields exist; reads return the Vec3d and applyMotion writes setDouble (impossible). Use setVelocityClient (method_5750)
+fabric:entity_motionX  # Entity.velocity is one Vec3d in 1.21.11 (field_18276) — no per-axis primitive fields exist. Two-hop read: entity_deltaMovement (field_18276) then vec3_x/y/z (field_1352/1351/1350). Write via setVelocityClient (method_5750)
+fabric:entity_motionY  # Entity.velocity is one Vec3d in 1.21.11 (field_18276) — no per-axis primitive fields exist. Two-hop read: entity_deltaMovement (field_18276) then vec3_x/y/z (field_1352/1351/1350). Write via setVelocityClient (method_5750)
+fabric:entity_motionZ  # Entity.velocity is one Vec3d in 1.21.11 (field_18276) — no per-axis primitive fields exist. Two-hop read: entity_deltaMovement (field_18276) then vec3_x/y/z (field_1352/1351/1350). Write via setVelocityClient (method_5750)
 fabric:entity_name  # 1.21.11 has no getDisplayName on Entity/LivingEntity — Entity.getDefaultName() (method_23315) returns the type name only and ignores custom names
 fabric:gs_viewBobbing  # 1.21.11 has no viewBobbing option (the toggle was removed from GameOptions)
 fabric:inventory_getStackInSlot  # the 1.21.11 inventory rework removed getStack(int) — use getMainStacks()/getSelectedStack()

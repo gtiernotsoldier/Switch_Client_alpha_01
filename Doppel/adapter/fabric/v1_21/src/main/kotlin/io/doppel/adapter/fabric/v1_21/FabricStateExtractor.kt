@@ -35,18 +35,25 @@ object FabricStateExtractor : IStateExtractor {
     override fun extractPlayerState(): PlayerState {
         val player = mc.player ?: return PlayerState.EMPTY
 
-        val posX = MappingContext.getFieldValue(player, "fabric:entity_posX") as? Double ?: 0.0
-        val posY = MappingContext.getFieldValue(player, "fabric:entity_posY") as? Double ?: 0.0
-        val posZ = MappingContext.getFieldValue(player, "fabric:entity_posZ") as? Double ?: 0.0
-        val motionX = MappingContext.getFieldValue(player, "fabric:entity_motionX") as? Double ?: 0.0
-        val motionY = MappingContext.getFieldValue(player, "fabric:entity_motionY") as? Double ?: 0.0
-        val motionZ = MappingContext.getFieldValue(player, "fabric:entity_motionZ") as? Double ?: 0.0
+        // 1.21.11 reality: no primitive position fields (mojmap keeps only xo/yo/zo
+        // and xOld/yOld/zOld) — current position reads through getX/getY/getZ
+        // (method_23317/23318/23321); motion is one Vec3d (field_18276), read
+        // two-hop through its x/y/z (field_1352/1351/1350).
+        val posX = MappingContext.invokeMethod(player, "fabric:entity_posX") as? Double ?: 0.0
+        val posY = MappingContext.invokeMethod(player, "fabric:entity_posY") as? Double ?: 0.0
+        val posZ = MappingContext.invokeMethod(player, "fabric:entity_posZ") as? Double ?: 0.0
+        val motionVec = MappingContext.getFieldValue(player, "fabric:entity_deltaMovement")
+        val motionX = MappingContext.getFieldValue(motionVec, "fabric:vec3_x") as? Double ?: 0.0
+        val motionY = MappingContext.getFieldValue(motionVec, "fabric:vec3_y") as? Double ?: 0.0
+        val motionZ = MappingContext.getFieldValue(motionVec, "fabric:vec3_z") as? Double ?: 0.0
         val rotationYaw = MappingContext.getFieldValue(player, "fabric:player_rotationYaw") as? Float ?: 0f
         val rotationPitch = MappingContext.getFieldValue(player, "fabric:player_rotationPitch") as? Float ?: 0f
         val onGround = MappingContext.getFieldValue(player, "fabric:entity_onGround") as? Boolean ?: false
         val isSprinting = MappingContext.invokeMethod(player, "fabric:player_isSprinting") as? Boolean ?: false
         val hurtTime = MappingContext.getFieldValue(player, "fabric:entity_hurtTime") as? Int ?: 0
-        val maxHurtResistantTime = MappingContext.getFieldValue(player, "fabric:entity_maxHurtResistantTime") as? Int ?: 10
+        // 1.21.11 keeps no maxHurtResistantTime field (documented in
+        // mappings/verify/v1_21_11-unmapped.txt) — keep the fail-closed default.
+        val maxHurtResistantTime = 10
         val health = MappingContext.invokeMethod(player, "fabric:entity_health") as? Float ?: 0f
 
         val moveForward = MappingContext.getFieldValue(player, "fabric:player_moveForward") as? Float ?: 0f
@@ -94,12 +101,15 @@ object FabricStateExtractor : IStateExtractor {
         val world = mc.world ?: return null
         val entity = MappingContext.invokeMethod(world, "fabric:world_getEntityByID", entityId) ?: return null
 
-        val posX = MappingContext.getFieldValue(entity, "fabric:entity_posX") as? Double ?: 0.0
-        val posY = MappingContext.getFieldValue(entity, "fabric:entity_posY") as? Double ?: 0.0
-        val posZ = MappingContext.getFieldValue(entity, "fabric:entity_posZ") as? Double ?: 0.0
-        val motionX = MappingContext.getFieldValue(entity, "fabric:entity_motionX") as? Double ?: 0.0
-        val motionY = MappingContext.getFieldValue(entity, "fabric:entity_motionY") as? Double ?: 0.0
-        val motionZ = MappingContext.getFieldValue(entity, "fabric:entity_motionZ") as? Double ?: 0.0
+        // Same 1.21.11 shape as the player state: methods for position, two-hop
+        // Vec3d read for motion.
+        val posX = MappingContext.invokeMethod(entity, "fabric:entity_posX") as? Double ?: 0.0
+        val posY = MappingContext.invokeMethod(entity, "fabric:entity_posY") as? Double ?: 0.0
+        val posZ = MappingContext.invokeMethod(entity, "fabric:entity_posZ") as? Double ?: 0.0
+        val motionVec = MappingContext.getFieldValue(entity, "fabric:entity_deltaMovement")
+        val motionX = MappingContext.getFieldValue(motionVec, "fabric:vec3_x") as? Double ?: 0.0
+        val motionY = MappingContext.getFieldValue(motionVec, "fabric:vec3_y") as? Double ?: 0.0
+        val motionZ = MappingContext.getFieldValue(motionVec, "fabric:vec3_z") as? Double ?: 0.0
         val health = MappingContext.invokeMethod(entity, "fabric:entity_health") as? Float ?: 0f
         val hurtTime = MappingContext.getFieldValue(entity, "fabric:entity_hurtTime") as? Int ?: 0
         // 1.9+ has no Entity.hurtResistantTime; use the entity's regen counter if mapped,
@@ -122,9 +132,9 @@ object FabricStateExtractor : IStateExtractor {
         }
 
         val player = mc.player ?: return null
-        val playerX = MappingContext.getFieldValue(player, "fabric:entity_posX") as? Double ?: 0.0
-        val playerY = MappingContext.getFieldValue(player, "fabric:entity_posY") as? Double ?: 0.0
-        val playerZ = MappingContext.getFieldValue(player, "fabric:entity_posZ") as? Double ?: 0.0
+        val playerX = MappingContext.invokeMethod(player, "fabric:entity_posX") as? Double ?: 0.0
+        val playerY = MappingContext.invokeMethod(player, "fabric:entity_posY") as? Double ?: 0.0
+        val playerZ = MappingContext.invokeMethod(player, "fabric:entity_posZ") as? Double ?: 0.0
         val dx = posX - playerX
         val dy = posY - playerY
         val dz = posZ - playerZ

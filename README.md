@@ -179,7 +179,7 @@ Doppel/
 │
 ├── mappings/                     # Semantic key → MC member mapping (JSON)
 │   ├── forge/v1_8_9.json         # Forge 1.8.9 (SRG + MCP names)
-│   ├── fabric/                   # v1_20_1.json baseline + per-version deltas
+│   ├── fabric/v1_21_11.json      # Fabric 1.21.11 (intermediary runtime layer, no mcp)
 │   └── verify/                   # Mapping verification fixtures
 │
 ├── injector/                     # Rust injector + C++ payload — OWNS the core
@@ -192,7 +192,7 @@ Doppel/
 │
 ├── hud/                          # External overlay process (Rust) — the offline
 │                                 #   indicator lives here, not in the JVM
-├── scripts/                      # generate_mappings.py, verify_mappings.mjs,
+├── scripts/                      # verify_mappings.mjs, verify_mappings_fabric.mjs,
 │                                 #   ipc_latency_bench.c, HUD mockups
 ├── tickets/                      # Open P0 tickets (injection, classloader)
 │
@@ -249,28 +249,28 @@ Every port is pinned by a bit-level golden replay (500+ rows per module) plus a 
 
 📦 Module Design Examples (Following the Constitution)
 
-Module	Traditional Approach	Sandwich Approach	
-AimAssist	Lock onto head/center, linear smoothing	Only softly pull back to hitbox edge when crosshair deviates, with jitter and reaction delay	
-AutoClicker	Fixed CPS, uniform randomness	Distance-adaptive CPS, gamma distribution, only active when player attacks	
-Velocity	Fixed retention rate 0%	Random range (20-60%), conditional triggering, simulating packet loss	
-WTap	Fixed tick packet sending	Random ticks + probability + only triggers when moving forward	
-Backtrack	Fixed delay	Dynamic delay following network distribution, random packet loss, coordinated with global scheduler	
-Disabler	Single exploit abuse	Dynamic strategy library loading, multiple bypasses randomly switched, behavior legitimization	
-Reach	Fixed extension	Small bounded extension, active only in specific combat states, randomized	
-AutoBlock	Hold-block forever	Timed block windows synchronized with attack rhythm and opponent swing	
-TriggerBot	Instant attack on crosshair	Latency-masked attack timing with human reaction delay	
-Strafe	Perfect movement lock	Assists only when the player is already strafing; never auto-controls direction	
+Module  Traditional Approach    Sandwich Approach       
+AimAssist       Lock onto head/center, linear smoothing Only softly pull back to hitbox edge when crosshair deviates, with jitter and reaction delay    
+AutoClicker     Fixed CPS, uniform randomness   Distance-adaptive CPS, gamma distribution, only active when player attacks      
+Velocity        Fixed retention rate 0% Random range (20-60%), conditional triggering, simulating packet loss   
+WTap    Fixed tick packet sending       Random ticks + probability + only triggers when moving forward  
+Backtrack       Fixed delay     Dynamic delay following network distribution, random packet loss, coordinated with global scheduler     
+Disabler        Single exploit abuse    Dynamic strategy library loading, multiple bypasses randomly switched, behavior legitimization  
+Reach   Fixed extension Small bounded extension, active only in specific combat states, randomized      
+AutoBlock       Hold-block forever      Timed block windows synchronized with attack rhythm and opponent swing  
+TriggerBot      Instant attack on crosshair     Latency-masked attack timing with human reaction delay  
+Strafe  Perfect movement lock   Assists only when the player is already strafing; never auto-controls direction 
 
 ---
 
 🔧 Four-Layer Architecture in Detail
 
-Layer	Language	Responsibility	Key Components	
-Injector	C++ / Rust	Process detection, version recognition, Agent injection — and it spawns & owns the core process	Process enumeration, remote thread, version probing, payload DLL, resource.rs::launch_core	
-Agent	Java	Orchestration only — one hook (Display.update), mappings, tick/key threads	ASM, MappingContext, MappingLoader, RenderBridge	
-Core process	Rust	**All algorithms, state machines and randomness** — deterministic, replayable, golden-parity pinned	24 strategy files, 20 PCG32 streams, session state, wire/codec/transport (core-rs/)	
-IPC stub	Kotlin	Thin pipe: framing, seq correlation, 1 ms deadline, per-op degradation	CoreStub, CoreSupervisor, Wire, Strategies (ipc/)	
-Adapter	Kotlin	Version adaptation (1.8.9 Forge / 1.21 Fabric) + judgement & platform side effects	50 modules, EventBridge, WebUIServer, render bridges	
+Layer   Language        Responsibility  Key Components  
+Injector        C++ / Rust      Process detection, version recognition, Agent injection — and it spawns & owns the core process Process enumeration, remote thread, version probing, payload DLL, resource.rs::launch_core      
+Agent   Java    Orchestration only — one hook (Display.update), mappings, tick/key threads      ASM, MappingContext, MappingLoader, RenderBridge        
+Core process    Rust    **All algorithms, state machines and randomness** — deterministic, replayable, golden-parity pinned     24 strategy files, 20 PCG32 streams, session state, wire/codec/transport (core-rs/)     
+IPC stub        Kotlin  Thin pipe: framing, seq correlation, 1 ms deadline, per-op degradation  CoreStub, CoreSupervisor, Wire, Strategies (ipc/)       
+Adapter Kotlin  Version adaptation (1.8.9 Forge / 1.21 Fabric) + judgement & platform side effects      50 modules, EventBridge, WebUIServer, render bridges    
 
 Core Principles:
 - Algorithms in the core **process**: All decision logic (knockback modification, rotation calculation, CPS generation, every probability, window and cross-tick memory) lives in core-rs — out of process, unit-testable, and replayable bit for bit. A JVM dump reveals no heuristic.
@@ -281,13 +281,13 @@ Core Principles:
 
 ️ Four Major Infrastructures (Cross-Cutting Concerns)
 
-Infrastructure	Function	Implementation Location	Status	
-Mapping Library + Cache	Cross-version class/method/field access, zero-reflection startup	Agent MappingLoader + JSON (forge/v1_8_9.json, fabric/v1_20_1.json + deltas)	✅ Implemented	
-Condition Engine	Unified trigger rules (onlyGround, onLook, chance, delay, ticks)	core-rs `condition.rs` (full port) + Kotlin oracle twin	✅ Implemented	
-Noise Perturbation	Mandatory randomization (Gaussian/uniform distribution) on all strategy outputs	core-rs RNG: 20 independent PCG32 streams on the decision path	✅ Implemented	
-Global Packet Scheduler	Manages all network packet sending order, delay, and packet loss simulation	Core network/PacketScheduler	✅ Implemented	
-Safety Wrapper	Auto-disable a module after repeated failures / suspicious patterns	Core safety/SafetyWrapper + SetbackTracker	✅ Implemented	
-Replay Logging	Per-tick state, decision, and packet recording for post-kick review	Core logging/ReplayLogger	✅ Implemented	
+Infrastructure  Function        Implementation Location Status  
+Mapping Library + Cache Cross-version class/method/field access, zero-reflection startup        Agent MappingLoader + JSON (forge/v1_8_9.json, fabric/v1_21_11.json)    ✅ Implemented   
+Condition Engine        Unified trigger rules (onlyGround, onLook, chance, delay, ticks)        core-rs `condition.rs` (full port) + Kotlin oracle twin ✅ Implemented   
+Noise Perturbation      Mandatory randomization (Gaussian/uniform distribution) on all strategy outputs core-rs RNG: 20 independent PCG32 streams on the decision path  ✅ Implemented   
+Global Packet Scheduler Manages all network packet sending order, delay, and packet loss simulation     Core network/PacketScheduler    ✅ Implemented   
+Safety Wrapper  Auto-disable a module after repeated failures / suspicious patterns     Core safety/SafetyWrapper + SetbackTracker      ✅ Implemented   
+Replay Logging  Per-tick state, decision, and packet recording for post-kick review     Core logging/ReplayLogger       ✅ Implemented   
 
 These infrastructures are transparent to modules; module developers only need to declare configurations without repetitive implementation.
 
@@ -401,7 +401,7 @@ All prompts are based on real data collection (knockback packets, attack animati
 - Forge 1.8.9: Independent adapter layer (`adapter/forge/v1_8_9`, MCP runtime names, mapping: `mappings/forge/v1_8_9.json`).
 - Fabric 1.21: `adapter/fabric/v1_21` with `ClientPlayNetworkHandlerMixin` for packet interception.
 - `adapter/common`: shared module codebase (modules, API bridges, render bridges, WebUI) used by every version.
-- Mapping library + cache: C++/Rust injector detects version → Agent loads the corresponding JSON → adapter layer resolves classes/methods/fields through `MappingContext`, with zero hardcoded names. `scripts/generate_mappings.py` regenerates mapping JSON.
+- Mapping library + cache: C++/Rust injector detects version → Agent loads the corresponding JSON → adapter layer resolves classes/methods/fields through `MappingContext`, with zero hardcoded names. `scripts/verify_mappings*.mjs` guard the tables.
 
 ---
 
@@ -445,7 +445,7 @@ Alpha stage. Architecture complete, both platform translation layers implemented
 - **50 modules** across combat (21) / movement (10) / player (7) / render (11) / world (1)
 - Forge 1.8.9 platform layer (bootstrap, event bridge, state extractor, packet interceptor, GL/font bridges)
 - Fabric 1.21 platform layer (bootstrap, event bridge, state extractor, velocity interceptor, packet mixin)
-- MappingContext reflection system + MappingLoader cache + mapping JSON (forge 1.8.9, fabric 1.20.1 + deltas)
+- MappingContext reflection system + MappingLoader cache + mapping JSON (forge 1.8.9, fabric 1.21.11)
 - **WebUI Aurora panel** (LAN access, bearer token auth, config persistence, keybinds, export/import)
 - **In-game HUD** restored as the sole in-game overlay; ClickGUI removed in favor of WebUI
 - Render abstraction (GL11Bridge, FontRendererBridge, OverlayRenderer, RenderContext)

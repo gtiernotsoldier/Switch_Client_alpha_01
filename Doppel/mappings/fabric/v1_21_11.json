@@ -145,27 +145,27 @@
   },
   "fabric:entity_getPosX": {
     "class": "net.minecraft.class_1297",
-    "field": "field_6014",
     "aliases": [
       "entity_getPosX",
-      "lastX"
-    ]
+      "getX"
+    ],
+    "method": "method_23317"
   },
   "fabric:entity_getPosY": {
     "class": "net.minecraft.class_1297",
-    "field": "field_6036",
     "aliases": [
       "entity_getPosY",
-      "lastY"
-    ]
+      "getY"
+    ],
+    "method": "method_23318"
   },
   "fabric:entity_getPosZ": {
     "class": "net.minecraft.class_1297",
-    "field": "field_5969",
     "aliases": [
       "entity_getPosZ",
-      "lastZ"
-    ]
+      "getZ"
+    ],
+    "method": "method_23321"
   },
   "fabric:entity_getPositionEyes": {
     "class": "net.minecraft.class_1297",
@@ -257,27 +257,27 @@
   },
   "fabric:entity_posX": {
     "class": "net.minecraft.class_1297",
-    "field": "field_6014",
     "aliases": [
       "entity_posX",
-      "lastX"
-    ]
+      "getX"
+    ],
+    "method": "method_23317"
   },
   "fabric:entity_posY": {
     "class": "net.minecraft.class_1297",
-    "field": "field_6036",
     "aliases": [
       "entity_posY",
-      "lastY"
-    ]
+      "getY"
+    ],
+    "method": "method_23318"
   },
   "fabric:entity_posZ": {
     "class": "net.minecraft.class_1297",
-    "field": "field_5969",
     "aliases": [
       "entity_posZ",
-      "lastZ"
-    ]
+      "getZ"
+    ],
+    "method": "method_23321"
   },
   "fabric:entity_prevPosX": {
     "class": "net.minecraft.class_1297",
@@ -1101,6 +1101,46 @@
     "aliases": [
       "world_worldTime",
       "getTimeOfDay"
+    ]
+  },
+  "fabric:entity_deltaMovement": {
+    "class": "net.minecraft.class_1297",
+    "field": "field_18276",
+    "aliases": [
+      "entity_deltaMovement",
+      "velocity"
+    ]
+  },
+  "fabric:vec3_x": {
+    "class": "net.minecraft.class_243",
+    "field": "field_1352",
+    "aliases": [
+      "vec3_x",
+      "x"
+    ]
+  },
+  "fabric:vec3_y": {
+    "class": "net.minecraft.class_243",
+    "field": "field_1351",
+    "aliases": [
+      "vec3_y",
+      "y"
+    ]
+  },
+  "fabric:vec3_z": {
+    "class": "net.minecraft.class_243",
+    "field": "field_1350",
+    "aliases": [
+      "vec3_z",
+      "z"
+    ]
+  },
+  "fabric:entity_setVelocityClient": {
+    "class": "net.minecraft.class_1297",
+    "method": "method_5750",
+    "aliases": [
+      "entity_setVelocityClient",
+      "setVelocityClient"
     ]
   }
 }

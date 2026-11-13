@@ -10,24 +10,37 @@
 //! rounding it to ticks would turn "no fixed period" back into a fixed one, and
 //! an evenly spaced hold is the thing this module exists to avoid.
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// What the core remembers between ticks. Hand-written `Default` — see `new`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct State {
-    /// Start of the current hold, or -1 when not holding.
+    /// Start of the current hold, or [`i64::MIN`] when not holding.
     ///
-    /// Not 0: the caller's clock is allowed to read 0 (a synthetic replay does),
-    /// and a 0 sentinel would then look like a hold that started at the epoch.
+    /// Not 0 and not -1: the caller's clock may read 0 (a synthetic replay
+    /// does), and JVM `System.nanoTime()` is explicitly allowed to be negative
+    /// (it is boot-relative on Linux). Both small sentinels would collide with
+    /// legitimate timestamps: -1 with any negative clock, 0 with the epoch.
+    /// [`i64::MIN`] cannot occur as a timestamp.
     pub hold_start_ns: i64,
-    /// Pulse style: stay quiet until this timestamp before the next hold.
+    /// Pulse style: stay quiet until this timestamp before the next hold,
+    /// or [`i64::MIN`] when no pause is armed. Same reasoning as above: with
+    /// the old -1 sentinel, a negative clock read as "paused forever" and
+    /// pulse mode never held at all.
     pub pause_until_ns: i64,
     /// Length of the current hold, rolled when it starts.
     pub window_ns: i64,
 }
 
+impl Default for State {
+    fn default() -> Self {
+        State::new()
+    }
+}
+
 impl State {
     pub fn new() -> State {
         State {
-            hold_start_ns: -1,
-            pause_until_ns: -1,
+            hold_start_ns: i64::MIN,
+            pause_until_ns: i64::MIN,
             window_ns: 150_000_000,
         }
     }
@@ -98,7 +111,7 @@ pub fn tick(state: &mut State, input: Input, roll: &mut impl FnMut(i32, i32) -> 
         return false;
     }
 
-    if state.hold_start_ns < 0 {
+    if state.hold_start_ns == i64::MIN {
         state.hold_start_ns = input.now_ns;
         if input.modern {
             // A fresh window every time: an evenly spaced hold is the one thing
@@ -124,7 +137,7 @@ pub fn tick(state: &mut State, input: Input, roll: &mut impl FnMut(i32, i32) -> 
 }
 
 fn release(state: &mut State) {
-    state.hold_start_ns = -1;
+    state.hold_start_ns = i64::MIN;
 }
 
 #[cfg(test)]
@@ -171,7 +184,27 @@ mod tests {
         let w = s.window_ns;
         assert!(t(&mut s, in_range(w - 1), &mut rng), "still inside the window");
         assert!(!t(&mut s, in_range(w), &mut rng), "the window is spent");
-        assert_eq!(s.hold_start_ns, -1);
+        assert_eq!(s.hold_start_ns, i64::MIN);
+    }
+
+    #[test]
+    fn a_negative_clock_still_expires() {
+        // JVM System.nanoTime() may be negative; the sentinel must not collide
+        // with a legitimate timestamp, or the hold would re-arm every tick and
+        // never expire.
+        let mut s = State::new();
+        let mut rng = Pcg32::new(1);
+        assert!(t(&mut s, in_range(-10 * MS), &mut rng));
+        let w = s.window_ns;
+        assert!(
+            t(&mut s, in_range(-10 * MS + w - 1), &mut rng),
+            "still inside the window below zero"
+        );
+        assert!(
+            !t(&mut s, in_range(-10 * MS + w), &mut rng),
+            "the window is spent, across the zero crossing"
+        );
+        assert_eq!(s.hold_start_ns, i64::MIN);
     }
 
     #[test]
@@ -217,7 +250,7 @@ mod tests {
             ..in_range(1)
         };
         assert!(!t(&mut s, hit, &mut rng));
-        assert_eq!(s.hold_start_ns, -1);
+        assert_eq!(s.hold_start_ns, i64::MIN);
     }
 
     #[test]
@@ -255,6 +288,22 @@ mod tests {
     }
 
     #[test]
+    fn pulse_arms_on_a_negative_clock() {
+        // The old -1 pause sentinel read any negative clock as "paused forever",
+        // so pulse mode never held at all until the clock went positive.
+        let mut s = State::new();
+        let mut rng = Pcg32::new(1);
+        let pulse = Input {
+            pulse: true,
+            distance: 3.0,
+            must_release: false,
+            now_ns: -5 * MS,
+            ..Default::default()
+        };
+        assert!(t(&mut s, pulse, &mut rng), "no pause is armed yet, the hold must start");
+    }
+
+    #[test]
     fn pulse_pauses_for_one_window_after_releasing() {
         let mut s = State::new();
         let mut rng = Pcg32::new(1);
@@ -273,7 +322,7 @@ mod tests {
 
         // Inside the pause: nothing, and no new window is armed.
         assert!(!t(&mut s, Input { now_ns: w + 1, ..pulse }, &mut rng));
-        assert_eq!(s.hold_start_ns, -1);
+        assert_eq!(s.hold_start_ns, i64::MIN);
 
         // After the pause a new hold starts.
         let resume = s.pause_until_ns;

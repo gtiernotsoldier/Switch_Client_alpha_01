@@ -174,7 +174,9 @@ pub fn interpolate_axes(current: Vec2, target: Vec2, yaw_factor: f32, pitch_fact
     )
 }
 
-/// Aim rotation to unit direction. Minecraft convention: yaw 0 faces -Z.
+/// Aim rotation to unit direction. Minecraft convention: yaw 0 faces +Z
+/// (south), yaw 90 faces -X (west) — forward is `(-sin yaw, cos yaw)`, same
+/// as every movement module in this crate.
 pub fn aim_to_direction(aim: Vec2) -> Vec3 {
     let yaw_rad = to_radians(aim.yaw as f64);
     let pitch_rad = to_radians(aim.pitch as f64);

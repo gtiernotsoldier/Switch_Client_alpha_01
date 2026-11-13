@@ -21,11 +21,19 @@ import io.doppel.contract.math.PortableMath
  */
 object StrafePattern {
 
-    /** Wrap an angle into [-180, 180). */
+    /** Wrap an angle into [-180, 180).
+     *
+     *  Single-pass modulo, not the historical subtraction loop: `a -= 360f`
+     *  cannot move ±Inf or magnitudes above ~1e17 (360 sits below one ulp),
+     *  and a loop is a hang, not a wrong answer. `fmod` is exact, so for every
+     *  finite input this returns bit-for-bit what the loop returned — 540
+     *  lands on -180 (plain `%` alone would stop at 180). Kept in lockstep
+     *  with `tap::wrap180` (core-rs).
+     */
     fun wrap180(angle: Float): Float {
-        var a = angle
-        while (a >= 180f) a -= 360f
-        while (a < -180f) a += 360f
+        var a = angle % 360f
+        if (a >= 180f) a -= 360f
+        if (a < -180f) a += 360f
         return a
     }
 

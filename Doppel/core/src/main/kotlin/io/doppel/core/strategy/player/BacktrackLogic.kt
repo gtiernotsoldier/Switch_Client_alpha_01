@@ -10,15 +10,17 @@ package io.doppel.core.strategy.player
  * (LiquidBounce cancels every received packet) and the reason this module is
  * safe to leave on: chat, sounds, health and the world stay live.
  *
- * `holdStartNs` uses -1 as "not holding", not 0. The caller's clock is allowed
- * to read 0 in a replay, and a 0 sentinel would then look like a hold that
- * started at the epoch.
+ * `holdStartNs`/`pauseUntilNs` use `Long.MIN_VALUE` as "not holding / not
+ * paused". Not 0 and not -1: the caller's clock may read 0 (a synthetic replay
+ * does), and JVM `System.nanoTime()` is explicitly allowed to be negative
+ * (it is boot-relative on Linux). -1 would collide with any negative clock and
+ * 0 with the epoch; `MIN_VALUE` cannot occur as a timestamp.
  */
 object BacktrackLogic {
 
     class State(
-        var holdStartNs: Long = -1L,
-        var pauseUntilNs: Long = -1L,
+        var holdStartNs: Long = Long.MIN_VALUE,
+        var pauseUntilNs: Long = Long.MIN_VALUE,
         var windowNs: Long = 150_000_000L
     )
 
@@ -49,18 +51,18 @@ object BacktrackLogic {
         }
 
         if (input.mustRelease || !inRange) {
-            state.holdStartNs = -1L
+            state.holdStartNs = Long.MIN_VALUE
             return false
         }
 
         // Pulse: after a window closes, stay quiet for the same length before the
         // next hold, so the pattern is hold-pause-hold rather than a solid block.
         if (input.modern && input.pulse && input.nowNs < state.pauseUntilNs) {
-            state.holdStartNs = -1L
+            state.holdStartNs = Long.MIN_VALUE
             return false
         }
 
-        if (state.holdStartNs < 0) {
+        if (state.holdStartNs == Long.MIN_VALUE) {
             state.holdStartNs = input.nowNs
             if (input.modern) {
                 // A fresh window every time: an evenly spaced hold is the one thing
@@ -75,7 +77,7 @@ object BacktrackLogic {
         }
 
         if (input.nowNs - state.holdStartNs >= state.windowNs) {
-            state.holdStartNs = -1L
+            state.holdStartNs = Long.MIN_VALUE
             if (input.modern && input.pulse) {
                 state.pauseUntilNs = input.nowNs + state.windowNs
             }

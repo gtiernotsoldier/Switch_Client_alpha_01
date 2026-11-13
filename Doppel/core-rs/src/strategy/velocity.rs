@@ -204,9 +204,15 @@ pub fn brace_keys(yaw_deg: f32, sector: f64, state: &mut State) -> (bool, bool, 
     }
     state.brace_ticks_left -= 1;
 
-    let yaw = (yaw_deg as f64).to_radians();
-    let fwd_x = -yaw.sin();
-    let fwd_z = yaw.cos();
+    // Bit-exact primitives, not the builtins: the Kotlin twin
+    // (`SprintBrace.keysFor`) evaluates `PortableMath.toRadians` (divide, then
+    // multiply) and fdlibm sin/cos, and both builtins disagree with those by
+    // an ulp on a meaningful share of inputs. At the sector boundary one ulp
+    // flips a key, which is the exact bug class this crate's trig/geom exist
+    // to remove.
+    let yaw = crate::geom::to_radians(yaw_deg as f64);
+    let fwd_x = -crate::trig::sin(yaw);
+    let fwd_z = crate::trig::cos(yaw);
     // Right of forward in the (x, z) plane: (x, z) -> (-z, x).
     let rgt_x = -fwd_z;
     let rgt_z = fwd_x;

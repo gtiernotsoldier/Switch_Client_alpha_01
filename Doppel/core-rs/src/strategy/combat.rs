@@ -130,6 +130,11 @@ impl Default for BlockArbiterState {
 
 impl BlockArbiterState {
     pub fn new(window: usize) -> Self {
+        // window == 0 would panic (`% 0`, indexing an empty vec) inside the
+        // per-call `catch_unwind` — every request would come back Degraded
+        // instead of a sane duty cycle. Degrade to a one-tick window instead;
+        // the in-tree callers always pass the default 60.
+        let window = window.max(1);
         BlockArbiterState {
             held: vec![false; window],
             cursor: 0,
@@ -319,6 +324,10 @@ fn observe_opponent(current_tick: i32, just_hit: bool, state: &mut PredictorStat
             state.interval_samples += 1;
         }
     } else {
+        // First hit ever: we have a timestamp but no period yet. The seed is
+        // only a placeholder (it keeps the HUD readable); `attack_due` refuses
+        // to predict until a real gap lands. Intentional, not a dead write —
+        // the Kotlin oracle documents this verbatim.
         state.interval_ema = config.seed_interval_ticks;
     }
     state.last_opponent_hit_tick = current_tick;

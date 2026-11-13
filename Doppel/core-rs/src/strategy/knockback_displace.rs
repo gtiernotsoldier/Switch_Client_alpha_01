@@ -39,12 +39,21 @@ impl Direction {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+/// What the core remembers between flicks. Hand-written `Default` — see `new`:
+/// the derived one would put `last_flick_ns` at 0, which the doc below
+/// explicitly reserves as a valid attack timestamp.
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct State {
     /// Which way the player last strafed, for `UseLastStrafe`.
     pub last_strafe_left: bool,
     /// Last flick, for the cooldown. -1 so a clock reading 0 is a valid attack.
     pub last_flick_ns: i64,
+}
+
+impl Default for State {
+    fn default() -> Self {
+        State::new()
+    }
 }
 
 impl State {

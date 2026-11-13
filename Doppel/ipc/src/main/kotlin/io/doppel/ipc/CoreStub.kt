@@ -720,11 +720,17 @@ class CoreStub(
         opponentJustHit: Boolean,
         tick: Int
     ): Verdict? {
+        // The target's i-frame counter rides in the last arg, -1 when there is
+        // no target. The snapshot's target block only carries `hurtTime` (the
+        // 0..10 flash timer); the core's lock arithmetic needs the 0..20
+        // hurtResistantTime, and feeding it the flash timer made `locked`
+        // unreachable. Keep in lockstep with op::CBT_PREDICT (core-rs).
         val payload = genericRequest(
             encodeSnapshot(player, target), Ops.CBT_PREDICT,
             maxHurt.toDouble(), rtt.toDouble(), lead.toDouble(), b(predict),
             window.toDouble(), chance.toDouble(), alpha, seedInterval,
-            currentTick.toDouble(), b(opponentJustHit)
+            currentTick.toDouble(), b(opponentJustHit),
+            (target?.hurtResistantTime ?: -1).toDouble()
         )
         val f = roundTrip(Wire.MODULE_COMBAT, payload, tick) ?: return null
         return decodeVerdict(f)

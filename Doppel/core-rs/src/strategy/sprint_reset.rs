@@ -99,6 +99,14 @@ pub struct Input {
     pub mode: i32,
 }
 
+/// Kotlin twin `sendStep`: only mode 1 (Silent) stays Silent, everything else
+/// degrades to Nostop. A stale or bogus config mode must not produce an
+/// unknown wire code — the stub's `from_code` would silently drop the step
+/// where the oracle still sends one.
+fn send_mode(mode: i32) -> i32 {
+    if mode == 1 { 1 } else { 0 }
+}
+
 /// One tick of the reset machine.
 pub fn tick(state: State, input: Input, roll: &mut impl FnMut() -> i32) -> (Step, State) {
     let mut s = state;
@@ -109,7 +117,7 @@ pub fn tick(state: State, input: Input, roll: &mut impl FnMut() -> i32) -> (Step
     if s.sending {
         if input.now_ns >= s.send_at_ns {
             s.sending = false;
-            return (Step::Send(s.pending_mode), s);
+            return (Step::Send(send_mode(s.pending_mode)), s);
         }
         return (Step::None, s);
     }
@@ -160,7 +168,7 @@ pub fn tick(state: State, input: Input, roll: &mut impl FnMut() -> i32) -> (Step
         return (Step::None, s);
     }
 
-    (Step::Send(input.mode), s)
+    (Step::Send(send_mode(input.mode)), s)
 }
 
 #[cfg(test)]

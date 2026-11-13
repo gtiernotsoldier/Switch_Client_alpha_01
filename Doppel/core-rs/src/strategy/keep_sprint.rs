@@ -59,7 +59,12 @@ pub struct State {
     /// Last dispatch tick an attack was handled on — one assertion per tick,
     /// not one per render frame.
     pub last_handled_tick: i32,
-    /// Last time the sprint sample reported "sprinting"; 0 when never.
+    /// Last time the sprint sample reported "sprinting", -1 when never.
+    ///
+    /// Not 0: the caller's clock may read exactly 0 (a synthetic replay does —
+    /// the lag-range twin documents the same hazard), and a 0 sentinel would
+    /// read a latch set at the epoch as "never sprinted", silently disabling
+    /// the two-dispatch sprint memory for that window.
     pub last_sprint_seen_ns: i64,
 }
 
@@ -69,7 +74,7 @@ impl Default for State {
             hold_until_tick: -1,
             hold_deadline_ns: 0,
             last_handled_tick: -1,
-            last_sprint_seen_ns: 0,
+            last_sprint_seen_ns: -1,
         }
     }
 }
@@ -221,7 +226,7 @@ pub fn frame(state: State, input: Input) -> (i32, State) {
             input.local_sprinting
         } else {
             input.local_sprinting
-                || (s.last_sprint_seen_ns != 0
+                || (s.last_sprint_seen_ns >= 0
                     && input.now_ns - s.last_sprint_seen_ns <= SPRINT_MEMORY_NANOS)
         };
         // Sprint is fed by forward input; with W released the flag is on its
@@ -406,6 +411,36 @@ mod tests {
             },
         );
         assert_eq!(unpack_assert(code), AssertStep::None.code());
+    }
+
+    #[test]
+    fn a_latch_set_on_a_zero_clock_still_counts() {
+        // The -1 sentinel: a replay clock parked at 0 must not read a latch set
+        // at the epoch as "never sprinted" — the old 0 sentinel swallowed the
+        // sample and the two-dispatch sprint memory stayed dead.
+        let (_, s) = frame(
+            State::new(),
+            Input {
+                now_ns: 0,
+                attacking: false,
+                local_sprinting: true,
+                ..input()
+            },
+        );
+        assert_eq!(s.last_sprint_seen_ns, 0, "the latch legitimately holds 0");
+        let (code, _) = frame(
+            s,
+            Input {
+                now_ns: 60_000_000,
+                local_sprinting: false,
+                ..input()
+            },
+        );
+        assert_eq!(
+            unpack_assert(code),
+            AssertStep::Assert.code(),
+            "60 ms later the latch still counts"
+        );
     }
 
     #[test]

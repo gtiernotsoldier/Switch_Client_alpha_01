@@ -15,8 +15,6 @@
 //! the branch that reaches it — a port that rolled both up front would spend a
 //! draw on clicks that never had a chance and diverge on the next click.
 
-use crate::rng::Pcg32;
-
 /// Everything the gate needs to remember between ticks.
 pub struct State {
     /// Id of the target the windows belong to; -1 when there is none.
@@ -29,7 +27,12 @@ pub struct State {
     pub prev_hurt_time: i32,
     /// Refreshed on each tick: airborne and falling means a crit is possible.
     pub can_crit_now: bool,
-    /// Last time CounterHit fired, 0 initially.
+    /// Last time CounterHit fired, -1 before the first one.
+    ///
+    /// Not 0: same reasoning as the two windows above — the caller's clock may
+    /// read 0 (or a small boot-relative value; JVM `nanoTime` may even be
+    /// negative), and a 0 sentinel would swallow the first eligible CounterHit
+    /// inside the first cooldown window after the clock origin.
     pub last_counter_ns: i64,
 }
 
@@ -43,7 +46,7 @@ impl State {
             last_confirmed_hit_ns: -1,
             prev_hurt_time: 0,
             can_crit_now: false,
-            last_counter_ns: 0,
+            last_counter_ns: -1,
         }
     }
 }
@@ -101,7 +104,8 @@ pub fn tick(state: &mut State, input: TickInput) -> bool {
     if input.counter_hit
         && !input.left_mouse_down
         && input.player_hurt_time > 0
-        && input.now_ns - state.last_counter_ns >= input.counter_cd_ms as i64 * 1_000_000
+        && (state.last_counter_ns < 0
+            || input.now_ns - state.last_counter_ns >= input.counter_cd_ms as i64 * 1_000_000)
     {
         state.last_counter_ns = input.now_ns;
         true
@@ -181,6 +185,7 @@ pub fn gate(state: &State, input: GateInput, roll: &mut impl FnMut() -> i32) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::rng::Pcg32;
 
     const MS: i64 = 1_000_000;
 
@@ -339,6 +344,19 @@ mod tests {
             &mut s,
             TickInput { now_ns: 2_000 * MS, left_mouse_down: true, ..base }
         ));
+    }
+
+    #[test]
+    fn counter_fires_on_a_zero_clock_without_a_prior_window() {
+        // The -1 sentinel: with a 0 sentinel the first eligible CounterHit was
+        // swallowed for `counter_cd_ms` after the clock origin.
+        let mut s = state();
+        let base = TickInput {
+            counter_hit: true,
+            player_hurt_time: 1,
+            ..tick_input(0, 0)
+        };
+        assert!(tick(&mut s, base), "no prior counter, so the cooldown must not block it");
     }
 
     #[test]

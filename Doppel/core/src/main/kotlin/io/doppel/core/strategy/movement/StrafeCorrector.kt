@@ -116,8 +116,15 @@ object StrafeCorrector {
         val yaw = PortableMath.toRadians(s.yawDeg)
         val fx = -PortableMath.sin(yaw)
         val fz = PortableMath.cos(yaw)          // Minecraft forward
-        val rx = PortableMath.cos(yaw)
-        val rz = PortableMath.sin(yaw)          // right of forward
+        // Right of forward. MC 1.8.9 `Entity.moveFlying` adds `strafe * (cos, sin)`
+        // for the A key, and at yaw 0 that is +X — the player's LEFT while facing
+        // +Z, so the right key is the negated vector. Getting this mirrored flips
+        // which neighbour wins for any input not parallel to the bearing, while
+        // symmetric cases (yaw ±90 of the bearing) still decide the same way,
+        // which is why hand-written tests stayed green on the old mapping.
+        // Kept in lockstep with strategy::movement::strafe_score (core-rs).
+        val rx = -PortableMath.cos(yaw)
+        val rz = -PortableMath.sin(yaw)
 
         var vx = 0.0
         var vz = 0.0

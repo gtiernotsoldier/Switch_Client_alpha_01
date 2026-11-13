@@ -866,7 +866,11 @@ pub mod op {
     /// The running duty cycle lives in the core.
     pub const CBT_ARBITER: u8 = 1;
     /// combat: `predictor(max_hurt, rtt, lead, predict, window, chance,
-    ///          alpha, seed_interval, current_tick, opponent_just_hit)` → verdict.
+    ///          alpha, seed_interval, current_tick, opponent_just_hit,
+    ///          target_hurt_resistant)` → verdict. The i-frame counter rides
+    /// in the last arg (-1 = no target): the snapshot's target block only
+    /// carries the 0..10 `hurtTime` flash timer, not the 0..20 counter the
+    /// lock arithmetic needs.
     pub const CBT_PREDICT: u8 = 2;
     /// combat: `range_gate(mode, min_distance, max_distance, hysteresis,
     ///          has_distance, distance)` → bool.

@@ -35,7 +35,11 @@ pub struct State {
     pub last_sprint: bool,
     /// Previous tick's blocking flag (only tracked while `block_sword` is on).
     pub last_blocking: bool,
-    /// When the current hold started; 0 when not holding.
+    /// When the current hold started, or -1 when not holding.
+    ///
+    /// Not 0: the caller's clock may read exactly 0 (a synthetic replay does,
+    /// and the backtrack twin documents the same hazard), and a 0 sentinel
+    /// would then re-arm every tick with a permanently reset deadline.
     pub hold_start_ns: i64,
 }
 
@@ -46,7 +50,7 @@ impl Default for State {
             last_self_hurt: 0,
             last_sprint: false,
             last_blocking: false,
-            hold_start_ns: 0,
+            hold_start_ns: -1,
         }
     }
 }
@@ -134,7 +138,7 @@ pub fn tick(state: State, input: Input) -> (i32, State) {
 
     // ---- Gate: GUI open, no target, or out of range ----
     if input.gui_open || !input.has_dist || dist > range {
-        s.hold_start_ns = 0;
+        s.hold_start_ns = -1;
         s.last_dist = -1.0;
         return (Step::Flush.code() as i32, s);
     }
@@ -142,7 +146,7 @@ pub fn tick(state: State, input: Input) -> (i32, State) {
     // ---- Damage taken: never held through it ----
     if input.hurt_time > s.last_self_hurt {
         s.last_self_hurt = input.hurt_time;
-        s.hold_start_ns = 0;
+        s.hold_start_ns = -1;
         s.last_dist = dist;
         return (Step::Flush.code() as i32, s);
     }
@@ -152,7 +156,7 @@ pub fn tick(state: State, input: Input) -> (i32, State) {
     if input.sprint_reset_on {
         if input.is_sprinting && !s.last_sprint {
             s.last_sprint = true;
-            s.hold_start_ns = 0;
+            s.hold_start_ns = -1;
             s.last_dist = dist;
             return (Step::Flush.code() as i32, s);
         }
@@ -163,7 +167,7 @@ pub fn tick(state: State, input: Input) -> (i32, State) {
     if input.block_sword_on {
         if input.is_blocking && !s.last_blocking {
             s.last_blocking = true;
-            s.hold_start_ns = 0;
+            s.hold_start_ns = -1;
             s.last_dist = dist;
             return (Step::Flush.code() as i32, s);
         }
@@ -172,21 +176,21 @@ pub fn tick(state: State, input: Input) -> (i32, State) {
 
     // ---- Weapon dropped ----
     if input.holding_weapon_on && !input.weapon_is_sword {
-        s.hold_start_ns = 0;
+        s.hold_start_ns = -1;
         s.last_dist = dist;
         return (Step::Flush.code() as i32, s);
     }
 
     // ---- Not closing in any more: the delay buys nothing ----
     if s.last_dist >= 0.0 && dist >= s.last_dist {
-        s.hold_start_ns = 0;
+        s.hold_start_ns = -1;
         s.last_dist = dist;
         return (Step::Flush.code() as i32, s);
     }
     s.last_dist = dist;
 
     // ---- Closing in: arm or extend the hold ----
-    let step = if s.hold_start_ns == 0 {
+    let step = if s.hold_start_ns < 0 {
         s.hold_start_ns = input.now_ns;
         Step::Arm
     } else {
@@ -198,7 +202,7 @@ pub fn tick(state: State, input: Input) -> (i32, State) {
     // is "lag off" — `Arm` can never flush on its own tick (maxDelay >= 50
     // ms > 0).
     if input.now_ns - s.hold_start_ns >= input.max_delay_ms as i64 * 1_000_000 {
-        s.hold_start_ns = 0;
+        s.hold_start_ns = -1;
         return (Step::Flush.code() as i32, s);
     }
 
@@ -264,7 +268,7 @@ mod tests {
             },
         );
         assert_eq!(code, Step::Flush.code() as i32);
-        assert_eq!(s2.hold_start_ns, 0);
+        assert_eq!(s2.hold_start_ns, -1);
         // And the hold re-arms on the next closing tick.
         let (code, _) = tick(
             s2,
@@ -291,7 +295,7 @@ mod tests {
             );
             assert_eq!(code, Step::Flush.code() as i32);
             assert_eq!(s2.last_dist, -1.0);
-            assert_eq!(s2.hold_start_ns, 0);
+            assert_eq!(s2.hold_start_ns, -1);
         }
         // Out of range too.
         let (code, s3) = tick(s, Input { dist: 4.5, ..input() });
@@ -395,5 +399,21 @@ mod tests {
             assert_eq!(Step::from_code(s.code()), Some(s));
         }
         assert_eq!(Step::from_code(4), None);
+    }
+
+    #[test]
+    fn a_zero_clock_does_not_rearm_every_tick() {
+        // The -1 sentinel: a replay clock parked at 0 must not look like "not
+        // holding". The old 0 sentinel re-armed on every tick and reset the
+        // deadline base, so max_delay never bounded the hold.
+        let base = Input { now_ns: 0, dist: 3.5, ..input() };
+        let (_, s) = tick(State::new(), base);
+        let (code, s2) = tick(s, Input { now_ns: 0, dist: 3.4, ..input() });
+        assert_eq!(code, Step::Hold.code() as i32, "the hold armed at 0 must extend, not re-arm");
+        assert_eq!(s2.hold_start_ns, 0, "the hold legitimately started at 0");
+        let (code, _) = tick(s2, Input { now_ns: 199_999_999, dist: 3.3, ..input() });
+        assert_eq!(code, Step::Hold.code() as i32, "still inside the 200 ms deadline");
+        let (code, _) = tick(s2, Input { now_ns: 200_000_000, dist: 3.2, ..input() });
+        assert_eq!(code, Step::Flush.code() as i32, "the deadline still flushes");
     }
 }

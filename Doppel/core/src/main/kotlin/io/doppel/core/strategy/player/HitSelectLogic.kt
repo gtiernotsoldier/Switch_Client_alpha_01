@@ -19,7 +19,8 @@ object HitSelectLogic {
         var lastConfirmedHitNs: Long = -1L
         var prevHurtTime: Int = 0
         var canCritNow: Boolean = false
-        var lastCounterNs: Long = 0L
+        /** -1 before the first CounterHit, so a clock reading 0 still fires it. */
+        var lastCounterNs: Long = -1L
     }
 
     class TickInput(
@@ -73,7 +74,8 @@ object HitSelectLogic {
         return if (input.counterHit &&
             !input.leftMouseDown &&
             input.playerHurtTime > 0 &&
-            input.nowNs - state.lastCounterNs >= input.counterCdMs * 1_000_000L
+            (state.lastCounterNs < 0L ||
+                input.nowNs - state.lastCounterNs >= input.counterCdMs * 1_000_000L)
         ) {
             state.lastCounterNs = input.nowNs
             true

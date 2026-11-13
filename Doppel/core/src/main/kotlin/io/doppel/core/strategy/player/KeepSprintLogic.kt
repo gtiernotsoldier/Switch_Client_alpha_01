@@ -47,8 +47,14 @@ object KeepSprintLogic {
         val holdDeadlineNs: Long = 0L,
         /** Last dispatch tick an attack was handled on. */
         val lastHandledTick: Int = -1,
-        /** Last time the sprint sample reported "sprinting"; 0 when never. */
-        val lastSprintSeenNs: Long = 0L
+        /** Last time the sprint sample reported "sprinting", -1 when never.
+         *
+         *  Not 0: the caller's clock may read exactly 0 (a synthetic replay
+         *  does — the LagRange twin documents the same hazard), and a 0
+         *  sentinel would read a latch set at the epoch as "never sprinted",
+         *  silently disabling the two-dispatch sprint memory for that window.
+         *  Kept in lockstep with strategy::keep_sprint (core-rs). */
+        val lastSprintSeenNs: Long = -1L
     )
 
     /** The hold half of the answer. A status, not just a transition. */
@@ -115,7 +121,7 @@ object KeepSprintLogic {
                 input.localSprinting
             } else {
                 input.localSprinting ||
-                    (s.lastSprintSeenNs != 0L && input.nowNs - s.lastSprintSeenNs <= SPRINT_MEMORY_NANOS)
+                    (s.lastSprintSeenNs >= 0L && input.nowNs - s.lastSprintSeenNs <= SPRINT_MEMORY_NANOS)
             }
             if (sprintWasOn && input.forward && !input.forwardOverride) {
                 s = s.copy(

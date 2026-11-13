@@ -914,8 +914,16 @@ impl Session {
                         interval_alpha: req.arg(6)?,
                         seed_interval_ticks: req.arg(7)?,
                     };
+                    // The target's i-frame counter rides in arg 10, -1 when
+                    // there is no target. The snapshot's target block only
+                    // carries `hurtTime` — the 0..10 red-flash timer — and
+                    // feeding that into the 0..20 lock arithmetic made
+                    // `locked` unreachable (10 > 10 is never true), silently
+                    // disabling the damage-lock layer of Predict/Adaptive.
+                    let target_hrt = req.i32(10)?;
+                    let target_hrt = if target_hrt < 0 { None } else { Some(target_hrt) };
                     let d = combat::block_predictor_evaluate(
-                        req.ctx.target.map(|t| t.hurt_time),
+                        target_hrt,
                         req.i32(8)?,
                         req.bool(9)?,
                         &mut self.predictor,

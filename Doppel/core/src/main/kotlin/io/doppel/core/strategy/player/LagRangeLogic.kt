@@ -36,8 +36,10 @@ object LagRangeLogic {
         val lastSprint: Boolean = false,
         /** Previous tick's blocking flag (only tracked while `blockSwordOn`). */
         val lastBlocking: Boolean = false,
-        /** When the current hold started; 0 when not holding. */
-        val holdStartNs: Long = 0L
+        /** When the current hold started, or -1 when not holding. Not 0: the
+         *  caller's clock may read exactly 0 (a synthetic replay does), and a
+         *  0 sentinel would re-arm every tick with a reset deadline. */
+        val holdStartNs: Long = -1L
     )
 
     /** What the module should write. Codes match the wire. */
@@ -70,13 +72,13 @@ object LagRangeLogic {
 
         // ---- Gate: GUI open, no target, or out of range ----
         if (input.guiOpen || !input.hasDist || dist > range) {
-            s = s.copy(holdStartNs = 0L, lastDist = -1f)
+            s = s.copy(holdStartNs = -1L, lastDist = -1f)
             return Decision(Step.FLUSH.code, s)
         }
 
         // ---- Damage taken: never held through it ----
         if (input.hurtTime > s.lastSelfHurt) {
-            s = s.copy(lastSelfHurt = input.hurtTime, holdStartNs = 0L, lastDist = dist)
+            s = s.copy(lastSelfHurt = input.hurtTime, holdStartNs = -1L, lastDist = dist)
             return Decision(Step.FLUSH.code, s)
         }
         s = s.copy(lastSelfHurt = input.hurtTime)
@@ -84,7 +86,7 @@ object LagRangeLogic {
         // ---- A sprint starting ----
         if (input.sprintResetOn) {
             if (input.isSprinting && !s.lastSprint) {
-                s = s.copy(lastSprint = true, holdStartNs = 0L, lastDist = dist)
+                s = s.copy(lastSprint = true, holdStartNs = -1L, lastDist = dist)
                 return Decision(Step.FLUSH.code, s)
             }
             s = s.copy(lastSprint = input.isSprinting)
@@ -93,7 +95,7 @@ object LagRangeLogic {
         // ---- A block starting ----
         if (input.blockSwordOn) {
             if (input.isBlocking && !s.lastBlocking) {
-                s = s.copy(lastBlocking = true, holdStartNs = 0L, lastDist = dist)
+                s = s.copy(lastBlocking = true, holdStartNs = -1L, lastDist = dist)
                 return Decision(Step.FLUSH.code, s)
             }
             s = s.copy(lastBlocking = input.isBlocking)
@@ -101,19 +103,19 @@ object LagRangeLogic {
 
         // ---- Weapon dropped ----
         if (input.holdingWeaponOn && !input.weaponIsSword) {
-            s = s.copy(holdStartNs = 0L, lastDist = dist)
+            s = s.copy(holdStartNs = -1L, lastDist = dist)
             return Decision(Step.FLUSH.code, s)
         }
 
         // ---- Not closing in any more ----
         if (s.lastDist >= 0f && dist >= s.lastDist) {
-            s = s.copy(holdStartNs = 0L, lastDist = dist)
+            s = s.copy(holdStartNs = -1L, lastDist = dist)
             return Decision(Step.FLUSH.code, s)
         }
         s = s.copy(lastDist = dist)
 
         // ---- Closing in: arm or extend the hold ----
-        val step = if (s.holdStartNs == 0L) {
+        val step = if (s.holdStartNs < 0L) {
             s = s.copy(holdStartNs = input.nowNs)
             Step.ARM
         } else {
@@ -124,7 +126,7 @@ object LagRangeLogic {
         // first and then checked the deadline, so the deadline tick's net
         // write is "lag off".
         if (input.nowNs - s.holdStartNs >= input.maxDelayMs * 1_000_000L) {
-            s = s.copy(holdStartNs = 0L)
+            s = s.copy(holdStartNs = -1L)
             return Decision(Step.FLUSH.code, s)
         }
 

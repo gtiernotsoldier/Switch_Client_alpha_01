@@ -20,15 +20,22 @@ impl Side {
 
 /// Wrap an angle into [-180, 180).
 ///
-/// A loop, not a modulo: the Kotlin uses `while`, and `%` maps -540 to -180
-/// where the loop maps it to 180. Both are "in range" and only one is the same
-/// number, which matters as soon as the result is compared to zero.
+/// Single-pass modulo, not a subtraction loop. The historical form — still in
+/// the Kotlin twin — subtracts 360 in a `while` loop, and a loop is a hang,
+/// not merely a wrong answer, on inputs where `a -= 360.0` cannot move the
+/// value: ±Inf, or any finite magnitude above ~1e17 where 360 sits below one
+/// ulp. This shape reaches the core through the untrusted `TAP_WRAP` op, so a
+/// bad frame used to be able to freeze the whole process outside the
+/// `catch_unwind` safety net. `fmod` is exact, so for every finite input this
+/// returns bit-for-bit what the loop returned: 540 lands on -180 (plain `%`
+/// alone would stop at 180), -540 → -180, 180 → -180, NaN → NaN. ±Inf now
+/// yields NaN instead of a hung core.
 pub fn wrap180(angle: f32) -> f32 {
-    let mut a = angle;
-    while a >= 180.0 {
+    let mut a = angle % 360.0;
+    if a >= 180.0 {
         a -= 360.0;
     }
-    while a < -180.0 {
+    if a < -180.0 {
         a += 360.0;
     }
     a
@@ -141,12 +148,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn wrap_matches_the_loop_not_the_modulo() {
+    fn wrap180_edges_and_non_finite_inputs() {
         assert_eq!(wrap180(180.0), -180.0);
         assert_eq!(wrap180(-180.0), -180.0);
-        // The loop keeps subtracting while >= 180, so 540 lands on -180, not 180.
+        // 540 lands on -180, not the +180 plain `%` would leave.
         assert_eq!(wrap180(540.0), -180.0);
         assert_eq!(wrap180(-540.0), -180.0);
+        // Non-finite and ulp-immune magnitudes: the old loop hung here forever,
+        // which froze the whole core from a single bad TAP_WRAP frame.
+        assert!(wrap180(f32::INFINITY).is_nan());
+        assert!(wrap180(f32::NEG_INFINITY).is_nan());
+        assert!(wrap180(f32::NAN).is_nan());
+        assert!(wrap180(1.0e20).abs() <= 180.0);
+        assert!(wrap180(-1.0e20).abs() <= 180.0);
+        assert_eq!(wrap180(-0.0), 0.0);
     }
 
     #[test]

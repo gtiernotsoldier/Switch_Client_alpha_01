@@ -173,8 +173,14 @@ pub fn strafe_score(input: StrafeInput, s: StrafeState) -> f64 {
     let yaw = to_radians(s.yaw_deg);
     let fx = -trig::sin(yaw);
     let fz = trig::cos(yaw);
-    let rx = trig::cos(yaw);
-    let rz = trig::sin(yaw);
+    // Right of forward. MC 1.8.9 `Entity.moveFlying` adds `strafe * (cos, sin)`
+    // for the A key, and at yaw 0 that is +X — the player's LEFT while facing
+    // +Z, so the right key is the negated vector. Getting this mirrored flips
+    // which neighbour wins for any input not parallel to the bearing, while
+    // symmetric cases (yaw ±90 of the bearing) still decide the same way,
+    // which is why hand-written tests stayed green on the old mapping.
+    let rx = -trig::cos(yaw);
+    let rz = -trig::sin(yaw);
 
     let mut vx = 0.0;
     let mut vz = 0.0;

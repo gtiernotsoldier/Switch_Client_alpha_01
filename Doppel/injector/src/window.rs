@@ -1709,27 +1709,18 @@ fn is_condition_option(name: &str) -> bool {
         || name == "DisabledInAir"
 }
 
-/// The summary the FOLDED trigger section shows in its header: the currently
-/// selected (on) conditions, "A, B +n" style. Two named flags plus a counter
-/// keeps one header line; with nothing selected it says so out loud. Port of
-/// the web panel's `trigSummaryText`.
+/// The summary the FOLDED trigger section shows in its header: a live COUNT of
+/// the selected (on) conditions, "N selected" — numeric on purpose, so the
+/// folded row stays one short line no matter how many conditions a module
+/// declares. Port of the web panel's `trigSummaryText`; the two panels phrase
+/// it identically.
 fn condition_summary(m: &panel::PanelModule) -> String {
-    let on: Vec<&str> = m
+    let on = m
         .options
         .iter()
         .filter(|o| is_condition_option(&o.name) && o.value_bool())
-        .map(|o| o.name.as_str())
-        .collect();
-    if on.is_empty() {
-        return "none".to_string();
-    }
-    let named = on.len().min(2);
-    let mut s = on[..named].join(", ");
-    let rest = on.len() - named;
-    if rest > 0 {
-        s.push_str(&format!(" +{rest}"));
-    }
-    s
+        .count();
+    format!("{on} selected")
 }
 
 /// The Min/Max twin of a numeric option, port of the web panel's sliderPairOf.

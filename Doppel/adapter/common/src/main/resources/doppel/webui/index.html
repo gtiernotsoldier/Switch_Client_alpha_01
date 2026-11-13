@@ -397,6 +397,54 @@
         .mini-btn:hover { background: rgba(34,211,238,0.12); }
         .noopts { font-size: 11px; color: rgba(255,255,255,0.2); font-style: italic; }
 
+        /* ===== Unified trigger-condition section =====
+           One collapsible group per module drawer. Folded is the default and the
+           header carries the live selection ("OnlyGround, OnlyMoveForward +1"), so
+           the folded state SHOWS the selected conditions instead of hiding them.
+           The body folds with a grid-rows 0fr→1fr animation: the row's final height
+           is the content's own height, so the fold never needs a measured max-height
+           and can never clip a widget. */
+        .opt-group {
+            grid-column: 1 / -1;
+            border: 1px solid rgba(255,255,255,0.07); border-radius: 10px;
+            background: rgba(255,255,255,0.02); overflow: hidden;
+            transition: border-color 0.3s ease;
+        }
+        .opt-group:hover { border-color: rgba(34,211,238,0.25); }
+        .opt-group.open { border-color: rgba(34,211,238,0.22); }
+        .opt-group-head {
+            display: flex; align-items: center; gap: 8px; padding: 7px 11px;
+            cursor: pointer; user-select: none; min-width: 0;
+        }
+        .opt-group-head:hover { background: rgba(255,255,255,0.04); }
+        .og-chevron {
+            flex: 0 0 auto; display: flex; color: rgba(255,255,255,0.25);
+            transition: color 0.3s ease, transform 0.45s cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+        .og-chevron svg { width: 13px; height: 13px; }
+        .opt-group.open .og-chevron { color: rgba(34,211,238,0.75); transform: rotate(180deg); }
+        .og-title {
+            flex: 0 0 auto; font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase;
+            font-family: 'SF Mono', monospace; color: rgba(255,255,255,0.42);
+        }
+        .opt-group.open .og-title { color: rgba(255,255,255,0.62); }
+        .og-summary {
+            margin-left: auto; flex: 0 1 auto; min-width: 0; text-align: right;
+            font-size: 11px; font-family: 'SF Mono', monospace;
+            color: rgba(103,232,249,0.85); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        }
+        .opt-group-body {
+            display: grid; grid-template-rows: 0fr;
+            transition: grid-template-rows 0.5s cubic-bezier(0.33, 1, 0.68, 1);
+        }
+        .opt-group.open .opt-group-body { grid-template-rows: 1fr; }
+        .og-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 9px 16px; }
+        .opt-group-body > .og-grid {
+            overflow: hidden; min-height: 0;
+            padding: 0 11px; transition: padding 0.5s cubic-bezier(0.33, 1, 0.68, 1);
+        }
+        .opt-group.open .opt-group-body > .og-grid { padding: 2px 11px 10px 11px; }
+
         .ver-tag { font-size: 9px; padding: 1px 6px; border-radius: 20px; font-family:'SF Mono',monospace; flex-shrink: 0; }
         .ver-tag.v19 { color:#7dd3fc; background:rgba(56,189,248,0.12); border:1px solid rgba(56,189,248,0.2); }
         .ver-tag.v18 { color:#fca5a5; background:rgba(248,113,113,0.12); border:1px solid rgba(248,113,113,0.2); }
@@ -866,6 +914,25 @@
         html[data-theme="google-dark"] .mini-btn { color:#1967d2; background:#e8f0fe; border-color:transparent; }
         html[data-theme="google"] .noopts,
         html[data-theme="google-dark"] .noopts { color: #9aa0a6; }
+
+        html[data-theme="google"] .opt-group,
+        html[data-theme="google-dark"] .opt-group { background: #f8f9fa; border-color: #e8eaed; }
+        html[data-theme="google"] .opt-group:hover,
+        html[data-theme="google-dark"] .opt-group:hover { border-color: #d2e3fc; }
+        html[data-theme="google"] .opt-group.open,
+        html[data-theme="google-dark"] .opt-group.open { border-color: #d2e3fc; }
+        html[data-theme="google"] .opt-group-head:hover,
+        html[data-theme="google-dark"] .opt-group-head:hover { background: #f1f3f4; }
+        html[data-theme="google"] .og-title,
+        html[data-theme="google-dark"] .og-title { color: #80868b; }
+        html[data-theme="google"] .opt-group.open .og-title,
+        html[data-theme="google-dark"] .opt-group.open .og-title { color: #3c4043; }
+        html[data-theme="google"] .og-summary,
+        html[data-theme="google-dark"] .og-summary { color: #1a73e8; }
+        html[data-theme="google"] .og-chevron,
+        html[data-theme="google-dark"] .og-chevron { color: #bdc1c6; }
+        html[data-theme="google"] .opt-group.open .og-chevron,
+        html[data-theme="google-dark"] .opt-group.open .og-chevron { color: #1a73e8; }
         html[data-theme="google"] .sub-select,
         html[data-theme="google-dark"] .sub-select {
             background: #ffffff; color: #202124; border-color: #dadce0;
@@ -1393,6 +1460,20 @@
         // ----- Expanded-state persistence (per module name) -----
         let expandedSet = new Set();
 
+        // ----- Trigger-condition section state (per module name, persisted) -----
+        // The unified trigger-condition engine (contract TriggerOptions + the per-module
+        // Only* filter flags that feed it) renders as ONE collapsible section inside
+        // every module's drawer. Folded is the default, and the folded header always
+        // carries the live selection, so folding costs no information.
+        let trigOpenSet = new Set();
+        try { trigOpenSet = new Set(JSON.parse(localStorage.getItem('doppel_trig') || '[]')); } catch(e){}
+        function persistTrigOpen(name, open){
+            try {
+                if(open) trigOpenSet.add(name); else trigOpenSet.delete(name);
+                localStorage.setItem('doppel_trig', JSON.stringify([...trigOpenSet]));
+            } catch(e){}
+        }
+
         // ----- Smoothness guards -----
         // lastModulesSig: full-rebuild only when the module COMPOSITION changes;
         //   pure value/toggle diffs are patched into the live DOM instead (no refresh glitch).
@@ -1622,6 +1703,54 @@
                 return true;
             });
         }
+
+        // ----- Unified trigger-condition engine (classification) -----
+        // Which options belong to the unified trigger-condition engine: the contract's
+        // TriggerOptions vocabulary (OnlyGround, OnlyMove*, OnlySprint, OnLook,
+        // DisableOnMine, DisabledInAir…) plus the per-module filter flags that feed it
+        // (OnlySword, OnlyPlayers, OnlyPlane, OnlyTargeting…). One name rule here and
+        // the same rule in the native window panel (injector window.rs
+        // is_condition_option) — the two panels classify in lockstep, and neither can
+        // drift from the modules because the rule IS the vocabulary's shape.
+        function isTriggerOption(o){
+            const n = o.name || '';
+            return /^Only/.test(n) || n === 'OnLook' || n === 'DisableOnMine' || n === 'DisabledInAir';
+        }
+        // The summary a FOLDED trigger section shows in its header: the currently
+        // selected (on) conditions, "A, B +n" style. Two named flags plus a counter
+        // keeps one header line; with nothing selected it says so out loud.
+        function trigSummaryText(m){
+            const on = optionsForModule(m).filter(o => isTriggerOption(o) && o.value === true)
+                                           .map(o => o.name);
+            if(!on.length) return 'none';
+            let s = on.slice(0, 2).join(', ');
+            const rest = on.length - 2;
+            if(rest > 0) s += ' +' + rest;
+            return s;
+        }
+        // ----- Options area: trigger section + the rest -----
+        // One builder for the card render AND the poll's in-place rebuild, so a fresh
+        // render and a mode-swap rebuild can never disagree about the grouping.
+        function optionsAreaHtml(m, rule){
+            const visible = optionsForModule(m);
+            if(!visible.length) return '<span class="noopts">No tunable options</span>';
+            const trig = visible.filter(isTriggerOption);
+            const main = visible.filter(o => !isTriggerOption(o));
+            let html = '';
+            if(trig.length){
+                const open = trigOpenSet.has(m.name);
+                html += `<div class="opt-group${open?' open':''}" data-trig="${m.name}">
+                    <div class="opt-group-head" title="Unified trigger conditions · click to ${open?'fold':'unfold'} — the selected conditions stay listed here either way">
+                        <span class="og-chevron">${SVGO}<path d="M6 9l6 6 6-6" stroke-width="2.2"/></svg></span>
+                        <span class="og-title">Trigger conditions</span>
+                        <span class="og-summary" data-og="1">${trigSummaryText(m)}</span>
+                    </div>
+                    <div class="opt-group-body"><div class="og-grid">${widgetsHtml(trig, rule)}</div></div>
+                </div>`;
+            }
+            if(main.length) html += `<div class="og-grid">${widgetsHtml(main, rule)}</div>`;
+            return html;
+        }
         // ----- Numeric precision (B2) -----
         // The server declares a step per option (OptionMeta.effectiveStep) and the number of
         // decimal places that implies. Everything numeric goes through these four helpers, so the
@@ -1843,7 +1972,7 @@
         }
         function moduleCard(m){
             const rule = MODE_RULES[m.name];
-            const opts = widgetsHtml(optionsForModule(m), rule);
+            const opts = optionsAreaHtml(m, rule);
             const enabled = !!m.enabled;
             const expanded = expandedSet.has(m.name);
             const chip = modeChipOf(m);
@@ -1941,8 +2070,7 @@
                 if(grid.dataset.optsig !== wantSig){
                     const rule = MODE_RULES[m.name];
                     grid.dataset.optsig = wantSig;
-                    grid.innerHTML =
-                        (optionsForModule(m).map(o => optionWidget(o, rule)).join('') || '<span class="noopts">No tunable options</span>');
+                    grid.innerHTML = optionsAreaHtml(m, rule);
                     if(card.classList.contains('expanded')){
                         const so = card.querySelector('.sub-options');
                         so.style.maxHeight = (so.scrollHeight + 80) + 'px';
@@ -1988,6 +2116,13 @@
                         if(inp && inp !== document.activeElement) inp.value = fmtNum(v, dec);
                     }
                 });
+                // Trigger summary: the folded header must show the live selection, so the
+                // poll patches the summary text in place on every value change.
+                const og = card.querySelector('.og-summary[data-og]');
+                if(og){
+                    const want = trigSummaryText(m);
+                    if(og.textContent !== want) og.textContent = want;
+                }
             });
             // Per-card HUD control: keep the header eye honest from the same poll payload — but
             // never while that module's own POST is in flight, so the poll cannot fight a click.
@@ -2205,6 +2340,23 @@
             if(srow){
                 const rect = srow.getBoundingClientRect();
                 commitSlider(srow, Math.max(0, Math.min(1, (e.clientX-rect.left)/rect.width)));
+                return;
+            }
+            // Trigger-condition section header: fold / unfold. The summary stays in the
+            // header either way — folding must never hide the selected conditions.
+            const ogHead = e.target.closest('.opt-group-head');
+            if(ogHead){
+                const grp = ogHead.closest('.opt-group');
+                const card = grp.closest('.setting-item');
+                const open = !grp.classList.contains('open');
+                grp.classList.toggle('open', open);
+                if(grp.dataset.trig) persistTrigOpen(grp.dataset.trig, open);
+                if(card && card.classList.contains('expanded')){
+                    const so = card.querySelector('.sub-options');
+                    // Room for the animating section: the fold's final height is its own
+                    // content height, so a generous clamp cannot clip anything.
+                    if(so) so.style.maxHeight = '2600px';
+                }
                 return;
             }
             // Expand/collapse — the push-the-table drawer

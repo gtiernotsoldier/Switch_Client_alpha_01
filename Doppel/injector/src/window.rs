@@ -688,6 +688,11 @@ static KB_CAPTURE: Mutex<Option<String>> = Mutex::new(None);
 /// each stops a poll answer that was already in flight from painting the OLD
 /// key back over a bind we just confirmed (same idea as the web panel's).
 static KB_FENCE: Mutex<Vec<(String, String, Instant)>> = Mutex::new(Vec::new());
+/// Modules whose trigger-condition section is unfolded (name keyed, client
+/// side only). Folded is the default — the folded header carries the live
+/// selection, so the state is never hidden, exactly like the web panel's
+/// `doppel_trig` localStorage set.
+static TRIG_OPEN: Mutex<Vec<String>> = Mutex::new(Vec::new());
 /// An option-slider drag in progress (mouse is captured).
 static DRAG: Mutex<Option<Drag>> = Mutex::new(None);
 /// Until when the poller must keep its hands off the snapshot: any UI edit
@@ -1690,6 +1695,43 @@ fn option_visible(m: &panel::PanelModule, o: &panel::PanelOption) -> bool {
     true
 }
 
+/// Does the option belong to the unified trigger-condition engine? The
+/// contract's TriggerOptions vocabulary (OnlyGround, OnlyMove*, OnlySprint,
+/// OnLook, DisableOnMine, DisabledInAir…) plus the per-module filter flags
+/// that feed it (OnlySword, OnlyPlayers, OnlyPlane, OnlyTargeting…). Same
+/// name rule as the web panel's `isTriggerOption` — the two panels classify
+/// in lockstep, and neither can drift from the modules because the rule IS
+/// the vocabulary's shape.
+fn is_condition_option(name: &str) -> bool {
+    name.starts_with("Only")
+        || name == "OnLook"
+        || name == "DisableOnMine"
+        || name == "DisabledInAir"
+}
+
+/// The summary the FOLDED trigger section shows in its header: the currently
+/// selected (on) conditions, "A, B +n" style. Two named flags plus a counter
+/// keeps one header line; with nothing selected it says so out loud. Port of
+/// the web panel's `trigSummaryText`.
+fn condition_summary(m: &panel::PanelModule) -> String {
+    let on: Vec<&str> = m
+        .options
+        .iter()
+        .filter(|o| is_condition_option(&o.name) && o.value_bool())
+        .map(|o| o.name.as_str())
+        .collect();
+    if on.is_empty() {
+        return "none".to_string();
+    }
+    let named = on.len().min(2);
+    let mut s = on[..named].join(", ");
+    let rest = on.len() - named;
+    if rest > 0 {
+        s.push_str(&format!(" +{rest}"));
+    }
+    s
+}
+
 /// The Min/Max twin of a numeric option, port of the web panel's sliderPairOf.
 fn slider_pair(m: &panel::PanelModule, i: usize) -> Option<(usize, usize, String, f64, f64)> {
     let o = &m.options[i];
@@ -1856,6 +1898,12 @@ struct SetPane {
     view_h: i32,
     total_h: i32,
     max_scroll: i32,
+    /// The unified trigger-condition section: header row (None = this module
+    /// has no trigger-classified option), whether it is unfolded, and the
+    /// summary of the currently selected conditions the folded header shows.
+    trig_header: Option<Rect>,
+    trig_open: bool,
+    trig_summary: String,
 }
 
 struct PanelLayout {
@@ -1890,8 +1938,26 @@ fn panel_layout() -> PanelLayout {
                 let key_label =
                     if capturing { "[press a key…]".to_string() } else { m.key_name.trim().to_string() };
                 let views = option_views(m);
+                // The unified trigger-condition section: which views belong to it,
+                // and whether this module's section is unfolded right now.
+                let view_is_trig: Vec<bool> = views
+                    .iter()
+                    .map(|v| match v {
+                        OptView::Single(i) => is_condition_option(&m.options[*i].name),
+                        OptView::Dual { .. } => false,
+                    })
+                    .collect();
+                let has_trig = view_is_trig.iter().any(|b| *b);
+                let trig_open = has_trig && lock(&TRIG_OPEN).iter().any(|n| n == &m.name);
+                let trig_summary = condition_summary(m);
                 let mut total = SET_ROWS_OFF + OPT_PAD;
-                for v in &views {
+                if has_trig {
+                    total += OPT_ROW_H; // the section header row
+                }
+                for (vi, v) in views.iter().enumerate() {
+                    if view_is_trig[vi] && !trig_open {
+                        continue; // folded: the header carries the selection, no rows
+                    }
                     total += match v {
                         OptView::Single(i) => set_row_h(&m.options[*i]),
                         OptView::Dual { .. } => OPT_SLIDER_H,
@@ -1909,7 +1975,20 @@ fn panel_layout() -> PanelLayout {
                 }
                 let mut hits = Vec::new();
                 let mut y = SETTINGS_RECT.top + SET_ROWS_OFF - scroll;
+                let mut trig_header: Option<Rect> = None;
+                if has_trig {
+                    trig_header = Some(Rect {
+                        left: SETTINGS_RECT.left + OPT_PAD,
+                        top: y,
+                        right: SETTINGS_RECT.right - OPT_PAD,
+                        bottom: y + OPT_ROW_H,
+                    });
+                    y += OPT_ROW_H;
+                }
                 for (vi, v) in views.iter().enumerate() {
+                    if view_is_trig[vi] && !trig_open {
+                        continue; // folded: no row, no hit rect, no height
+                    }
                     let h = match v {
                         OptView::Single(i) => set_row_h(&m.options[*i]),
                         OptView::Dual { .. } => OPT_SLIDER_H,
@@ -1956,6 +2035,9 @@ fn panel_layout() -> PanelLayout {
                     view_h,
                     total_h: total,
                     max_scroll,
+                    trig_header,
+                    trig_open,
+                    trig_summary,
                 }
             })
     });
@@ -2950,6 +3032,36 @@ unsafe fn draw_main(hdc: Hdc) {
 
                 let saved = SaveDC(hdc);
                 IntersectClipRect(hdc, sp.pane.left + 2, sp.pane.top + 2, sp.pane.right - 2, sp.pane.bottom - 2);
+                // The unified trigger-condition section header: fold / unfold. The
+                // summary of the selected conditions stays visible folded or not —
+                // same contract as the web panel's .opt-group-head.
+                if let Some(hr) = &sp.trig_header {
+                    let hov = point_in(hover, *hr);
+                    if hov {
+                        fill(hdc, C_BTN_HOVER, *hr);
+                    }
+                    text_in(
+                        hdc, f.small, C_DIM, "TRIGGER",
+                        Rect { left: hr.left, top: hr.top, right: hr.left + 92, bottom: hr.bottom },
+                        DT_LEFT | DT_VCENTER | DT_SINGLELINE,
+                    );
+                    text_in(
+                        hdc, f.small, C_LINK, &sp.trig_summary,
+                        Rect { left: hr.left + 94, top: hr.top, right: hr.right - 22, bottom: hr.bottom },
+                        DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS,
+                    );
+                    draw_chevron(
+                        hdc,
+                        Rect { left: hr.right - 20, top: hr.top + 6, right: hr.right - 4, bottom: hr.bottom - 6 },
+                        sp.trig_open,
+                        hov,
+                    );
+                    fill(
+                        hdc,
+                        C_SEPARATOR,
+                        Rect { left: hr.left, top: hr.bottom, right: hr.right, bottom: hr.bottom + 1 },
+                    );
+                }
                 if sp.views.is_empty() {
                     text_in(
                         hdc,
@@ -3699,6 +3811,19 @@ unsafe extern "system" fn wnd_proc(hwnd: Hwnd, msg: u32, wp: Wparam, lp: Lparam)
                                     } else if point_in(p, sp.kb_chip) {
                                         // (re)arm capture: the next keypress binds
                                         *lock(&KB_CAPTURE) = Some(sp.name.clone());
+                                        poke_interact();
+                                    } else if sp.trig_header.map(|hr| point_in(p, hr)).unwrap_or(false) {
+                                        // Fold / unfold the trigger-condition section. The
+                                        // folded header carries the live selection, so nothing
+                                        // is hidden either way (web panel parity).
+                                        let mut open_set = lock(&TRIG_OPEN);
+                                        match open_set.iter().position(|n| n == &sp.name) {
+                                            Some(pos) => {
+                                                open_set.remove(pos);
+                                            }
+                                            None => open_set.push(sp.name.clone()),
+                                        }
+                                        drop(open_set);
                                         poke_interact();
                                     } else {
                                         for (hr, vi) in &sp.hits {

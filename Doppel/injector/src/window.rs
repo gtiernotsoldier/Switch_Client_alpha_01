@@ -1967,18 +1967,13 @@ fn panel_layout() -> PanelLayout {
                 let mut hits = Vec::new();
                 let mut y = SETTINGS_RECT.top + SET_ROWS_OFF - scroll;
                 let mut trig_header: Option<Rect> = None;
-                if has_trig {
-                    trig_header = Some(Rect {
-                        left: SETTINGS_RECT.left + OPT_PAD,
-                        top: y,
-                        right: SETTINGS_RECT.right - OPT_PAD,
-                        bottom: y + OPT_ROW_H,
-                    });
-                    y += OPT_ROW_H;
-                }
+                // Web-panel parity: the module's parameters come FIRST, the
+                // conditions section is a trailing row BELOW them — never above
+                // the tunables. Unfolded, the condition rows render grouped
+                // under their header instead of interleaved with the parameters.
                 for (vi, v) in views.iter().enumerate() {
-                    if view_is_trig[vi] && !trig_open {
-                        continue; // folded: no row, no hit rect, no height
+                    if view_is_trig[vi] {
+                        continue; // conditions render under the header below
                     }
                     let h = match v {
                         OptView::Single(i) => set_row_h(&m.options[*i]),
@@ -1994,6 +1989,36 @@ fn panel_layout() -> PanelLayout {
                         vi,
                     ));
                     y += h;
+                }
+                if has_trig {
+                    trig_header = Some(Rect {
+                        left: SETTINGS_RECT.left + OPT_PAD,
+                        top: y,
+                        right: SETTINGS_RECT.right - OPT_PAD,
+                        bottom: y + OPT_ROW_H,
+                    });
+                    y += OPT_ROW_H;
+                }
+                if trig_open {
+                    for (vi, v) in views.iter().enumerate() {
+                        if !view_is_trig[vi] {
+                            continue;
+                        }
+                        let h = match v {
+                            OptView::Single(i) => set_row_h(&m.options[*i]),
+                            OptView::Dual { .. } => OPT_SLIDER_H,
+                        };
+                        hits.push((
+                            Rect {
+                                left: SETTINGS_RECT.left + OPT_PAD,
+                                top: y,
+                                right: SETTINGS_RECT.right - OPT_PAD,
+                                bottom: y + h,
+                            },
+                            vi,
+                        ));
+                        y += h;
+                    }
                 }
                 let kb_w = (18 + key_label.len() as i32 * 8).max(48);
                 SetPane {

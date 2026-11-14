@@ -398,67 +398,76 @@
         .noopts { font-size: 11px; color: rgba(255,255,255,0.2); font-style: italic; }
 
         /* ===== Unified trigger-condition section =====
-           One collapsible group per module drawer. Folded is the default and the
-           header carries the live selection as a COUNT ("2 selected"), so the
-           folded state shows how many conditions are on without hiding them —
-           and folded it is deliberately BORDERLESS: the group reads as just
-           another slim row of the drawer, not a boxed band. Unfolded, a subtle
-           box appears around the whole group.
+           One collapsible group per module drawer, styled after the reference
+           settings app: folded, the section IS a bordered button row —
+           "Conditions" on the left, the live "N selected" count and a list
+           glyph on the right. Unfolding drops a separate rounded panel BELOW
+           the button (the button itself never changes shape); the checkbox
+           rows keep their own controls. The group sits AFTER the module's
+           parameters, never above them.
+           Folded is the default and the header carries the live selection as a
+           COUNT ("2 selected"), so the folded state shows how many conditions
+           are on without hiding them.
            The body folds with a grid-rows 0fr→1fr animation: the row's final height
            is the content's own height, so the fold never needs a measured max-height
            and can never clip a widget. */
         .opt-group {
             grid-column: 1 / -1;
-            border: 1px solid transparent; border-radius: 10px;
-            background: transparent; overflow: hidden;
+            background: transparent;
+        }
+        .opt-group-head {
+            display: flex; align-items: center; gap: 10px; padding: 8px 12px;
+            cursor: pointer; user-select: none; min-width: 0;
+            border: 1px solid rgba(34,211,238,0.30); border-radius: 10px;
+            background: rgba(34,211,238,0.04);
             transition: border-color 0.3s ease, background 0.3s ease;
         }
-        .opt-group:hover { background: rgba(255,255,255,0.025); }
-        .opt-group.open { border-color: rgba(34,211,238,0.16); background: rgba(255,255,255,0.02); }
-        .opt-group.open:hover { border-color: rgba(34,211,238,0.25); }
-        .opt-group-head {
-            display: flex; align-items: center; gap: 7px; padding: 4px 10px;
-            cursor: pointer; user-select: none; min-width: 0; border-radius: 10px;
-        }
-        .opt-group-head:hover { background: rgba(255,255,255,0.04); }
-        .og-chevron {
-            flex: 0 0 auto; display: flex; color: rgba(255,255,255,0.25);
-            transition: color 0.3s ease, transform 0.45s cubic-bezier(0.34, 1.56, 0.64, 1);
-        }
-        .og-chevron svg { width: 13px; height: 13px; }
-        .opt-group.open .og-chevron { color: rgba(34,211,238,0.75); transform: rotate(180deg); }
+        .opt-group-head:hover { border-color: rgba(34,211,238,0.55); background: rgba(34,211,238,0.08); }
+        .opt-group.open .opt-group-head { border-color: rgba(34,211,238,0.45); }
         .og-title {
-            flex: 0 0 auto; font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase;
-            font-family: 'SF Mono', monospace; color: rgba(255,255,255,0.42);
+            flex: 0 0 auto; font-size: 13px; font-weight: 500; letter-spacing: 0.01em;
+            color: rgba(255,255,255,0.88); white-space: nowrap;
         }
-        .opt-group.open .og-title { color: rgba(255,255,255,0.62); }
-        /* The live count ("2 selected") as a compact pill. Zero gets the muted
-           variant so an empty selection reads as calm, not as a warning. */
+        /* The live count ("3 selected") as plain accent text, like the reference
+           button. Zero gets the muted variant so an empty selection reads as
+           calm, not as a warning. */
         .og-summary {
             margin-left: auto; flex: 0 0 auto;
-            font-size: 10px; font-family: 'SF Mono', monospace; line-height: 1;
-            padding: 3px 9px; border-radius: 20px;
-            background: rgba(34,211,238,0.10); border: 1px solid rgba(34,211,238,0.22);
-            color: rgba(103,232,249,0.92); white-space: nowrap;
+            font-size: 12.5px; font-family: 'SF Mono', monospace; line-height: 1;
+            color: rgba(103,232,249,0.95); white-space: nowrap;
         }
-        .og-summary.zero {
-            background: rgba(255,255,255,0.04); border-color: rgba(255,255,255,0.10);
-            color: rgba(255,255,255,0.32);
+        .og-summary.zero { color: rgba(255,255,255,0.35); }
+        .og-ico {
+            flex: 0 0 auto; display: flex; color: rgba(255,255,255,0.40);
+            transition: color 0.3s ease;
         }
+        .og-ico svg { width: 15px; height: 15px; }
+        .opt-group.open .og-ico { color: rgba(34,211,238,0.85); }
         .opt-group-body {
-            display: grid; grid-template-rows: 0fr;
-            transition: grid-template-rows 0.5s cubic-bezier(0.33, 1, 0.68, 1);
+            display: grid; grid-template-rows: 0fr; margin-top: 0;
+            transition: grid-template-rows 0.5s cubic-bezier(0.33, 1, 0.68, 1),
+                        margin-top 0.5s cubic-bezier(0.33, 1, 0.68, 1);
         }
-        .opt-group.open .opt-group-body { grid-template-rows: 1fr; }
-        /* Drawer options run ONE full-width column: every row gets the whole card
-           width (label left, control right), which kills the half-empty second
-           column that used to strand the controls on a narrow left rail. */
+        .opt-group.open .opt-group-body { grid-template-rows: 1fr; margin-top: 6px; }
+        /* Unfolded, the list sits in its own rounded panel below the button —
+           the reference app's popout. One full-width column: every row gets the
+           whole card width (label left, control right), which kills the
+           half-empty second column that used to strand the controls on a
+           narrow left rail. */
         .og-grid { display: grid; grid-template-columns: 1fr; gap: 6px; }
         .opt-group-body > .og-grid {
             overflow: hidden; min-height: 0;
-            padding: 0 10px; transition: padding 0.5s cubic-bezier(0.33, 1, 0.68, 1);
+            border: 0 solid rgba(34,211,238,0.18); border-radius: 10px;
+            background: transparent;
+            padding: 0 10px;
+            transition: padding 0.5s cubic-bezier(0.33, 1, 0.68, 1),
+                        border-width 0.4s ease, background 0.4s ease;
         }
-        .opt-group.open .opt-group-body > .og-grid { padding: 1px 10px 8px 10px; }
+        .opt-group.open .opt-group-body > .og-grid {
+            border-width: 1px;
+            background: rgba(0,0,0,0.28);
+            padding: 6px 10px 8px 10px;
+        }
 
         .ver-tag { font-size: 9px; padding: 1px 6px; border-radius: 20px; font-family:'SF Mono',monospace; flex-shrink: 0; }
         .ver-tag.v19 { color:#7dd3fc; background:rgba(56,189,248,0.12); border:1px solid rgba(56,189,248,0.2); }
@@ -931,31 +940,29 @@
         html[data-theme="google-dark"] .noopts { color: #9aa0a6; }
 
         html[data-theme="google"] .opt-group,
-        html[data-theme="google-dark"] .opt-group { background: transparent; border-color: transparent; }
-        html[data-theme="google"] .opt-group:hover,
-        html[data-theme="google-dark"] .opt-group:hover { background: rgba(60,64,67,0.05); }
-        html[data-theme="google"] .opt-group.open,
-        html[data-theme="google-dark"] .opt-group.open { background: #f8f9fa; border-color: #e8eaed; }
-        html[data-theme="google"] .opt-group.open:hover,
-        html[data-theme="google-dark"] .opt-group.open:hover { border-color: #d2e3fc; }
+        html[data-theme="google-dark"] .opt-group { background: transparent; }
+        html[data-theme="google"] .opt-group-head,
+        html[data-theme="google-dark"] .opt-group-head {
+            border-color: #dadce0; background: transparent;
+        }
         html[data-theme="google"] .opt-group-head:hover,
         html[data-theme="google-dark"] .opt-group-head:hover { background: #f1f3f4; }
+        html[data-theme="google"] .opt-group.open .opt-group-head,
+        html[data-theme="google-dark"] .opt-group.open .opt-group-head { border-color: #1a73e8; }
         html[data-theme="google"] .og-title,
-        html[data-theme="google-dark"] .og-title { color: #80868b; }
-        html[data-theme="google"] .opt-group.open .og-title,
-        html[data-theme="google-dark"] .opt-group.open .og-title { color: #3c4043; }
+        html[data-theme="google-dark"] .og-title { color: #202124; }
         html[data-theme="google"] .og-summary,
-        html[data-theme="google-dark"] .og-summary {
-            color: #1a73e8; background: #e8f0fe; border-color: transparent;
-        }
+        html[data-theme="google-dark"] .og-summary { color: #1a73e8; }
         html[data-theme="google"] .og-summary.zero,
-        html[data-theme="google-dark"] .og-summary.zero {
-            color: #9aa0a6; background: #f1f3f4; border-color: transparent;
-        }
-        html[data-theme="google"] .og-chevron,
-        html[data-theme="google-dark"] .og-chevron { color: #bdc1c6; }
-        html[data-theme="google"] .opt-group.open .og-chevron,
-        html[data-theme="google-dark"] .opt-group.open .og-chevron { color: #1a73e8; }
+        html[data-theme="google-dark"] .og-summary.zero { color: #9aa0a6; }
+        html[data-theme="google"] .og-ico,
+        html[data-theme="google-dark"] .og-ico { color: #5f6368; }
+        html[data-theme="google"] .opt-group.open .og-ico,
+        html[data-theme="google-dark"] .opt-group.open .og-ico { color: #1a73e8; }
+        html[data-theme="google"] .opt-group-body > .og-grid,
+        html[data-theme="google-dark"] .opt-group-body > .og-grid { border-color: #e8eaed; background: transparent; }
+        html[data-theme="google"] .opt-group.open .opt-group-body > .og-grid,
+        html[data-theme="google-dark"] .opt-group.open .opt-group-body > .og-grid { background: #f8f9fa; }
         html[data-theme="google"] .sub-select,
         html[data-theme="google-dark"] .sub-select {
             background: #ffffff; color: #202124; border-color: #dadce0;
@@ -1757,20 +1764,24 @@
             if(!visible.length) return '<span class="noopts">No tunable options</span>';
             const trig = visible.filter(isTriggerOption);
             const main = visible.filter(o => !isTriggerOption(o));
+            // Reference layout: the module's parameters come FIRST, the
+            // conditions fold is a trailing button row BELOW them — never
+            // above the tunables. Unfolded, the checkbox list pops out of the
+            // button as its own panel underneath.
             let html = '';
+            if(main.length) html += `<div class="og-grid">${widgetsHtml(main, rule)}</div>`;
             if(trig.length){
                 const open = trigOpenSet.has(m.name);
                 const nOn = trigOnCount(m);
                 html += `<div class="opt-group${open?' open':''}" data-trig="${m.name}">
-                    <div class="opt-group-head" title="Unified trigger conditions · click to ${open?'fold':'unfold'} · ${nOn} selected">
-                        <span class="og-chevron">${SVGO}<path d="M6 9l6 6 6-6" stroke-width="2.2"/></svg></span>
-                        <span class="og-title">Trigger conditions</span>
+                    <div class="opt-group-head" title="Trigger conditions · click to ${open?'fold':'unfold'} · ${nOn} selected">
+                        <span class="og-title">Conditions</span>
                         <span class="og-summary${nOn?'':' zero'}" data-og="1">${trigSummaryText(m)}</span>
+                        <span class="og-ico">${SVGO}<path d="M4 6h16M4 12h16M4 18h16" stroke-width="2"/></svg></span>
                     </div>
                     <div class="opt-group-body"><div class="og-grid">${widgetsHtml(trig, rule)}</div></div>
                 </div>`;
             }
-            if(main.length) html += `<div class="og-grid">${widgetsHtml(main, rule)}</div>`;
             return html;
         }
         // ----- Numeric precision (B2) -----

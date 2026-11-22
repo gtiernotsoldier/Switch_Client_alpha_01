@@ -1,7 +1,6 @@
 package io.doppel.adapter.common.module.player
 
 import io.doppel.adapter.common.api.EventBridge
-import io.doppel.adapter.common.api.TrackRecord
 import io.doppel.adapter.common.option.ConfigManager
 import io.doppel.contract.model.PlayerState
 import io.doppel.contract.model.TargetState
@@ -13,7 +12,6 @@ import io.mockk.mockk
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
-import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
@@ -70,7 +68,6 @@ class KamuiWiringTest {
         // Not covered by EventBridge.reset() — a stale hold from a previous
         // test would leak into the assertions below.
         EventBridge.packetLagActive = false
-        TrackRecord.clear()
         EventBridge.isGuiOpen = false
 
         core = mockk(relaxed = true)
@@ -107,7 +104,6 @@ class KamuiWiringTest {
         CoreLink.stub = null
         EventBridge.reset()
         EventBridge.packetLagActive = false
-        TrackRecord.clear()
     }
 
     /**
@@ -209,26 +205,22 @@ class KamuiWiringTest {
     }
 
     @Test
-    fun `the trail freezes at the fossil while phasing and resumes after`() {
+    fun `the phase flag tracks the answer for the trail arbiter`() {
+        // The trail ring lives in the core now (strategy::izanagi); what Kamui
+        // still owns is the freeze flag: while a phase holds the connection the
+        // reported position is the fossil, and Izanagi must not feed those
+        // frames into its history as if the server had seen them.
         tick(1)
-        tick(2)
-        val before = TrackRecord.size()
-        assertNotEquals(0, before, "idle ticks feed the trail")
+        assertFalse(EventBridge.kamuiPhaseActive, "idle: nothing is held")
 
         EventBridge.onKey(triggerKey, true)
         answer = pack(KamuiAnswer.STATE_PHASE, claim = false, release = false, phaseTick = 0, cooldownTick = 0)
-        tick(3)
-        answer = pack(KamuiAnswer.STATE_PHASE, claim = true, release = false, phaseTick = 1, cooldownTick = 0)
-        tick(4)
-        assertEquals(before, TrackRecord.size(), "held frames are not server-seen — the trail waits")
-        val fossil = TrackRecord.lastSent()
-        assertEquals(2, fossil?.tick, "the last pushed frame is the fossil the server is looking at")
+        tick(2)
+        assertTrue(EventBridge.kamuiPhaseActive, "the phase owns the reported position")
 
-        // The release tick resumes the feed: the phase ended inside tick 5, so its
-        // position is server-seen again (it is part of the burst that just went out).
         answer = pack(KamuiAnswer.STATE_COOLDOWN, claim = false, release = true, phaseTick = 2, cooldownTick = 0)
-        tick(5)
-        assertEquals(before + 1, TrackRecord.size())
+        tick(3)
+        assertFalse(EventBridge.kamuiPhaseActive, "released: the burst went out, the body is server-seen again")
     }
 
     @Test

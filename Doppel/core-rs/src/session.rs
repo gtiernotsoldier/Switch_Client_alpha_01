@@ -28,6 +28,7 @@ use crate::strategy::combat::{self, BlockArbiterState, PredictorConfig, Predicto
 use crate::strategy::eagle;
 use crate::strategy::eagle_place;
 use crate::strategy::hit_select;
+use crate::strategy::izanagi;
 use crate::strategy::jump_reset;
 use crate::strategy::kamui;
 use crate::strategy::keep_sprint;
@@ -188,6 +189,11 @@ pub struct Session {
     /// stream — the machine is deterministic.
     pub kamui: kamui::State,
 
+    /// Izanagi: the trail ring ("what the server has seen"), the anchor pin,
+    /// the walk list and the stall / cooldown counters. No RNG stream — the
+    /// replay walks stored frames at exactly 1x.
+    pub izanagi: izanagi::State,
+
     pub ticks: u64,
     pub decisions: u64,
     pub degraded: u64,
@@ -260,6 +266,7 @@ impl Session {
             keep_sprint: keep_sprint::State::new(),
             lag_range: lag_range::State::new(),
             kamui: kamui::State::new(),
+            izanagi: izanagi::State::new(),
             ticks: 0,
             decisions: 0,
             degraded: 0,
@@ -339,6 +346,7 @@ impl Session {
                 // platform side (release + flush), and a half-elapsed phase
                 // must not resume on re-enable.
                 self.kamui = kamui::State::new();
+                self.izanagi = izanagi::State::new();
             }
         }
         Frame::new(Kind::Reset, frame.header.seq, frame.header.tick, module)
@@ -1470,6 +1478,37 @@ impl Session {
                         WireAction::Scalar,
                         packed as f64,
                     ))
+                }
+                op::PLAYER_IZANAGI_TICK => {
+                    let input = izanagi::Input {
+                        feed: req.bool(0)?,
+                        tick_clock: req.i32(1)?,
+                        x: req.arg(2)?,
+                        y: req.arg(3)?,
+                        z: req.arg(4)?,
+                        on_ground: req.bool(5)?,
+                        mark_edge: req.bool(6)?,
+                        recall_edge: req.bool(7)?,
+                        corridor_ok: req.bool(8)?,
+                        gui_open: req.bool(9)?,
+                        dead: req.bool(10)?,
+                        // Session-internal arbitration: a live Kamui phase owns
+                        // the reported position, so no mark and no recall may
+                        // start while it runs. Reading the sibling state here is
+                        // why the exclusion needs no JVM-side cross-module
+                        // reference and no extra wire argument.
+                        kamui_busy: self.kamui.state == kamui::STATE_PHASE,
+                        max_depth: req.i32(12)?,
+                        stall_cap: req.i32(13)?,
+                        cooldown_ticks: req.i32(14)?,
+                    };
+                    // No roll either: the replay walks stored frames. The state
+                    // carries the trail ring (a VecDeque, not Copy), so it rides
+                    // through a clone — the borrow ends before the reassignment.
+                    let st = self.izanagi.clone();
+                    let (answer, next) = izanagi::tick(st, input);
+                    self.izanagi = next;
+                    Ok(codec::encode_izanagi(seq, tick, &answer))
                 }
                 _ => Err(Status::BadPayload),
             }

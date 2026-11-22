@@ -1136,6 +1136,48 @@ class CoreStub(
     }
 
     /**
+     * Izanagi: one tick of the Mark & Recall machine (trail feed + mark/recall
+     * edges + the replay walk).
+     *
+     * The JVM supplies the judgements (whether the server can see this position —
+     * false while Kamui holds the connection — the corridor collision/danger
+     * check, death, GUI) and the key edges; the core owns the trail ring, the
+     * anchor pin, the walk list, the stall counter and the cooldown. The answer
+     * is a position answer — decoded here into an [IzanagiStep]: flags + the x/y/z of the
+     * step to report this tick. `null` means no answer — the caller must not move the
+     * player and must not feed the trail: moving is the state that can desync
+     * the view, so the safe direction is to stand still.
+     */
+    fun playerIzanagiTick(
+        player: io.doppel.contract.model.PlayerState,
+        target: io.doppel.contract.model.TargetState?,
+        feed: Boolean,
+        tickClock: Int,
+        x: Double,
+        y: Double,
+        z: Double,
+        onGround: Boolean,
+        markEdge: Boolean,
+        recallEdge: Boolean,
+        corridorOk: Boolean,
+        guiOpen: Boolean,
+        dead: Boolean,
+        maxDepth: Int,
+        stallCap: Int,
+        cooldownTicks: Int,
+        tick: Int
+    ): IzanagiStep? {
+        val payload = genericRequest(
+            encodeSnapshot(player, target), Ops.PLAYER_IZANAGI_TICK,
+            b(feed), tickClock.toDouble(), x, y, z, b(onGround),
+            b(markEdge), b(recallEdge), b(corridorOk), b(guiOpen), b(dead),
+            maxDepth.toDouble(), stallCap.toDouble(), cooldownTicks.toDouble()
+        )
+        val f = roundTrip(Wire.MODULE_PLAYER, payload, tick) ?: return null
+        return decodeIzanagiStep(f)
+    }
+
+    /**
      * Backtrack's hold window: one call per tick.
      *
      * `null` means the core did not answer. The caller must then let the

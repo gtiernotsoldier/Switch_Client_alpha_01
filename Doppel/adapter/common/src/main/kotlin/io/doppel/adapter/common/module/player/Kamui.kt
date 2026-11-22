@@ -1,7 +1,6 @@
 package io.doppel.adapter.common.module.player
 
 import io.doppel.adapter.common.api.EventBridge
-import io.doppel.adapter.common.api.TrackRecord
 import io.doppel.adapter.common.module.Category
 import io.doppel.adapter.common.module.HudLineProvider
 import io.doppel.adapter.common.module.Module
@@ -68,12 +67,15 @@ import io.doppel.ipc.Strategies
  *  * **Co-claimants** — a routine lag window (FakeLag et al.) may outlive the phase, but
  *    the flush request is one-sided: the phase's backlog goes out regardless of claims.
  *
- * ## The trail (TrackRecord)
+ * ## The trail (core-owned)
  *
- * While not phasing, the module feeds the player's reported position into
- * [TrackRecord] — the "what the server has seen" ring buffer the desync readout and the
- * future Mark & Recall consume. While phasing, feeding stops: the buffer freezes at the
- * fossil instead of recording frames the server will never see.
+ * While not phasing, this module's reported positions feed the trail ring — the
+ * "what the server has seen" history Mark & Recall (Izanagi) walks back on. The
+ * ring lives in the core (`strategy::izanagi`), fed by Izanagi's own op; this
+ * module's contribution is the [EventBridge.kamuiPhaseActive] flag: while a
+ * phase holds the connection, the reported position is the fossil, and the
+ * flag freezes the feed so frames the server will never see cannot masquerade
+ * as sent.
  *
  * ## Degradation direction (PROTECTION.md §9.5.3)
  *
@@ -151,13 +153,17 @@ object Kamui : Module("Kamui", Category.PLAYER), HudLineProvider {
             // NOT hold. Holding is the state that can desync the view; a missing answer
             // must not leave packets queued behind a dead decision. No flush: nothing
             // was decided this tick, and the backlog drains on its own once the claim
-            // is gone.
+            // is gone. The phase flag follows: with no decision there is no phase.
             EventBridge.releasePacketHold(SOURCE)
-            pushTrail(player)
+            EventBridge.kamuiPhaseActive = false
             return
         }
 
         lastAnswer = answer
+        // The vault-flag pattern: Izanagi reads this to freeze its trail feed
+        // while the reported position is the fossil, and the vault arbiter's
+        // logs say who owns the position. Written from the CURRENT answer only.
+        EventBridge.kamuiPhaseActive = answer.state == KamuiAnswer.STATE_PHASE
 
         when {
             answer.release -> release()
@@ -180,13 +186,6 @@ object Kamui : Module("Kamui", Category.PLAYER), HudLineProvider {
         if (edge && answer.state != KamuiAnswer.STATE_PHASE) {
             EventBridge.releasePacketHold(SOURCE)
         }
-
-        // Feed the trail only while the server can actually see us: during a phase the
-        // local position diverges from the fossil, and those frames must not masquerade
-        // as sent. A missing answer degrades to "not holding" (the claim was released
-        // above), so its tick's position is treated as server-seen — the same direction
-        // the claim took.
-        if (answer.state != KamuiAnswer.STATE_PHASE) pushTrail(player)
     }
 
     private fun onKeyEdge(key: Int) {
@@ -212,23 +211,13 @@ object Kamui : Module("Kamui", Category.PLAYER), HudLineProvider {
         markWorked()
     }
 
-    private fun pushTrail(player: PlayerState) {
-        TrackRecord.push(
-            TrackRecord.Frame(
-                tick = player.ticks.toInt(),
-                x = player.position.x, y = player.position.y, z = player.position.z,
-                yaw = player.rotation.yaw, pitch = player.rotation.pitch,
-                onGround = player.onGround
-            )
-        )
-    }
-
     override fun onEnable() {
         // A fresh enable inherits nothing: not a stale edge, not a stale HUD answer,
         // and not a machine the core still believes it owns — the Reset frame
         // (CONTRIBUTING step 5) drops the phase machine on the core side too.
         Strategies.resetPlayer()
         EventBridge.releasePacketHold(SOURCE)
+        EventBridge.kamuiPhaseActive = false
         pendingTriggerEdge = false
         lastAnswer = null
         EventBridge.registerTickListener(tickListener)
@@ -252,6 +241,7 @@ object Kamui : Module("Kamui", Category.PLAYER), HudLineProvider {
         pendingTriggerEdge = false
         lastAnswer = null
         EventBridge.releasePacketHold(SOURCE)
+        EventBridge.kamuiPhaseActive = false
         // The Reset frame — CONTRIBUTING step 5: the core must forget the cast too,
         // or a re-enable would resume a half-elapsed phase it still believes is live.
         Strategies.resetPlayer()

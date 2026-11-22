@@ -113,6 +113,8 @@ object EventBridge {
         packetFlushReason = ""
         packetLagActive = false
         packetLagAttackReleased = false
+        pendingReplayPosition = null
+        kamuiPhaseActive = false
         attackListeners.clear()
         sprintResetActive = false
         superKnockbackActive = false
@@ -1785,6 +1787,66 @@ object EventBridge {
         packetHoldOwner = packetHoldClaims.entries.maxByOrNull { it.value }?.key ?: ""
         packetLagActive = packetHoldClaims.isNotEmpty()
     }
+
+    // ========== 9. Replay position (Izanagi's platform write) ==========
+    //
+    // A replay advance is a REPOSITION: the core walked back one recorded frame
+    // and the module asks the platform to set the player there. It rides a
+    // pending slot instead of a direct call because only the platform can name
+    // the player object — the same seam the synthetic keys use.
+
+    /** One replay step: the position the server already accepted once. */
+    data class ReplayPosition(val x: Double, val y: Double, val z: Double)
+
+    /** The pending replay step, consumed by the platform's tick loop. */
+    @Volatile var pendingReplayPosition: ReplayPosition? = null
+
+    /** The module's one-sided lever — the platform consumes it and clears it. */
+    fun requestReplayPosition(x: Double, y: Double, z: Double) {
+        pendingReplayPosition = ReplayPosition(x, y, z)
+    }
+
+    /** Consume a pending replay step. Null when none is owed. */
+    fun consumeReplayPosition(): ReplayPosition? = pendingReplayPosition.also { pendingReplayPosition = null }
+
+    /** Drop a step nobody will apply (module disable mid-replay). */
+    fun clearReplayPosition() {
+        pendingReplayPosition = null
+    }
+
+    /**
+     * Platform capability: can this adapter reposition the player at all?
+     * Fabric sets it at bootstrap; the Forge 1.8.9 path never does, and a
+     * platform without the capability refuses recalls — the machine still
+     * marks, but nothing is ever spent on a write it cannot make.
+     */
+    @Volatile var supportsReplayPosition: Boolean = false
+
+    /**
+     * The corridor checker: collision + danger sources around the position the
+     * replay is about to report. Registered by the platform (it owns the world
+     * query); a platform without one fails CLOSED — a null checker means the
+     * module never marshals a recall, because rewinding through unvalidated
+     * geometry is exactly the failure this check exists to prevent.
+     */
+    @Volatile var corridorChecker: ((Double, Double, Double) -> Boolean)? = null
+
+    /** Whether a corridor check is available at all (the recall gate). */
+    val corridorAvailable: Boolean
+        get() = corridorChecker != null
+
+    /** Run the corridor judgement; a missing checker fails closed (false). */
+    fun checkCorridor(x: Double, y: Double, z: Double): Boolean =
+        corridorChecker?.invoke(x, y, z) ?: false
+
+    /**
+     * True while a Kamui phase holds the connection — the reported position is
+     * the fossil, not the player. Kamui writes it from its answer every tick
+     * (and clears it on enable/disable); Izanagi reads it to freeze the trail
+     * feed. The vault-flag pattern ([packetLagActive], [sprintResetActive]):
+     * modules arbitrate through EventBridge, never through each other.
+     */
+    @Volatile var kamuiPhaseActive: Boolean = false
 
     // ========== Freelook (Visual) ==========
     /**

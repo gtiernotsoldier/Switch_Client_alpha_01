@@ -1008,6 +1008,7 @@ fn emit_golden(dir: &str) -> Result<(), String> {    use std::fs;
     emit_keep_sprint_golden(dir)?;
     emit_lag_range_golden(dir)?;
     emit_kamui_golden(dir)?;
+    emit_izanagi_golden(dir)?;
     emit_tap_sample_golden(dir)?;
     emit_adtap_sample_golden(dir)?;
     emit_autoblock_sample_golden(dir)?;
@@ -2109,6 +2110,143 @@ fn emit_lag_range_golden(dir: &str) -> Result<(), String> {
 /// flags, phase_tick, cooldown_tick, casts) and deliberately NOT the packed
 /// int: the packing is unit-tested in `strategy::kamui` and round-tripped on
 /// the wire, while the fixture pins the machine.
+/// Izanagi's Mark & Recall, replayed over a fixed 500-tick walk.
+///
+/// The scripted inputs cover every branch the machine has: marks that land and
+/// get overwritten, recalls refused by the depth fuse / by a scripted Kamui
+/// phase (session-derived in production, scripted here — the fixture exercises
+/// the MACHINE; the session's `kamui_busy` derivation is a one-liner the wire
+/// tests own), replays that complete, corridor stalls that abort at the cap,
+/// GUI/death exits, and unfed gaps. Position columns are raw f64 bits: a
+/// printed-decimal comparison can pass while the last mantissa bit differs,
+/// which is exactly the drift a replay exists to catch.
+fn emit_izanagi_golden(dir: &str) -> Result<(), String> {
+    use std::fs;
+
+    let mut input = String::new();
+    input.push_str("# doppel-izanagi-golden v1\n");
+    input.push_str("# kamui_busy is SCRIPTED here (fixture drives the machine directly); in production the session derives it from self.kamui.state.\n");
+    input.push_str("# idx\tfeed\ttick_clock\tx\tz\ton_ground\tmark_edge\trecall_edge\tcorridor_ok\tgui_open\tdead\tkamui_busy\tmax_depth\tstall_cap\tcooldown_ticks\n");
+
+    let mut expected = String::new();
+    expected.push_str("# idx\tstate\tflags\tremaining\tx_bits\tz_bits\n");
+
+    let mut state = strategy::izanagi::State::new();
+    let mut rng = Pcg32::new(0x0000_5EED_12A6_0001);
+    let mut pos_x = 0.0f64;
+    let mut pos_z = 0.0f64;
+    // Edge schedules: independent of the machine state so marks/recalls land
+    // in every state. Mid-replay exits are scheduled on recall starts (the
+    // same trick the kamui fixture uses) because unbiased draws rarely
+    // coincide with a ~4-tick walk.
+    let mut mark_in: i32 = rng.random_int(2, 12);
+    let mut recall_in: i32 = -1;
+    let mut block_in: i32 = -1;
+    let mut gui_in: i32 = -1;
+    let mut dead_in: i32 = -1;
+    let mut kamui_in: i32 = -1;
+    let mut feed_gap: i32 = 0;
+
+    for i in 0..500i64 {
+        let tick_clock = i as i32;
+
+        // Movement: a walker that pauses (mark→recall age varies) and doubles
+        // back (the corridor is naturally clear).
+        if rng.random_int(0, 5) != 0 {
+            pos_x += rng.random_float(-0.4, 0.4) as f64;
+            pos_z += rng.random_float(-0.4, 0.4) as f64;
+        }
+
+        let feed = if feed_gap > 0 { feed_gap -= 1; false } else {
+            if rng.random_int(0, 23) == 0 { feed_gap = rng.random_int(1, 3); false } else { true }
+        };
+
+        let mark_edge = if mark_in == 0 { mark_in = -1; true } else { if mark_in > 0 { mark_in -= 1; } false };
+        let recall_edge = if recall_in == 0 { recall_in = -1; true } else { if recall_in > 0 { recall_in -= 1; } false };
+
+        let corridor_ok = if block_in >= 0 {
+            if block_in == 0 { block_in = -1; false } else { block_in -= 1; false }
+        } else { true };
+
+        let gui_open = if gui_in >= 0 { if gui_in == 0 { gui_in = -1; true } else { gui_in -= 1; false } } else { rng.random_int(0, 63) == 0 };
+        let dead = if dead_in >= 0 { if dead_in == 0 { dead_in = -1; true } else { dead_in -= 1; false } } else { rng.random_int(0, 255) == 0 };
+        let kamui_busy = if kamui_in >= 0 { if kamui_in == 0 { kamui_in = -1; true } else { kamui_in -= 1; true } } else { false };
+
+        // A phase burst a few ticks long, occasional.
+        if kamui_in < 0 && rng.random_int(0, 39) == 0 { kamui_in = rng.random_int(2, 6); }
+
+        let max_depth = [10i32, 15, 20, 40][rng.random_int(0, 3) as usize];
+        let stall_cap = [3i32, 5, 8][rng.random_int(0, 2) as usize];
+
+        // A SHORT cooldown in the fixture (20-80): the production tuning is 300
+        // ticks, and a 300-tick cooldown would swallow most of a 500-tick replay,
+        // starving the mark/recall buckets. The fixture exercises the MACHINE.
+        let cooldown_ticks = [20i32, 40, 80][rng.random_int(0, 2) as usize];
+
+        input.push_str(&format!(
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+            i, feed as u8, tick_clock, pos_x, pos_z, 1, mark_edge as u8,
+            recall_edge as u8, corridor_ok as u8, gui_open as u8, dead as u8,
+            kamui_busy as u8, max_depth, stall_cap, cooldown_ticks
+        ));
+
+        let (answer, next) = strategy::izanagi::tick(
+            state.clone(),
+            strategy::izanagi::Input {
+                feed,
+                tick_clock,
+                x: pos_x,
+                y: 64.0,
+                z: pos_z,
+                on_ground: true,
+                mark_edge,
+                recall_edge,
+                corridor_ok,
+                gui_open,
+                dead,
+                kamui_busy,
+                max_depth,
+                stall_cap,
+                cooldown_ticks,
+            },
+        );
+        state = next;
+        let (xb, zb) = if answer.flags & strategy::izanagi::FLAG_ADVANCE != 0 {
+            (answer.x.to_bits(), answer.z.to_bits())
+        } else { (0u64, 0u64) };
+        expected.push_str(&format!(
+            "{}\t{}\t{}\t{}\t{:016x}\t{:016x}\n",
+            i, answer.state, answer.flags, answer.remaining, xb, zb
+        ));
+
+        // Schedule the NEXT edges AFTER seeing the machine state, so completions
+        // and refusals both get follow-ups:
+        //  - a tick that left the machine MARKED schedules the recall a few ticks
+        //    later (age 3..9 always lands inside the depth fuse, whose floor is
+        //    10) — without this the recall fires at a random age and the depth
+        //    fuse refuses nearly everything;
+        //  - a tick that STARTED a replay schedules the mid-replay exits a tick
+        //    or two later, SOMETIMES survivable (block < stall_cap) and
+        //    sometimes not — the override paths must fire inside the walk, but
+        //    completions must survive them too.
+        if state.state == strategy::izanagi::STATE_MARKED && recall_in < 0 {
+            recall_in = rng.random_int(3, 9);
+        }
+        if answer.flags & strategy::izanagi::FLAG_STARTED != 0 {
+            let pick = rng.random_int(0, 4);
+            if pick == 0 { block_in = rng.random_int(1, 2); }       // survivable: block < stall_cap floor 3
+            else if pick == 1 { block_in = rng.random_int(4, 9); }  // fatal: stall_cap <= 8
+            else if pick == 2 { gui_in = rng.random_int(2, 4); }
+        }
+        if mark_in < 0 && rng.random_int(0, 9) == 0 { mark_in = rng.random_int(3, 25); }
+        if recall_in < 0 && rng.random_int(0, 7) == 0 { recall_in = rng.random_int(4, 40); }
+    }
+
+    fs::write(format!("{}/izanagi_input.tsv", dir), input).map_err(|e| e.to_string())?;
+    fs::write(format!("{}/izanagi_expected.tsv", dir), expected).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 fn emit_kamui_golden(dir: &str) -> Result<(), String> {
     use std::fs;
 

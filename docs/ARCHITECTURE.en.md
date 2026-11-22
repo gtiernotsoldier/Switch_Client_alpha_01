@@ -137,6 +137,7 @@ Measured latency p50 6.70 µs / p99 12.50 µs (loopback) — 80× headroom again
 | **KeepSprint** | `keep_sprint.rs` (`PLAYER_KEEPSPRINT`=12, **first frame-driven op**, no RNG) | attack composite, forward arbitration, claimSprint + C0B |
 | **LagRange** | `lag_range.rs` (`PLAYER_LAGRANGE`=13, no RNG, deterministic hold machine) | GUI/distance/sword judgement, single `packetLagActive` write |
 | **Kamui** | `kamui.rs` (`PLAYER_KAMUI_TICK`=14, no RNG, deterministic phase machine IDLE/PHASE/COOLDOWN) | death/GUI/key-edge judgement, claim/release/flush writes, TrailRecord feed (frozen during a phase) |
+| **Izanagi** | `izanagi.rs` (`PLAYER_IZANAGI_TICK`=15, no RNG, Mark & Recall: trail ring + anchor fuse + 1x reverse replay) | feed (frozen during a phase) / corridor check (fail-closed) / key edges, replay position write; Kamui arbitration derived session-internally |
 | KnockbackDelay | the delay queue in `velocity.rs` (`VEL_DELAY_ENQUEUE/PUMP`) | packet marshalling, delay pump |
 | HUD family (11 render modules + JumpTiming/KnockbackDisplay) | none (display-only, reads EventBridge) | local window timing/measuring (display semantics, not decisions) |
 | TargetFilter / AntiBot / Teams | none (pure local filter predicates) | player/mob filtering → `isViableTarget` |
@@ -145,7 +146,7 @@ Measured latency p50 6.70 µs / p99 12.50 µs (loopback) — 80× headroom again
 
 ### RNG Stream Inventory (20, in `session.rs`)
 
-velocity / aim / click / tap (side selection) / wtap / stap / adtap / combat (trigger engine) / autoblock / blockhit / player / backtrack / kbd / reach / click_assist / hit_select / eagle_place / sprint_reset / jump_reset / super_knockback. KeepSprint, LagRange and Kamui have no stream (deterministic). **Stream discipline**: one module's draws must never shift another module's replay.
+velocity / aim / click / tap (side selection) / wtap / stap / adtap / combat (trigger engine) / autoblock / blockhit / player / backtrack / kbd / reach / click_assist / hit_select / eagle_place / sprint_reset / jump_reset / super_knockback. KeepSprint, LagRange, Kamui and Izanagi have no stream (deterministic). **Stream discipline**: one module's draws must never shift another module's replay.
 
 ### Who Owns State (One-Second Test)
 

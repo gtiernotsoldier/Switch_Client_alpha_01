@@ -862,6 +862,43 @@ object Strategies {
     }
 
     /**
+     * Izanagi: one tick of the Mark & Recall machine.
+     *
+     * The module supplies the judgements (feed = "the server can see this
+     * position", the corridor check, death, GUI) and the key edges; the core
+     * owns the trail ring, the anchor pin, the walk list, the stall counter
+     * and the cooldown, and the Kamui arbitration (session-internal — the
+     * dispatch arm derives `kamui_busy` from the sibling machine, so this
+     * facade carries no cross-module reference).
+     *
+     * `null` means the core did not answer, and the caller must not move the
+     * player: moving on a guess is the state that can desync the view — the
+     * same direction as the hold family's "let the packets through".
+     */
+    fun izanagiTick(
+        player: PlayerState,
+        target: TargetState?,
+        feed: Boolean,
+        tickClock: Int,
+        markEdge: Boolean,
+        recallEdge: Boolean,
+        corridorOk: Boolean,
+        guiOpen: Boolean,
+        dead: Boolean,
+        maxDepth: Int,
+        stallCap: Int,
+        cooldownTicks: Int
+    ): IzanagiStep? {
+        val stub = CoreLink.stub ?: return null
+        return stub.playerIzanagiTick(
+            player, target, feed, tickClock,
+            player.position.x, player.position.y, player.position.z,
+            player.onGround, markEdge, recallEdge, corridorOk, guiOpen, dead,
+            maxDepth, stallCap, cooldownTicks, nextTick()
+        )
+    }
+
+    /**
      * Backtrack: hold position updates this tick?
      *
      * `null` means the core did not answer, and the caller must let the updates

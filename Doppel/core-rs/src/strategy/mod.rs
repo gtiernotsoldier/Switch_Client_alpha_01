@@ -12,6 +12,7 @@ pub mod combat;
 pub mod eagle;
 pub mod eagle_place;
 pub mod hit_select;
+pub mod izanagi;
 pub mod jump_reset;
 pub mod kamui;
 pub mod keep_sprint;

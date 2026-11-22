@@ -232,3 +232,28 @@ versions whose combat model has not been mined with the same fifteen years of at
 **The useful output of this document is not its conclusions but its filters**: before building
 anything, ask whether the server has an independent channel, whether the change is expressed in units
 the server accepts from you, and what the null looks like.
+
+---
+
+## 9. The desync family (2026-11): Kamui (op 14) and Izanagi (op 15)
+
+The two modules deliberately widen the client/server divergence window and settle it
+on the client's schedule. Both run the same filter this document exists to apply —
+and both live entirely inside the one channel where the client still holds
+authority: **the timing and content of its own movement reports**. Health, potions,
+inventory and burn ticks are the server's ledger; nothing here touches them.
+
+| | Kamui (phase) | Izanagi (Mark & Recall) |
+|---|---|---|
+| The gap used | movement verification tolerates an overdue reporter | attack settlement tolerates a stale victim (the same tolerance Backtrack shoots from, turned around) |
+| The null | release the claim, no flush (holding is the desync state) | no move, no feed (standing still is vanilla) |
+| The server-side mirror | held packets arrive in order, each a frame the client actually simulated | the walk replays STORED frames at 1x — steps the server accepted once |
+| What bounds it | MaxHold + the vault's wall-clock cap | `max_depth` (the environment's fuse, not the ring's) + the anchor's eviction fuse |
+| The detector to fear | statistical hold-length/rhythm tracking (blink is explicitly banned on Grim forks) | frozen-then-vanishing footprints: a mark that ages out is a body that stood still and vanished — the corridor check and short `max_depth` exist to keep the profile small |
+| What it must never do | rewrite or drop held packets out of order | touch health/state rewind, race a live phase (arbitration is session-internal: `kamui_busy` derives from the sibling machine) |
+
+Honest limits: the manual slices carry no trigger judgement (the AUTO/PRD slice is
+the later core-rs migration), the replay is exactly 1x (no clamped-speed compression
+yet — that machinery also needs the known-gain-source audit), and the corridor check
+is the platform's word, not a physics proof. Both degrade to vanilla when the core
+is unreachable — visible, idle, and legal.

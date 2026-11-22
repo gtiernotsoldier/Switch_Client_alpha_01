@@ -42,7 +42,7 @@ dependencies {
     modImplementation("net.fabricmc:fabric-loader:${loaderVersion}")
     modImplementation("net.fabricmc.fabric-api:fabric-api:*")
 
-    // The shared module layer (Module/EventBridge/ConfigManager/TrackRecord/Kamui...).
+    // The shared module layer (Module/EventBridge/ConfigManager/Kamui/Izanagi...).
     // Compiled at Java 8 — that is fine on Java 21 and is what keeps the two platforms
     // able to share every module implementation.
     implementation(project(":adapter:common"))

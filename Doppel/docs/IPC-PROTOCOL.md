@@ -563,6 +563,28 @@ can desync the view, and a stale claim with no decision behind it is exactly
 the leak class the vault arbiter exists to close — the next CLAIM flag simply
 re-raises the claim.
 
+`PLAYER_IZANAGI_TICK` (15) carries Mark & Recall — the position-rewind family
+alongside Kamui's phase. The trail ring ("what the server has seen", 120-tick
+capacity), the anchor pin with its eviction fuse, the walk list, the stall
+counter and the cooldown live in the core; the adapter marshals fifteen
+arguments per tick — the judgements (`feed` = "the server can see this
+position", false while a Kamui phase holds the connection; `corridor_ok` =
+the platform's collision + danger check, fail-closed without one; `gui_open`,
+`dead`), the key edges and the knobs (`max_depth` — the environment's fuse,
+not the ring's; `stall_cap`; `cooldown_ticks`). The answer is a POSITION, not
+a scalar: the generic Decision payload's motion slots carry the step's x/y/z,
+its u16 flags field carries the machine (low byte ADVANCE/STARTED/ABORTED/
+DONE, high nibble state 0 idle / 1 marked / 2 replay / 3 cooldown) and aux[0]
+the walk's remaining steps — no new frame kind, the 40-byte layout unchanged.
+The replay walks the recorded path back one stored frame per tick at exactly
+1x: every step is a frame the server already accepted once, so no speed
+computation exists yet (the clamped-speed machinery for compressed recalls is
+the later migration). The Kamui arbitration is session-internal: the dispatch
+arm derives `kamui_busy` from the sibling machine's state, so the two
+position-rewriting machines can never race, and no JVM-side cross-module
+reference exists. No RNG stream. A missing answer means no move and no feed:
+moving on a guess desyncs the view, standing still is merely vanilla.
+
 `ClickAssistFlag` in `Wire.kt` is the bit layout for `PLAYER_CLICK_ASSIST`'s
 thirteen predicates. It lives beside the op rather than in the module for the
 same reason as `write_trigger`: two layouts would disagree about which bit means

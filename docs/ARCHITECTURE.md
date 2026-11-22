@@ -134,6 +134,7 @@ Rust injector
 | SuperKnockback | `super_knockback.rs`（`PLAYER_SUPER_KNOCKBACK`=11，独立流；三相机器） | trigger/range 判定、C0B + sprint claim |
 | **KeepSprint** | `keep_sprint.rs`（`PLAYER_KEEPSPRINT`=12，**首个帧频 op**，无 RNG） | 攻击复合判定、forward 仲裁、claimSprint + C0B 落地 |
 | **LagRange** | `lag_range.rs`（`PLAYER_LAGRANGE`=13，无 RNG，确定性 hold 机） | GUI/距离/剑判定、单一 `packetLagActive` 写入 |
+| **Kamui** | `kamui.rs`（`PLAYER_KAMUI_TICK`=14，无 RNG，确定性相位机 IDLE/PHASE/COOLDOWN） | 死亡/GUI/键沿判定、claim/release/flush 落地、TrailRecord 喂食（PHASE 期冻结） |
 | KnockbackDelay | `velocity.rs` 的 delay 队列（`VEL_DELAY_ENQUEUE/PUMP`） | 包参数编组、延迟泵落地 |
 | HUD 家族（11 个 render + JumpTiming/KnockbackDisplay） | 无（纯显示，读 EventBridge） | 本地窗口计时/测距（显示语义，不是决策） |
 | TargetFilter / AntiBot / Teams | 无（纯本地过滤谓词） | 玩家/生物过滤 → `isViableTarget` |
@@ -142,7 +143,7 @@ Rust injector
 
 ### RNG 流清单（20 条，`session.rs`）
 
-velocity / aim / click / tap（side 选择）/ wtap / stap / adtap / combat（触发引擎）/ autoblock / blockhit / player / backtrack / kbd / reach / click_assist / hit_select / eagle_place / sprint_reset / jump_reset / super_knockback。KeepSprint 与 LagRange 无流（确定性）。**流隔离的纪律**：一个模块的抽样绝不能挪动另一个模块的回放。
+velocity / aim / click / tap（side 选择）/ wtap / stap / adtap / combat（触发引擎）/ autoblock / blockhit / player / backtrack / kbd / reach / click_assist / hit_select / eagle_place / sprint_reset / jump_reset / super_knockback。KeepSprint、LagRange 与 Kamui 无流（确定性）。**流隔离的纪律**：一个模块的抽样绝不能挪动另一个模块的回放。
 
 ### 状态归谁（一秒判断法）
 

@@ -1007,6 +1007,7 @@ fn emit_golden(dir: &str) -> Result<(), String> {    use std::fs;
     emit_super_knockback_golden(dir)?;
     emit_keep_sprint_golden(dir)?;
     emit_lag_range_golden(dir)?;
+    emit_kamui_golden(dir)?;
     emit_tap_sample_golden(dir)?;
     emit_adtap_sample_golden(dir)?;
     emit_autoblock_sample_golden(dir)?;
@@ -2093,6 +2094,133 @@ fn emit_lag_range_golden(dir: &str) -> Result<(), String> {
 
     fs::write(format!("{}/lag_range_input.tsv", dir), input).map_err(|e| e.to_string())?;
     fs::write(format!("{}/lag_range_expected.tsv", dir), expected).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Kamui's phase machine, replayed over a fixed tick sequence.
+///
+/// No rolls land in the answer — the machine is deterministic, there is no
+/// RNG stream — but the INPUT script is randomized the way the key thread and
+/// the game produce its inputs: trigger edges arrive in bursts (a press, then
+/// a mash whose extra edges are refused or coalesced), GUIs open occasionally,
+/// deaths are rare, and the knobs are redrawn from small sets so retunes
+/// happen mid-flight and the fixture pins the "never retune a live cast"
+/// latch. The expected file carries the MACHINE as semantic columns (state,
+/// flags, phase_tick, cooldown_tick, casts) and deliberately NOT the packed
+/// int: the packing is unit-tested in `strategy::kamui` and round-tripped on
+/// the wire, while the fixture pins the machine.
+fn emit_kamui_golden(dir: &str) -> Result<(), String> {
+    use std::fs;
+
+    let mut input = String::new();
+    input.push_str("# doppel-kamui-golden v1\n");
+    input.push_str("# idx\ttrigger_edge\tgui_open\tdead\tphase_ticks\tmax_hold_ticks\tcooldown_ticks\n");
+
+    let mut expected = String::new();
+    expected.push_str("# idx\tstate\tflags\tphase_tick\tcooldown_tick\tcasts\n");
+
+    let mut state = strategy::kamui::State::new();
+    let mut rng = Pcg32::new(0x0000_5EED_60D0_0001);
+    // A burst counter: trigger edges arrive the way a key thread delivers
+    // them — a press, sometimes a mash (several edges in consecutive ticks;
+    // the machine refuses or the module coalesces them), then quiet. Refills
+    // are independent of the machine state, so edges land in IDLE, PHASE and
+    // COOLDOWN alike and every refusal path gets exercised.
+    let mut burst: i32 = 0;
+    // Scheduled mid-phase exits. Unbiased draws rarely coincide with a ~4-tick
+    // phase (the first run of this fixture produced zero GUI releases and zero
+    // death releases in 500 ticks), so a tick that STARTS a phase schedules a
+    // GUI opening / a death a tick or three later — the machine must not know
+    // the difference, but the fixture must cover both override paths.
+    let mut gui_in: i32 = -1;
+    let mut dead_in: i32 = -1;
+
+    for i in 0..500 {
+        if burst > 0 {
+            burst -= 1;
+        } else if rng.random_int(0, 7) == 0 {
+            burst = rng.random_int(1, 4);
+        }
+        let trigger_edge = burst > 0;
+
+        let gui_open = if gui_in >= 0 {
+            if gui_in == 0 {
+                gui_in = -1;
+                true
+            } else {
+                gui_in -= 1;
+                false
+            }
+        } else {
+            rng.random_int(0, 31) == 0
+        };
+        let dead = if dead_in >= 0 {
+            if dead_in == 0 {
+                dead_in = -1;
+                true
+            } else {
+                dead_in -= 1;
+                false
+            }
+        } else {
+            rng.random_int(0, 199) == 0
+        };
+        // Knobs drawn from small sets, retuning freely between casts (and
+        // mid-flight — which the machine must ignore, per the latch rule).
+        let phase_ticks = rng.random_int(1, 10);
+        let max_hold_ticks = rng.random_int(3, 20);
+        let cooldown_ticks = rng.random_int(0, 40);
+
+        let (packed, next) = strategy::kamui::tick(
+            state,
+            strategy::kamui::Input {
+                trigger_edge,
+                gui_open,
+                dead,
+                phase_ticks,
+                max_hold_ticks,
+                cooldown_ticks,
+            },
+        );
+        state = next;
+
+        // A tick that started a phase (state PHASE, phase_tick 0 — the
+        // trigger-tick signature, which never carries flags) may schedule its
+        // mid-phase exit one to three ticks ahead.
+        if state.state == strategy::kamui::STATE_PHASE && state.phase_tick == 0 {
+            if gui_in < 0 && rng.random_int(0, 3) == 0 {
+                gui_in = rng.random_int(1, 3);
+            }
+            if dead_in < 0 && rng.random_int(0, 7) == 0 {
+                dead_in = rng.random_int(1, 3);
+            }
+        }
+
+        input.push_str(&format!(
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\n",
+            i,
+            trigger_edge as u8,
+            gui_open as u8,
+            dead as u8,
+            phase_ticks,
+            max_hold_ticks,
+            cooldown_ticks
+        ));
+
+        let a = strategy::kamui::unpack(packed);
+        expected.push_str(&format!(
+            "{}\t{}\t{}\t{}\t{}\t{}\n",
+            i,
+            state.state,
+            (a.claim as u8) | ((a.release as u8) << 1),
+            state.phase_tick,
+            state.cooldown_tick,
+            state.casts
+        ));
+    }
+
+    fs::write(format!("{}/kamui_input.tsv", dir), input).map_err(|e| e.to_string())?;
+    fs::write(format!("{}/kamui_expected.tsv", dir), expected).map_err(|e| e.to_string())?;
     Ok(())
 }
 

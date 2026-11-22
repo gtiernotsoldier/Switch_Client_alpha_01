@@ -823,6 +823,45 @@ object Strategies {
     }
 
     /**
+     * Kamui: one tick of the phase machine.
+     *
+     * The module supplies the judgements (the trigger key edge, death, the GUI
+     * under FlushOnGui) and marshals the three knobs; the core owns the IDLE /
+     * PHASE / COOLDOWN machine, the tick counters, the cast counter and the
+     * knob set latched when the phase started. No randomness — there is no RNG
+     * stream for this module.
+     *
+     * The packed answer layout (`Wire.Ops.PLAYER_KAMUI_TICK`, mirrored by
+     * `strategy::kamui::pack`):
+     *  - bits 0-3  machine state (0 idle, 1 phase, 2 cooldown);
+     *  - bits 4-7  flags — bit 0 CLAIM (refresh the vault claim this tick),
+     *    bit 1 RELEASE (drop it and flush the backlog);
+     *  - bits 8-19 the phase tick counter (for the HUD);
+     *  - bits 20-31 the cooldown tick counter (for the HUD).
+     *
+     * `null` means the core did not answer, and the caller must release its
+     * claim and NOT flush — holding is the state that can desync the view, so
+     * the safe direction is not to hold at all.
+     */
+    fun kamuiTick(
+        player: PlayerState,
+        target: TargetState?,
+        triggerEdge: Boolean,
+        guiOpen: Boolean,
+        dead: Boolean,
+        phaseTicks: Int,
+        maxHoldTicks: Int,
+        cooldownTicks: Int
+    ): KamuiAnswer? {
+        val stub = CoreLink.stub ?: return null
+        val code = stub.playerKamuiTick(
+            player, target, triggerEdge, guiOpen, dead,
+            phaseTicks, maxHoldTicks, cooldownTicks, nextTick()
+        ) ?: return null
+        return KamuiAnswer.fromCode(code)
+    }
+
+    /**
      * Backtrack: hold position updates this tick?
      *
      * `null` means the core did not answer, and the caller must let the updates
@@ -1089,6 +1128,43 @@ enum class LagRangeStep(val code: Int) {
         /** Unknown codes degrade to FLUSH: never hold packets on a guess. */
         @JvmStatic
         fun fromCode(code: Int): LagRangeStep? = entries.firstOrNull { it.code == code }
+    }
+}
+
+/**
+ * One Kamui tick, unpacked from one scalar.
+ *
+ * [state] is the machine state (0 idle, 1 phase, 2 cooldown — see the
+ * STATE_* constants), [claim] / [release] are this tick's flags, and the two
+ * counters feed the HUD. The packing lives in `Wire.Ops.PLAYER_KAMUI_TICK`
+ * and `strategy::kamui::pack`; the counters are masked to their 12-bit fields
+ * so a mistuned knob cannot bleed into a neighbouring field.
+ */
+data class KamuiAnswer(
+    val state: Int,
+    val claim: Boolean,
+    val release: Boolean,
+    val phaseTick: Int,
+    val cooldownTick: Int
+) {
+    companion object {
+        /** Machine states, as carried by the answer's low nibble. */
+        const val STATE_IDLE = 0
+        const val STATE_PHASE = 1
+        const val STATE_COOLDOWN = 2
+
+        /** Flag bits, in the answer's second nibble (bits 4-7). */
+        const val FLAG_CLAIM = 1
+        const val FLAG_RELEASE = 2
+
+        @JvmStatic
+        fun fromCode(code: Int): KamuiAnswer = KamuiAnswer(
+            state = code and 0xF,
+            claim = code and (FLAG_CLAIM shl 4) != 0,
+            release = code and (FLAG_RELEASE shl 4) != 0,
+            phaseTick = (code shr 8) and 0xFFF,
+            cooldownTick = (code shr 20) and 0xFFF
+        )
     }
 }
 

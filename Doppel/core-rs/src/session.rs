@@ -29,6 +29,7 @@ use crate::strategy::eagle;
 use crate::strategy::eagle_place;
 use crate::strategy::hit_select;
 use crate::strategy::jump_reset;
+use crate::strategy::kamui;
 use crate::strategy::keep_sprint;
 use crate::strategy::knockback_displace;
 use crate::strategy::lag_range;
@@ -182,6 +183,11 @@ pub struct Session {
     /// and the hold's start timestamp. No RNG stream either.
     pub lag_range: lag_range::State,
 
+    /// Kamui: the phase machine (IDLE / PHASE / COOLDOWN), the tick counters,
+    /// the cast counter and the knob set latched at the trigger. No RNG
+    /// stream — the machine is deterministic.
+    pub kamui: kamui::State,
+
     pub ticks: u64,
     pub decisions: u64,
     pub degraded: u64,
@@ -253,6 +259,7 @@ impl Session {
             super_knockback: super_knockback::State::new(),
             keep_sprint: keep_sprint::State::new(),
             lag_range: lag_range::State::new(),
+            kamui: kamui::State::new(),
             ticks: 0,
             decisions: 0,
             degraded: 0,
@@ -328,6 +335,10 @@ impl Session {
                 self.super_knockback = super_knockback::State::new();
                 self.keep_sprint = keep_sprint::State::new();
                 self.lag_range = lag_range::State::new();
+                // Kamui forgets the cast: the module's onDisable owns the
+                // platform side (release + flush), and a half-elapsed phase
+                // must not resume on re-enable.
+                self.kamui = kamui::State::new();
             }
         }
         Frame::new(Kind::Reset, frame.header.seq, frame.header.tick, module)
@@ -1436,6 +1447,28 @@ impl Session {
                         Module::Player,
                         WireAction::Scalar,
                         code as f64,
+                    ))
+                }
+                op::PLAYER_KAMUI_TICK => {
+                    let input = kamui::Input {
+                        trigger_edge: req.bool(0)?,
+                        gui_open: req.bool(1)?,
+                        dead: req.bool(2)?,
+                        phase_ticks: req.i32(3)?,
+                        max_hold_ticks: req.i32(4)?,
+                        cooldown_ticks: req.i32(5)?,
+                    };
+                    // No roll: the phase machine is deterministic. The answer
+                    // is the packed machine view (state + flags + counters),
+                    // laid out by strategy::kamui::pack.
+                    let (packed, next) = kamui::tick(self.kamui, input);
+                    self.kamui = next;
+                    Ok(codec::encode_scalar(
+                        seq,
+                        tick,
+                        Module::Player,
+                        WireAction::Scalar,
+                        packed as f64,
                     ))
                 }
                 _ => Err(Status::BadPayload),

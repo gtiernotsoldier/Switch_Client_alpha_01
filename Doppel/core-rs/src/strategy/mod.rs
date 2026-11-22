@@ -13,6 +13,7 @@ pub mod eagle;
 pub mod eagle_place;
 pub mod hit_select;
 pub mod jump_reset;
+pub mod kamui;
 pub mod keep_sprint;
 pub mod knockback_displace;
 pub mod lag_range;

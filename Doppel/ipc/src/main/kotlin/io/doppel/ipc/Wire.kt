@@ -422,6 +422,7 @@ object Ops {
     const val PLAYER_SUPER_KNOCKBACK = 11 // nowNs, hasTarget, triggerOk, inRange, gateOk, entityId, chance, hitCount, delayMs, mode, sprintTapAllowed, coordinationActive → packed step
     const val PLAYER_KEEPSPRINT = 12       // nowNs, tick, localSprinting, attacking, targetAlive, forward, forwardOverride → packed hold status + assert step; no RNG stream
     const val PLAYER_LAGRANGE = 13         // nowNs, guiOpen, hasDist, dist, range, maxDelayMs, sprintResetOn, isSprinting, blockSwordOn, isBlocking, holdingWeaponOn, weaponIsSword, hurtTime → step (0 none, 1 hold, 2 arm, 3 flush); no RNG stream
+    const val PLAYER_KAMUI_TICK = 14       // triggerEdge, guiOpen, dead, phaseTicks, maxHoldTicks, cooldownTicks → packed machine view (bits 0-3 state: 0 idle, 1 phase, 2 cooldown; bits 4-7 flags: bit0 claim this tick, bit1 release this tick; bits 8-19 phaseTick; bits 20-31 cooldownTick); no RNG stream
 }
 
 /**

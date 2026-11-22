@@ -1015,6 +1015,21 @@ pub mod op {
     /// as config values. No RNG stream either — the hold machine is
     /// deterministic.
     pub const PLAYER_LAGRANGE: u8 = 13;
+
+    /// player/kamui: `tick(trigger_edge, gui_open, dead, phase_ticks,
+    ///        max_hold_ticks, cooldown_ticks)` → packed machine view.
+    ///
+    /// The phase machine (IDLE / PHASE / COOLDOWN), the tick counters, the
+    /// cast counter and the knob set latched when the phase started live in
+    /// the core; the JVM keeps the dead / GUI judgements, the trigger key
+    /// edge and the claim / release / flush writes. The answer packs the
+    /// whole machine view because the HUD reads the state and both counters
+    /// every tick: bits 0-3 state (0 idle, 1 phase, 2 cooldown), bits 4-7
+    /// flags (bit 0 claim this tick, bit 1 release this tick), bits 8-19
+    /// phase_tick, bits 20-31 cooldown_tick — the `strategy::kamui::pack`
+    /// layout, mirrored in `Wire.Ops`. No RNG stream — the machine is
+    /// deterministic.
+    pub const PLAYER_KAMUI_TICK: u8 = 14;
 }
 
 /// Maps a side to the wire's 0/1.
@@ -1121,6 +1136,7 @@ pub fn known_ops(module: Module) -> &'static [u8] {
             op::PLAYER_SUPER_KNOCKBACK,
             op::PLAYER_KEEPSPRINT,
             op::PLAYER_LAGRANGE,
+            op::PLAYER_KAMUI_TICK,
         ],
         Module::Velocity => &[op::VEL_BRACE, op::VEL_DELAY_ENQUEUE, op::VEL_DELAY_PUMP],
         _ => &[],

@@ -539,6 +539,30 @@ discipline only. No RNG stream either — the hold machine is deterministic.
 A missing answer means let the packets through: holding is the state that
 can desync the view, the same direction as Backtrack.
 
+`PLAYER_KAMUI_TICK` (14) moves Kamui's whole phase machine into the core:
+the IDLE / PHASE / COOLDOWN states, the tick counters, the cast counter and
+the knob set latched when the phase started (the original engine ignored
+config changes outside IDLE, so a live cast was never retuned mid-flight —
+the latch preserves that). The adapter marshals six arguments per tick:
+the judgements (`trigger_edge` — the key edge that survived its hop from the
+key thread to the tick listener, `gui_open` already folded with FlushOnGui,
+`dead`) and the knobs (`phase_ticks`, `max_hold_ticks`, `cooldown_ticks`).
+The answer is one packed scalar because the HUD reads the whole machine view
+every tick: bits 0-3 state (0 idle, 1 phase, 2 cooldown), bits 4-7 flags
+(bit 0 claim this tick, bit 1 release+flush this tick), bits 8-19 phase_tick,
+bits 20-31 cooldown_tick — the `strategy::kamui::pack` layout, mirrored in
+`Wire.Ops`; the fixture pins the machine in semantic columns, the packing is
+unit-tested in Rust and round-tripped on the wire. The overrides keep their
+order (death hard-resets with no cooldown, a mid-phase GUI ends the cast, the
+cap is `min(Phase, MaxHold)`). No RNG stream — the machine is deterministic.
+The trigger edge is claimed by the adapter AT the keypress (the packet the
+same tick produces may already need holding); a refused edge drops that claim
+on the answer tick, so a wrong guess costs at most one tick of hold. A missing
+answer means release the claim and do NOT flush: holding is the state that
+can desync the view, and a stale claim with no decision behind it is exactly
+the leak class the vault arbiter exists to close — the next CLAIM flag simply
+re-raises the claim.
+
 `ClickAssistFlag` in `Wire.kt` is the bit layout for `PLAYER_CLICK_ASSIST`'s
 thirteen predicates. It lives beside the op rather than in the module for the
 same reason as `write_trigger`: two layouts would disagree about which bit means

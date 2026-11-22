@@ -1096,6 +1096,46 @@ class CoreStub(
     }
 
     /**
+     * Kamui: one tick of the phase machine.
+     *
+     * The JVM supplies the judgements — the trigger key edge (registered by the
+     * key thread between ticks, consumed by this tick's request), the player
+     * being dead, the GUI being open (already folded with the FlushOnGui
+     * switch) — and marshals the three knobs. The core owns the IDLE / PHASE /
+     * COOLDOWN machine, the tick counters, the cast counter and the knob set
+     * latched when the phase started.
+     *
+     * The answer is the packed machine view (see `Wire.Ops.PLAYER_KAMUI_TICK`,
+     * mirrored by `strategy::kamui::pack`): bits 0-3 state, bits 4-7 flags
+     * (bit 0 claim this tick, bit 1 release this tick), bits 8-19 phase tick,
+     * bits 20-31 cooldown tick — the HUD reads the state and both counters
+     * every tick, so flags alone would leave it guessing.
+     *
+     * `null` means no answer — the caller must release its claim and NOT
+     * flush: holding is the state that can desync the view, so the safe
+     * direction when the core is unreachable is not to hold.
+     */
+    fun playerKamuiTick(
+        player: io.doppel.contract.model.PlayerState,
+        target: io.doppel.contract.model.TargetState?,
+        triggerEdge: Boolean,
+        guiOpen: Boolean,
+        dead: Boolean,
+        phaseTicks: Int,
+        maxHoldTicks: Int,
+        cooldownTicks: Int,
+        tick: Int
+    ): Int? {
+        val payload = genericRequest(
+            encodeSnapshot(player, target), Ops.PLAYER_KAMUI_TICK,
+            b(triggerEdge), b(guiOpen), b(dead),
+            phaseTicks.toDouble(), maxHoldTicks.toDouble(), cooldownTicks.toDouble()
+        )
+        val f = roundTrip(Wire.MODULE_PLAYER, payload, tick) ?: return null
+        return decodeScalar(f).toInt()
+    }
+
+    /**
      * Backtrack's hold window: one call per tick.
      *
      * `null` means the core did not answer. The caller must then let the

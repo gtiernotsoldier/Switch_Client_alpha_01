@@ -514,6 +514,7 @@ tick 边界（50ms 一次）
 | `PLAYER_BACKTRACK_TICK` | `release()` | 宁可放过也不悬着状态 |
 | `PLAYER_KEEPSPRINT` | 交还 sprint claim（等同 DEAD） | 悬挂的 ADDITIVE sprint 声明与 AutoBlock lag 窗口同属一类泄漏；无应答即"无意见"，归还即释放 |
 | `PLAYER_LAGRANGE` | 放行所有包（不持有） | 持包才是会 desync 视角的状态，与 Backtrack 同向 |
+| `PLAYER_KAMUI_TICK` | 释放 claim，不 flush | 持包才是会 desync 视角的状态：无应答的 claim 背后没有决策，正是 vault 仲裁要关掉的泄漏类；下一次 CLAIM 标志会把它重新拉起 |
 | `Velocity` 同步决策 | `Pass(original motion)` | 见上，`Modify` 不可重放 |
 | 其余 tick 级 op | 本拍无动作 | 状态留在 core，下一拍自然续上 |
 

@@ -40,6 +40,13 @@ object ForgePacketInterceptor : ChannelDuplexHandler() {
         )
     }
 
+    // Vault failsafes: the keepalive REPLY must never sit in a held queue (the server's
+    // watchdog measures it — hold everything else, answer pings on time), and the server
+    // re-asserting our position means every held packet is measured against a position the
+    // server just set itself, so the backlog must go out at once.
+    private val c00KeepAliveClass by lazy { Class.forName("net.minecraft.network.play.client.C00PacketKeepAlive") }
+    private val s08PosLookClass by lazy { Class.forName("net.minecraft.network.play.server.S08PacketPlayerPosLook") }
+
     fun ensureInjected() {
         if (injected) return
         // PROBE: confirm this is actually called and what injected/mc read (INFO level — visible).
@@ -185,12 +192,25 @@ object ForgePacketInterceptor : ChannelDuplexHandler() {
 
     override fun write(ctx: ChannelHandlerContext, msg: Any, promise: io.netty.channel.ChannelPromise) {
         try {
+            // A module demanded the backlog out NOW (Kamui's phase release): claims no longer
+            // decide, the flush wins. Consumed exactly once.
+            val flushReason = EventBridge.consumePacketFlush()
+            if (flushReason != null) {
+                releaseHeld(ctx)
+                CoreLogger.info("[ForgePacketInterceptor] vault flush ($flushReason)")
+            }
             if (lagActive()) {
                 // An attack is never delayed: let everything held go first, then this packet, and tell the
                 // module so it can block again immediately (Raven's prevent-delaying-attacks).
                 if (c02PacketClass.isInstance(msg)) {
                     releaseHeld(ctx)
                     EventBridge.packetLagAttackReleased = true
+                } else if (c00KeepAliveClass.isInstance(msg)) {
+                    // Pings are answered even mid-hold, WITHOUT draining the backlog: reordering a
+                    // keepalive reply ahead of held movement is protocol-fine, and draining here
+                    // would silently end a phase just because the server said hello.
+                    super.write(ctx, msg, promise)
+                    return
                 } else {
                     if (lagStartedMs == 0L) lagStartedMs = System.currentTimeMillis()
                     heldOutbound.add(msg to promise)
@@ -238,6 +258,17 @@ object ForgePacketInterceptor : ChannelDuplexHandler() {
         // Runs on the Netty thread. Any unexpected exception here (e.g. racing the main thread's
         // entity-list mutation during an explosion) must never escape and kill the connection.
         try {
+            // The server re-asserted our own position (teleport, plugin tp, pearl landing, a
+            // server-side correction, respawn). Everything held is now measured against a
+            // position the server just set itself — the fossil is gone, the backlog must go
+            // out at once and the claims are void. The module's next tick re-claims from the
+            // freshly synced position if its phase genuinely continues.
+            if (s08PosLookClass.isInstance(msg) && heldOutbound.isNotEmpty()) {
+                releaseHeld(ctx)
+                EventBridge.releaseAllPacketHolds()
+                EventBridge.packetFlushPending = false
+                CoreLogger.info("[ForgePacketInterceptor] server position sync — vault drained, claims void")
+            }
             // Backtrack's hold, before anything else looks at the packet.
             val isPosUpdate = s14PacketClass.isInstance(msg) || s18PacketClass.isInstance(msg)
             if (isPosUpdate && backtracking()) {

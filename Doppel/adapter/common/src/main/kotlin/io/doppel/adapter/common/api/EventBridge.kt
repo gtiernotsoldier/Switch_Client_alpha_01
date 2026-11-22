@@ -107,6 +107,12 @@ object EventBridge {
         tickListeners.clear()
         simpleTickListeners.clear()
         startTickListeners.clear()
+        packetHoldClaims.clear()
+        packetHoldOwner = ""
+        packetFlushPending = false
+        packetFlushReason = ""
+        packetLagActive = false
+        packetLagAttackReleased = false
         attackListeners.clear()
         sprintResetActive = false
         superKnockbackActive = false
@@ -757,6 +763,9 @@ object EventBridge {
         val anyRight = rightClaims.remove(source) != null
         if (any || anyBack || anyLeft || anyRight) resolveKeys()
         releaseSprint(source)
+        // Packet-hold claims ride along: a module that dies mid-hold must not leave the
+        // connection held on a stale claim — same reasoning as the keys above.
+        releasePacketHold(source)
     }
 
     // ========== Sprint state arbitration ==========
@@ -1692,6 +1701,90 @@ object EventBridge {
 
     /** Set when the platform let an attack through during a lag — the module then re-blocks at once. */
     @Volatile var packetLagAttackReleased: Boolean = false
+
+    // ========== 8. Packet vault arbitration (outbound hold) ==========
+    //
+    // `packetLagActive` above used to be a raw flag with three writers (FakeLag, LagRange,
+    // AutoBlock's Lag mode) and no owner — exactly the shape `syntheticForward` had before
+    // the key arbiter: in a shared tick the last writer silently discarded the others, and a
+    // module that released while another was mid-window dropped the other's hold as a side
+    // effect. Same missing ownership model, same cure, smaller vocabulary: a hold is one
+    // entry per source here, the arbiter resolves the flag, and the highest-priority
+    // claimant is recorded so logs can say who is holding the connection.
+    //
+    // Semantics the platform relies on:
+    //  * the flag is the UNION of live claims — a hold continues while any claimant wants it;
+    //  * releasing one source never releases another's queued packets (the queue is shared,
+    //    the claims are not);
+    //  * [requestPacketFlush] is the one one-sided lever: a module whose release IS the
+    //    mechanic (Kamui) asks the platform to let the backlog out NOW, claims or no claims.
+    //    The platform consumes it and clears it.
+    //
+    // [releaseAllClaims] (called by Module.disable) also drops packet-hold claims, so a
+    // module that dies mid-hold cannot stall the connection on a stale claim.
+
+    /** Default priority for routine lag-window claims (FakeLag, LagRange, AutoBlock Lag). */
+    const val PACKET_PRIORITY_LAG = 0
+
+    /** A phase hold (Kamui) outranks a routine lag window — it is short and timing-critical. */
+    const val PACKET_PRIORITY_PHASE = 10
+
+    private val packetHoldClaims = LinkedHashMap<String, Int>()
+
+    /** Highest-priority live claimant (diagnostics + HUD); "" when nobody is holding. */
+    @Volatile var packetHoldOwner: String = ""
+        private set
+
+    /** Set by a module whose held packets must leave NOW (Kamui release). Consumed by the platform. */
+    @Volatile var packetFlushPending: Boolean = false
+    @Volatile var packetFlushReason: String = ""
+
+    /** The caller wants the connection held. Refreshed every tick while the hold should last. */
+    @Synchronized
+    fun claimPacketHold(source: String, priority: Int = PACKET_PRIORITY_LAG) {
+        packetHoldClaims[source] = priority
+        resolvePacketHold()
+    }
+
+    /**
+     * Drop one source's hold claim. Resolves even when no claim was present, so a module's
+     * enable/disable path also clears a stale resolved flag left over from a direct write.
+     */
+    @Synchronized
+    fun releasePacketHold(source: String) {
+        packetHoldClaims.remove(source)
+        resolvePacketHold()
+    }
+
+    /** Emergency path: drop every claim and the resolved flag (server re-synced our position). */
+    @Synchronized
+    fun releaseAllPacketHolds() {
+        packetHoldClaims.clear()
+        resolvePacketHold()
+    }
+
+    /** The held backlog must go out immediately — claims no longer decide, the flush wins. */
+    @Synchronized
+    fun requestPacketFlush(source: String, reason: String) {
+        packetFlushReason = "$source: $reason"
+        packetFlushPending = true
+    }
+
+    /**
+     * Consume a pending flush request. Called by the platform's packet executor on the network
+     * thread; returns the reason when a flush is owed (and clears the flag), null otherwise.
+     */
+    fun consumePacketFlush(): String? {
+        if (!packetFlushPending) return null
+        packetFlushPending = false
+        return packetFlushReason
+    }
+
+    @Synchronized
+    private fun resolvePacketHold() {
+        packetHoldOwner = packetHoldClaims.entries.maxByOrNull { it.value }?.key ?: ""
+        packetLagActive = packetHoldClaims.isNotEmpty()
+    }
 
     // ========== Freelook (Visual) ==========
     /**

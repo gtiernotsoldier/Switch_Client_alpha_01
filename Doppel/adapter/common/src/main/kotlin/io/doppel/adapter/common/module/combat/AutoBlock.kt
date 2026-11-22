@@ -425,15 +425,15 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
                 // module's short-circuit `&&` reached the roll.
                 if (!lagging && want && Strategies.autoblockChance(player, target, lagChance)) {
                     lagStartNano = nowNs
-                    EventBridge.packetLagActive = true
+                    EventBridge.claimPacketHold("AutoBlock")
                     markWorked() // a lag window starting is a transition, like a block starting
                 } else if (lagging) {
                     // Keep the request alive (the platform releases it if it is not refreshed), and end it
                     // when the window is up or the player stopped attacking.
-                    EventBridge.packetLagActive = true
+                    EventBridge.claimPacketHold("AutoBlock")
                     if (elapsedNs(lagStartNano) >= lagMaxMs * 1_000_000L || !want) {
                         lagStartNano = 0L
-                        EventBridge.packetLagActive = false
+                        EventBridge.releasePacketHold("AutoBlock")
                     }
                 }
                 // An attack was let through: block at once, so the server sees the block right after it.
@@ -523,7 +523,7 @@ object AutoBlock : Module("AutoBlock", Category.COMBAT) {
         // on a stale deadline — the same leak the Reset frames exist to prevent,
         // on the adapter side of the Lag state machine.
         lagStartNano = 0L
-        EventBridge.packetLagActive = false
+        EventBridge.releasePacketHold("AutoBlock")
         Strategies.resetCombat()
         lastSelfHurt = 0
     }

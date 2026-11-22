@@ -77,14 +77,14 @@ object LagRange : Module("LagRange", Category.COMBAT) {
         when (step) {
             LagRangeStep.ARM -> {
                 // A hold starting is a transition, like every other module's work.
-                EventBridge.packetLagActive = true
+                EventBridge.claimPacketHold("LagRange")
                 markWorked()
             }
-            LagRangeStep.HOLD -> EventBridge.packetLagActive = true
-            LagRangeStep.FLUSH -> EventBridge.packetLagActive = false
+            LagRangeStep.HOLD -> EventBridge.claimPacketHold("LagRange")
+            LagRangeStep.FLUSH -> EventBridge.releasePacketHold("LagRange")
             // No answer: never hold packets on a guess — same direction as
             // the flush, and exactly Backtrack's reasoning.
-            null -> EventBridge.packetLagActive = false
+            null -> EventBridge.releasePacketHold("LagRange")
             LagRangeStep.NONE -> Unit
         }
     }
@@ -93,13 +93,13 @@ object LagRange : Module("LagRange", Category.COMBAT) {
         // A fresh enable must not inherit a distance base, an edge tracker
         // or a hold start the core still believes it owns.
         Strategies.resetPlayer()
-        EventBridge.packetLagActive = false
+        EventBridge.releasePacketHold("LagRange")
         EventBridge.registerTickListener(tickListener)
     }
 
     override fun onDisable() {
         EventBridge.unregisterTickListener(tickListener)
-        EventBridge.packetLagActive = false
+        EventBridge.releasePacketHold("LagRange")
         Strategies.resetPlayer()
     }
 }

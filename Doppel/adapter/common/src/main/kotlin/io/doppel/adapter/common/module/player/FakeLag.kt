@@ -92,11 +92,11 @@ object FakeLag : Module("FakeLag", Category.PLAYER) {
 
         if (holdStartNano == 0L) {
             holdStartNano = now
-            EventBridge.packetLagActive = true
+            EventBridge.claimPacketHold("FakeLag")
             markWorked() // a hold starting is a transition, not the steady state
         } else {
             // Keep the request refreshed so the platform's cap does not cut the hold short early.
-            EventBridge.packetLagActive = true
+            EventBridge.claimPacketHold("FakeLag")
         }
 
         if (now - holdStartNano >= delayMs * 1_000_000L) flush(now)
@@ -111,13 +111,15 @@ object FakeLag : Module("FakeLag", Category.PLAYER) {
 
     private fun release() {
         holdStartNano = 0L
-        EventBridge.packetLagActive = false
+        // Dropping the claim resolves the flag through the vault arbiter — and never touches
+        // another module's claim: a co-claimant's hold simply continues without us.
+        EventBridge.releasePacketHold("FakeLag")
     }
 
     override fun onEnable() {
         holdStartNano = 0L
         lastReleaseNano = 0L
-        EventBridge.packetLagActive = false
+        EventBridge.releasePacketHold("FakeLag")
         EventBridge.registerTickListener(tickListener)
     }
 

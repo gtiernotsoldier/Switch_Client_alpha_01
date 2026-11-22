@@ -12,9 +12,6 @@
       "io.doppel.adapter.fabric.v1_21.FabricBootstrap"
     ]
   },
-  "mixins": [
-    "doppel.mixins.json"
-  ],
   "depends": {
     "fabric-api": "*",
     "minecraft": ">=1.21"

@@ -314,6 +314,65 @@ public class MappingContext {
         String resolvedKey = resolveKey(key);
         return MAPPINGS.get(resolvedKey);
     }
+
+    /**
+     * Return the RAW class/member strings behind a semantic key — for callers that must
+     * act on names only, before the target class exists.
+     *
+     * WHY a separate accessor: every other resolver here (getClass/getMethod/getField)
+     * calls Class.forName() on the mapping's class. The agent's Transformer runs inside
+     * ClassFileTransformer.transform(), i.e. DURING class loading — the target class
+     * (net.minecraft.class_8673 / class_2743 on Fabric) is not loaded yet, and a
+     * Class.forName() from inside transform() would either fail (agent CL cannot see the
+     * game classes) or recurse into the very class-loading round it is supposed to serve.
+     * The Transformer therefore needs the bare strings: it compares them against the
+     * className argument it was handed and injects bytecode — no resolution of game types.
+     *
+     * Deliberately cache-free: the same resolveKey/alias logic as the runtime accessors,
+     * a straight read of the raw entry map, no CLASS/METHOD/FIELD cache traffic. Transform
+     * -time calls are rare (two keys, resolved once per JVM and then held in the
+     * Transformer's own volatile fields), so the cache would be dead weight and another
+     * invalidation surface for clearCache() to get wrong.
+     *
+     * @param key Semantic key (e.g. "fabric:clientCommonNetworkHandler_sendPacket")
+     * @return {@code new String[] {classNameWithDots, memberName, kind}} where kind is
+     *         "method" or "field" — or null when the key has no usable entry (wrong table
+     *         loaded, or the entry lacks class/member). Failures are reported through the
+     *         same logErr channel as every other resolver so a dead key surfaces in
+     *         doppel-agent.log instead of silently leaving a hook uninjected.
+     */
+    public static String[] rawEntry(String key) {
+        try {
+            String resolvedKey = resolveKey(key);
+            Object mapping = MAPPINGS.get(resolvedKey);
+            if (!(mapping instanceof Map)) {
+                // Mirrors the message shape of getMethod()/getField(): say WHICH key failed
+                // and what it resolved to — a wrong-platform table (Forge table loaded on a
+                // Fabric launch) must not look identical to a typo'd key.
+                logErr("No mapping found for key: " + key + " (resolved: " + resolvedKey + ")");
+                return null;
+            }
+            @SuppressWarnings("unchecked")
+            Map<String, Object> entry = (Map<String, Object>) mapping;
+            String className = entry.get("class") instanceof String ? (String) entry.get("class") : null;
+            String methodName = entry.get("method") instanceof String ? (String) entry.get("method") : null;
+            String fieldName = entry.get("field") instanceof String ? (String) entry.get("field") : null;
+            String member = methodName != null ? methodName : fieldName;
+            String kind = methodName != null ? "method" : fieldName != null ? "field" : null;
+            if (className == null || member == null || kind == null) {
+                // Same discipline as the kind-mismatch messages in getMethod()/getField():
+                // name the actual defect instead of letting the caller guess.
+                logErr("Mapping '" + key + "' carries no usable {class, method|field} — rawEntry cannot resolve it");
+                return null;
+            }
+            return new String[] { className, member, kind };
+        } catch (Throwable t) {
+            // Transform-time must never throw into the JVMTI callback — a null return
+            // leaves the hook uninjected (fail-open), a throw would abort class loading.
+            logErr("rawEntry failed for key: " + key + ": " + t);
+            return null;
+        }
+    }
     
     /**
      * Get a field value from an object using a semantic key.

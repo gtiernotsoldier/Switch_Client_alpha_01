@@ -56,13 +56,29 @@ object FabricBootstrap : ClientModInitializer {
         // Initialize EventBridge platform handlers
         FabricEventBridge.registerListeners()
 
+        // Packet interception on Fabric is the agent's ASM layer (the adapter carries no
+        // SpongePowered Mixin). The agent's Transformer rewrites the HEAD of
+        // class_8673.method_52787 sendPacket (all C2S traffic) and class_2743.method_11817
+        // apply (S2C velocity) to call io.doppel.agent.PacketBridge — the two decision
+        // objects below are what that bridge delegates to, so they must be registered.
+        // Reflection because PacketBridge lives in the agent jar and this adapter must
+        // stay compilable (and runnable) without it: the agent jar rides the system
+        // classpath, so knot's parent chain sees it once the agent is attached. Without
+        // the agent the hooks never fire anyway — one INFO line and pure pass-through.
+        try {
+            val bridgeClass = Class.forName("io.doppel.agent.PacketBridge")
+            bridgeClass.getMethod("install", Any::class.java, Any::class.java)
+                .invoke(null, FabricPacketVault, FabricVelocityInterceptor)
+        } catch (_: ClassNotFoundException) {
+            println("[FabricBootstrap] agent not attached — packet hooks inactive, adapter runs pass-through")
+        } catch (t: Throwable) {
+            println("[FabricBootstrap] PacketBridge install failed ($t) — packet hooks inactive, adapter runs pass-through")
+        }
+
         // Register the module set (reflection fallback path — the same entries the agent
         // publishes). Idempotent: if a platform bootstrap registered them already, this
         // only wires safety integration and enables HUD/WebUI.
         io.doppel.adapter.common.AgentBridge.initModules()
-
-        // Velocity packet interception is handled by ClientPlayNetworkHandlerMixin
-        // (registered via doppel.mixins.json)
 
         println("[FabricBootstrap] Initialized")
     }
@@ -136,7 +152,9 @@ object FabricBootstrap : ClientModInitializer {
     }
 
     /**
-     * Handle velocity packet from Mixin interceptor.
+     * Handle velocity packet coming down the agent's ASM hook path
+     * (class_2743.method_11817 apply HEAD → PacketBridge.onVelocityPacket →
+     * FabricVelocityInterceptor.onVelocityPacket → here for the non-cancel outcomes).
      * Called when EntityVelocityUpdateS2CPacket is detected.
      */
     fun onVelocityPacket(packet: EntityVelocityUpdateS2CPacket) {
@@ -147,7 +165,8 @@ object FabricBootstrap : ClientModInitializer {
                 // Motion will be applied by FabricEventBridge.applyMotion()
             }
             is io.doppel.contract.model.PlatformCommand.CancelPacket -> {
-                // Cancel the packet - handled by Mixin cancelling the injection
+                // Cancelled in the hook itself — FabricVelocityInterceptor answered true
+                // and PacketBridge made apply() return before its body ran
             }
             is io.doppel.contract.model.PlatformCommand.ClickBurst -> {
                 // Send click packets

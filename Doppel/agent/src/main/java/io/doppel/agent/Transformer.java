@@ -14,14 +14,29 @@ import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.Label;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
+import org.objectweb.asm.Type;
+
+import io.doppel.adapter.common.mapping.MappingContext;
 
 /**
- * ASM bytecode injection layer — hooks Display.update() for HUD rendering.
+ * ASM bytecode injection layer — hooks Display.update() for HUD rendering and the two
+ * Fabric 1.21.11 packet methods for packet interception.
  *
  * Architecture role: This is the "stealthy" injection layer.
  * - Gets Instrumentation (via provided inst or self-attach)
  * - Injects RenderBridge.onFrame() call into Display.update()
  * - RenderBridge then delegates to ForgeBootstrap.render() on the MC render thread
+ *
+ * Fabric packet hooks (no Mixin): on Fabric 1.21.11 the adapter carries NO SpongePowered
+ * Mixin at all — packet interception is done here instead. transform() matches the two
+ * intermediary-named classes (class_8673.method_52787 sendPacket, class_2743.method_11817
+ * apply) resolved ONCE from the fabric mapping table via MappingContext.rawEntry(), and
+ * injects a cancellable reflective call to PacketBridge at each method HEAD. PacketBridge
+ * delegates to the adapter's pure decision objects (FabricPacketVault.onOutbound /
+ * FabricVelocityInterceptor.onVelocityPacket); true cancels the packet (early RETURN,
+ * never sent / never applied), anything else falls through to the original body.
+ * verify_mappings_fabric.mjs guards the table entries these targets come from, so a
+ * rotted intermediary id fails CI instead of failing silently in someone's game.
  *
  * Stealth advantage: Bytecode injection into the method body is invisible to
  * task-queue scanning and thread-based detection. Anti-cheat that checks
@@ -243,6 +258,26 @@ public class Transformer implements ClassFileTransformer {
             return transformStaticCamera(classfileBuffer);
         }
 
+        // Fabric packet hooks — BEFORE the Display branch: these classes are hooked at FIRST
+        // LOAD (not retransform), the two targets are intermediary names that only exist on
+        // Fabric 1.21.x, and on a Forge launch the resolution below yields nothing and this
+        // branch is permanently inert. Display (Forge HUD) is untouched by any of this.
+        if (className != null) {
+            ensureFabricTargets();
+            if (fabricHooksActive && classBeingRedefined == null) {
+                // classBeingRedefined != null means a retransform of an ALREADY loaded class;
+                // the packet classes get their hook at first load, and re-running the injector
+                // on a previously transformed buffer would double-inject (two decisions per
+                // packet). Skipping keeps a retransform a clean no-op for these targets.
+                if (className.equals(fabricC2sOwner)) {
+                    return transformFabricPacketHook(classfileBuffer, fabricC2sMethod, "onC2SPacket", fabricC2sOwner);
+                }
+                if (className.equals(fabricS2cOwner)) {
+                    return transformFabricPacketHook(classfileBuffer, fabricS2cMethod, "onVelocityPacket", fabricS2cOwner);
+                }
+            }
+        }
+
         // Handle the HUD render hook (Display) only.
         if (!"org/lwjgl/opengl/Display".equals(className)) {
             return null;
@@ -408,6 +443,315 @@ public class Transformer implements ClassFileTransformer {
             mv.visitFrame(Opcodes.F_NEW, entryLocals.length, entryLocals, 0, new Object[0]);
         }
     }
+
+    // ═══════════════════════════════════════════════════════════
+    //  Fabric packet hooks — class_8673.sendPacket / class_2743.apply
+    // ═══════════════════════════════════════════════════════════
+
+    /**
+     * Resolved hook targets, held as raw STRINGS — never as Class objects. The whole point
+     * of MappingContext.rawEntry() is that at transform() time the target classes do not
+     * exist yet; holding a Class here would mean Class.forName() inside the transform path
+     * (deadlock/failure during class loading). Owners are stored in slashed internal form
+     * so they can be compared against the className argument transform() receives.
+     *
+     * Resolution happens lazily ONCE per JVM. On a Forge launch (or with a fabric table
+     * predating the hook keys) rawEntry returns null and the branch is permanently inert —
+     * logged once, never retried, never thrown.
+     */
+    private static volatile boolean fabricTargetsResolved = false;
+    /** Whether ANY hook target resolved; false = the fabric branch is inert. */
+    private static volatile boolean fabricHooksActive = false;
+    /** Slashed internal name of net.minecraft.class_8673 (ClientCommonNetworkHandler). */
+    private static volatile String fabricC2sOwner = null;
+    /** method_52787 (sendPacket) — the outbound hook target. */
+    private static volatile String fabricC2sMethod = null;
+    /** Slashed internal name of net.minecraft.class_2743 (EntityVelocityUpdateS2CPacket). */
+    private static volatile String fabricS2cOwner = null;
+    /** method_11817 (apply) — the inbound velocity hook target. */
+    private static volatile String fabricS2cMethod = null;
+
+    /**
+     * Test hook: clear the cached target resolution so tests can re-drive the lazy path.
+     * Package-visible on purpose — it is not part of the agent's public surface.
+     */
+    static void resetFabricTargets() {
+        fabricTargetsResolved = false;
+        fabricHooksActive = false;
+        fabricC2sOwner = null;
+        fabricC2sMethod = null;
+        fabricS2cOwner = null;
+        fabricS2cMethod = null;
+    }
+
+    /**
+     * Lazily resolve the two hook targets from the fabric mapping table. The raw strings
+     * are read transform-time-cheaply (no Class.forName anywhere — see rawEntry); the
+     * dotted class name from the table is converted to the slashed internal name
+     * transform() matches against. Each half resolves independently: a missing/inert
+     * velocity entry leaves the c2s half working and vice versa.
+     */
+    private static void ensureFabricTargets() {
+        if (fabricTargetsResolved) return;
+        synchronized (Transformer.class) {
+            if (fabricTargetsResolved) return;
+            try {
+                String[] c2s = MappingContext.rawEntry("fabric:clientCommonNetworkHandler_sendPacket");
+                String[] s2c = MappingContext.rawEntry("fabric:entityVelocityUpdateS2CPacket_apply");
+                if (c2s != null && c2s.length == 3) {
+                    fabricC2sOwner = c2s[0].replace('.', '/');
+                    fabricC2sMethod = c2s[1];
+                }
+                if (s2c != null && s2c.length == 3) {
+                    fabricS2cOwner = s2c[0].replace('.', '/');
+                    fabricS2cMethod = s2c[1];
+                }
+                fabricHooksActive = fabricC2sOwner != null || fabricS2cOwner != null;
+                if (!fabricHooksActive) {
+                    // One line, once: Forge mappings loaded, or a fabric table without the
+                    // hook keys. Without this the absence of the hooks is indistinguishable
+                    // from "attached but broken" in a log file.
+                    Agent.log("[Transformer] Fabric packet hooks: no targets resolved (Forge mappings or fabric table without hook keys) — packet branch permanently inert");
+                } else {
+                    Agent.log("[Transformer] Fabric packet hooks resolved: c2s="
+                            + fabricC2sOwner + "." + fabricC2sMethod
+                            + " s2c=" + fabricS2cOwner + "." + fabricS2cMethod);
+                }
+            } catch (Throwable t) {
+                // Same rule as everywhere in this class: a resolution failure must degrade to
+                // "no hooks" (vanilla pass-through), never abort class loading.
+                Agent.log("[Transformer] Fabric packet hook resolution failed — branch inert: "
+                        + t.getClass().getName() + ": " + t.getMessage());
+            }
+            fabricTargetsResolved = true;
+        }
+    }
+
+    /**
+     * Inject a cancellable PacketBridge call at the HEAD of one Fabric packet method.
+     *
+     * Unlike Display (a retransform of an already-loaded class, which forbids adding
+     * methods), these classes are hooked at first load — a helper method would be legal
+     * here. It stays inline anyway, in house style: one emission path, no new methods, and
+     * the same ClassWriter(COMPUTE_MAXS) + EXPAND_FRAMES approach as transformDisplay.
+     *
+     * The hook shape for BOTH targets (they are void instance methods with exactly one
+     * object argument — enforced by the defensive match below):
+     *
+     *     Object decision = null;
+     *     try {
+     *         decision = io.doppel.agent.PacketBridge
+     *                 .<onC2SPacket|onVelocityPacket>(arg1);   // reflective, game-CL resolved
+     *     } catch (Throwable) { }                              // fail-open: swallow
+     *     if (Boolean.TRUE.equals(decision)) return;           // cancel: original body never runs
+     *     <original body>
+     *
+     * Reflection instead of a direct INVOKESTATIC is deliberate, exactly as in
+     * emitInlineHook: the hooked classes are defined by Fabric's Knot ClassLoader while
+     * PacketBridge lives in agent.jar; a direct reference would resolve through a
+     * ClassLoader the game class cannot see and NoClassDefFoundError into the netty/event
+     * thread on first call. Resolving through the current thread's context CL keeps every
+     * failure inside the try block, where it collapses to "pass through".
+     */
+    private byte[] transformFabricPacketHook(byte[] classfileBuffer, String targetMethod,
+                                             String bridgeMethod, String owner) {
+        try {
+            ClassReader reader = new ClassReader(classfileBuffer);
+            final boolean needsFrames = (reader.readShort(6) & 0xffff) >= 50;
+            final boolean[] injected = new boolean[] { false };
+            ClassWriter writer = new ClassWriter(reader, ClassWriter.COMPUTE_MAXS);
+            ClassVisitor injector = new ClassVisitor(COMPAT_API, writer) {
+                @Override
+                public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
+                    MethodVisitor mv = super.visitMethod(access, name, descriptor, signature, exceptions);
+                    if (mv == null) return null;
+                    // Match by NAME plus a defensive shape check (void return, exactly one
+                    // object argument). A mapping that rots onto a same-named member of a
+                    // different signature must not receive bytecode written for this shape.
+                    if (!injected[0] && targetMethod.equals(name) && isVoidOneObjectArg(descriptor)) {
+                        injected[0] = true;
+                        // Frame locals at the hook's jump targets: [owner, arg, temp-slot-2].
+                        // Slot 2 is written by the hook (ACONST_NULL/ASTORE first, the bridge
+                        // result later), so every frame we emit must carry it; ClassWriter
+                        // COMPUTE_MAXS grows maxLocals to cover the extra slot.
+                        Object[] entryLocals = new Object[] {
+                                owner, firstParamFrameType(descriptor), "java/lang/Object" };
+                        return new MethodVisitor(COMPAT_API, mv) {
+                            @Override
+                            public void visitCode() {
+                                super.visitCode();
+                                emitFabricHook(this, entryLocals, bridgeMethod, needsFrames);
+                            }
+                        };
+                    }
+                    return mv;
+                }
+            };
+            // EXPAND_FRAMES, same reason as transformDisplay: frames arrive fully expanded,
+            // so the two we add cannot corrupt the delta chain of the frames that follow
+            // (the original body's own frames pass through as absolute F_NEW frames).
+            reader.accept(injector, ClassReader.EXPAND_FRAMES);
+
+            if (!injected[0]) {
+                Agent.log("[Transformer] Fabric hook: " + owner + "." + targetMethod
+                        + " not present (or wrong shape) — nothing injected");
+                return null;
+            }
+
+            Agent.log("[Transformer] Fabric hook injected: " + owner + "." + targetMethod
+                    + " HEAD -> PacketBridge." + bridgeMethod);
+            return writer.toByteArray();
+        } catch (Throwable e) {
+            // Fail-open, same discipline as the camera redirect: null leaves the class
+            // untouched, so the worst case is a module that does nothing — never a client
+            // that does not start. Full diagnostics, because a bare "failed" line cost days
+            // once already (see transformDisplay).
+            Agent.log("[Transformer] Fabric hook failed for " + owner + "." + targetMethod + ": "
+                    + e.getClass().getName() + ": " + e.getMessage());
+            for (StackTraceElement el : e.getStackTrace()) {
+                if (el.getClassName().startsWith("io.doppel") || el.getClassName().startsWith("org.objectweb.asm")) {
+                    Agent.log("[Transformer]   at " + el);
+                }
+            }
+            return null;
+        }
+    }
+
+    /**
+     * Emit, at the current position (the HEAD of the target method): the reflective
+     * PacketBridge call, the early-RETURN cancel path, and the frames for the two jump
+     * targets it creates. Written out, not COMPUTE_FRAMES — computing frames for a game
+     * class requires resolving game types, which this ClassLoader cannot do.
+     *
+     * @param entryLocals locals visible at the hook's jump targets: [owner, arg, Object]
+     *                    (slot 2 is written by the temp below, hence the third entry).
+     */
+    private static void emitFabricHook(MethodVisitor mv, Object[] entryLocals,
+                                       String bridgeMethod, boolean needsFrames) {
+        Label start = new Label();
+        Label end = new Label();
+        Label handler = new Label();
+        Label fall = new Label();
+        mv.visitTryCatchBlock(start, end, handler, "java/lang/Throwable");
+
+        // temp = null (slot 2). Written OUTSIDE the try: a decision that never ran is the
+        // same as one that failed — pass through.
+        mv.visitInsn(Opcodes.ACONST_NULL);
+        mv.visitVarInsn(Opcodes.ASTORE, 2);
+
+        mv.visitLabel(start);
+        mv.visitLdcInsn("io.doppel.agent.PacketBridge");
+        mv.visitInsn(Opcodes.ICONST_1);
+        mv.visitMethodInsn(Opcodes.INVOKESTATIC, "java/lang/Thread", "currentThread", "()Ljava/lang/Thread;", false);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/Thread", "getContextClassLoader", "()Ljava/lang/ClassLoader;", false);
+        mv.visitMethodInsn(Opcodes.INVOKESTATIC, "java/lang/Class", "forName", "(Ljava/lang/String;ZLjava/lang/ClassLoader;)Ljava/lang/Class;", false);
+        mv.visitLdcInsn(bridgeMethod);
+        mv.visitInsn(Opcodes.ICONST_1);
+        mv.visitTypeInsn(Opcodes.ANEWARRAY, "java/lang/Class");
+        mv.visitInsn(Opcodes.DUP);
+        mv.visitInsn(Opcodes.ICONST_0);
+        mv.visitLdcInsn(Type.getObjectType("java/lang/Object"));
+        mv.visitInsn(Opcodes.AASTORE);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/Class", "getMethod", "(Ljava/lang/String;[Ljava/lang/Class;)Ljava/lang/reflect/Method;", false);
+        mv.visitInsn(Opcodes.ACONST_NULL);
+        mv.visitInsn(Opcodes.ICONST_1);
+        mv.visitTypeInsn(Opcodes.ANEWARRAY, "java/lang/Object");
+        mv.visitInsn(Opcodes.DUP);
+        mv.visitInsn(Opcodes.ICONST_0);
+        mv.visitVarInsn(Opcodes.ALOAD, 1);
+        mv.visitInsn(Opcodes.AASTORE);
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/reflect/Method", "invoke", "(Ljava/lang/Object;[Ljava/lang/Object;)Ljava/lang/Object;", false);
+        mv.visitVarInsn(Opcodes.ASTORE, 2);
+        mv.visitVarInsn(Opcodes.ALOAD, 2);
+        mv.visitJumpInsn(Opcodes.IFNULL, fall);
+        mv.visitVarInsn(Opcodes.ALOAD, 2);
+        mv.visitTypeInsn(Opcodes.CHECKCAST, "java/lang/Boolean");
+        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "java/lang/Boolean", "booleanValue", "()Z", false);
+        mv.visitJumpInsn(Opcodes.IFEQ, fall);
+        mv.visitInsn(Opcodes.RETURN);
+
+        // End of the protected range. There is deliberately NO fall-through GOTO here:
+        // every in-try path already exits (RETURN on cancel, IFNULL/IFEQ to `fall` on
+        // pass-through), so nothing reaches `end` except the exception-table boundary
+        // itself — a jump out of that dead label would sit between the cancel RETURN and
+        // the original body for no reason.
+        mv.visitLabel(end);
+        mv.visitLabel(handler);
+        if (needsFrames) {
+            // The handler is entered with the thrown object on the stack and the same
+            // locals the hook started with (slot 2 = Object — the merge of the null written
+            // before the try and whatever the bridge had stored when the throw happened).
+            mv.visitFrame(Opcodes.F_NEW, entryLocals.length, entryLocals, 1, new Object[] { "java/lang/Throwable" });
+        }
+        mv.visitInsn(Opcodes.POP);
+        mv.visitLabel(fall);
+        if (needsFrames) {
+            // Where the original body resumes. The locals shape includes slot 2 because the
+            // temp was written; the original body's own frames (emitted absolute thanks to
+            // EXPAND_FRAMES) follow unchanged.
+            mv.visitFrame(Opcodes.F_NEW, entryLocals.length, entryLocals, 0, new Object[0]);
+        }
+    }
+
+    /**
+     * True when the descriptor is exactly {@code (OneObjectOrArrayArg)V} — the shape both
+     * Fabric hook targets have. The defensive check exists so a mapping that rots onto a
+     * same-named member of a different signature (say {@code (Lclass_2596;)Z}) can never
+     * receive a hook written for this shape — the emitted bytecode does ALOAD 1 as an
+     * object and RETURNs before the original body, and neither is valid otherwise.
+     */
+    private static boolean isVoidOneObjectArg(String descriptor) {
+        if (descriptor == null || descriptor.length() < 4 || descriptor.charAt(0) != '(') return false;
+        int i = 1;
+        int arrayDepth = 0;
+        while (i < descriptor.length() && descriptor.charAt(i) == '[') { i++; arrayDepth++; }
+        if (i >= descriptor.length()) return false;
+        char c = descriptor.charAt(i);
+        if (c == 'L') {
+            int end = descriptor.indexOf(';', i);
+            if (end < 0) return false;
+            i = end + 1;
+        } else if (arrayDepth == 0) {
+            return false; // bare primitive parameter — not the shape the hook is written for
+        } else {
+            i++; // primitive array element char
+        }
+        return i == descriptor.length() - 2
+                && descriptor.charAt(i) == ')'
+                && descriptor.charAt(descriptor.length() - 1) == 'V';
+    }
+
+    /**
+     * The frame-local verification type of the (single, object) parameter — the form
+     * StackMapTable frames demand: an INTERNAL NAME ("net/minecraft/class_2596", no
+     * L…; wrapper) for class types, the descriptor form ("[Ljava/lang/Object;") only
+     * for arrays — that is exactly how the Display hook's entry locals carry the
+     * receiver. Only called after isVoidOneObjectArg passed, so indexing is safe and
+     * a reference or array type always comes out.
+     */
+    private static Object firstParamFrameType(String descriptor) {
+        int i = 1;
+        int arrayDepth = 0;
+        while (descriptor.charAt(i) == '[') { i++; arrayDepth++; }
+        StringBuilder type = new StringBuilder();
+        for (int a = 0; a < arrayDepth; a++) type.append('[');
+        char c = descriptor.charAt(i);
+        if (c == 'L') {
+            int end = descriptor.indexOf(';', i);
+            if (arrayDepth > 0) {
+                // Arrays carry the full descriptor element form.
+                type.append('L').append(descriptor, i + 1, end).append(';');
+            } else {
+                // A bare class type carries its internal name — an L…; wrapper here is
+                // an illegal class name and the definition fails at first load.
+                type.append(descriptor, i + 1, end);
+            }
+        } else {
+            type.append(c);
+        }
+        return type.toString();
+    }
+
 
     /** The classes that read the camera rotation, by obfuscated and deobfuscated name. */
     private static final java.util.Set<String> STATIC_CAMERA_CLASSES = new java.util.HashSet<>(java.util.Arrays.asList(

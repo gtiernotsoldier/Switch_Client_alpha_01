@@ -25,7 +25,10 @@
 //  3. every `fabric:*` key referenced by MappingContext call sites in the
 //     Kotlin/Java sources resolves through the table (key or alias) with the
 //     right accessor kind (field vs method) — the forge script's call-site
-//     discipline, applied to the fabric table.
+//     discipline, applied to the fabric table. rawEntry() is also checked: it
+//     hands the RAW class/member strings to the agent's transform-time layer
+//     (no Class.forName), so it accepts either kind — "any" — but the key
+//     itself must still resolve.
 //
 // Keys listed in mappings/verify/v1_21_11-unmapped.txt are known to have no
 // faithful 1.21.11 binding (DataTracker/flag/Vec3d-only members); they are
@@ -145,11 +148,15 @@ function lookupEntry(rawKey) {
   return byAlias.get(rawKey) || byAlias.get(`fabric:${rawKey}`) || null;
 }
 
+// 'any' = rawEntry(): transform-time raw class/member lookup — a method OR a
+// field entry is both valid there (the caller only needs the strings), but the
+// key must resolve; the per-accessor kind check below treats 'any' as valid.
 const ACCESSORS = {
   invokeMethod: 'method',
   getMethod: 'method',
   getFieldValue: 'field',
   getField: 'field',
+  rawEntry: 'any',
 };
 
 const SRC_ROOT = path.join(root, 'Doppel');
@@ -170,7 +177,7 @@ const badKind = [];
 const unknownKey = [];
 let callSites = 0;
 
-const CALL_RE = /MappingContext\s*\.\s*(invokeMethod|getMethod|getFieldValue|getField)\s*\(/g;
+const CALL_RE = /MappingContext\s*\.\s*(invokeMethod|getMethod|getFieldValue|getField|rawEntry)\s*\(/g;
 const FABRIC_KEY_RE = /^fabric:/;
 for (const file of walk(SRC_ROOT)) {
   const text = fs.readFileSync(file, 'utf8');
@@ -214,7 +221,7 @@ for (const file of walk(SRC_ROOT)) {
     callSites++;
     const want = ACCESSORS[accessor];
     const has = hit.entry.method ? 'method' : hit.entry.field ? 'field' : 'neither';
-    if (has !== want) {
+    if (want !== 'any' && has !== want) {
       badKind.push(
         `${rel}:${line} ${accessor}("${rawKey}") reads a ${has.toUpperCase()} mapping (${hit.key}); ` +
           `must use ${want === 'field' ? 'getFieldValue/getField' : 'invokeMethod/getMethod'}`,

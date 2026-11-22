@@ -7,10 +7,13 @@ import io.doppel.contract.logging.CoreLogger
  * The vault's Fabric executor — the outbound half the adapter never had.
  *
  * Forge holds packets inside a Netty pipeline handler with their channel promises;
- * Fabric gets the same result at a higher level: [ClientCommonNetworkHandlerMixin]
- * cancels `sendPacket` at HEAD for anything [onOutbound] asks to hold, and the held
- * packet objects are re-sent through `ClientConnection.send` on release — which does
- * NOT re-enter the handler, so there is no recursion and no re-hold.
+ * Fabric gets the same result through the agent's ASM hook: the Transformer rewrites the
+ * HEAD of `ClientCommonNetworkHandler.sendPacket` (intermediary class_8673.method_52787,
+ * mapping key fabric:clientCommonNetworkHandler_sendPacket) to call
+ * io.doppel.agent.PacketBridge.onC2SPacket first, and [onOutbound] is that bridge's c2s
+ * decision point — true holds the packet (the hook returns before the send), false lets
+ * it through. Held packet objects are re-sent through `ClientConnection.send` on release
+ * — which does NOT re-enter the hooked method, so there is no recursion and no re-hold.
  *
  * Semantics are identical to the Forge executor on purpose (the vault contract):
  *
@@ -24,9 +27,11 @@ import io.doppel.contract.logging.CoreLogger
  *  * a pending [EventBridge.consumePacketFlush] (Kamui's phase release) lets the
  *    backlog out regardless of any claim.
  *
- * The S2C position-sync failsafe (Forge's S08 path) is handled on Fabric by the same
- * principle but a different entry point (a mixin on the S2C handler is a follow-up);
- * until then the vault's wall-clock cap and the engine's own MaxHold bound the window.
+ * Fail-open direction: no agent attached means no hook and no call into [onOutbound] —
+ * every packet is sent exactly as vanilla would. The same holds when the decision path
+ * throws: [onOutbound] catches and answers false. The S2C position-sync failsafe (Forge's
+ * S08 path) has no Fabric hook yet — until one is added, the vault's wall-clock cap and
+ * the engine's own MaxHold bound the window.
  */
 object FabricPacketVault {
 
@@ -42,7 +47,7 @@ object FabricPacketVault {
     }
 
     /**
-     * Decide one outbound packet. Returns true = the mixin cancels the send (held);
+     * Decide one outbound packet. Returns true = the ASM hook cancels the send (held);
      * false = pass through. Runs on the client thread (sendPacket's caller).
      */
     fun onOutbound(packet: Any): Boolean {
@@ -78,7 +83,7 @@ object FabricPacketVault {
         }
     }
 
-    /** Re-send what was held, straight through the connection (bypasses the handler mixin). */
+    /** Re-send what was held, straight through the connection (bypasses the hooked method). */
     fun drain() {
         holdStartedMs = 0L
         if (held.isEmpty()) return

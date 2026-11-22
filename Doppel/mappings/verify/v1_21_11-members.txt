@@ -72,6 +72,7 @@ net.minecraft.class_268	field	field_1415	playerList	e	Ljava/util/Set;
 net.minecraft.class_268	field	field_1421	name	d	Ljava/lang/String;
 net.minecraft.class_269	field	field_1426	teams	g	Lit/unimi/dsi/fastutil/objects/Object2ObjectMap;
 net.minecraft.class_2743	field	field_12564	entityId	b	I
+net.minecraft.class_2743	method	method_11817	apply	a	(Lnet/minecraft/class_2602;)V
 net.minecraft.class_304	field	field_1653	pressed	g	Z
 net.minecraft.class_304	field	field_1655	boundKey	a	Lnet/minecraft/class_3675$class_306;
 net.minecraft.class_304	field	field_1661	timesPressed	h	I

@@ -8,12 +8,17 @@
 //   2. Align the `minecraftVersion` / `yarnMappings` / `loaderVersion` placeholders below
 //      with the mapping target the rest of the adapter speaks — mappings/fabric/v1_21_11.json
 //      (MC 1.21.x line). The Kotlin adapter code accesses MC through those semantic mapping
-//      keys, but the two mixins reference real classes and MUST compile against a matching
-//      Minecraft jar.
+//      keys, but it also names real Minecraft classes directly (the packet decision objects
+//      the agent's ASM hook calls into) and MUST compile against a matching Minecraft jar.
 //   3. `./gradlew :adapter:fabric:v1_21:build` (needs network for the Minecraft download)
 //
-// Everything in this module was written to compile under Loom once wired: FabricBootstrap,
-// FabricPacketVault, the two mixins. None of it is exercised by CI yet.
+// Note: this module previously needed the Mixin annotation processor for its two Sponge
+// mixins; the mixins (and doppel.mixins.json) are gone — packet interception moved into
+// the agent's ASM layer (Transformer → PacketBridge → the decision objects here), so no
+// annotation processor is required any more. What still keeps this module out of CI is
+// only Loom's configuration-time Minecraft download. None of it is exercised by CI yet;
+// everything here was written to compile under Loom once wired: FabricBootstrap,
+// FabricPacketVault, FabricVelocityInterceptor, FabricEventBridge, FabricStateExtractor.
 
 plugins {
     // Align the Loom version with your Gradle; 1.6+ supports MC 1.21.
@@ -26,7 +31,7 @@ val yarnMappings: String = (project.findProperty("doppelYarn") as String?) ?: "1
 val loaderVersion: String = (project.findProperty("doppelLoader") as String?) ?: "0.16.9"
 
 java {
-    // Mixins here are compiled with compatibilityLevel JAVA_21 (doppel.mixins.json).
+    // Java 21 — the MC 1.21.x class files this module compiles against require it.
     sourceCompatibility = JavaVersion.VERSION_21
     targetCompatibility = JavaVersion.VERSION_21
 }

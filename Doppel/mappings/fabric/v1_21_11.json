@@ -7,6 +7,14 @@
       "entityId"
     ]
   },
+  "fabric:entityVelocityUpdateS2CPacket_apply": {
+    "class": "net.minecraft.class_2743",
+    "method": "method_11817",
+    "aliases": [
+      "entityVelocityUpdateS2CPacket_apply",
+      "apply"
+    ]
+  },
   "fabric:axisAlignedBB_calculateIntercept": {
     "class": "net.minecraft.class_238",
     "method": "method_1010",
@@ -852,6 +860,14 @@
     "method": "method_52787",
     "aliases": [
       "netHandler_addToSendQueue",
+      "sendPacket"
+    ]
+  },
+  "fabric:clientCommonNetworkHandler_sendPacket": {
+    "class": "net.minecraft.class_8673",
+    "method": "method_52787",
+    "aliases": [
+      "clientCommonNetworkHandler_sendPacket",
       "sendPacket"
     ]
   },

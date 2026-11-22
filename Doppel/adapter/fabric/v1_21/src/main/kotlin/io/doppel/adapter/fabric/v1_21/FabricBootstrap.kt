@@ -48,11 +48,18 @@ object FabricBootstrap : ClientModInitializer {
             // Apply queued JumpReset jump pulses on the main thread (press/release jump key).
             EventBridge.drainPendingJump()
             FabricEventBridge.onTick()
+            // The vault's end-of-tick sweep: honor a flush request even when no new packet flows.
+            FabricPacketVault.tick()
             setupKeyCallback(client)
         }
 
         // Initialize EventBridge platform handlers
         FabricEventBridge.registerListeners()
+
+        // Register the module set (reflection fallback path — the same entries the agent
+        // publishes). Idempotent: if a platform bootstrap registered them already, this
+        // only wires safety integration and enables HUD/WebUI.
+        io.doppel.adapter.common.AgentBridge.initModules()
 
         // Velocity packet interception is handled by ClientPlayNetworkHandlerMixin
         // (registered via doppel.mixins.json)
@@ -112,6 +119,17 @@ object FabricBootstrap : ClientModInitializer {
             // Dispatch to EventBridge for module consumption
             val pressed = action == GLFW.GLFW_PRESS || action == GLFW.GLFW_REPEAT
             io.doppel.adapter.common.api.EventBridge.onKey(key, pressed)
+
+            // Module keybind toggles (the Forge path polls keyboard state; Fabric is event
+            // driven). PRESS only — REPEAT would toggle a module once per key-repeat tick.
+            // Skipped while a screen is open, same rule as Forge's poll.
+            if (action == GLFW.GLFW_PRESS && key != GLFW.GLFW_KEY_UNKNOWN && client.currentScreen == null) {
+                try {
+                    io.doppel.adapter.common.module.ModuleRegistry.getAll().forEach { module ->
+                        module.tryKeybindToggle(key)
+                    }
+                } catch (_: Exception) {}
+            }
         })
 
         keyCallbackInitialized = true

@@ -113,8 +113,6 @@ object EventBridge {
         packetFlushReason = ""
         packetLagActive = false
         packetLagAttackReleased = false
-        pendingReplayPosition = null
-        kamuiPhaseActive = false
         attackListeners.clear()
         sprintResetActive = false
         superKnockbackActive = false
@@ -1718,9 +1716,9 @@ object EventBridge {
     //  * the flag is the UNION of live claims — a hold continues while any claimant wants it;
     //  * releasing one source never releases another's queued packets (the queue is shared,
     //    the claims are not);
-    //  * [requestPacketFlush] is the one one-sided lever: a module whose release IS the
-    //    mechanic (Kamui) asks the platform to let the backlog out NOW, claims or no claims.
-    //    The platform consumes it and clears it.
+    //  * [requestPacketFlush] is the one one-sided lever: a module whose release IS
+    //    the mechanic asks the platform to let the backlog out NOW, claims or no
+    //    claims. The platform consumes it and clears it.
     //
     // [releaseAllClaims] (called by Module.disable) also drops packet-hold claims, so a
     // module that dies mid-hold cannot stall the connection on a stale claim.
@@ -1728,16 +1726,13 @@ object EventBridge {
     /** Default priority for routine lag-window claims (FakeLag, LagRange, AutoBlock Lag). */
     const val PACKET_PRIORITY_LAG = 0
 
-    /** A phase hold (Kamui) outranks a routine lag window — it is short and timing-critical. */
-    const val PACKET_PRIORITY_PHASE = 10
-
     private val packetHoldClaims = LinkedHashMap<String, Int>()
 
     /** Highest-priority live claimant (diagnostics + HUD); "" when nobody is holding. */
     @Volatile var packetHoldOwner: String = ""
         private set
 
-    /** Set by a module whose held packets must leave NOW (Kamui release). Consumed by the platform. */
+    /** Set by a module whose held packets must leave NOW. Consumed by the platform. */
     @Volatile var packetFlushPending: Boolean = false
     @Volatile var packetFlushReason: String = ""
 
@@ -1787,66 +1782,6 @@ object EventBridge {
         packetHoldOwner = packetHoldClaims.entries.maxByOrNull { it.value }?.key ?: ""
         packetLagActive = packetHoldClaims.isNotEmpty()
     }
-
-    // ========== 9. Replay position (Izanagi's platform write) ==========
-    //
-    // A replay advance is a REPOSITION: the core walked back one recorded frame
-    // and the module asks the platform to set the player there. It rides a
-    // pending slot instead of a direct call because only the platform can name
-    // the player object — the same seam the synthetic keys use.
-
-    /** One replay step: the position the server already accepted once. */
-    data class ReplayPosition(val x: Double, val y: Double, val z: Double)
-
-    /** The pending replay step, consumed by the platform's tick loop. */
-    @Volatile var pendingReplayPosition: ReplayPosition? = null
-
-    /** The module's one-sided lever — the platform consumes it and clears it. */
-    fun requestReplayPosition(x: Double, y: Double, z: Double) {
-        pendingReplayPosition = ReplayPosition(x, y, z)
-    }
-
-    /** Consume a pending replay step. Null when none is owed. */
-    fun consumeReplayPosition(): ReplayPosition? = pendingReplayPosition.also { pendingReplayPosition = null }
-
-    /** Drop a step nobody will apply (module disable mid-replay). */
-    fun clearReplayPosition() {
-        pendingReplayPosition = null
-    }
-
-    /**
-     * Platform capability: can this adapter reposition the player at all?
-     * Fabric sets it at bootstrap; the Forge 1.8.9 path never does, and a
-     * platform without the capability refuses recalls — the machine still
-     * marks, but nothing is ever spent on a write it cannot make.
-     */
-    @Volatile var supportsReplayPosition: Boolean = false
-
-    /**
-     * The corridor checker: collision + danger sources around the position the
-     * replay is about to report. Registered by the platform (it owns the world
-     * query); a platform without one fails CLOSED — a null checker means the
-     * module never marshals a recall, because rewinding through unvalidated
-     * geometry is exactly the failure this check exists to prevent.
-     */
-    @Volatile var corridorChecker: ((Double, Double, Double) -> Boolean)? = null
-
-    /** Whether a corridor check is available at all (the recall gate). */
-    val corridorAvailable: Boolean
-        get() = corridorChecker != null
-
-    /** Run the corridor judgement; a missing checker fails closed (false). */
-    fun checkCorridor(x: Double, y: Double, z: Double): Boolean =
-        corridorChecker?.invoke(x, y, z) ?: false
-
-    /**
-     * True while a Kamui phase holds the connection — the reported position is
-     * the fossil, not the player. Kamui writes it from its answer every tick
-     * (and clears it on enable/disable); Izanagi reads it to freeze the trail
-     * feed. The vault-flag pattern ([packetLagActive], [sprintResetActive]):
-     * modules arbitrate through EventBridge, never through each other.
-     */
-    @Volatile var kamuiPhaseActive: Boolean = false
 
     // ========== Freelook (Visual) ==========
     /**

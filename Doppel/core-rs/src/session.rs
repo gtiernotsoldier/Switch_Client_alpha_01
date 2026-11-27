@@ -28,9 +28,7 @@ use crate::strategy::combat::{self, BlockArbiterState, PredictorConfig, Predicto
 use crate::strategy::eagle;
 use crate::strategy::eagle_place;
 use crate::strategy::hit_select;
-use crate::strategy::izanagi;
 use crate::strategy::jump_reset;
-use crate::strategy::kamui;
 use crate::strategy::keep_sprint;
 use crate::strategy::knockback_displace;
 use crate::strategy::lag_range;
@@ -184,16 +182,6 @@ pub struct Session {
     /// and the hold's start timestamp. No RNG stream either.
     pub lag_range: lag_range::State,
 
-    /// Kamui: the phase machine (IDLE / PHASE / COOLDOWN), the tick counters,
-    /// the cast counter and the knob set latched at the trigger. No RNG
-    /// stream — the machine is deterministic.
-    pub kamui: kamui::State,
-
-    /// Izanagi: the trail ring ("what the server has seen"), the anchor pin,
-    /// the walk list and the stall / cooldown counters. No RNG stream — the
-    /// replay walks stored frames at exactly 1x.
-    pub izanagi: izanagi::State,
-
     pub ticks: u64,
     pub decisions: u64,
     pub degraded: u64,
@@ -265,8 +253,6 @@ impl Session {
             super_knockback: super_knockback::State::new(),
             keep_sprint: keep_sprint::State::new(),
             lag_range: lag_range::State::new(),
-            kamui: kamui::State::new(),
-            izanagi: izanagi::State::new(),
             ticks: 0,
             decisions: 0,
             degraded: 0,
@@ -342,11 +328,6 @@ impl Session {
                 self.super_knockback = super_knockback::State::new();
                 self.keep_sprint = keep_sprint::State::new();
                 self.lag_range = lag_range::State::new();
-                // Kamui forgets the cast: the module's onDisable owns the
-                // platform side (release + flush), and a half-elapsed phase
-                // must not resume on re-enable.
-                self.kamui = kamui::State::new();
-                self.izanagi = izanagi::State::new();
             }
         }
         Frame::new(Kind::Reset, frame.header.seq, frame.header.tick, module)
@@ -1457,58 +1438,13 @@ impl Session {
                         code as f64,
                     ))
                 }
-                op::PLAYER_KAMUI_TICK => {
-                    let input = kamui::Input {
-                        trigger_edge: req.bool(0)?,
-                        gui_open: req.bool(1)?,
-                        dead: req.bool(2)?,
-                        phase_ticks: req.i32(3)?,
-                        max_hold_ticks: req.i32(4)?,
-                        cooldown_ticks: req.i32(5)?,
-                    };
-                    // No roll: the phase machine is deterministic. The answer
-                    // is the packed machine view (state + flags + counters),
-                    // laid out by strategy::kamui::pack.
-                    let (packed, next) = kamui::tick(self.kamui, input);
-                    self.kamui = next;
-                    Ok(codec::encode_scalar(
-                        seq,
-                        tick,
-                        Module::Player,
-                        WireAction::Scalar,
-                        packed as f64,
-                    ))
-                }
-                op::PLAYER_IZANAGI_TICK => {
-                    let input = izanagi::Input {
-                        feed: req.bool(0)?,
-                        tick_clock: req.i32(1)?,
-                        x: req.arg(2)?,
-                        y: req.arg(3)?,
-                        z: req.arg(4)?,
-                        on_ground: req.bool(5)?,
-                        mark_edge: req.bool(6)?,
-                        recall_edge: req.bool(7)?,
-                        corridor_ok: req.bool(8)?,
-                        gui_open: req.bool(9)?,
-                        dead: req.bool(10)?,
-                        // Session-internal arbitration: a live Kamui phase owns
-                        // the reported position, so no mark and no recall may
-                        // start while it runs. Reading the sibling state here is
-                        // why the exclusion needs no JVM-side cross-module
-                        // reference and no extra wire argument.
-                        kamui_busy: self.kamui.state == kamui::STATE_PHASE,
-                        max_depth: req.i32(12)?,
-                        stall_cap: req.i32(13)?,
-                        cooldown_ticks: req.i32(14)?,
-                    };
-                    // No roll either: the replay walks stored frames. The state
-                    // carries the trail ring (a VecDeque, not Copy), so it rides
-                    // through a clone — the borrow ends before the reassignment.
-                    let st = self.izanagi.clone();
-                    let (answer, next) = izanagi::tick(st, input);
-                    self.izanagi = next;
-                    Ok(codec::encode_izanagi(seq, tick, &answer))
+                op::PLAYER_KAMUI_TICK | op::PLAYER_IZANAGI_TICK => {
+                    // RETIRED (2026-11): the Kamui phase machine and Izanagi's
+                    // Mark & Recall were removed by decision. The op ids stay
+                    // reserved forever — the op table is append-only and an id
+                    // is never reused for a different machine. An old stub that
+                    // still sends these gets a clean BadPayload, not garbage.
+                    Err(Status::BadPayload)
                 }
                 _ => Err(Status::BadPayload),
             }

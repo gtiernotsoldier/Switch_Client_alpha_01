@@ -235,7 +235,15 @@ the server accepts from you, and what the null looks like.
 
 ---
 
-## 9. The desync family (2026-11): Kamui (op 14) and Izanagi (op 15)
+## 9. The desync family (2026-11): Kamui (op 14) and Izanagi (op 15) — RETIRED
+
+**Retirement note (2026-11-27)**: both modules were removed from every layer
+by decision — the core-rs strategies, the oracle twins, the JVM facades, the
+adapter modules, the golden fixtures and the parity suites. The op ids stay
+reserved forever (the op table is append-only); the session answers
+`BadPayload` for both. The analysis below is kept as the record of *why the
+family was lawful in the first place* — the filters it applied are the ones
+any future position-domain module must pass before it is built again.
 
 The two modules deliberately widen the client/server divergence window and settle it
 on the client's schedule. Both run the same filter this document exists to apply —

@@ -24,8 +24,8 @@ import io.doppel.contract.logging.CoreLogger
  *  * keepalive replies are answered even mid-phase, WITHOUT draining the backlog
  *    (reordering a ping reply ahead of held movement is protocol-fine; draining here
  *    would silently end a phase because the server said hello);
- *  * a pending [EventBridge.consumePacketFlush] (Kamui's phase release) lets the
- *    backlog out regardless of any claim.
+ *  * a pending [EventBridge.consumePacketFlush] lets the backlog out regardless
+ *    of any claim.
  *
  * Fail-open direction: no agent attached means no hook and no call into [onOutbound] —
  * every packet is sent exactly as vanilla would. The same holds when the decision path

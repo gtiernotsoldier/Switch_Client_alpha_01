@@ -53,8 +53,6 @@ object AgentBridge {
         "AntiBot" to "player",
         "AutoTool" to "player",
         "FakeLag" to "player",
-        "Kamui" to "player",
-        "Izanagi" to "player",
         "BridgeAssist" to "player",
         "Eagle" to "player",
         "Teams" to "player",

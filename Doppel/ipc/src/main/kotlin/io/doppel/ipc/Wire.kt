@@ -422,8 +422,10 @@ object Ops {
     const val PLAYER_SUPER_KNOCKBACK = 11 // nowNs, hasTarget, triggerOk, inRange, gateOk, entityId, chance, hitCount, delayMs, mode, sprintTapAllowed, coordinationActive → packed step
     const val PLAYER_KEEPSPRINT = 12       // nowNs, tick, localSprinting, attacking, targetAlive, forward, forwardOverride → packed hold status + assert step; no RNG stream
     const val PLAYER_LAGRANGE = 13         // nowNs, guiOpen, hasDist, dist, range, maxDelayMs, sprintResetOn, isSprinting, blockSwordOn, isBlocking, holdingWeaponOn, weaponIsSword, hurtTime → step (0 none, 1 hold, 2 arm, 3 flush); no RNG stream
-    const val PLAYER_KAMUI_TICK = 14       // triggerEdge, guiOpen, dead, phaseTicks, maxHoldTicks, cooldownTicks → packed machine view (bits 0-3 state: 0 idle, 1 phase, 2 cooldown; bits 4-7 flags: bit0 claim this tick, bit1 release this tick; bits 8-19 phaseTick; bits 20-31 cooldownTick); no RNG stream
-    const val PLAYER_IZANAGI_TICK = 15     // feed, tickClock, x, y, z, onGround, markEdge, recallEdge, corridorOk, guiOpen, dead, maxDepth, stallCap, cooldownTicks → position answer (flags u16: low byte ADVANCE/STARTED/ABORTED/DONE, high nibble state: 0 idle, 1 marked, 2 replay, 3 cooldown; aux[0] remaining; motion = x/y/z of the step); kamuiBusy is session-internal (derived from the sibling state, not marshalled); no RNG stream
+    // RETIRED (2026-11): PLAYER_KAMUI_TICK = 14 and PLAYER_IZANAGI_TICK = 15 —
+    // the modules were removed by decision. The ids stay reserved forever (the
+    // op table is append-only, an id is never reused); the core answers
+    // BadPayload. Mirrors the retirement note on `codec::op`.
 }
 
 /**
@@ -527,61 +529,6 @@ fun decodeBool(f: Frame): Boolean {
     b.get(); b.get()
     val flags = b.short.toInt()
     return flags and 1 != 0
-}
-
-/**
- * Izanagi's position answer, decoded.
- *
- * Layout (mirrors `codec::encode_izanagi`): action+reason bytes, then a u16
- * flags field — low byte ADVANCE/STARTED/ABORTED/DONE, high nibble the machine
- * state (0 idle, 1 marked, 2 replay, 3 cooldown) — then the three motion slots
- * carrying the step's x/y/z, then aux[0] = the walk's remaining steps.
- */
-data class IzanagiStep(
-    @JvmField val state: Int,
-    @JvmField val advance: Boolean,
-    @JvmField val started: Boolean,
-    @JvmField val aborted: Boolean,
-    @JvmField val done: Boolean,
-    @JvmField val remaining: Int,
-    @JvmField val x: Double,
-    @JvmField val y: Double,
-    @JvmField val z: Double
-)
-
-/** Flag bits shared with `strategy::izanagi` on the Rust side. */
-object IzanagiFlag {
-    const val ADVANCE = 1
-    const val STARTED = 2
-    const val ABORTED = 4
-    const val DONE = 8
-}
-
-/** Machine states shared with `strategy::izanagi` on the Rust side (high nibble of the flags field). */
-object IzanagiState {
-    const val IDLE = 0
-    const val MARKED = 1
-    const val REPLAY = 2
-    const val COOLDOWN = 3
-}
-
-fun decodeIzanagiStep(f: Frame): IzanagiStep {
-    val b = ByteBuffer.wrap(f.payload, 0, f.payloadLen).order(ByteOrder.LITTLE_ENDIAN)
-    b.get(); b.get()
-    val flags = b.short.toInt() and 0xFFFF
-    val x = b.double
-    val y = b.double
-    val z = b.double
-    val remaining = b.int
-    return IzanagiStep(
-        state = (flags shr 8) and 0xF,
-        advance = flags and IzanagiFlag.ADVANCE != 0,
-        started = flags and IzanagiFlag.STARTED != 0,
-        aborted = flags and IzanagiFlag.ABORTED != 0,
-        done = flags and IzanagiFlag.DONE != 0,
-        remaining = remaining,
-        x = x, y = y, z = z
-    )
 }
 
 /**

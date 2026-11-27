@@ -539,51 +539,17 @@ discipline only. No RNG stream either — the hold machine is deterministic.
 A missing answer means let the packets through: holding is the state that
 can desync the view, the same direction as Backtrack.
 
-`PLAYER_KAMUI_TICK` (14) moves Kamui's whole phase machine into the core:
-the IDLE / PHASE / COOLDOWN states, the tick counters, the cast counter and
-the knob set latched when the phase started (the original engine ignored
-config changes outside IDLE, so a live cast was never retuned mid-flight —
-the latch preserves that). The adapter marshals six arguments per tick:
-the judgements (`trigger_edge` — the key edge that survived its hop from the
-key thread to the tick listener, `gui_open` already folded with FlushOnGui,
-`dead`) and the knobs (`phase_ticks`, `max_hold_ticks`, `cooldown_ticks`).
-The answer is one packed scalar because the HUD reads the whole machine view
-every tick: bits 0-3 state (0 idle, 1 phase, 2 cooldown), bits 4-7 flags
-(bit 0 claim this tick, bit 1 release+flush this tick), bits 8-19 phase_tick,
-bits 20-31 cooldown_tick — the `strategy::kamui::pack` layout, mirrored in
-`Wire.Ops`; the fixture pins the machine in semantic columns, the packing is
-unit-tested in Rust and round-tripped on the wire. The overrides keep their
-order (death hard-resets with no cooldown, a mid-phase GUI ends the cast, the
-cap is `min(Phase, MaxHold)`). No RNG stream — the machine is deterministic.
-The trigger edge is claimed by the adapter AT the keypress (the packet the
-same tick produces may already need holding); a refused edge drops that claim
-on the answer tick, so a wrong guess costs at most one tick of hold. A missing
-answer means release the claim and do NOT flush: holding is the state that
-can desync the view, and a stale claim with no decision behind it is exactly
-the leak class the vault arbiter exists to close — the next CLAIM flag simply
-re-raises the claim.
-
-`PLAYER_IZANAGI_TICK` (15) carries Mark & Recall — the position-rewind family
-alongside Kamui's phase. The trail ring ("what the server has seen", 120-tick
-capacity), the anchor pin with its eviction fuse, the walk list, the stall
-counter and the cooldown live in the core; the adapter marshals fifteen
-arguments per tick — the judgements (`feed` = "the server can see this
-position", false while a Kamui phase holds the connection; `corridor_ok` =
-the platform's collision + danger check, fail-closed without one; `gui_open`,
-`dead`), the key edges and the knobs (`max_depth` — the environment's fuse,
-not the ring's; `stall_cap`; `cooldown_ticks`). The answer is a POSITION, not
-a scalar: the generic Decision payload's motion slots carry the step's x/y/z,
-its u16 flags field carries the machine (low byte ADVANCE/STARTED/ABORTED/
-DONE, high nibble state 0 idle / 1 marked / 2 replay / 3 cooldown) and aux[0]
-the walk's remaining steps — no new frame kind, the 40-byte layout unchanged.
-The replay walks the recorded path back one stored frame per tick at exactly
-1x: every step is a frame the server already accepted once, so no speed
-computation exists yet (the clamped-speed machinery for compressed recalls is
-the later migration). The Kamui arbitration is session-internal: the dispatch
-arm derives `kamui_busy` from the sibling machine's state, so the two
-position-rewriting machines can never race, and no JVM-side cross-module
-reference exists. No RNG stream. A missing answer means no move and no feed:
-moving on a guess desyncs the view, standing still is merely vanilla.
+Ops 14 and 15 are **RETIRED (2026-11 decision)**: `PLAYER_KAMUI_TICK` was
+Kamui's phase machine and `PLAYER_IZANAGI_TICK` was Mark & Recall. The
+modules were removed from every layer (core-rs strategies, the oracle twins,
+the JVM facades and the adapter modules), and their golden fixtures and
+parity suites went with them. The op table is append-only, so **the ids stay
+reserved forever** — no new machine may claim 14 or 15. The core's dispatch
+answers `BadPayload` for both (a retired-op arm with a comment, not a silent
+fall-through), and this table mirrors that note beside `Wire.Ops`. The
+surrounding machinery survives on its own merits: the packet vault's claim
+arbitration and the one-sided flush are still exercised by FakeLag / LagRange
+/ AutoBlock Lag, and `PACKET_PRIORITY_LAG` remains the default priority.
 
 `ClickAssistFlag` in `Wire.kt` is the bit layout for `PLAYER_CLICK_ASSIST`'s
 thirteen predicates. It lives beside the op rather than in the module for the

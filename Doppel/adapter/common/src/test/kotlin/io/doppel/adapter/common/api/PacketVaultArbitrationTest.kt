@@ -16,6 +16,11 @@ import org.junit.jupiter.api.Test
  */
 class PacketVaultArbitrationTest {
 
+    companion object {
+        /** Any high-priority claimant. The retired Kamui module used to be the only one. */
+        private const val PRIORITY_HIGH = 10
+    }
+
     @BeforeEach
     fun setUp() { EventBridge.reset() }
 
@@ -41,15 +46,15 @@ class PacketVaultArbitrationTest {
     @Test
     fun `a hold continues while any claimant remains`() {
         EventBridge.claimPacketHold("FakeLag")
-        EventBridge.claimPacketHold("Kamui", EventBridge.PACKET_PRIORITY_PHASE)
+        EventBridge.claimPacketHold("PhaseHolder", PRIORITY_HIGH)
         assertTrue(EventBridge.packetLagActive)
 
-        // FakeLag's window ends: Kamui's phase keeps the connection held.
+        // FakeLag's window ends: the other claimant keeps the connection held.
         EventBridge.releasePacketHold("FakeLag")
         assertTrue(EventBridge.packetLagActive, "releasing one source never releases the other's hold")
-        assertEquals("Kamui", EventBridge.packetHoldOwner)
+        assertEquals("PhaseHolder", EventBridge.packetHoldOwner)
 
-        EventBridge.releasePacketHold("Kamui")
+        EventBridge.releasePacketHold("PhaseHolder")
         assertFalse(EventBridge.packetLagActive)
     }
 
@@ -58,11 +63,11 @@ class PacketVaultArbitrationTest {
         EventBridge.claimPacketHold("FakeLag")
         assertEquals("FakeLag", EventBridge.packetHoldOwner)
 
-        // A phase outranks a routine lag window while both are live.
-        EventBridge.claimPacketHold("Kamui", EventBridge.PACKET_PRIORITY_PHASE)
-        assertEquals("Kamui", EventBridge.packetHoldOwner)
+        // A high-priority claim outranks a routine lag window while both are live.
+        EventBridge.claimPacketHold("PhaseHolder", PRIORITY_HIGH)
+        assertEquals("PhaseHolder", EventBridge.packetHoldOwner)
 
-        EventBridge.releasePacketHold("Kamui")
+        EventBridge.releasePacketHold("PhaseHolder")
         assertEquals("FakeLag", EventBridge.packetHoldOwner)
     }
 
@@ -79,18 +84,18 @@ class PacketVaultArbitrationTest {
 
     @Test
     fun `releaseAllClaims drops the packet hold too - a dead module cannot stall the connection`() {
-        EventBridge.claimPacketHold("Kamui", EventBridge.PACKET_PRIORITY_PHASE)
+        EventBridge.claimPacketHold("PhaseHolder", PRIORITY_HIGH)
         assertTrue(EventBridge.packetLagActive)
 
         // Module.disable(source) calls this — the module cannot forget to release.
-        EventBridge.releaseAllClaims("Kamui")
+        EventBridge.releaseAllClaims("PhaseHolder")
         assertFalse(EventBridge.packetLagActive)
     }
 
     @Test
     fun `releaseAllPacketHolds clears everything at once`() {
         EventBridge.claimPacketHold("FakeLag")
-        EventBridge.claimPacketHold("Kamui", EventBridge.PACKET_PRIORITY_PHASE)
+        EventBridge.claimPacketHold("PhaseHolder", PRIORITY_HIGH)
         EventBridge.releaseAllPacketHolds()
         assertFalse(EventBridge.packetLagActive)
         assertEquals("", EventBridge.packetHoldOwner)
@@ -100,8 +105,8 @@ class PacketVaultArbitrationTest {
 
     @Test
     fun `a flush request is consumed exactly once`() {
-        EventBridge.requestPacketFlush("Kamui", "phase release")
-        assertEquals("Kamui: phase release", EventBridge.consumePacketFlush())
+        EventBridge.requestPacketFlush("PhaseHolder", "phase release")
+        assertEquals("PhaseHolder: phase release", EventBridge.consumePacketFlush())
         assertNull(EventBridge.consumePacketFlush(), "one request, one flush")
     }
 
@@ -113,7 +118,7 @@ class PacketVaultArbitrationTest {
     @Test
     fun `reset clears the whole vault state`() {
         EventBridge.claimPacketHold("FakeLag")
-        EventBridge.requestPacketFlush("Kamui", "test")
+        EventBridge.requestPacketFlush("PhaseHolder", "test")
         EventBridge.reset()
         assertFalse(EventBridge.packetLagActive)
         assertFalse(EventBridge.packetFlushPending)

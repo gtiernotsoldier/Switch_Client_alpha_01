@@ -192,8 +192,8 @@ object ForgePacketInterceptor : ChannelDuplexHandler() {
 
     override fun write(ctx: ChannelHandlerContext, msg: Any, promise: io.netty.channel.ChannelPromise) {
         try {
-            // A module demanded the backlog out NOW (Kamui's phase release): claims no longer
-            // decide, the flush wins. Consumed exactly once.
+            // A module demanded the backlog out NOW: claims no longer decide,
+            // the flush wins. Consumed exactly once.
             val flushReason = EventBridge.consumePacketFlush()
             if (flushReason != null) {
                 releaseHeld(ctx)

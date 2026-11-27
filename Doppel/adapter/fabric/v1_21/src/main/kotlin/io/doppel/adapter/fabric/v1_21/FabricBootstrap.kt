@@ -51,13 +51,6 @@ object FabricBootstrap : ClientModInitializer {
             // The vault's end-of-tick sweep: honor a flush request even when no new packet flows.
             FabricPacketVault.tick()
 
-            // Izanagi's platform write: apply the replay step the core walked back
-            // to. A step is a frame the server already accepted once — this is a
-            // reposition, not a teleport; the corridor check already vetted the
-            // segment before the core advanced.
-            EventBridge.consumeReplayPosition()?.let { rp ->
-                client.player?.refreshPositionAndAngles(rp.x, rp.y, rp.z, client.player!!.yaw, client.player!!.pitch)
-            }
             setupKeyCallback(client)
         }
 
@@ -73,12 +66,6 @@ object FabricBootstrap : ClientModInitializer {
         // stay compilable (and runnable) without it: the agent jar rides the system
         // classpath, so knot's parent chain sees it once the agent is attached. Without
         // the agent the hooks never fire anyway — one INFO line and pure pass-through.
-        // Izanagi's platform surface: this adapter CAN reposition the player and
-        // owns the corridor query, so it registers both — the capability gate and
-        // the checker. A platform without either fails closed (no recalls), so
-        // registering them here is what enables the module, not the module itself.
-        EventBridge.supportsReplayPosition = true
-        EventBridge.corridorChecker = { x, y, z -> corridorClear(client, x, y, z) }
 
         try {
             val bridgeClass = Class.forName("io.doppel.agent.PacketBridge")
@@ -164,28 +151,6 @@ object FabricBootstrap : ClientModInitializer {
         })
 
         keyCallbackInitialized = true
-    }
-
-    /**
-     * The corridor judgement for Izanagi's replay: the segment is clear when the
-     * player's own body volume fits at the target position (collision) AND the
-     * feet block plus the one below it carry no danger source (lava, fire,
-     * cactus). Deliberately conservative — anything the world query cannot
-     * answer fails closed, because a false "clear" walks the body into geometry.
-     */
-    private fun corridorClear(client: net.minecraft.client.MinecraftClient, x: Double, y: Double, z: Double): Boolean {
-        val world = client.world ?: return false
-        val player = client.player ?: return false
-        val box = player.boundingBox.offset(x - player.x, y - player.y, z - player.z)
-        if (!world.isSpaceEmpty(player, box)) return false
-        for (dy in intArrayOf(0, -1)) {
-            val bp = net.minecraft.util.math.BlockPos.ofFloored(x, y + dy, z)
-            val state = world.getBlockState(bp)
-            if (state.isIn(net.minecraft.registry.tag.BlockTags.FIRE)) return false
-            if (state.isOf(net.minecraft.block.Blocks.LAVA)) return false
-            if (state.isOf(net.minecraft.block.Blocks.CACTUS)) return false
-        }
-        return true
     }
 
     /**

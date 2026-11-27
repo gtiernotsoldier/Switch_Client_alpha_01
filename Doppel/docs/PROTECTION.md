@@ -429,6 +429,7 @@ offline **不是 HUD 功能，也不进 Kotlin**。它是外部进程侧对「�
 > | BlockHit 随机 | **已迁移（2026-11-08）**：fire 点 post-delay / wait 两段抽样与 on-enable hitPer 阈值抽样（含 `coerceAtLeast(1)` clamp）全部进 `strategy::blockhit_sample`（`CBT_BLOCKHIT_SAMPLE` = 6，独立 `rng_blockhit` 流，退化区间不掷骰、FIRE 先 post 后 wait 保持原抽取顺序）；模块只剩物理 / 合成点击状态、target / sword 守卫、CombatTrigger 判定编组与 pressBlock / releaseBlock 平台副作用；chance 掷骰本就在 core（`CBT_DECIDE` 的 `rng_combat`），本次只关掉最后一个 `kotlin.random` 洞 | 达成；`BlockHitSampleParityTest` 500 行对拍，真实 socket 往返有 E2E 覆盖；**Block 家族完成，adapter 模块侧 `kotlin.random` 清零** |
 | KeepSprint 本地状态机 | **已迁移（2026-11-08）**：sprint 采样锁存（120ms）、两个 dispatch 的 hold 窗口、150ms 墙钟兜底与逐 tick assert 去重全部进 `strategy::keep_sprint`（`PLAYER_KEEPSPRINT` = 12，无 RNG 流——模块本无随机）；模块只剩攻击复合判定、target 存活、forward 仲裁、tap 占用 W 判断、编组与 claimSprint / C0B 平台副作用。answer 低四位是 hold **状态**（DEAD/LIVE/RELEASE）而非仅事件：DEAD 或无应答都交还 claim，治的是 Reset / core 重启后 claim 悬挂这一类泄漏；模块还把原 early-return 重排为空闲帧短路，空闲帧零往返 | 达成；`KeepSprintParityTest` 500 帧对拍，真实 socket 往返有 E2E 覆盖；首个**帧频** op，理由与 HitSelect 的逐帧拒绝同页对举：无随机流可供帧率驱动 |
 | LagRange 本地状态机 | **已迁移（2026-11-08）**：上一 tick 距离基准、伤害上升沿（hurtTime 倒计时不误判）、sprint / block 上升沿与 hold 起始时间戳全部进 `strategy::lag_range`（`PLAYER_LAGRANGE` = 13，无 RNG 流）；模块只剩 GUI / 距离 / 剑判定编组与单一 `packetLagActive` 平台副作用；无应答一律放行包——持包才是能 desync 视角的那个状态，与 Backtrack 同向；`last_dist` 以 f32 原始位进 fixture，与 velocity 的 f64 位规则同源 | 达成；`LagRangeParityTest` 500 tick 对拍（七种 flush 原因全覆盖断言），真实 socket 往返有 E2E 覆盖 |
+| Kamui + Izanagi（desync 家族） | **已退役（2026-11-27 决定）**：两个模块从所有层拆除——`strategy::kamui` / `strategy::izanagi`、oracle 孪生、`Strategies` / `CoreStub` facade、adapter 模块、golden fixtures 与对拍套件。**op id 14 / 15 永久退役**：op 表 append-only，id 不复用，session 派遣臂显式答 `BadPayload` 并带注释（codec.rs / Wire.kt 两侧各留退役标记）。vault 的 claim 仲裁与单边 flush **保留**——FakeLag / LagRange / AutoBlock Lag 继续使用，`PACKET_PRIORITY_PHASE` 随唯一使用者一并移除。EventBridge 的 `kamuiPhaseActive` / replay-position 面 / corridor checker 随模块拆除（唯一消费者没了） | 证据：`cargo test` 262 用例 + `--selftest` 全绿；`:adapter:common:test` 与 `:core:test` 全绿（parity 门禁在 fixture 撤除后自然关闭）；线缆两侧注释同步 |
 >
 > 注：`agent.jar` 内的 `CoreStub` / `Strategies` / wire 表本来就会暴露「存在外部算法进程」，
 > 所以把 offline 从 jar 里挪出去**不是防护增强**，只是架构归位与视觉约束。
@@ -514,8 +515,6 @@ tick 边界（50ms 一次）
 | `PLAYER_BACKTRACK_TICK` | `release()` | 宁可放过也不悬着状态 |
 | `PLAYER_KEEPSPRINT` | 交还 sprint claim（等同 DEAD） | 悬挂的 ADDITIVE sprint 声明与 AutoBlock lag 窗口同属一类泄漏；无应答即"无意见"，归还即释放 |
 | `PLAYER_LAGRANGE` | 放行所有包（不持有） | 持包才是会 desync 视角的状态，与 Backtrack 同向 |
-| `PLAYER_KAMUI_TICK` | 释放 claim，不 flush | 持包才是会 desync 视角的状态：无应答的 claim 背后没有决策，正是 vault 仲裁要关掉的泄漏类；下一次 CLAIM 标志会把它重新拉起 |
-| `PLAYER_IZANAGI_TICK` | 不移动、不喂数据 | 位置重演是会 desync 视角的状态：无应答就原地站立——不移动只是原版；下一拍的 ADVANCE 自然续上 |
 | `Velocity` 同步决策 | `Pass(original motion)` | 见上，`Modify` 不可重放 |
 | 其余 tick 级 op | 本拍无动作 | 状态留在 core，下一拍自然续上 |
 

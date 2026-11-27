@@ -697,31 +697,6 @@ pub fn encode_scalar(seq: u32, tick: u32, module: Module, action: WireAction, v:
     f
 }
 
-/// A position answer — Izanagi's replay step. The generic Decision payload
-/// already carries three f64 slots (the velocity motion vector) plus a u16
-/// flags field and two i32 aux slots, so no new frame kind is needed:
-/// flags = low byte FLAG_* | high nibble state, aux[0] = remaining steps,
-/// x/y/z = the position to report this tick (meaningful only with ADVANCE).
-pub fn encode_izanagi(seq: u32, tick: u32, a: &crate::strategy::izanagi::Answer) -> Frame {
-    let mut f = Frame::new(Kind::Decision, seq, tick, Module::Player);
-    let mut buf = [0u8; 40];
-    {
-        let mut w = Writer::new(&mut buf);
-        w.u8(WireAction::Scalar as u8);
-        w.u8(Reason::None as u8);
-        w.u16(((a.flags as u16) & 0xFF) | ((a.state as u16) << 8));
-        w.f64(a.x);
-        w.f64(a.y);
-        w.f64(a.z);
-        w.i32(a.remaining);
-        w.i32(0);
-        w.u32(tick);
-    }
-    f.payload[..40].copy_from_slice(&buf);
-    f.set_len(40);
-    f
-}
-
 /// A variable-length list of released motions: `count(u16)` then `count * (x, y, z)`.
 ///
 /// The knockback delay can release several packets on the same tick, so this cannot reuse the
@@ -1041,35 +1016,15 @@ pub mod op {
     /// deterministic.
     pub const PLAYER_LAGRANGE: u8 = 13;
 
-    /// player/kamui: `tick(trigger_edge, gui_open, dead, phase_ticks,
-    ///        max_hold_ticks, cooldown_ticks)` → packed machine view.
-    ///
-    /// The phase machine (IDLE / PHASE / COOLDOWN), the tick counters, the
-    /// cast counter and the knob set latched when the phase started live in
-    /// the core; the JVM keeps the dead / GUI judgements, the trigger key
-    /// edge and the claim / release / flush writes. The answer packs the
-    /// whole machine view because the HUD reads the state and both counters
-    /// every tick: bits 0-3 state (0 idle, 1 phase, 2 cooldown), bits 4-7
-    /// flags (bit 0 claim this tick, bit 1 release this tick), bits 8-19
-    /// phase_tick, bits 20-31 cooldown_tick — the `strategy::kamui::pack`
-    /// layout, mirrored in `Wire.Ops`. No RNG stream — the machine is
-    /// deterministic.
+    /// RETIRED (2026-11): was player/kamui, the phase machine (op id 14).
+    /// The id is retired, never reused — the op table is append-only. The
+    /// session rejects the op with BadPayload; the modules were removed by
+    /// decision (see PROTECTION.md §9 and the migration ledger).
     pub const PLAYER_KAMUI_TICK: u8 = 14;
 
-    /// player/izanagi: `tick(feed, tick_clock, x, y, z, on_ground, mark_edge,
-    ///        recall_edge, corridor_ok, gui_open, dead, kamui_busy, max_depth,
-    ///        stall_cap, cooldown_ticks)` → position answer.
-    ///
-    /// Mark & Recall: the trail ring, the anchor pin (with its eviction fuse),
-    /// the walk list and the stall/cooldown counters live in the core; the JVM
-    /// keeps the judgements (death, GUI, "can the server see this position",
-    /// the corridor collision/danger check) and the platform write (move the
-    /// player to the returned step). `kamui_busy` is session-internal: the
-    /// dispatch arm passes `self.kamui.state == PHASE`, so the two machines can
-    /// never race without any JVM-side cross-module reference. The answer is a
-    /// position, not a scalar: flags u16 (low byte FLAG_*, high nibble state)
-    /// + x/y/z in the motion slots + remaining in aux[0]. No RNG stream — the
-    /// walk replays stored frames at exactly 1x, physics-legal by construction.
+    /// RETIRED (2026-11): was player/izanagi, Mark & Recall (op id 15).
+    /// Same retirement rules as op 14: id reserved forever, session answers
+    /// BadPayload, no new machine may claim the number.
     pub const PLAYER_IZANAGI_TICK: u8 = 15;
 }
 
@@ -1177,8 +1132,6 @@ pub fn known_ops(module: Module) -> &'static [u8] {
             op::PLAYER_SUPER_KNOCKBACK,
             op::PLAYER_KEEPSPRINT,
             op::PLAYER_LAGRANGE,
-            op::PLAYER_KAMUI_TICK,
-            op::PLAYER_IZANAGI_TICK,
         ],
         Module::Velocity => &[op::VEL_BRACE, op::VEL_DELAY_ENQUEUE, op::VEL_DELAY_PUMP],
         _ => &[],

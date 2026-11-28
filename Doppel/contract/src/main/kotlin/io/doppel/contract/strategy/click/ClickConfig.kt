@@ -19,7 +19,20 @@ data class ClickConfig(
     val clickMode: ClickMode = ClickMode.SINGLE,
     val mode: ClickOperatingMode = ClickOperatingMode.NORMAL,
     val disableOnBlock: Boolean = true,
-    val triggerOptions: TriggerOptions = TriggerOptions()
+    val triggerOptions: TriggerOptions = TriggerOptions(),
+    // ── 1.8 rhythm shaping (tunable) ────────────────────────────────────
+    // Short names on purpose; defaults match the old consts bit-for-bit.
+    /** AR(1) persistence of the interval jitter. 0 = no bursts, 1 = frozen. */
+    val jitter: Float = 0.65f,
+    /** Jitter target drawn in [jitterMin, jitterMin + jitterVar). */
+    val jitterMin: Float = 0.8f,
+    val jitterVar: Float = 0.4f,
+    /** Chance of a rare long (pause / re-acquisition) interval. */
+    val pause: Float = 0.05f,
+    val pauseLow: Float = 2.0f,
+    val pauseVar: Float = 2.0f,
+    /** Reaction floor in ticks after the gates break. 0 removes the floor. */
+    val react: Int = 4
 )
 
 /**

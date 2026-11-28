@@ -62,8 +62,8 @@ object AutoClicker : Module("AutoClicker", Category.COMBAT), HudLineProvider {
     var combatVersion by choices("CombatVersion", arrayOf("1.8", "1.9+"))
 
     // ========== 1.8 Configuration (Delegated Properties) ==========
-    private val maxCps by int("MaxCPS", 10, 0..20, "cps")
-    private val minCps by int("MinCPS", 8, 0..20, "cps")
+    private val maxCps by int("MaxCPS", 10, 0..25, "cps")
+    private val minCps by int("MinCPS", 8, 0..25, "cps")
     /** Click pattern — Slinky: Single | Double | Butterfly. Butterfly emits two tight clicks per
      *  cadence (legit butterfly clicking); recommended above ~15 CPS to avoid flagging. */
     private val clickPattern by choices("ClickPattern", arrayOf("Single", "Double", "Butterfly"))

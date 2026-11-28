@@ -598,6 +598,10 @@ pub fn decode_click_config(buf: &[u8], len: usize) -> Result<ClickConfigKind, St
                 mode,
                 disable_on_block,
                 trigger_options,
+                // Rhythm shaping fields are not on the wire yet (v1 38-byte
+                // click config is unchanged). They stay at their tuned
+                // defaults until a future append-only wire op carries them.
+                ..Default::default()
             }))
         }
         1 => {

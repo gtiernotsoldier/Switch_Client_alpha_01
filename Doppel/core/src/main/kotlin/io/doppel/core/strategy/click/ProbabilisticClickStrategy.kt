@@ -84,7 +84,7 @@ class ProbabilisticClickStrategy : ClickStrategy<ClickConfig, ClickStrategy.Stat
         //    and fires on zero.
         if (!state.rhythmLive) {
             val interval = drawInterval(config, state, target, random)
-                .coerceAtLeast(RE_ENGAGE_MIN_TICKS)
+                .coerceAtLeast(config.react)
             state.nextClickIn = interval - 1
             state.rhythmLive = true
             return ClickResult.Skip
@@ -129,13 +129,13 @@ class ProbabilisticClickStrategy : ClickStrategy<ClickConfig, ClickStrategy.Stat
         val tempoF = tempo.coerceAtLeast(1).toFloat()
 
         // AR(1) jitter around 1.0: bursts of short intervals, lulls of long
-        // ones.
-        val jitterTarget = JITTER_LO + JITTER_SPAN * random.nextFloat()
-        state.jitter = JITTER_PERSIST * state.jitter + (1f - JITTER_PERSIST) * jitterTarget
+        // ones. Draw order is unchanged — config only supplies the coefficients.
+        val jitterTarget = config.jitterMin + config.jitterVar * random.nextFloat()
+        state.jitter = config.jitter * state.jitter + (1f - config.jitter) * jitterTarget
 
         var interval = (20.0f / tempoF) * state.jitter
-        if (random.nextFloat() < PAUSE_CHANCE) {
-            interval *= PAUSE_MIN + PAUSE_SPAN * random.nextFloat()
+        if (random.nextFloat() < config.pause) {
+            interval *= config.pauseLow + config.pauseVar * random.nextFloat()
         }
         return (interval + 0.5f).toInt().coerceAtLeast(1)
     }

@@ -91,6 +91,22 @@ pub struct ClickConfig {
     pub mode: ClickOperatingMode,
     pub disable_on_block: bool,
     pub trigger_options: TriggerOptions,
+    // ── 1.8 rhythm shaping (tunable) ────────────────────────────────────
+    // Short names on purpose — these are the knobs a human reads. Defaults
+    // match the old consts bit-for-bit, so golden fixtures are unchanged.
+    /// AR(1) persistence of the interval jitter (lag-1 autocorrelation).
+    /// 0 = no bursts, 1 = frozen.
+    pub jitter: f32,
+    /// Jitter target drawn in [jitter_min, jitter_min + jitter_var).
+    /// For flat intervals: jitter=0, jitter_min=1.0, jitter_var=0.0.
+    pub jitter_min: f32,
+    pub jitter_var: f32,
+    /// Chance of a rare long (pause / re-acquisition) interval.
+    pub pause: f32,
+    pub pause_low: f32,
+    pub pause_var: f32,
+    /// Reaction floor in ticks after the gates break. 0 removes the floor.
+    pub react: i32,
 }
 
 impl Default for ClickConfig {
@@ -102,6 +118,13 @@ impl Default for ClickConfig {
             mode: ClickOperatingMode::Normal,
             disable_on_block: true,
             trigger_options: TriggerOptions::default(),
+            jitter: JITTER_PERSIST,
+            jitter_min: JITTER_LO,
+            jitter_var: JITTER_SPAN,
+            pause: PAUSE_CHANCE,
+            pause_low: PAUSE_MIN,
+            pause_var: PAUSE_SPAN,
+            react: RE_ENGAGE_MIN_TICKS,
         }
     }
 }
@@ -258,7 +281,7 @@ pub fn probabilistic_tick(
     // 5. The rhythm scheduler. An idle rhythm re-arms with a fresh interval
     //    (the reaction gap, floored); a live one counts down and fires on zero.
     if !state.rhythm_live {
-        let interval = draw_interval(config, state, input, rng).max(RE_ENGAGE_MIN_TICKS);
+        let interval = draw_interval(config, state, input, rng).max(config.react);
         state.next_click_in = interval - 1;
         state.rhythm_live = true;
         return ClickResult::Skip;
@@ -298,12 +321,13 @@ fn draw_interval(
     let tempo = tempo.max(1) as f32;
 
     // AR(1) jitter around 1.0: bursts of short intervals, lulls of long ones.
-    let target = JITTER_LO + JITTER_SPAN * rng.next_float();
-    state.jitter = JITTER_PERSIST * state.jitter + (1.0f32 - JITTER_PERSIST) * target;
+    // Draw order is unchanged — config only supplies the coefficients.
+    let target = config.jitter_min + config.jitter_var * rng.next_float();
+    state.jitter = config.jitter * state.jitter + (1.0f32 - config.jitter) * target;
 
     let mut interval = (20.0f32 / tempo) * state.jitter;
-    if rng.next_float() < PAUSE_CHANCE {
-        interval *= PAUSE_MIN + PAUSE_SPAN * rng.next_float();
+    if rng.next_float() < config.pause {
+        interval *= config.pause_low + config.pause_var * rng.next_float();
     }
     ((interval + 0.5f32) as i32).max(1)
 }

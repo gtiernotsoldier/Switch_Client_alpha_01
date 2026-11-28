@@ -77,7 +77,23 @@ public class MappingContext {
     private static Map<String, Object> MAPPINGS = new ConcurrentHashMap<>();
     private static Map<String, String> ALIASES = new ConcurrentHashMap<>();
     private static Map<String, Class<?>> CLASS_CACHE = new ConcurrentHashMap<>();
-    private static Map<String, MethodHandle> METHOD_CACHE = new ConcurrentHashMap<>();
+    /**
+     * Method cache keyed by BOTH the primary mapping key and every alias/semantic
+     * key that resolved to it. The hot path — [invokeMethod] on the 20 Hz tick —
+     * is one lookup on the key the caller actually passed; the resolution chain
+     * (primary-map probe, alias probe, reflection) runs only on the first call.
+     *
+     * Caches the reflective [Method], not a MethodHandle: `Method.invoke` on an
+     * accessible method JIT-inflates to a near-direct call, while the generic
+     * `bindTo(...).invokeWithArguments(...)` chain pays an adapter and an
+     * Object[] boxing on every invocation. [getMethod] still hands out
+     * MethodHandles for the cold-path callers that cache them in `by lazy`.
+     */
+    private static Map<String, Method> METHOD_CACHE = new ConcurrentHashMap<>();
+    /**
+     * Same dual-key caching as [METHOD_CACHE]: one lookup per field read on the
+     * hot path, resolution only on the first call.
+     */
     private static Map<String, Field> FIELD_CACHE = new ConcurrentHashMap<>();
     
     /**
@@ -160,86 +176,117 @@ public class MappingContext {
      * @return MethodHandle for invocation
      */
     public static MethodHandle getMethod(String key) {
+        Method found = resolveMethod(key);
+        if (found == null) return null;
+        try {
+            return MethodHandles.lookup().unreflect(found);
+        } catch (IllegalAccessException e) {
+            logErr("Cannot access method for key " + key + ": " + e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * The hot-path resolver behind [invokeMethod] and [getMethod]: the cached
+     * [Method] under whichever key the caller used, resolved on first call.
+     */
+    private static Method resolveMethod(String key) {
+        Method cached = METHOD_CACHE.get(key);
+        if (cached != null) return cached;
+
         String resolvedKey = resolveKey(key);
-        return METHOD_CACHE.computeIfAbsent(resolvedKey, k -> {
-            Object mapping = MAPPINGS.get(k);
-            if (mapping == null) {
-                logErr("No method mapping found for key: " + key + " (resolved: " + k + ")");
+        if (!resolvedKey.equals(key)) {
+            Method viaPrimary = METHOD_CACHE.get(resolvedKey);
+            if (viaPrimary != null) {
+                METHOD_CACHE.put(key, viaPrimary);
+                return viaPrimary;
+            }
+        }
+
+        Method found = METHOD_CACHE.computeIfAbsent(resolvedKey, k -> resolveMethodEntry(key, k));
+        if (found != null && !resolvedKey.equals(key)) {
+            // Remember the alias the caller actually used, so the next call is
+            // a single lookup.
+            METHOD_CACHE.put(key, found);
+        }
+        return found;
+    }
+
+    private static Method resolveMethodEntry(String askedKey, String k) {
+        Object mapping = MAPPINGS.get(k);
+        if (mapping == null) {
+            logErr("No method mapping found for key: " + askedKey + " (resolved: " + k + ")");
+            return null;
+        }
+        try {
+            @SuppressWarnings("unchecked")
+            Map<String, String> entry = (Map<String, String>) mapping;
+            String className = entry.get("class");
+            String methodName = entry.get("method");
+            if (className == null || methodName == null) {
+                // The usual cause is calling invokeMethod() on a FIELD entry. Say so
+                // explicitly: the caller turns the null into a default value, so the only
+                // symptom is a feature that quietly does nothing — which is exactly how
+                // forge:keybinding_keyCode disabled every physical-key check.
+                Object fieldName = entry.get("field");
+                if (className != null && fieldName != null) {
+                    logErr("Mapping '" + k + "' is a FIELD (" + className + "." + fieldName
+                            + ") but was read with invokeMethod() — use getFieldValue()");
+                } else {
+                    logErr("Missing 'class' or 'method' in mapping for key: " + k);
+                }
                 return null;
             }
-            try {
-                @SuppressWarnings("unchecked")
-                Map<String, String> entry = (Map<String, String>) mapping;
-                String className = entry.get("class");
-                String methodName = entry.get("method");
-                if (className == null || methodName == null) {
-                    // The usual cause is calling invokeMethod() on a FIELD entry. Say so
-                    // explicitly: the caller turns the null into a default value, so the only
-                    // symptom is a feature that quietly does nothing — which is exactly how
-                    // forge:keybinding_keyCode disabled every physical-key check.
-                    Object fieldName = entry.get("field");
-                    if (className != null && fieldName != null) {
-                        logErr("Mapping '" + k + "' is a FIELD (" + className + "." + fieldName
-                                + ") but was read with invokeMethod() — use getFieldValue()");
-                    } else {
-                        logErr("Missing 'class' or 'method' in mapping for key: " + k);
-                    }
-                    return null;
+            Class<?> clazz = Class.forName(className);
+            // Search declared methods (including private) first, then public inherited
+            Method found = null;
+            for (Method m : clazz.getDeclaredMethods()) {
+                if (m.getName().equals(methodName)) {
+                    found = m;
+                    break;
                 }
-                Class<?> clazz = Class.forName(className);
-                // Search declared methods (including private) first, then public inherited
-                Method found = null;
-                for (Method m : clazz.getDeclaredMethods()) {
+            }
+            if (found == null) {
+                for (Method m : clazz.getMethods()) {
                     if (m.getName().equals(methodName)) {
                         found = m;
                         break;
                     }
                 }
-                if (found == null) {
-                    for (Method m : clazz.getMethods()) {
-                        if (m.getName().equals(methodName)) {
+            }
+            if (found == null) {
+                // SRG name not found — try MCP fallback (handles non-obfuscated/Forge-added methods)
+                @SuppressWarnings("unchecked")
+                Map<String, String> entryMap = (Map<String, String>) mapping;
+                String mcpName = entryMap.get("mcp");
+                if (mcpName != null && !mcpName.equals(methodName)) {
+                    logErr("SRG method '" + methodName + "' not found in " + className + ", trying MCP fallback '" + mcpName + "'");
+                    for (Method m : clazz.getDeclaredMethods()) {
+                        if (m.getName().equals(mcpName)) {
                             found = m;
                             break;
                         }
                     }
-                }
-                if (found == null) {
-                    // SRG name not found — try MCP fallback (handles non-obfuscated/Forge-added methods)
-                    @SuppressWarnings("unchecked")
-                    Map<String, String> entryMap = (Map<String, String>) mapping;
-                    String mcpName = entryMap.get("mcp");
-                    if (mcpName != null && !mcpName.equals(methodName)) {
-                        logErr("SRG method '" + methodName + "' not found in " + className + ", trying MCP fallback '" + mcpName + "'");
-                        for (Method m : clazz.getDeclaredMethods()) {
+                    if (found == null) {
+                        for (Method m : clazz.getMethods()) {
                             if (m.getName().equals(mcpName)) {
                                 found = m;
                                 break;
                             }
                         }
-                        if (found == null) {
-                            for (Method m : clazz.getMethods()) {
-                                if (m.getName().equals(mcpName)) {
-                                    found = m;
-                                    break;
-                                }
-                            }
-                        }
                     }
                 }
-                if (found == null) {
-                    logErr("Method '" + methodName + "' not found in " + className + " for key: " + k);
-                    return null;
-                }
-                found.setAccessible(true);
-                return MethodHandles.lookup().unreflect(found);
-            } catch (ClassNotFoundException e) {
-                logErr("Class not found for key " + k + ": " + e.getMessage());
-                return null;
-            } catch (IllegalAccessException e) {
-                logErr("Cannot access method for key " + k + ": " + e.getMessage());
+            }
+            if (found == null) {
+                logErr("Method '" + methodName + "' not found in " + className + " for key: " + k);
                 return null;
             }
-        });
+            found.setAccessible(true);
+            return found;
+        } catch (ClassNotFoundException e) {
+            logErr("Class not found for key " + k + ": " + e.getMessage());
+            return null;
+        }
     }
     
     /**
@@ -248,61 +295,80 @@ public class MappingContext {
      * @return Field object for reflection access
      */
     public static Field getField(String key) {
+        Field cached = FIELD_CACHE.get(key);
+        if (cached != null) return cached;
+
         String resolvedKey = resolveKey(key);
-        return FIELD_CACHE.computeIfAbsent(resolvedKey, k -> {
-            Object mapping = MAPPINGS.get(k);
-            if (mapping == null) {
-                logErr("No field mapping found for key: " + key + " (resolved: " + k + ")");
+        if (!resolvedKey.equals(key)) {
+            Field viaPrimary = FIELD_CACHE.get(resolvedKey);
+            if (viaPrimary != null) {
+                FIELD_CACHE.put(key, viaPrimary);
+                return viaPrimary;
+            }
+        }
+
+        Field found = FIELD_CACHE.computeIfAbsent(resolvedKey, k -> resolveFieldEntry(key, k));
+        if (found != null && !resolvedKey.equals(key)) {
+            // Remember the alias the caller actually used, so the next read is
+            // a single lookup.
+            FIELD_CACHE.put(key, found);
+        }
+        return found;
+    }
+
+    private static Field resolveFieldEntry(String askedKey, String k) {
+        Object mapping = MAPPINGS.get(k);
+        if (mapping == null) {
+            logErr("No field mapping found for key: " + askedKey + " (resolved: " + k + ")");
+            return null;
+        }
+        String className = null;
+        String fieldName = null;
+        try {
+            @SuppressWarnings("unchecked")
+            Map<String, String> entry = (Map<String, String>) mapping;
+            className = entry.get("class");
+            fieldName = entry.get("field");
+            if (className == null || fieldName == null) {
+                // Mirror of the message in getMethod(): name the mismatch instead of
+                // leaving the reader to guess which of class/field/method is wrong.
+                Object methodName = entry.get("method");
+                if (className != null && methodName != null) {
+                    logErr("Mapping '" + k + "' is a METHOD (" + className + "." + methodName
+                            + ") but was read with getFieldValue() — use invokeMethod()");
+                } else {
+                    logErr("Missing 'class' or 'field' in mapping for key: " + k);
+                }
                 return null;
             }
-            String className = null;
-            String fieldName = null;
+            Class<?> clazz = Class.forName(className);
+            Field field = null;
             try {
+                field = clazz.getDeclaredField(fieldName);
+            } catch (NoSuchFieldException e) {
+                // SRG name not found — try MCP fallback (handles non-obfuscated/Forge-added fields)
                 @SuppressWarnings("unchecked")
-                Map<String, String> entry = (Map<String, String>) mapping;
-                className = entry.get("class");
-                fieldName = entry.get("field");
-                if (className == null || fieldName == null) {
-                    // Mirror of the message in getMethod(): name the mismatch instead of
-                    // leaving the reader to guess which of class/field/method is wrong.
-                    Object methodName = entry.get("method");
-                    if (className != null && methodName != null) {
-                        logErr("Mapping '" + k + "' is a METHOD (" + className + "." + methodName
-                                + ") but was read with getFieldValue() — use invokeMethod()");
-                    } else {
-                        logErr("Missing 'class' or 'field' in mapping for key: " + k);
-                    }
-                    return null;
-                }
-                Class<?> clazz = Class.forName(className);
-                Field field = null;
-                try {
-                    field = clazz.getDeclaredField(fieldName);
-                } catch (NoSuchFieldException e) {
-                    // SRG name not found — try MCP fallback (handles non-obfuscated/Forge-added fields)
-                    @SuppressWarnings("unchecked")
-                    Map<String, String> entryMap = (Map<String, String>) mapping;
-                    String mcpName = entryMap.get("mcp");
-                    if (mcpName != null && !mcpName.equals(fieldName)) {
-                        logErr("SRG field '" + fieldName + "' not found in " + className + ", trying MCP fallback '" + mcpName + "'");
-                        try {
-                            field = clazz.getDeclaredField(mcpName);
-                        } catch (NoSuchFieldException e2) {
-                            logErr("MCP field '" + mcpName + "' also not found in " + className + " for key: " + k);
-                            return null;
-                        }
-                    } else {
-                        logErr("Field '" + fieldName + "' not found in " + className + " for key: " + k);
+                Map<String, String> entryMap = (Map<String, String>) mapping;
+                String mcpName = entryMap.get("mcp");
+                if (mcpName != null && !mcpName.equals(fieldName)) {
+                    logErr("SRG field '" + fieldName + "' not found in " + className + ", trying MCP fallback '" + mcpName + "'");
+                    try {
+                        field = clazz.getDeclaredField(mcpName);
+                    } catch (NoSuchFieldException e2) {
+                        logErr("MCP field '" + mcpName + "' also not found in " + className + " for key: " + k);
                         return null;
                     }
+                } else {
+                    logErr("Field '" + fieldName + "' not found in " + className + " for key: " + k);
+                    return null;
                 }
-                field.setAccessible(true);
-                return field;
-            } catch (ClassNotFoundException e) {
-                logErr("Class not found for key " + k + ": " + e.getMessage());
-                return null;
             }
-        });
+            field.setAccessible(true);
+            return field;
+        } catch (ClassNotFoundException e) {
+            logErr("Class not found for key " + k + ": " + e.getMessage());
+            return null;
+        }
     }
     
     /**
@@ -396,7 +462,8 @@ public class MappingContext {
                         + " but the receiver is " + obj.getClass().getName() + " — wrong object passed");
                 return null;
             }
-            field.setAccessible(true);
+            // setAccessible happened once at resolve time; re-asserting it per call
+            // was a redundant security check on every field read of every tick.
             return field.get(obj);
         } catch (Exception e) {
             // Include the detail: a bare "failed" line is indistinguishable from a mapping
@@ -415,19 +482,19 @@ public class MappingContext {
      */
     public static Object invokeMethod(Object obj, String key, Object... args) {
         try {
-            MethodHandle handle = getMethod(key);
-            if (handle == null) return null;
-            if (obj == null) {
-                // Static method (e.g. Minecraft.getMinecraft) — no receiver.
-                // bindTo(null) on a zero-arg static MethodHandle throws
-                // IllegalStateException "no leading reference parameter",
-                // which made mc_getMinecraft return null on every call
-                // (silent render failure — confirmed 2026-08-05).
-                return handle.invokeWithArguments(args);
-            }
-            return handle.bindTo(obj).invokeWithArguments(args);
+            Method method = resolveMethod(key);
+            if (method == null) return null;
+            // Plain reflective invoke on the cached accessible Method: it
+            // JIT-inflates to a near-direct call, and handles both static
+            // (obj == null) and instance receivers without the per-call
+            // bindTo adapter the generic MethodHandle path needed.
+            return method.invoke(obj, args);
         } catch (Throwable e) {
-            logErr("Failed to invoke method for key: " + key + ": " + e);
+            // Method.invoke wraps whatever the target threw in
+            // InvocationTargetException; the useful message is in the cause.
+            Throwable reported = (e instanceof java.lang.reflect.InvocationTargetException && e.getCause() != null)
+                    ? e.getCause() : e;
+            logErr("Failed to invoke method for key: " + key + ": " + reported);
             return null;
         }
     }

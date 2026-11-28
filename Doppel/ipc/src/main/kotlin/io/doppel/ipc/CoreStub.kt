@@ -10,8 +10,6 @@ import java.net.InetSocketAddress
 import java.net.Socket
 import java.nio.channels.Channels
 import java.nio.channels.SocketChannel
-import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
@@ -50,16 +48,26 @@ sealed class Endpoint {
  * the middle of a frame is an [IOException] — the peer died holding half a
  * message, and silently treating that as EOF would let a truncated stream look
  * like a graceful shutdown.
+ *
+ * `setTimeoutMillis` bounds a blocking read. A timeout fires as
+ * [java.net.SocketTimeoutException] (an [IOException]) and — because it can land
+ * mid-frame — the caller must treat the connection as dead, never reuse it.
+ * The TCP path implements it with `Socket.setSoTimeout`; the Unix-domain path
+ * (tooling only, Java 8 has no UDS so it is reflected) has no channel-level
+ * timeout and leaves the deadline to the caller's clock: a wedged core would
+ * block that caller, which the TCP safety net exists to prevent.
  */
 internal interface Channel : Closeable {
     fun readFully(buf: ByteArray): Boolean
     fun write(buf: ByteArray)
+    fun setTimeoutMillis(ms: Int) {}
 }
 
 private class StreamChannel(
     private val input: InputStream,
     private val output: OutputStream,
-    private val closer: () -> Unit
+    private val closer: () -> Unit,
+    private val timeoutSetter: (Int) -> Unit = {}
 ) : Channel {
     override fun readFully(buf: ByteArray): Boolean {
         var filled = 0
@@ -79,6 +87,13 @@ private class StreamChannel(
         output.flush()
     }
 
+    override fun setTimeoutMillis(ms: Int) {
+        try {
+            timeoutSetter(ms)
+        } catch (_: Exception) {
+        }
+    }
+
     override fun close() {
         try {
             closer()
@@ -90,20 +105,36 @@ private class StreamChannel(
 /**
  * The game-side thin stub: snapshot out, decision back, one round trip per tick.
  *
- * Threading. Snapshot writes happen on the tick thread; a dedicated reader thread
- * drains replies and hands each one to the [Pending] slot that is waiting for its
- * sequence number. This is why a deadline miss does not corrupt the stream: the
- * read side is never cancelled, so a late reply is simply discarded when its slot
- * is already gone. A blocking read with `SO_TIMEOUT` would have been simpler and
- * wrong — after a timeout it is undefined how much of a frame has been consumed.
+ * Threading. One [wireLock] guards the whole wire — the write and the read of a
+ * round trip happen as an inseparable pair on the **calling** thread, so at most
+ * one request is ever in flight and the reply that follows on the stream is
+ * always the reply to that request (the core serves each connection from a
+ * single thread and TCP preserves order). Fire-and-forget writes (config push,
+ * reset) take the same lock; their acks are drained by the next round trip,
+ * which skips any frame whose sequence number is not the one it is waiting for.
  *
- * Degradation (PROTECTION.md 9.5.3). A miss, a dead socket, or a `Degraded`
- * status all return **Pass(original motion)**, never the previous command. For a
- * Modify-type command, replaying last tick's vector would apply last tick's scale
- * factor to this tick's knockback, and the position error would stack instead of
- * staying bounded at one tick. Skipping the tick is the conservative reading of
- * "hold the previous command", and it is what keeps the worst case at "one
- * missed reduction" rather than "a growing deviation".
+ * Why not a reader thread with a pending map: the hand-off — caller parks, reader
+ * thread wakes on data, parks the reply, caller wakes again — costs two thread
+ * wake-ups per round trip. Measured on this wire (CoreStubBenchTest, 2026-11-28):
+ * 33.4 µs p50 with the reader thread vs 18.1 µs p50 for the direct write+read,
+ * 45% of the whole round trip spent on the hand-off alone. The direct path also
+ * removes the per-call [java.util.concurrent.CountDownLatch] and pending-slot
+ * allocation and one daemon thread.
+ *
+ * Deadline (PROTECTION.md 9.5.3). The socket's read timeout is set slightly
+ * above [deadlineNanos]: a reply that arrives late but within that grace window
+ * is *read in full* (the stream stays aligned — a full frame was consumed) and
+ * then **discarded**, because the deadline already passed. A reply that never
+ * comes fires [java.net.SocketTimeoutException], which can land mid-frame —
+ * the connection is marked dead and the next call reconnects. Either way the
+ * caller gets null within bounded time and the game never waits for the core.
+ * A miss, a dead socket, or a `Degraded` status all return **Pass(original
+ * motion)**, never the previous command. For a Modify-type command, replaying
+ * last tick's vector would apply last tick's scale factor to this tick's
+ * knockback, and the position error would stack instead of staying bounded at
+ * one tick. Skipping the tick is the conservative reading of "hold the previous
+ * command", and it is what keeps the worst case at "one missed reduction"
+ * rather than "a growing deviation".
  */
 class CoreStub(
     private val endpoint: Endpoint,
@@ -114,15 +145,17 @@ class CoreStub(
 ) : Closeable {
 
     private val seq = AtomicInteger(1)
-    private val pending = ConcurrentHashMap<Int, Pending>()
     private val running = AtomicBoolean(false)
     private val connected = AtomicBoolean(false)
 
-    @Volatile
-    private var channel: Channel? = null
+    /** Serialises every wire access: round-trip pairs, fire-and-forget writes, connect and close. */
+    private val wireLock = java.util.concurrent.locks.ReentrantLock()
+
+    /** Reply scratch buffer, guarded by [wireLock] — one read at a time by design. */
+    private val rbuf = ByteArray(Wire.FRAME)
 
     @Volatile
-    private var reader: Thread? = null
+    private var channel: Channel? = null
 
     @Volatile
     var lastError: String? = null
@@ -142,79 +175,27 @@ class CoreStub(
     var seed: Long = 0
         private set
 
-    private class Pending {
-        val latch = CountDownLatch(1)
-
-        @Volatile
-        var frame: Frame? = null
-    }
+    /**
+     * The read timeout installed on the socket once the handshake completes:
+     * the decision deadline plus a small grace so a reply that just missed the
+     * deadline is still consumed in full (stream stays aligned) instead of
+     * hard-killing the connection.
+     */
+    private val readTimeoutMillis: Int =
+        (deadlineNanos / 1_000_000L).toInt().coerceAtLeast(1) + 2
 
     /**
      * Connects and completes the handshake. Throws on failure — a stub that
      * cannot reach the core must not pretend it can decide.
      */
+    @Synchronized
     fun connect() {
-        val ch = open()
-        channel = ch
-
-        // Handshake happens before the reader thread starts: two readers on one
-        // stream would race for the ack.
-        val tokenBytes = (token ?: "").toByteArray(Charsets.UTF_8)
-        val hello = Frame(Wire.KIND_HELLO, seq.getAndIncrement(), 0, payload = tokenBytes.copyOf(Wire.MAX_PAYLOAD), payloadLen = tokenBytes.size)
-        ch.write(hello.encode())
-
-        val ackBytes = ByteArray(Wire.FRAME)
-        if (!ch.readFully(ackBytes)) {
-            ch.close()
-            throw IOException("core closed during handshake")
+        wireLock.lock()
+        try {
+            connectLocked()
+        } finally {
+            wireLock.unlock()
         }
-        val ack = Frame.decode(ackBytes) ?: run {
-            ch.close()
-            throw IOException("malformed handshake reply")
-        }
-        if (ack.kind != Wire.KIND_HELLO_ACK) {
-            ch.close()
-            throw IOException("handshake rejected: status=${ack.status}")
-        }
-        val b = java.nio.ByteBuffer.wrap(ack.payload, 0, ack.payloadLen).order(java.nio.ByteOrder.LITTLE_ENDIAN)
-        sessionId = b.long
-        seed = b.long
-
-        connected.set(true)
-        running.set(true)
-        startReader(ch)
-    }
-
-    private fun startReader(ch: Channel) {
-        val t = Thread({
-            val buf = ByteArray(Wire.FRAME)
-            try {
-                while (running.get()) {
-                    if (!ch.readFully(buf)) break
-                    val f = Frame.decode(buf) ?: continue
-                    val slot = pending.remove(f.seq)
-                    if (slot != null) {
-                        slot.frame = f
-                        slot.latch.countDown()
-                    }
-                    // No slot: the caller already gave up on this sequence. Drop it.
-                }
-            } catch (e: Exception) {
-                if (running.get()) lastError = e.message
-            } finally {
-                connected.set(false)
-                // Unblock every waiter immediately instead of letting them burn
-                // their full deadline on a socket that is already gone.
-                val it = pending.values.iterator()
-                while (it.hasNext()) {
-                    it.next().latch.countDown()
-                }
-                pending.clear()
-            }
-        }, "doppel-core-reader")
-        t.isDaemon = true
-        t.start()
-        reader = t
     }
 
     /**
@@ -225,55 +206,106 @@ class CoreStub(
      * socket and a `Degraded` status all collapse to null: each caller decides
      * what "no answer" means for its own command type, and none of them is
      * allowed to guess.
+     *
+     * The wire lock is acquired with the *remaining* deadline as its budget: a
+     * caller that cannot even get the wire within its deadline degrades rather
+     * than queues unboundedly behind another thread's in-flight request. Since
+     * the core serves this connection from a single thread anyway, serialising
+     * the callers changes no ordering the core could observe.
      */
     private fun roundTrip(module: Int, payload: ByteArray, tick: Int): Frame? {
-        if (!connected.get()) {
-            if (!tryReconnect()) {
+        val deadlineAt = System.nanoTime() + deadlineNanos
+
+        // Lock budget: whatever is left of the deadline. An interrupt degrades
+        // this tick like any other miss — the flag is restored for the caller.
+        val locked = try {
+            wireLock.tryLock(deadlineAt - System.nanoTime(), TimeUnit.NANOSECONDS)
+        } catch (_: InterruptedException) {
+            Thread.currentThread().interrupt()
+            false
+        }
+        if (!locked) {
+            degradedTicks.incrementAndGet()
+            return null
+        }
+        try {
+            var ch = channel
+            if (ch == null || !connected.get()) {
+                // A closed stub stays closed: close() is a lifecycle decision,
+                // not a dropped connection to recover from.
+                if (!running.get()) {
+                    degradedTicks.incrementAndGet()
+                    return null
+                }
+                if (!reconnectLocked()) {
+                    degradedTicks.incrementAndGet()
+                    return null
+                }
+                ch = channel ?: run {
+                    degradedTicks.incrementAndGet()
+                    return null
+                }
+            }
+
+            val s = seq.getAndIncrement()
+            val request = Frame(
+                Wire.KIND_SNAPSHOT, s, tick,
+                module = module,
+                payload = payload,
+                payloadLen = payload.size
+            ).encode()
+
+            try {
+                ch.write(request)
+            } catch (e: IOException) {
+                markDead(e)
+                return null
+            }
+
+            // Read frames until the one carrying this request's sequence number
+            // arrives. Anything else on the stream is an ack to a fire-and-forget
+            // write (config push, reset) made earlier — consumed in full, dropped.
+            val f: Frame
+            try {
+                while (true) {
+                    if (!ch.readFully(rbuf)) {
+                        markDead("core closed the connection")
+                        return null
+                    }
+                    val reply = Frame.decode(rbuf) ?: run {
+                        markDead("malformed reply frame")
+                        return null
+                    }
+                    if (reply.seq == s) {
+                        f = reply
+                        break
+                    }
+                }
+            } catch (e: IOException) {
+                // Includes SocketTimeoutException: the read timeout can fire
+                // mid-frame, so the stream's alignment is no longer knowable —
+                // the connection dies here and the next call reconnects.
+                markDead(e)
+                return null
+            }
+
+            // A full frame was consumed, so the stream stays aligned whether the
+            // answer was on time or not. Late means the deadline already passed:
+            // the decision is discarded exactly like a miss, never used.
+            if (System.nanoTime() > deadlineAt) {
+                timeouts.incrementAndGet()
                 degradedTicks.incrementAndGet()
                 return null
             }
+            if (f.status != Wire.STATUS_OK) {
+                degradedTicks.incrementAndGet()
+                return null
+            }
+            roundTrips.incrementAndGet()
+            return f
+        } finally {
+            wireLock.unlock()
         }
-        val ch = channel ?: run {
-            degradedTicks.incrementAndGet()
-            return null
-        }
-
-        val s = seq.getAndIncrement()
-        val slot = Pending()
-        pending[s] = slot
-
-        try {
-            ch.write(
-                Frame(
-                    Wire.KIND_SNAPSHOT, s, tick,
-                    module = module,
-                    payload = payload,
-                    payloadLen = payload.size
-                ).encode()
-            )
-        } catch (e: IOException) {
-            pending.remove(s)
-            lastError = e.message
-            connected.set(false)
-            degradedTicks.incrementAndGet()
-            return null
-        }
-
-        val arrived = slot.latch.await(deadlineNanos, TimeUnit.NANOSECONDS)
-        pending.remove(s)
-
-        val f = slot.frame
-        if (!arrived || f == null) {
-            timeouts.incrementAndGet()
-            degradedTicks.incrementAndGet()
-            return null
-        }
-        if (f.status != Wire.STATUS_OK) {
-            degradedTicks.incrementAndGet()
-            return null
-        }
-        roundTrips.incrementAndGet()
-        return f
     }
 
     /**
@@ -1278,27 +1310,44 @@ class CoreStub(
     private fun b(v: Boolean): Double = if (v) 1.0 else 0.0
 
     /**
-     * Drops one module's cross-tick memory in the core.
+     * Forgets one module's core-side state. Fire-and-forget on purpose — the
+     * ack is drained by the next round trip, which skips frames whose sequence
+     * number is not its own.
      *
      * Called on module disable and on enable, because both leave the core
      * holding facts that stopped being true: a key that is no longer held, a tap
      * whose remaining time belongs to the previous activation, the previous
-     * player's motion. Fire-and-forget like [pushConfig] — the next request
-     * carries its own inputs, and a lost reset degrades to "one stale tick",
-     * not to a wrong answer forever.
+     * player's motion. A lost reset degrades to "one stale tick", not to a
+     * wrong answer forever.
+     *
+     * Takes [wireLock] so the write can never interleave with another thread's
+     * in-flight request/reply pair. The lock budget is the same [deadlineNanos]:
+     * a caller that cannot get the wire in time drops the reset (logged), which
+     * is the same failure shape as the write IOException it replaces — stale
+     * core state that misbehaves quietly, never a wrong decision.
      */
     fun reset(module: Int) {
-        val ch = channel ?: return
+        val locked = try {
+            wireLock.tryLock(deadlineNanos, TimeUnit.NANOSECONDS)
+        } catch (_: InterruptedException) {
+            Thread.currentThread().interrupt()
+            false
+        }
+        if (!locked) return
         try {
-            ch.write(
-                Frame(
-                    Wire.KIND_RESET, seq.getAndIncrement(), 0,
-                    module = module, payload = ByteArray(0), payloadLen = 0
-                ).encode()
-            )
-        } catch (e: IOException) {
-            lastError = e.message
-            connected.set(false)
+            val ch = channel ?: return
+            try {
+                ch.write(
+                    Frame(
+                        Wire.KIND_RESET, seq.getAndIncrement(), 0,
+                        module = module, payload = ByteArray(0), payloadLen = 0
+                    ).encode()
+                )
+            } catch (e: IOException) {
+                markDead(e)
+            }
+        } finally {
+            wireLock.unlock()
         }
     }
 
@@ -1311,30 +1360,54 @@ class CoreStub(
      * Fire-and-forget on purpose: a config is a handful of scalars that change
      * when the user drags a slider, not per tick. Waiting for the ack would put
      * a round trip on the UI thread for no benefit — and if it is lost, the next
-     * push carries the same values.
+     * push carries the same values. (With the direct-read wire the ack round
+     * trip would now cost ~18 µs instead of a thread hand-off, but "lost push,
+     * next push carries the values" remains the cheaper contract.) The ack frame
+     * is drained by the next round trip, which skips any sequence number that is
+     * not the one it is waiting for.
+     *
+     * The [wireLock] guard is the correctness point: a write interleaved into
+     * another thread's request/reply pair would put that ack between the request
+     * and its reply on the stream. The drain loop handles that ordering anyway —
+     * the lock keeps it from happening in the first place.
      */
     fun pushConfig(module: Int, payload: ByteArray) {
-        val ch = channel ?: return
+        val locked = try {
+            wireLock.tryLock(deadlineNanos, TimeUnit.NANOSECONDS)
+        } catch (_: InterruptedException) {
+            Thread.currentThread().interrupt()
+            false
+        }
+        if (!locked) return
         try {
-            ch.write(
-                Frame(
-                    Wire.KIND_CONFIG, seq.getAndIncrement(), 0,
-                    module = module, payload = payload, payloadLen = payload.size
-                ).encode()
-            )
-        } catch (e: IOException) {
-            lastError = e.message
-            connected.set(false)
+            val ch = channel ?: return
+            try {
+                ch.write(
+                    Frame(
+                        Wire.KIND_CONFIG, seq.getAndIncrement(), 0,
+                        module = module, payload = payload, payloadLen = payload.size
+                    ).encode()
+                    )
+            } catch (e: IOException) {
+                markDead(e)
+            }
+        } finally {
+            wireLock.unlock()
         }
     }
 
-    private fun tryReconnect(): Boolean {
+    /**
+     * Reconnect attempt. Caller must hold [wireLock]. The `this` monitor is taken
+     * here only to serialise with a concurrent public [connect]/[close]; lock
+     * order is always `this` → [wireLock], never the reverse, so no cycle exists.
+     */
+    private fun reconnectLocked(): Boolean {
         synchronized(this) {
             if (connected.get()) return true
             reconnects++
             return try {
-                closeQuietly()
-                connect()
+                closeQuietlyLocked()
+                connectLocked()
                 true
             } catch (e: Exception) {
                 lastError = e.message
@@ -1343,13 +1416,52 @@ class CoreStub(
         }
     }
 
+    /**
+     * The handshake without the public [connect] entry point: for a caller that
+     * already holds [wireLock].
+     *
+     * The handshake read is bounded by the handshake timeout, not the decision
+     * deadline: a core that accepts the connection but never answers Hello used
+     * to block connect() forever.
+     */
+    private fun connectLocked() {
+        val ch = open()
+        ch.setTimeoutMillis(handshakeTimeoutMillis)
+        val tokenBytes = (token ?: "").toByteArray(Charsets.UTF_8)
+        val hello = Frame(Wire.KIND_HELLO, seq.getAndIncrement(), 0, payload = tokenBytes.copyOf(Wire.MAX_PAYLOAD), payloadLen = tokenBytes.size)
+        ch.write(hello.encode())
+        if (!ch.readFully(rbuf)) {
+            ch.close()
+            throw IOException("core closed during handshake")
+        }
+        val ack = Frame.decode(rbuf) ?: run {
+            ch.close()
+            throw IOException("malformed handshake reply")
+        }
+        if (ack.kind != Wire.KIND_HELLO_ACK) {
+            ch.close()
+            throw IOException("handshake rejected: status=${ack.status}")
+        }
+        val b = java.nio.ByteBuffer.wrap(ack.payload, 0, ack.payloadLen).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        sessionId = b.long
+        seed = b.long
+        channel = ch
+        // From here on, every read is bounded by the decision deadline (+grace).
+        ch.setTimeoutMillis(readTimeoutMillis)
+        connected.set(true)
+        running.set(true)
+    }
+
     private fun open(): Channel {
         when (val ep = endpoint) {
             is Endpoint.Tcp -> {
                 val s = Socket()
                 s.tcpNoDelay = true
                 s.connect(InetSocketAddress(ep.host, ep.port), handshakeTimeoutMillis)
-                return StreamChannel(s.getInputStream(), s.getOutputStream()) { s.close() }
+                // SO_TIMEOUT lives on the socket; the streams below carry it.
+                return StreamChannel(s.getInputStream(), s.getOutputStream(), { s.close() }) { ms ->
+                    s.soTimeout = ms
+                }
             }
             is Endpoint.Unix -> {
                 // Reflected on purpose: this class is compiled for Java 8 (the game
@@ -1360,30 +1472,53 @@ class CoreStub(
                 val address = addrClass.getMethod("of", String::class.java).invoke(null, ep.path)
                 val ch = SocketChannel.open()
                 ch.connect(address as java.net.SocketAddress)
-                return StreamChannel(Channels.newInputStream(ch), Channels.newOutputStream(ch)) { ch.close() }
+                // No channel-level read timeout exists for blocking NIO channels;
+                // see Channel.setTimeoutMillis. Tooling path only.
+                return StreamChannel(Channels.newInputStream(ch), Channels.newOutputStream(ch), { ch.close() })
             }
         }
     }
 
-    private fun closeQuietly() {
-        running.set(false)
+    /**
+     * The connection is no longer trustworthy (IO error, timeout mid-frame,
+     * malformed reply, clean EOF). Caller must hold [wireLock] — or be the only
+     * thread with a reference (close during construction failures).
+     */
+    private fun markDead(reason: Any?) {
+        lastError = reason?.toString()
+        degradedTicks.incrementAndGet()
+        closeQuietlyLocked()
+    }
+
+    /** Drops the channel and the wire-healthy flag. Caller must hold [wireLock]. */
+    private fun closeQuietlyLocked() {
         try {
             channel?.close()
         } catch (_: Exception) {
         }
         channel = null
         connected.set(false)
-        pending.clear()
     }
 
     override fun close() {
-        val ch = channel
-        if (ch != null) {
+        synchronized(this) {
+            wireLock.lock()
             try {
-                ch.write(Frame(Wire.KIND_BYE, seq.getAndIncrement(), 0).encode())
-            } catch (_: Exception) {
+                // Lifecycle off: a closed stub must not silently resurrect on the
+                // next round trip — the old code could reconnect here because
+                // nothing checked the lifecycle flag.
+                running.set(false)
+                val ch = channel
+                if (ch != null) {
+                    try {
+                        ch.write(Frame(Wire.KIND_BYE, seq.getAndIncrement(), 0).encode())
+                    } catch (_: Exception) {
+                    }
+                }
+                closeQuietlyLocked()
+            } finally {
+                wireLock.unlock()
             }
         }
-        closeQuietly()
     }
 }

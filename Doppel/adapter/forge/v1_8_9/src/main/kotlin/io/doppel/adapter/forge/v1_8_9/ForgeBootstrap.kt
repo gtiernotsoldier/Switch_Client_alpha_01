@@ -65,6 +65,17 @@ object ForgeBootstrap {
     // Cached field refs for tick
     private val keybindingPressedField by lazy { MappingContext.getField("forge:keybinding_pressed") }
 
+    /**
+     * The MovingObjectType.BLOCK enum constant, resolved once. `===` comparison
+     * against it is how "crosshair is on a block" is decided every tick.
+     */
+    private val blockHitEnum: Any? by lazy {
+        try {
+            Class.forName("net.minecraft.util.MovingObjectPosition\$MovingObjectType")
+                .enumConstants.firstOrNull { it.toString() == "BLOCK" }
+        } catch (_: Exception) { null }
+    }
+
     // Version-specific render bridges (lazy, created once) — HUD overlay.
     private val glBridge by lazy { ForgeGL11Bridge() }
     private val mouseGetX by lazy { try { mouseClass.getMethod("getX") } catch (_: Exception) { null } }
@@ -181,9 +192,11 @@ object ForgeBootstrap {
                 try {
                     val objMouseOver = MappingContext.getFieldValue(mc, "forge:mc_objectMouseOver")
                     val typeOfHit = MappingContext.getFieldValue(objMouseOver, "forge:movingObjectPosition_typeOfHit")
-                    val motClass = Class.forName("net.minecraft.util.MovingObjectPosition\$MovingObjectType")
-                    val blockType = motClass.enumConstants.firstOrNull { it.toString() == "BLOCK" }
-                    EventBridge.isLookingAtBlock = typeOfHit === blockType
+                    // Resolved once, not per tick: Class.forName + enum scan on the
+                    // hot 20 Hz path cost a reflection lookup every tick for a
+                    // constant that can never change inside one JVM. Same lazy-cache
+                    // pattern as keybindingPressedField above.
+                    EventBridge.isLookingAtBlock = typeOfHit === blockHitEnum
                 } catch (_: Exception) {}
 
                 if (player != null) {

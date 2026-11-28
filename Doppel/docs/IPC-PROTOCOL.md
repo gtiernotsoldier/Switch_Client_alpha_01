@@ -249,6 +249,23 @@ tick boundary (50 ms)
   process survives. Losing the gate chain is a quality regression, not a crash.
 - The snapshot **is** the heartbeat. There is no keepalive to misconfigure.
 
+### Stub dispatch (2026-11-28)
+
+The stub reads the wire **directly**: one lock guards write+read as an
+inseparable pair on the calling thread, so exactly one request is in flight and
+the next frame on the stream is always its reply. Config/reset pushes take the
+same lock fire-and-forget; their acks are drained by the next round trip
+(skipping frames whose seq is not the awaited one). The socket read timeout is
+the decision deadline plus 2 ms of grace, so a late reply is consumed in full
+(stream stays aligned) and then discarded; a reply that never comes kills the
+connection and the next call reconnects. There is no reader thread and no
+pending-map hand-off: that design cost two thread wake-ups per round trip, and
+removing it (CoreStubBenchTest, 2026-11-28) cut the JVM-side round trip from
+33.4 µs to 17.9 µs p50 (−46%), p99.9 from ~350 µs to ~83 µs, leaving the stub
+1.8 µs above the raw-socket floor. The codec chain (encodeSnapshot +
+genericRequest + Frame.encode) measures ~0.3 µs p50 — measured and deliberately
+left alone.
+
 ### Offline is not a HUD concern
 
 "Core is not attached" is a **process-liveness fact**, not game state. `Strategies.online`

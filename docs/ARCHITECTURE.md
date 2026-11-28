@@ -92,7 +92,7 @@ Rust injector
 4. **落地**：`PlatformCommand`（`ModifyMotion`/`CancelPacket`/`ClickBurst`/`Pass`）——`ModifyMotion` → `pendingMotion` 主线程应用；`CancelPacket` Netty 线程丢包；`ClickBurst` Netty 线程直发。
 5. **降级**：1 ms 死线超时 → `Pass(原始 motion)`（**不是**重放上一拍命令）；core 死 → 下一 tick 重连，本拍降级。
 
-延迟实测 p50 6.70 µs / p99 12.50 µs（环回），死线余量 80 倍。
+延迟实测 p50 6.70 µs / p99 12.50 µs（环回，`--bench`，Rust 两侧）；JVM 桩侧含编组与锁的完整往返 p50 17.9 µs（2026-11-28，`CoreStubBenchTest`，直读分发），死线余量 50 倍以上。
 
 ## 6. EventBridge：中枢（既是解耦点，也是唯一"上帝对象"警区）
 

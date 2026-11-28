@@ -1,13 +1,32 @@
 //! Port of `io.doppel.core.strategy.click`.
 //!
-//! Two strategies with different clocks: the 1.8 one decides per tick from a
-//! CPS probability, the 1.9 one waits on an attack cooldown and optionally runs
-//! a crit state machine. Both are pure functions of (config, state, input, rng).
+//! Two strategies with different clocks: the 1.8 one runs a rhythm of
+//! scheduled intervals, the 1.9 one waits on an attack cooldown and optionally
+//! runs a crit state machine. Both are pure functions of (config, state, input, rng).
 //!
-//! The crit FSM is the part worth porting carefully. Its phases emit actions on
-//! *consecutive* ticks (`StopSprint` this tick, `Click` the next), so a phase
-//! transition that is off by one tick produces a click that does land but never
-//! crits — silent, and invisible to any test that only counts clicks.
+//! The 1.8 rhythm is the part worth reading carefully. A per-tick Bernoulli
+//! roll ("click with probability cps/20") produces memoryless geometric
+//! intervals — flat, no burst structure, no long tail — which is exactly the
+//! statistical signature autoclicker detectors key on. The rhythm scheduler
+//! instead draws an INTERVAL when a click fires and counts it down:
+//!
+//! - tempo: uniform in [min_cps, max_cps], redrawn per click, distance-adjusted
+//!   in LEGIT — the same helpers the Bernoulli model used, just at click
+//!   frequency instead of tick frequency;
+//! - jitter: an AR(1) multiplicative factor around 1.0 — intervals carry
+//!   lag-1 autocorrelation, so short intervals cluster (bursts) and long ones
+//!   cluster (lulls), like a human finger;
+//! - pause: 5% of intervals are 2.0-4.0x — the blink / aim-recheck;
+//! - re-engagement floor: when the gates break (player mining, condition
+//!   fail) the rhythm dies and the next engagement waits a fresh full
+//!   interval, at least 4 ticks (200 ms) — a reaction floor, not an instant
+//!   restart.
+//!
+//! The crit FSM is the other part worth porting carefully. Its phases emit
+//! actions on *consecutive* ticks (`StopSprint` this tick, `Click` the next),
+//! so a phase transition that is off by one tick produces a click that does
+//! land but never crits — silent, and invisible to any test that only counts
+//! clicks.
 
 use crate::condition;
 use crate::model::{PlayerState, TargetState, TriggerOptions, WeaponType};
@@ -130,11 +149,26 @@ pub enum ClickResult {
 pub struct ClickState {
     pub last_target_id: i32,
     pub pending_second_click: bool,
+    /// Rhythm scheduler: ticks left before the next click is due. Meaningful
+    /// only while `rhythm_live` is true.
+    pub next_click_in: i32,
+    /// The persistent AR(1) component of the interval jitter, centred on 1.0.
+    pub jitter: f32,
+    /// False while the rhythm is idle (fresh state, or the gates broke): the
+    /// next gate-passing tick re-arms with a fresh interval as the reaction
+    /// gap instead of resuming a half-counted countdown.
+    pub rhythm_live: bool,
 }
 
 impl Default for ClickState {
     fn default() -> Self {
-        ClickState { last_target_id: -1, pending_second_click: false }
+        ClickState {
+            last_target_id: -1,
+            pending_second_click: false,
+            next_click_in: 0,
+            jitter: 1.0,
+            rhythm_live: false,
+        }
     }
 }
 
@@ -145,6 +179,23 @@ impl ClickState {
 }
 
 // ── 1.8 probabilistic ──────────────────────────────────────────────────────
+
+/// Re-engagement floor in ticks: after the gates break, the first click of
+/// the new rhythm waits at least this long (200 ms at 20 tps) — a human
+/// reaction floor, not a robot's instant restart.
+const RE_ENGAGE_MIN_TICKS: i32 = 4;
+/// Interval jitter persistence (lag-1 autocorrelation of the multiplicative
+/// factor). Higher = longer bursts/lulls.
+const JITTER_PERSIST: f32 = 0.65;
+/// The jitter target is drawn uniformly in [JITTER_LO, JITTER_LO + JITTER_SPAN),
+/// centred on 1.0.
+const JITTER_LO: f32 = 0.8;
+const JITTER_SPAN: f32 = 0.4;
+/// Rare re-acquisition pause: with this probability an interval is drawn
+/// 2.0-4.0x long — the blink / aim-recheck.
+const PAUSE_CHANCE: f32 = 0.05;
+const PAUSE_MIN: f32 = 2.0;
+const PAUSE_SPAN: f32 = 2.0;
 
 fn sample_cps_in_range(lo: i32, hi: i32, rng: &mut Pcg32) -> i32 {
     if lo == hi {
@@ -177,16 +228,24 @@ pub fn probabilistic_tick(
 ) -> ClickResult {
     let player = &input.player;
 
+    // 1. Block-hit prevention. A player busy mining is not mid-click-train,
+    //    so the rhythm dies here too, not just the click.
     if config.disable_on_block && player.is_mining() {
+        state.rhythm_live = false;
         return ClickResult::Skip;
     }
 
+    // 2. Pending second click (DOUBLE mode): the pair completes regardless of
+    //    where the rhythm scheduler is.
     if state.pending_second_click {
         state.pending_second_click = false;
         return ClickResult::Click;
     }
 
+    // 3. Condition fail — the player lifted off. The rhythm dies; the next
+    //    engagement restarts from the reaction floor.
     if condition::check(&config.trigger_options, player, input.target.as_ref(), rng).is_some() {
+        state.rhythm_live = false;
         return ClickResult::Skip;
     }
 
@@ -196,29 +255,57 @@ pub fn probabilistic_tick(
         }
     }
 
-    let lo = config.min_cps.min(config.max_cps);
-    let hi = config.max_cps.max(config.min_cps);
-    let effective = match config.mode {
-        ClickOperatingMode::Normal => sample_cps_in_range(lo, hi, rng),
-        ClickOperatingMode::Legit => {
-            let base = sample_cps_in_range(lo, hi, rng);
-            match input.target.as_ref() {
-                Some(t) => adjust_cps_by_distance(base, lo, hi, t.distance, rng),
-                None => base,
-            }
-        }
+    // 5. The rhythm scheduler. An idle rhythm re-arms with a fresh interval
+    //    (the reaction gap, floored); a live one counts down and fires on zero.
+    if !state.rhythm_live {
+        let interval = draw_interval(config, state, input, rng).max(RE_ENGAGE_MIN_TICKS);
+        state.next_click_in = interval - 1;
+        state.rhythm_live = true;
+        return ClickResult::Skip;
     }
-    .max(1);
-
-    let click_chance = effective as f64 / 20.0;
-    if (rng.next_float() as f64) >= click_chance {
+    if state.next_click_in > 0 {
+        state.next_click_in -= 1;
         return ClickResult::Skip;
     }
 
+    // Due this tick: fire, then schedule the next interval from *next* tick.
+    let interval = draw_interval(config, state, input, rng);
+    state.next_click_in = interval - 1;
     if config.click_mode == ClickMode::Double {
         state.pending_second_click = true;
     }
     ClickResult::Click
+}
+
+/// Draw the next inter-click interval in ticks: a tempo (CPS) sample, the
+/// AR(1) multiplicative jitter, a rare pause. Draw order is part of the
+/// cross-language contract — the Kotlin twin consumes in exactly this
+/// sequence, on exactly these fire/re-arm points and nowhere else.
+fn draw_interval(
+    config: &ClickConfig,
+    state: &mut ClickState,
+    input: &ClickInput,
+    rng: &mut Pcg32,
+) -> i32 {
+    let lo = config.min_cps.min(config.max_cps);
+    let hi = config.max_cps.max(config.min_cps);
+    let mut tempo = sample_cps_in_range(lo, hi, rng);
+    if config.mode == ClickOperatingMode::Legit {
+        if let Some(t) = input.target.as_ref() {
+            tempo = adjust_cps_by_distance(tempo, lo, hi, t.distance, rng);
+        }
+    }
+    let tempo = tempo.max(1) as f32;
+
+    // AR(1) jitter around 1.0: bursts of short intervals, lulls of long ones.
+    let target = JITTER_LO + JITTER_SPAN * rng.next_float();
+    state.jitter = JITTER_PERSIST * state.jitter + (1.0f32 - JITTER_PERSIST) * target;
+
+    let mut interval = (20.0f32 / tempo) * state.jitter;
+    if rng.next_float() < PAUSE_CHANCE {
+        interval *= PAUSE_MIN + PAUSE_SPAN * rng.next_float();
+    }
+    ((interval + 0.5f32) as i32).max(1)
 }
 
 // ── 1.9 cooldown ───────────────────────────────────────────────────────────
@@ -463,6 +550,119 @@ mod tests {
         let cfg = ClickConfig::default();
         let r = probabilistic_tick(&cfg, &mut st, &input(F_MINING, 1.0, false), &mut rng);
         assert_eq!(r, ClickResult::Skip);
+    }
+
+    #[test]
+    fn fresh_rhythm_waits_out_the_re_engage_floor() {
+        // A brand-new state (module just enabled, or just reset) does not
+        // click on the first gate-passing tick: the re-engagement floor is a
+        // reaction gap, minimum four ticks.
+        let mut st = ClickState::default();
+        let mut rng = Pcg32::new(21);
+        let cfg = ClickConfig::default();
+        for t in 0..(RE_ENGAGE_MIN_TICKS - 1) {
+            assert_eq!(
+                probabilistic_tick(&cfg, &mut st, &input(F_ON_GROUND, 1.0, false), &mut rng),
+                ClickResult::Skip,
+                "tick {} clicked inside the reaction floor",
+                t
+            );
+        }
+        assert!(st.rhythm_live, "the rhythm should be armed by now");
+    }
+
+    #[test]
+    fn gate_break_kills_the_rhythm_and_re_arms_at_the_floor() {
+        // onlyGround in the trigger options gives a deterministic gate: in
+        // the air the condition fails, on the ground it passes.
+        let mut cfg = ClickConfig::default();
+        cfg.trigger_options.only_ground = true;
+        let mut st = ClickState::default();
+        let mut rng = Pcg32::new(5);
+
+        // Warm up on the ground until at least one click has landed, with the
+        // rhythm live and a countdown in flight.
+        let mut clicked = false;
+        for _ in 0..200 {
+            if probabilistic_tick(&cfg, &mut st, &input(F_ON_GROUND, 1.0, false), &mut rng)
+                == ClickResult::Click
+            {
+                clicked = true;
+            }
+        }
+        assert!(clicked, "the warm-up should click");
+
+        // One tick in the air: no click, and the rhythm must be dead.
+        assert_eq!(
+            probabilistic_tick(&cfg, &mut st, &input(0, 1.0, false), &mut rng),
+            ClickResult::Skip
+        );
+        assert!(!st.rhythm_live, "a failed condition must kill the rhythm");
+
+        // Back on the ground: no click for at least the floor, then a click
+        // lands well inside a second.
+        for t in 0..(RE_ENGAGE_MIN_TICKS - 1) {
+            assert_eq!(
+                probabilistic_tick(&cfg, &mut st, &input(F_ON_GROUND, 1.0, false), &mut rng),
+                ClickResult::Skip,
+                "tick {} after re-engagement clicked inside the floor",
+                t
+            );
+        }
+        let mut clicked_after = 0;
+        for _ in 0..200 {
+            if probabilistic_tick(&cfg, &mut st, &input(F_ON_GROUND, 1.0, false), &mut rng)
+                == ClickResult::Click
+            {
+                clicked_after += 1;
+            }
+        }
+        assert!(clicked_after > 0, "the rhythm must resume clicking");
+    }
+
+    #[test]
+    fn sustained_cps_respects_the_configured_band() {
+        // Defaults are 8..10 CPS. With the 5% pauses the long-run rate sits
+        // slightly below the pure band; anything outside 5..11 over 20 s is a
+        // broken scheduler, not a statistic.
+        let mut st = ClickState::default();
+        let mut rng = Pcg32::new(777);
+        let cfg = ClickConfig::default();
+        let mut clicks = 0;
+        for _ in 0..20_000 {
+            if probabilistic_tick(&cfg, &mut st, &input(F_ON_GROUND, 1.0, false), &mut rng)
+                == ClickResult::Click
+            {
+                clicks += 1;
+            }
+        }
+        let cps = clicks as f64 / 1000.0;
+        assert!(
+            (5.0..=11.0).contains(&cps),
+            "sustained cps {} outside the human band",
+            cps
+        );
+    }
+
+    #[test]
+    fn absurd_config_cannot_exceed_the_tick_ceiling() {
+        // A configured 25 CPS is physically impossible at 20 tps; the
+        // interval model clamps to one click per tick at most — the old
+        // Bernoulli model did the same via p >= 1, so this pins the ceiling.
+        let mut st = ClickState::default();
+        let mut rng = Pcg32::new(88);
+        let cfg = ClickConfig { min_cps: 25, max_cps: 25, ..Default::default() };
+        let mut clicks = 0;
+        for _ in 0..2000 {
+            if probabilistic_tick(&cfg, &mut st, &input(F_ON_GROUND, 1.0, false), &mut rng)
+                == ClickResult::Click
+            {
+                clicks += 1;
+            }
+        }
+        assert!(clicks <= 2000, "clicked more than once per tick");
+        // And it must not collapse either: a 25 CPS request still clicks hard.
+        assert!(clicks > 1500, "only {} clicks at requested 25 cps", clicks);
     }
 
     #[test]

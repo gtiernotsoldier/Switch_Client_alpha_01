@@ -498,6 +498,36 @@ fn selftest() {
         failures += 1;
     }
 
+    // 5. Stream vectors + twenty pairwise-independent session streams.
+    let mut s1 = Pcg32::with_stream(0x0123_4567_89AB_CDEF, session::stream::VELOCITY);
+    let mut s2 = Pcg32::with_stream(0x0123_4567_89AB_CDEF, session::stream::AIM);
+    let sv = [s1.next_u32(), s1.next_u32(), s2.next_u32(), s2.next_u32()];
+    if sv == [440_953_551, 4_112_438_068, 2_922_926_312, 3_361_374_836] {
+        let mut draws: Vec<Vec<u32>> = Vec::new();
+        for k in 1..=20u64 {
+            let mut rng = Pcg32::with_stream(987_654_321, k);
+            let d: Vec<u32> = (0..64).map(|_| rng.next_u32()).collect();
+            draws.push(d);
+        }
+        let mut collisions = 0;
+        for i in 0..draws.len() {
+            for j in (i + 1)..draws.len() {
+                if draws[i] == draws[j] {
+                    collisions += 1;
+                }
+            }
+        }
+        if collisions == 0 {
+            println!("ok   session streams independent (20 streams x 64 draws)");
+        } else {
+            eprintln!("FAIL stream independence: {} colliding pairs", collisions);
+            failures += 1;
+        }
+    } else {
+        eprintln!("FAIL stream golden vectors: {:?}", sv);
+        failures += 1;
+    }
+
     if failures == 0 {
         println!("SELFTEST OK");
     } else {

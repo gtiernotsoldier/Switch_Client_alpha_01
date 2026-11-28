@@ -60,14 +60,20 @@ pub enum ClickSlot {
 pub struct Session {
     pub id: u64,
     pub seed: u64,
-    /// One stream per module, all seeded from the session seed.
+    /// One stream per module, all seeded from the session seed — and each on
+    /// its *own PCG stream selector*, so they are statistically independent,
+    /// not merely consumption-isolated.
     ///
     /// A single shared stream would make a module's decisions depend on whether
     /// the other modules happened to be enabled and in what order they ran — so
-    /// toggling aim would quietly change click timing. Six streams cost six
-    /// 32-byte counters and make each module's sequence reproducible in
-    /// isolation, which is also what lets a per-module parity test start from
-    /// the same seed as the in-process strategy.
+    /// toggling aim would quietly change click timing. But identical-seed,
+    /// fixed-increment generators would only fix the *replay* half of that:
+    /// all twenty would be the same sequence walked at different speeds, and
+    /// two modules drawing in lockstep would receive identical values. The
+    /// stream selector (the PCG increment) breaks that too: one odd increment
+    /// per module, ids pinned in [`stream`] and mirrored by
+    /// `DecisionRng.Streams` on the JVM side, so a per-module parity test
+    /// starts from the same (seed, stream) pair as the in-process strategy.
     pub rng_velocity: Pcg32,
     pub rng_aim: Pcg32,
     pub rng_click: Pcg32,
@@ -203,31 +209,61 @@ impl Default for TapWireConfig {
     }
 }
 
+/// Stream-selector ids for the twenty module streams.
+///
+/// Append-only, like the op table: these numbers are a contract with the JVM
+/// oracle tree (`DecisionRng.Streams` mirrors them one-for-one), and a parity
+/// test that reconstructs a module's stream uses the same id the session uses.
+/// New modules append at the end; never renumber, never reuse a retired id.
+pub mod stream {
+    pub const VELOCITY: u64 = 1;
+    pub const AIM: u64 = 2;
+    pub const CLICK: u64 = 3;
+    pub const TAP: u64 = 4;
+    pub const WTAP: u64 = 5;
+    pub const STAP: u64 = 6;
+    pub const ADTAP: u64 = 7;
+    pub const COMBAT: u64 = 8;
+    pub const AUTOBLOCK: u64 = 9;
+    pub const BLOCKHIT: u64 = 10;
+    pub const PLAYER: u64 = 11;
+    pub const BACKTRACK: u64 = 12;
+    pub const KBD: u64 = 13;
+    pub const REACH: u64 = 14;
+    pub const CLICK_ASSIST: u64 = 15;
+    pub const HIT_SELECT: u64 = 16;
+    pub const EAGLE_PLACE: u64 = 17;
+    pub const SPRINT_RESET: u64 = 18;
+    pub const JUMP_RESET: u64 = 19;
+    pub const SUPER_KNOCKBACK: u64 = 20;
+}
+
 impl Session {
     pub fn new(id: u64, seed: u64) -> Session {
+        use stream::*;
         Session {
             id,
             seed,
-            rng_velocity: Pcg32::new(seed),
-            rng_aim: Pcg32::new(seed),
-            rng_click: Pcg32::new(seed),
-            rng_tap: Pcg32::new(seed),
-            rng_wtap: Pcg32::new(seed),
-            rng_stap: Pcg32::new(seed),
-            rng_adtap: Pcg32::new(seed),
-            rng_combat: Pcg32::new(seed),
-            rng_autoblock: Pcg32::new(seed),
-            rng_blockhit: Pcg32::new(seed),
-            rng_player: Pcg32::new(seed),
-            rng_backtrack: Pcg32::new(seed),
-            rng_kbd: Pcg32::new(seed),
-            rng_reach: Pcg32::new(seed),
-            rng_click_assist: Pcg32::new(seed),
-            rng_hit_select: Pcg32::new(seed),
-            rng_eagle_place: Pcg32::new(seed),
-            rng_sprint_reset: Pcg32::new(seed),
-            rng_jump_reset: Pcg32::new(seed),
-            rng_super_knockback: Pcg32::new(seed),
+            rng_velocity: Pcg32::with_stream(seed, VELOCITY),
+            rng_aim: Pcg32::with_stream(seed, AIM),
+            rng_click: Pcg32::with_stream(seed, CLICK),
+            rng_tap: Pcg32::with_stream(seed, TAP),
+            rng_wtap: Pcg32::with_stream(seed, WTAP),
+            rng_stap: Pcg32::with_stream(seed, STAP),
+            rng_adtap: Pcg32::with_stream(seed, ADTAP),
+            rng_combat: Pcg32::with_stream(seed, COMBAT),
+            rng_autoblock: Pcg32::with_stream(seed, AUTOBLOCK),
+            rng_blockhit: Pcg32::with_stream(seed, BLOCKHIT),
+            rng_player: Pcg32::with_stream(seed, PLAYER),
+            rng_backtrack: Pcg32::with_stream(seed, BACKTRACK),
+            rng_kbd: Pcg32::with_stream(seed, KBD),
+            rng_reach: Pcg32::with_stream(seed, REACH),
+            rng_click_assist: Pcg32::with_stream(seed, CLICK_ASSIST),
+            rng_hit_select: Pcg32::with_stream(seed, HIT_SELECT),
+            rng_eagle_place: Pcg32::with_stream(seed, EAGLE_PLACE),
+            rng_sprint_reset: Pcg32::with_stream(seed, SPRINT_RESET),
+            rng_jump_reset: Pcg32::with_stream(seed, JUMP_RESET),
+            rng_super_knockback: Pcg32::with_stream(seed, SUPER_KNOCKBACK),
             config: VelocityConfig::default(),
             velocity: velocity::State::new(),
             aim_config: AimConfig::default(),

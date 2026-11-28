@@ -103,7 +103,9 @@ class CoreStubE2ETest {
                 stub.connect()
                 assertTrue(stub.seed != 0L, "handshake did not deliver a seed")
 
-                val local = LegitVelocityStrategy(DecisionRng(stub.seed))
+                // The velocity stream: same (seed, stream id) pair the session
+                // constructs in core-rs — see `session::stream`.
+                val local = LegitVelocityStrategy(DecisionRng(stub.seed, DecisionRng.Streams.VELOCITY))
                 val state = VelocityStrategy.State()
                 val config = VelocityConfig()
 

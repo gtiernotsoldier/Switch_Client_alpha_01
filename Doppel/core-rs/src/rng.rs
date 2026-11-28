@@ -27,11 +27,34 @@ const MULT: u64 = 6364136223846793005;
 const INC: u64 = 1442695040888963407;
 
 impl Pcg32 {
+    /// The historical single-stream constructor: one fixed increment, so a seed
+    /// fully determines the sequence. Golden vectors pin this one; do not
+    /// change its behaviour.
     pub fn new(seed: u64) -> Pcg32 {
-        let mut r = Pcg32 {
-            state: 0,
-            inc: INC | 1,
-        };
+        Pcg32::with_inc(seed, INC)
+    }
+
+    /// Seeded constructor with an explicit stream selector.
+    ///
+    /// PCG's own stream mechanism: the increment *is* the stream id. Two
+    /// generators with the same seed and different (odd) increments walk the
+    /// same state lattice through different additive cosets, which decorrelates
+    /// them after the two seeding advances — that is the whole reason PCG
+    /// exposes `inc` at all. `with_stream(seed, k)` uses `inc = 2k+1`, so
+    /// distinct small ids give distinct odd increments.
+    ///
+    /// Why this matters here: the session seeds all twenty module streams from
+    /// one session seed. With the fixed-increment constructor those twenty
+    /// streams were the *same sequence* consumed at different rates — replay
+    /// isolation, but not statistical independence. Two modules drawing in
+    /// lockstep would receive identical values. One increment bit per stream
+    /// buys actual independence for the price of nothing.
+    pub fn with_stream(seed: u64, stream: u64) -> Pcg32 {
+        Pcg32::with_inc(seed, (stream << 1) | 1)
+    }
+
+    fn with_inc(seed: u64, inc: u64) -> Pcg32 {
+        let mut r = Pcg32 { state: 0, inc };
         // Standard PCG seeding: two steps so the first output is not a function
         // of the seed alone.
         r.state = r.state.wrapping_add(seed);
@@ -108,6 +131,55 @@ mod tests {
         assert_eq!(r.next_int(100), 25);
         let f = r.next_float();
         assert!((f - 0.546_510_16).abs() < 1e-6, "got {}", f);
+    }
+
+    /// Stream-selector golden vectors: same seed, stream ids 1 and 2. These
+    /// exact numbers are asserted in `DecisionRngTest.kt` on the JVM side.
+    /// They are deliberately *different* from the fixed-increment vectors
+    /// above — that difference is the point of the stream mechanism.
+    #[test]
+    fn stream_golden_vectors() {
+        let mut s1 = Pcg32::with_stream(0x0123_4567_89AB_CDEF, 1);
+        assert_eq!(s1.next_u32(), 440_953_551);
+        assert_eq!(s1.next_u32(), 4_112_438_068);
+        let mut s2 = Pcg32::with_stream(0x0123_4567_89AB_CDEF, 2);
+        assert_eq!(s2.next_u32(), 2_922_926_312);
+        assert_eq!(s2.next_u32(), 3_361_374_836);
+    }
+
+    #[test]
+    fn distinct_streams_are_distinct_sequences() {
+        let seed = 42;
+        let mut streams: Vec<Pcg32> = (1..=20).map(|k| Pcg32::with_stream(seed, k)).collect();
+        // First draw: pairwise distinct across all twenty.
+        let firsts: Vec<u32> = streams.iter_mut().map(|r| r.next_u32()).collect();
+        for i in 0..firsts.len() {
+            for j in (i + 1)..firsts.len() {
+                assert_ne!(firsts[i], firsts[j], "streams {} and {} share a first draw", i + 1, j + 1);
+            }
+        }
+        // And none of them equals the fixed-increment sequence's first draw.
+        let fixed = Pcg32::new(seed).next_u32();
+        assert!(firsts.iter().all(|v| *v != fixed), "a stream matched the legacy sequence");
+        // Sustained: the first 64 draws of stream 3 never match stream 17's.
+        let mut a = Pcg32::with_stream(seed, 3);
+        let mut b = Pcg32::with_stream(seed, 17);
+        let mut overlap = 0;
+        for _ in 0..64 {
+            if a.next_u32() == b.next_u32() {
+                overlap += 1;
+            }
+        }
+        assert_eq!(overlap, 0, "streams 3 and 17 aligned within 64 draws");
+    }
+
+    #[test]
+    fn same_stream_same_sequence() {
+        let mut a = Pcg32::with_stream(7, 5);
+        let mut b = Pcg32::with_stream(7, 5);
+        for _ in 0..1000 {
+            assert_eq!(a.next_u32(), b.next_u32());
+        }
     }
 
     #[test]

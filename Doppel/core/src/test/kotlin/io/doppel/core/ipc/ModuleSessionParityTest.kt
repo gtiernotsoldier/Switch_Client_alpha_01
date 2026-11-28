@@ -140,7 +140,9 @@ class ModuleSessionParityTest {
         val config = AimConfig()   // defaults must equal `AimConfig::default()` in Rust
         val local = LegitAimStrategy()
         val state = AimStrategy.State()
-        val rng = DecisionRng(stub.seed)
+        // The aim stream: same (seed, stream id) pair the session constructs in
+        // core-rs — see `session::stream` / `DecisionRng.Streams`.
+        val rng = DecisionRng(stub.seed, DecisionRng.Streams.AIM)
         val inputs = DecisionRng(0xA1A1_A1A1L)
 
         var applies = 0
@@ -193,7 +195,7 @@ class ModuleSessionParityTest {
         val config = ClickConfig()
         val local = ProbabilisticClickStrategy()
         val state = io.doppel.contract.strategy.click.ClickStrategy.State()
-        val rng = DecisionRng(stub.seed)
+        val rng = DecisionRng(stub.seed, DecisionRng.Streams.CLICK)
         val inputs = DecisionRng(0xB2B2_B2B2L)
 
         var clicks = 0
@@ -320,7 +322,7 @@ class ModuleSessionParityTest {
 
         // sevenTapSide: consumes the RNG, so a wrong call order desynchronises
         // every later draw — which is exactly what this catches.
-        val rng = DecisionRng(stub.seed)
+        val rng = DecisionRng(stub.seed, DecisionRng.Streams.TAP)
         var side = Side.LEFT
         for (t in 0 until 300) {
             val chance = 30

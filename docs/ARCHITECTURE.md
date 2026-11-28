@@ -144,7 +144,9 @@ Rust injector
 
 ### RNG 流清单（20 条，`session.rs`）
 
-velocity / aim / click / tap（side 选择）/ wtap / stap / adtap / combat（触发引擎）/ autoblock / blockhit / player / backtrack / kbd / reach / click_assist / hit_select / eagle_place / sprint_reset / jump_reset / super_knockback。KeepSprint、LagRange 无流（确定性）。**流隔离的纪律**：一个模块的抽样绝不能挪动另一个模块的回放。
+velocity / aim / click / tap（side 选择）/ wtap / stap / adtap / combat（触发引擎）/ autoblock / blockhit / player / backtrack / kbd / reach / click_assist / hit_select / eagle_place / sprint_reset / jump_reset / super_knockback。KeepSprint、LagRange 无流（确定性）。
+
+**流隔离的两层纪律**（2026-11-28 起每条流挂在独立 PCG 流选择子上，`session::stream` 与 JVM 侧 `DecisionRng.Streams` 一一镜像，append-only 永不重编号）：一层是**回放隔离**——一个模块的抽样绝不能挪动另一个模块的回放；另一层是**统计独立**——同种子固定增量的二十台生成器只是同一条序列的不同消耗速率，锁步抽取会拿到相同值，流选择子（inc）把这一层也买断了。
 
 ### 状态归谁（一秒判断法）
 

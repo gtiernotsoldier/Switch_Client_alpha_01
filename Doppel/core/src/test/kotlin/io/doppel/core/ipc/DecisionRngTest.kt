@@ -25,6 +25,29 @@ class DecisionRngTest {
     }
 
     @Test
+    fun `matches the rust stream golden vectors`() {
+        // Same seed as above, stream ids 1 and 2 — the numbers asserted by
+        // `stream_golden_vectors` in `rng.rs`. Different from the legacy
+        // sequence on purpose: that difference is the stream mechanism working.
+        val s1 = DecisionRng(0x0123456789ABCDEFL, DecisionRng.Streams.VELOCITY)
+        assertEquals(440953551L, s1.nextU32())
+        assertEquals(4112438068L, s1.nextU32())
+        val s2 = DecisionRng(0x0123456789ABCDEFL, DecisionRng.Streams.AIM)
+        assertEquals(2922926312L, s2.nextU32())
+        assertEquals(3361374836L, s2.nextU32())
+    }
+
+    @Test
+    fun `distinct streams are distinct sequences`() {
+        // All twenty session stream ids produce pairwise-distinct first draws,
+        // and none of them matches the legacy fixed-increment first draw.
+        val firsts = (1L..20L).map { DecisionRng(42L, it).nextU32() }
+        assertEquals(firsts.size, firsts.toSet().size, "two session streams share a first draw")
+        val legacy = DecisionRng(42L).nextU32()
+        assertTrue(legacy !in firsts, "a stream matched the legacy sequence")
+    }
+
+    @Test
     fun `same seed produces the same sequence`() {
         val a = DecisionRng(42)
         val b = DecisionRng(42)
